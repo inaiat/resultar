@@ -1,6 +1,6 @@
 # Resultar 🙅
 
-[![supermacro](https://circleci.com/gh/inaiat/resultar.svg?style=svg)](https://app.circleci.com/pipelines/github/inaiat/resultar)
+[![inaiat](https://circleci.com/gh/inaiat/resultar.svg?style=svg)](https://app.circleci.com/pipelines/github/inaiat/resultar)
 
 ## Description
 
@@ -99,8 +99,6 @@ import {
 ---
 
 **Check out the [wiki](https://github.com/inaiat/resultar/wiki) for help on how to make the most of `resultar`.**
-
-If you find this package useful, please consider [sponsoring me](https://github.com/sponsors/supermacro/) or simply [buying me a coffee](https://ko-fi.com/gdelgado)!
 
 ---
 
