@@ -1,5 +1,6 @@
 import {
   Result,
+  safeTry,
 } from './result.js'
 
 export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
@@ -79,10 +80,24 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   async match<X>(ok: (t: T) => X, _err: (e: E) => X): Promise<X> {
     return this.innerPromise.then(res => res.match(ok, _err))
   }
+
+  /**
+   * Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
+   */
+  async * safeUnwrap(): AsyncGenerator<Result<T, E>, T> {
+    return yield * await this.innerPromise.then(res => res.safeUnwrap())
+  }
 }
 
 export const fromPromise = <T, E>(promise: PromiseLike<T>, errorFn: (e: unknown) => E): ResultAsync<T, E> => ResultAsync.fromPromise(promise, errorFn)
 export const fromSafePromise = <T, E>(promise: Promise<T>): ResultAsync<T, E> => ResultAsync.fromSafePromise(promise)
 export const okAsync = <T, E = never>(value: T): ResultAsync<T, E> => new ResultAsync<T, E>(Promise.resolve(Result.ok(value)))
 export const errAsync = <T = never, E = unknown>(error: E): ResultAsync<T, E> => new ResultAsync<T, E>(Promise.resolve(Result.err(error)))
+export const safeTryAsync = <T, E> (fn: () => AsyncGenerator<Result<T, E>, Result<T, E>>) =>
+  ResultAsync.fromSafePromise(safeTry(fn)).andThen(result => {
+    if (result.isOk()) {
+      return okAsync(result.value)
+    }
 
+    return errAsync(result.error)
+  })

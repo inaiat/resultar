@@ -246,6 +246,23 @@ export class Result<T, E> {
 
     return this.error
   }
+
+  safeUnwrap(): Generator<Result<T, E>, T> {
+    if (this.state.ok) {
+      const { value } = this
+      /* eslint-disable-next-line require-yield */
+      return (function * () {
+        return value
+      })()
+    }
+
+    const { error } = this
+    return (function * () {
+      yield err(error)
+
+      throw new Error('Do not use this generator out of `safeTry`')
+    })()
+  }
 }
 
 export const ok = <T, E = never>(value: T): Result<T, E> => Result.ok(value)
