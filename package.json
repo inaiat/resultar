@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Result pattern for typescript",
   "type": "module",
-  "packageManager": "pnpm@8.15.5",
+  "packageManager": "pnpm@8.15.6",
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -23,7 +23,8 @@
     "build": "rimraf ./dist && mkdir dist && tsup && git rev-parse HEAD > BUILD_SHA",
     "lint": "xo --fix",
     "prepublishOnly": "pnpm run build",
-    "test": "tsx --test tests/*.ts"
+    "test": "xo && tsx --test tests/*.ts",
+    "prepare": "husky || true"
   },
   "repository": {
     "type": "git",
@@ -49,6 +50,7 @@
   "devDependencies": {
     "@types/node": "^20.12.3",
     "eslint-plugin-unused-imports": "^3.1.0",
+    "husky": "^9.0.11",
     "rimraf": "^5.0.5",
     "semver": "^7.6.0",
     "tsup": "^8.0.2",
