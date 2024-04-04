@@ -1,6 +1,6 @@
-# NeverThrow 🙅
+# Resultar 🙅
 
-[![supermacro](https://circleci.com/gh/supermacro/neverthrow.svg?style=svg)](https://app.circleci.com/pipelines/github/supermacro/neverthrow)
+[![supermacro](https://circleci.com/gh/inaiat/resultar.svg?style=svg)](https://app.circleci.com/pipelines/github/inaiat/resultar)
 
 ## Description
 
@@ -8,9 +8,9 @@ Encode failure into your program.
 
 This package contains a `Result` type that represents either success (`Ok`) or failure (`Err`).
 
-For asynchronous tasks, `neverthrow` offers a `ResultAsync` class which wraps a `Promise<Result<T, E>>` and gives you the same level of expressivity and control as a regular `Result<T, E>`.
+For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `Promise<Result<T, E>>` and gives you the same level of expressivity and control as a regular `Result<T, E>`.
 
-`ResultAsync` is `thenable` meaning it **behaves exactly like a native `Promise<Result>`** ... except you have access to the same methods that `Result` provides without having to `await` or `.then` the promise! Check out [the wiki](https://github.com/supermacro/neverthrow/wiki/Basic-Usage-Examples#asynchronous-api) for examples and best practices.
+`ResultAsync` is `thenable` meaning it **behaves exactly like a native `Promise<Result>`** ... except you have access to the same methods that `Result` provides without having to `await` or `.then` the promise! Check out [the wiki](https://github.com/inaiat/resultar/wiki/Basic-Usage-Examples#asynchronous-api) for examples and best practices.
 
 > Need to see real-life examples of how to leverage this package for error handling? See this repo: https://github.com/parlez-vous/server
 
@@ -19,7 +19,6 @@ For asynchronous tasks, `neverthrow` offers a `ResultAsync` class which wraps a 
 ## Table Of Contents
 
 * [Installation](#installation)
-* [Recommended: Use `eslint-plugin-neverthrow`](#recommended-use-eslint-plugin-neverthrow)
 * [Top-Level API](#top-level-api)
 * [API Documentation](#api-documentation)
   + [Synchronous API (`Result`)](#synchronous-api-result)
@@ -64,33 +63,12 @@ For asynchronous tasks, `neverthrow` offers a `ResultAsync` class which wraps a 
 ## Installation
 
 ```sh
-> npm install neverthrow
+> npm install resultar
 ```
-
-## Recommended: Use `eslint-plugin-neverthrow`
-
-As part of `neverthrow`s [bounty program](https://github.com/supermacro/neverthrow/issues/314), user [mdbetancourt](https://github.com/mdbetancourt) created [`eslint-plugin-neverthrow`](https://github.com/mdbetancourt/eslint-plugin-neverthrow) to ensure that errors are not gone unhandled.
-
-Install by running:
-
-```sh
-> npm install eslint-plugin-neverthrow
-```
-
-With `eslint-plugin-neverthrow`, you are forced to consume the result in one of the following three ways:
-
-- Calling `.match`
-- Calling `.unwrapOr`
-- Calling `._unsafeUnwrap`
-
-This ensures that you're explicitly handling the error of your `Result`.
-
-This plugin is essentially a porting of Rust's [`must-use`](https://doc.rust-lang.org/std/result/#results-must-be-used) attribute. 
-
 
 ## Top-Level API
 
-`neverthrow` exposes the following:
+`resultar` exposes the following:
 
 - `ok` convenience function to create an `Ok` variant of `Result`
 - `err` convenience function to create an `Err` variant of `Result`
@@ -115,12 +93,12 @@ import {
   fromPromise,
   fromSafePromise,
   safeTry,
-} from 'neverthrow'
+} from 'resultar'
 ```
 
 ---
 
-**Check out the [wiki](https://github.com/supermacro/neverthrow/wiki) for help on how to make the most of `neverthrow`.**
+**Check out the [wiki](https://github.com/inaiat/resultar/wiki) for help on how to make the most of `resultar`.**
 
 If you find this package useful, please consider [sponsoring me](https://github.com/sponsors/supermacro/) or simply [buying me a coffee](https://ko-fi.com/gdelgado)!
 
@@ -143,7 +121,7 @@ ok<T, E>(value: T): Ok<T, E> { ... }
 **Example:**
 
 ```typescript
-import { ok } from 'neverthrow'
+import { ok } from 'resultar'
 
 const myResult = ok({ myData: 'test' }) // instance of `Ok`
 
@@ -168,7 +146,7 @@ err<T, E>(error: E): Err<T, E> { ... }
 **Example:**
 
 ```typescript
-import { err } from 'neverthrow'
+import { err } from 'resultar'
 
 const myResult = err('Oh noooo') // instance of `Err`
 
@@ -336,7 +314,7 @@ class Result<T, E> {
 **Example 1: Chaining Results**
 
 ```typescript
-import { err, ok } from 'neverthrow'
+import { err, ok } from 'resultar'
 
 const sq = (n: number): Result<number, number> => ok(n ** 2)
 
@@ -556,7 +534,7 @@ map what is thrown to a known type.
 **Example**:
 
 ```typescript
-import { Result } from 'neverthrow'
+import { Result } from 'resultar'
 
 type ParseError = { message: string }
 const toParseError = (): ParseError => ({ message: "Parse Error" })
@@ -688,7 +666,7 @@ okAsync<T, E>(value: T): ResultAsync<T, E>
 **Example:**
 
 ```typescript
-import { okAsync } from 'neverthrow'
+import { okAsync } from 'resultar'
 
 const myResultAsync = okAsync({ myData: 'test' }) // instance of `ResultAsync`
 
@@ -715,7 +693,7 @@ errAsync<T, E>(error: E): ResultAsync<T, E>
 **Example:**
 
 ```typescript
-import { errAsync } from 'neverthrow'
+import { errAsync } from 'resultar'
 
 const myResultAsync = errAsync('Oh nooo') // instance of `ResultAsync`
 
@@ -741,7 +719,7 @@ The second argument handles the rejection case of the promise and maps the error
 ```typescript
 // fromPromise is a static class method
 // also available as a standalone function
-// import { fromPromise } from 'neverthrow'
+// import { fromPromise } from 'resultar'
 ResultAsync.fromPromise<T, E>(
   promise: PromiseLike<T>,
   errorHandler: (unknownError: unknown) => E)
@@ -753,7 +731,7 @@ If you are working with `PromiseLike` objects that you **know for a fact** will 
 **Example**:
 
 ```typescript
-import { ResultAsync } from 'neverthrow'
+import { ResultAsync } from 'resultar'
 import { insertIntoDb } from 'imaginary-database'
 // insertIntoDb(user: User): Promise<User>
 
@@ -774,7 +752,7 @@ Same as `ResultAsync.fromPromise` except that it does not handle the rejection o
 ```typescript
 // fromPromise is a static class method
 // also available as a standalone function
-// import { fromPromise } from 'neverthrow'
+// import { fromPromise } from 'resultar'
 ResultAsync.fromSafePromise<T, E>(
   promise: PromiseLike<T>
 ): ResultAsync<T, E> { ... }
@@ -1277,7 +1255,7 @@ expect(myResult._unsafeUnwrap()).toBe(someExpectation)
 However, do note that `Result` instances are comparable. So you don't necessarily need to unwrap them in order to assert expectations in your tests. So you could also do something like this:
 
 ```typescript
-import { ok } from 'neverthrow'
+import { ok } from 'resultar'
 
 // ...
 
@@ -1300,14 +1278,6 @@ If you find this package useful, please consider [sponsoring me](https://github.
 
 ---
 
-## A note on the Package Name
-
-Although the package is called `neverthrow`, please don't take this literally. I am simply encouraging the developer to think a bit more about the ergonomics and usage of whatever software they are writing.
-
-`Throw`ing and `catching` is very similar to using `goto` statements - in other words; it makes reasoning about your programs harder. Secondly, by using `throw` you make the assumption that the caller of your function is implementing `catch`. This is a known source of errors. Example: One dev `throw`s and another dev uses the function without prior knowledge that the function will throw. Thus, and edge case has been left unhandled and now you have unhappy users, bosses, cats, etc.
-
-With all that said, there are definitely good use cases for throwing in your program. But much less than you might think.
-
 ### License
 
-The neverthrow project is available as open source under the terms of the [MIT license](https://github.com/supermacro/neverthrow/blob/master/LICENSE).
+The resultar project is available as open source under the terms of the [MIT license](https://github.com/inaiat/resultar/blob/master/LICENSE).
