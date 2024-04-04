@@ -1,7 +1,5 @@
 # Resultar 🙅
 
-[![inaiat](https://circleci.com/gh/inaiat/resultar.svg?style=svg)](https://app.circleci.com/pipelines/github/inaiat/resultar)
-
 ## Description
 
 Encode failure into your program.
