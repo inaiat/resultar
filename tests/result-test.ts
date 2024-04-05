@@ -7,7 +7,9 @@ import assert, {
 import {
   Result, err, ok,
 } from '../src/result.js'
-import { ResultAsync, errAsync, okAsync } from '../src/result-async.js'
+import {
+  ResultAsync, errAsync, fromThrowableAsync, okAsync,
+} from '../src/result-async.js'
 
 const validateUser = (user: Readonly<{name: string}>): ResultAsync<{name: string}, string> => {
   if (user.name === 'superadmin') {
@@ -661,6 +663,59 @@ await describe('ResultAsync', async () => {
       const r: R = x.error
       equal(r, 'Oops: boom')
     }
+
+    await describe('ResultAsync.fromThrowable', async () => {
+      await it('creates a new function that returns a ResultAsync', async () => {
+        const example = fromThrowableAsync(async (a: number, b: number) => a + b)
+        const res = example(4, 8)
+        isTrue(res instanceof ResultAsync)
+
+        const val = await res
+        isTrue(val.isOk())
+        equal(val._unsafeUnwrap(), 12)
+      })
+
+      await it('handles synchronous errors', async () => {
+        const example = fromThrowableAsync(async () => {
+          if (1 > 0) { // eslint-disable-line no-constant-condition
+            throw new Error('Oops: No!')
+          }
+
+          return 12
+        })
+
+        const val = await example()
+        isTrue(val.isErr())
+        deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
+      })
+
+      await it('handles asynchronous errors', async () => {
+        const example = fromThrowableAsync(async () => {
+          if (1 > 0) { // eslint-disable-line no-constant-condition
+            throw new Error('Oops: No!')
+          }
+
+          return 12
+        })
+
+        const val = await example()
+        isTrue(val.isErr())
+        deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
+      })
+
+      await it('Accepts an error handler as a second argument', async () => {
+        const example = fromThrowableAsync(
+          async () => {
+            throw new Error('No!')
+          },
+          e => new Error('Oops: '.concat((e as Error).message)),
+        )
+
+        const val = await example()
+        isTrue(val.isErr())
+        deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
+      })
+    })
   })
 
   await describe('tap', async () => {

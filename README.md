@@ -1,4 +1,4 @@
-# Resultar 🙅
+# Resultar
 
 ## Description
 

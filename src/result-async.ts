@@ -129,6 +129,23 @@ export function errAsync<T = never, E = unknown>(error: E): ResultAsync<T, E> {
   return new ResultAsync<T, E>(Promise.resolve(Result.err(error)))
 }
 
+export function fromThrowableAsync<A extends readonly any[], T, E>(
+  fn: (...args: A) => Promise<T>,
+  errorFn?: (err: unknown) => E,
+): (...args: A) => ResultAsync<T, E> {
+  return (...args) => new ResultAsync<T, E>(
+    (async () => {
+      try {
+        const v = await fn(...args)
+        return Result.ok(v)
+      } catch (error) {
+        const e = errorFn ? errorFn(error) : error
+        return Result.err(e as E)
+      }
+    })(),
+  )
+}
+
 export function safeTryAsync<T, E>(
   body: () => AsyncGenerator<Result<never, E>, Result<T, E>>,
 ): ResultAsync<T, E> {
@@ -143,4 +160,3 @@ export function safeTryAsync<T, E>(
     })(),
   )
 }
-
