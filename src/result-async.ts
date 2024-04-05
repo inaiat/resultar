@@ -112,7 +112,7 @@ export function errAsync<T = never, E = unknown>(error: E): ResultAsync<T, E> {
 }
 
 export function safeTryAsync<T, E>(
-  body: () => AsyncGenerator<Result<T, E>, Result<T, E>>,
+  body: () => AsyncGenerator<Result<never, E>, Result<T, E>>,
 ): ResultAsync<T, E> {
   return new ResultAsync<T, E>(
     (async () => {

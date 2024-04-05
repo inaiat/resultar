@@ -284,7 +284,7 @@ export const fromThrowable = <Fn extends (...args: readonly any[]) => unknown, E
  * Rust's `result?` expression.
  * @returns The first occurence of either an yielded Err or a returned Result.
  */
-export function safeTry<T, E>(body: () => Generator<Result<T, E>, Result<T, E>>): Result<T, E>
+export function safeTry<T, E>(body: () => Generator<Result<never, E>, Result<T, E>>): Result<T, E>
 /**
  * Evaluates the given generator to a Result returned or an Err yielded from it,
  * whichever comes first.
@@ -301,12 +301,12 @@ export function safeTry<T, E>(body: () => Generator<Result<T, E>, Result<T, E>>)
 // Since body is potentially throwable because `await` can be used in it,
 // Promise<Result<T, E>>, not ResultAsync<T, E>, is used as the return type.
 export function safeTry<T, E>(
-  body: () => AsyncGenerator<Result<T, E>, Result<T, E>>,
+  body: () => AsyncGenerator<Result<never, E>, Result<T, E>>,
 ): Promise<Result<T, E>>
 export function safeTry<T, E>(
   body:
-  | (() => Generator<Result<T, E>, Result<T, E>>)
-  | (() => AsyncGenerator<Result<T, E>, Result<T, E>>),
+  | (() => Generator<Result<never, E>, Result<T, E>>)
+  | (() => AsyncGenerator<Result<never, E>, Result<T, E>>),
 ): Result<T, E> | Promise<Result<T, E>> {
   const n = body().next()
   if (n instanceof Promise) {
