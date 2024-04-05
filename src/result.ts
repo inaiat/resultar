@@ -247,7 +247,7 @@ export class Result<T, E> {
     return this.error
   }
 
-  safeUnwrap(): Generator<Result<T, E>, T> {
+  safeUnwrap(): Generator<Result<never, E>, T> {
     if (this.state.ok) {
       const { value } = this
       /* eslint-disable-next-line require-yield */

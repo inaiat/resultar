@@ -1,21 +1,21 @@
 import {
   Result,
-  safeTry,
 } from './result.js'
 
 export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
+  static fromSafePromise<T, E = never>(promise: PromiseLike<T>): ResultAsync<T, E>
+  static fromSafePromise<T, E = never>(promise: Promise<T>): ResultAsync<T, E> {
+    const newPromise = promise
+      .then((value: T) => Result.ok(value))
+
+    return new ResultAsync<T, E>(newPromise)
+  }
+
   static fromPromise<T, E>(promise: PromiseLike<T>, errorFn: (e: unknown) => E): ResultAsync<T, E>
   static fromPromise<T, E>(promise: Promise<T>, errorFn: (e: unknown) => E): ResultAsync<T, E> {
     const newPromise = promise
       .then((value: T) => Result.ok(value))
       .catch(error => Result.err(errorFn(error)))
-
-    return new ResultAsync<T, E>(newPromise)
-  }
-
-  static fromSafePromise<T, E>(promise: Promise<T>): ResultAsync<T, E> {
-    const newPromise = promise
-      .then((value: T) => Result.ok(value))
 
     return new ResultAsync<T, E>(newPromise)
   }
@@ -84,20 +84,45 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   /**
    * Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
    */
-  async * safeUnwrap(): AsyncGenerator<Result<T, E>, T> {
+  async * safeUnwrap(): AsyncGenerator<Result<never, E>, T> {
     return yield * await this.innerPromise.then(res => res.safeUnwrap())
   }
 }
 
-export const fromPromise = <T, E>(promise: PromiseLike<T>, errorFn: (e: unknown) => E): ResultAsync<T, E> => ResultAsync.fromPromise(promise, errorFn)
-export const fromSafePromise = <T, E>(promise: Promise<T>): ResultAsync<T, E> => ResultAsync.fromSafePromise(promise)
-export const okAsync = <T, E = never>(value: T): ResultAsync<T, E> => new ResultAsync<T, E>(Promise.resolve(Result.ok(value)))
-export const errAsync = <T = never, E = unknown>(error: E): ResultAsync<T, E> => new ResultAsync<T, E>(Promise.resolve(Result.err(error)))
-export const safeTryAsync = <T, E> (fn: () => AsyncGenerator<Result<T, E>, Result<T, E>>) =>
-  ResultAsync.fromSafePromise(safeTry(fn)).andThen(result => {
-    if (result.isOk()) {
-      return okAsync(result.value)
-    }
+export function fromSafePromise<T, E = never>(promise: PromiseLike<T>): ResultAsync<T, E>
+export function fromSafePromise<T, E = never>(promise:
+| PromiseLike<T>
+| Promise<T>): ResultAsync<T, E> {
+  return ResultAsync.fromSafePromise(promise)
+}
 
-    return errAsync(result.error)
-  })
+export function fromPromise<T, E>(promise: PromiseLike<T>, errorFn: (e: unknown) => E): ResultAsync<T, E>
+export function fromPromise<T, E>(promise:
+| PromiseLike<T>
+| Promise<T>, errorFn: (e: unknown) => E): ResultAsync<T, E> {
+  return ResultAsync.fromPromise(promise, errorFn)
+}
+
+export function okAsync<T, E = never>(value: T): ResultAsync<T, E> {
+  return new ResultAsync<T, E>(Promise.resolve(Result.ok(value)))
+}
+
+export function errAsync<T = never, E = unknown>(error: E): ResultAsync<T, E> {
+  return new ResultAsync<T, E>(Promise.resolve(Result.err(error)))
+}
+
+export function safeTryAsync<T, E>(
+  body: () => AsyncGenerator<Result<T, E>, Result<T, E>>,
+): ResultAsync<T, E> {
+  return new ResultAsync<T, E>(
+    (async () => {
+      const n = await body().next()
+      if (n.value.isOk()) {
+        return okAsync(n.value.value)
+      }
+
+      return errAsync(n.value.error)
+    })(),
+  )
+}
+

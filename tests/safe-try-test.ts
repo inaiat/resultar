@@ -1,13 +1,65 @@
 /* eslint-disable require-yield */
 /* eslint-disable @typescript-eslint/no-floating-promises */
 import { describe, it } from 'node:test'
-import { deepEqual, equal, ok as isOk } from 'node:assert'
+import {
+  deepEqual, equal, ok as isOk,
+} from 'node:assert'
 import {
   Result, err, ok, safeTry,
 } from '../src/result.js'
-import { ResultAsync, errAsync, okAsync } from '../src/result-async.js'
+import {
+  ResultAsync, errAsync, okAsync,
+  safeTryAsync,
+} from '../src/result-async.js'
 
-describe('Returns what is returned from the generator function', () => {
+await describe('safeTryAsync', async () => {
+  const fooValue = okAsync('foo')
+  const barValue = okAsync('bar')
+  const errValue = errAsync('boom')
+
+  await it('SafeTryAsync with all Ok', async () => {
+    const resultAsync = safeTryAsync(async function * () {
+      const okValues = new Array<string>()
+
+      const okFoo = yield * fooValue.safeUnwrap()
+      okValues.push(okFoo)
+
+      const okBar = yield * barValue.safeUnwrap()
+      okValues.push(okBar)
+
+      return ok(okValues)
+    })
+
+    const result = await resultAsync
+
+    isOk(result.isOk())
+    deepEqual(result._unsafeUnwrap(), ['foo', 'bar'])
+  })
+
+  await it('SafeTryAsync with Err', async () => {
+    const resultAsync = safeTryAsync(async function * () {
+      const okValues = new Array<string>()
+      const okFoo = yield * fooValue.safeUnwrap()
+      okValues.push(okFoo)
+
+      const okBar = yield * barValue.safeUnwrap()
+      okValues.push(okBar)
+
+      deepEqual(okValues, ['foo', 'bar'])
+
+      yield * errValue.safeUnwrap()
+
+      throw new Error('This line should not be executed')
+    })
+
+    const result = await resultAsync
+
+    isOk(result.isErr())
+    deepEqual(result._unsafeUnwrapErr(), (await errValue)._unsafeUnwrapErr())
+  })
+})
+
+await describe('Returns what is returned from the generator function', async () => {
   const val = 'value'
 
   it('With synchronous Ok', () => {
@@ -44,7 +96,7 @@ describe('Returns what is returned from the generator function', () => {
   })
 })
 
-describe('Returns the first occurence of Err instance as yiled*\'s operand', () => {
+await describe('Returns the first occurence of Err instance as yiled*\'s operand', async () => {
   it('With synchronous results', () => {
     const errVal = 'err'
     const okValues = new Array<string>()
@@ -112,7 +164,7 @@ describe('Returns the first occurence of Err instance as yiled*\'s operand', () 
   })
 })
 
-describe('Tests if README\'s examples work', () => {
+await describe('Tests if README\'s examples work', async () => {
   const okValue = 3
   const errValue = 'err!'
   function good(): Result<number, string> {
