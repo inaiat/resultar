@@ -15,8 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/checkout@v4
-
       - name: Set up Node.js
         uses: actions/setup-node@v2
         with:
@@ -30,12 +28,12 @@ jobs:
         run: npm run build && npm test
 
       - name: Publish package
-        run: npm publish
+        run: npm ci && npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish package on JSR
-        run: npx jsr publish
-        env:
-          JSR_TOKEN: ${{ secrets.JSR_TOKEN }}
-          JSR_URL: ${{ secrets.JSR_URL }}
+      # - name: Publish package on JSR
+      #   run: npx jsr publish
+      #   env:
+      #     JSR_TOKEN: ${{ secrets.JSR_TOKEN }}
+      #     JSR_URL: ${{ secrets.JSR_URL }}
