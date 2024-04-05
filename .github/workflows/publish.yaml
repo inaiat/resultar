@@ -25,10 +25,10 @@ jobs:
         run: npm install -g corepack && corepack enable
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install
 
       - name: Build and test
-        run: npm run build && npm test
+        run: pnpm build && pnpm test
 
       - name: Publish package
         run: npm publish --access public
