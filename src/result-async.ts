@@ -81,6 +81,24 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     return this.innerPromise.then(res => res.match(ok, _err))
   }
 
+  tap(f: (t: T) => void | Promise<void>): ResultAsync<T, E> {
+    return new ResultAsync(
+      this.innerPromise.then(async res => {
+        if (res.isErr()) {
+          return errAsync(res.error)
+        }
+
+        try {
+          await f(res.value)
+        } catch {
+          // Dont do anything. Its just a tap
+        }
+
+        return okAsync(res.value)
+      }),
+    )
+  }
+
   /**
    * Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
    */

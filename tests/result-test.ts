@@ -182,6 +182,69 @@ await describe('Result.Ok', async () => {
 
     equal(val.value, 'safe to read')
   })
+
+  await it('Taps into an Ok value', () => {
+    const okVal = ok(12)
+
+    // value can be accessed, but is not changed
+    const sideEffect = mock.fn(number => {
+      console.log(number)
+    })
+
+    const mapped = okVal.tap(sideEffect)
+
+    isTrue(mapped.isOk())
+    equal(mapped._unsafeUnwrap(), 12)
+    equal(sideEffect.mock.calls.length, 1)
+  })
+
+  await it('Cannot change a value with .tap', () => {
+    const original = { name: 'John' }
+    const okVal = ok(original)
+
+    // value can be accessed, but is not changed
+    const sideEffect = mock.fn(_person => ({ name: 'Alice' }))
+
+    const mapped = okVal.tap(sideEffect)
+
+    isTrue(mapped.isOk())
+    equal(mapped._unsafeUnwrap(), original)
+    equal(sideEffect.mock.calls.length, 1)
+  })
+
+  await it('Skips `tap`', () => {
+    const errVal = err('I am your father')
+
+    const sideEffect = mock.fn(_value => {
+      console.log('noooo')
+    })
+
+    const hopefullyNotMapped = errVal.tap(sideEffect)
+
+    isTrue(hopefullyNotMapped.isErr())
+    equal(sideEffect.mock.calls.length, 0)
+    equal(hopefullyNotMapped._unsafeUnwrapErr(), errVal._unsafeUnwrapErr())
+  })
+
+  await it('Cannot change a value with .tap and does not raise exception if tap has one', () => {
+    const original = { name: 'John' }
+    const okVal = ok(original)
+
+    // value can be accessed, but is not changed
+    const sideEffect = mock.fn((value: number) => {
+      if (value === 12) {
+        throw new Error('Don\'t do that!')
+      }
+
+      return { name: 'Alice' }
+    })
+
+    const mapped = okVal.tap(_x => sideEffect(12))
+
+    isTrue(mapped.isOk())
+    equal(mapped._unsafeUnwrap(), original)
+    equal(sideEffect.mock.calls.length, 1)
+  })
 })
 
 await describe('Result.Err', async () => {
@@ -598,6 +661,69 @@ await describe('ResultAsync', async () => {
       const r: R = x.error
       equal(r, 'Oops: boom')
     }
+  })
+
+  await describe('tap', async () => {
+    await it('Taps into an async value', async () => {
+      const asyncVal = okAsync(12)
+
+      const sideEffect = mock.fn(number => {
+        console.log(number)
+      })
+
+      const mapped = asyncVal.tap(sideEffect)
+
+      isTrue(mapped instanceof ResultAsync)
+
+      const newVal = await mapped
+
+      isTrue(newVal.isOk())
+      equal(newVal._unsafeUnwrap(), 12)
+      equal(sideEffect.mock.calls.length, 1)
+    })
+
+    await it('Cannot change an async value with .tap', async () => {
+      const original = { name: 'John' }
+      const asyncVal = okAsync(original)
+
+      const sideEffect = mock.fn(_person => okAsync({ name: 'Alice' }))
+
+      // @ts-expect-error  Ignoring this to run "dangerous code"
+      const mapped = asyncVal.tap(sideEffect)
+
+      isTrue(mapped instanceof ResultAsync)
+
+      const newVal = await mapped
+
+      // expect(newVal.isOk()).toBe(true)
+      // expect(newVal._unsafeUnwrap()).toEqual(original)
+      // expect(sideEffect).toHaveBeenCalledTimes(1)
+      isTrue(newVal.isOk())
+      deepEqual(newVal._unsafeUnwrap(), original)
+      equal(sideEffect.mock.calls.length, 1)
+    })
+
+    await it('Skips an error when tapping into an asynchronous value', async () => {
+      const asyncErr = errAsync<number, string>('Wrong format')
+
+      const sideEffect = mock.fn(number => {
+        console.log(number)
+      })
+
+      const notMapped = asyncErr.tap(sideEffect)
+
+      // expect(notMapped).toBeInstanceOf(ResultAsync)
+      isTrue(notMapped instanceof ResultAsync)
+
+      const newVal = await notMapped
+
+      // expect(newVal.isErr()).toBe(true)
+      // expect(newVal._unsafeUnwrapErr()).toBe('Wrong format')
+      // expect(sideEffect).toHaveBeenCalledTimes(0)
+      isTrue(newVal.isErr())
+      equal(newVal._unsafeUnwrapErr(), 'Wrong format')
+      equal(sideEffect.mock.calls.length, 0)
+    })
   })
 })
 

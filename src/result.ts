@@ -217,6 +217,26 @@ export class Result<T, E> {
   }
 
   /**
+   * Performs a side effect for the `Ok` variant of `Result`.
+   *
+   * @param f The function to apply an `OK` value
+   * @returns the result of applying `f` or an `Err` untouched
+   */
+  tap(f: (t: T) => void): Result<T, E> {
+    if (this.state.ok) {
+      try {
+        f(this.value)
+      } catch {
+        // Dont do anything. Its just a tap
+      }
+
+      return ok(this.value)
+    }
+
+    return err(this.error)
+  }
+
+  /**
    * **This method is unsafe, and should only be used in a test environments**
    *
    * Takes a `Result<T, E>` and returns a `T` when the result is an `Ok`, otherwise it throws a custom object.

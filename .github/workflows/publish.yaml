@@ -35,8 +35,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      # - name: Publish package on JSR
-      #   run: npx jsr publish
-      #   env:
-      #     JSR_TOKEN: ${{ secrets.JSR_TOKEN }}
-      #     JSR_URL: ${{ secrets.JSR_URL }}
+      - name: Publish package on JSR
+        run: pnpm dlx jsr publish
+
