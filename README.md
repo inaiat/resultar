@@ -1,5 +1,13 @@
 # Resultar
 
+## About
+
+Resultar is a TypeScript library that is a fork of the excellent [neverthrow](https://github.com/supermacro/neverthrow) library. The neverthrow library provides a robust and type-safe way to handle errors without throwing exceptions, using the Result type.
+
+In the spirit of open-source development, **resultar** builds upon the solid foundation laid by neverthrow, extending its functionality to better suit specific needs. It introduces additional methods and functions such as tap, safeTryAsync, and fromThrowableAsync, providing more flexibility and control in error handling.
+
+While resultar owes its origins to neverthrow, it has evolved to offer its own unique features, making error handling in TypeScript even more powerful and expressive. It's a testament to the power of open-source collaboration and the continuous pursuit of improving code quality and developer experience.
+
 ## Description
 
 Encode failure into your program.
