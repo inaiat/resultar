@@ -1,3 +1,6 @@
+import {
+  CombineResults, CombineResultsWithAllErrorsArray, combineResultList, combineResultListWithAllErrors,
+} from './utils.js'
 import { ErrorConfig, createResultarError } from './error.js'
 import { ResultAsync, errAsync } from './result-async.js'
 
@@ -43,6 +46,30 @@ export class Result<T, E> {
 
   static err<T=never, E=unknown>(error: E): Result<T, E> {
     return new Result<T, E>({ ok: false, error })
+  }
+
+  static combine<
+    T extends readonly [Result<unknown, unknown>, ...Array<Result<unknown, unknown>>],
+  >(resultList: T): CombineResults<T>
+  static combine<T extends ReadonlyArray<Result<unknown, unknown>>>(
+    resultList: T,
+  ): CombineResults<T>
+  static combine<
+    T extends readonly [Result<unknown, unknown>, ...Array<Result<unknown, unknown>>],
+  >(resultList: T): CombineResults<T> {
+    return combineResultList(resultList) as CombineResults<T>
+  }
+
+  static combineWithAllErrors<
+    T extends readonly [Result<unknown, unknown>, ...Array<Result<unknown, unknown>>],
+  >(resultList: T): CombineResultsWithAllErrorsArray<T>
+  static combineWithAllErrors<T extends ReadonlyArray<Result<unknown, unknown>>>(
+    resultList: T,
+  ): CombineResultsWithAllErrorsArray<T>
+  static combineWithAllErrors<T extends ReadonlyArray<Result<unknown, unknown>>>(
+    resultList: T,
+  ): CombineResultsWithAllErrorsArray<T> {
+    return combineResultListWithAllErrors(resultList) as CombineResultsWithAllErrorsArray<T>
   }
 
   readonly value: T

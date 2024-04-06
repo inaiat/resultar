@@ -4,6 +4,7 @@ import { describe, it, mock } from 'node:test'
 import assert, {
   equal, deepEqual, strictEqual, deepStrictEqual, notDeepStrictEqual, ok as isTrue, notEqual,
 } from 'node:assert'
+import * as td from 'testdouble'
 import {
   Result, err, ok,
 } from '../src/result.js'
@@ -782,3 +783,241 @@ await describe('ResultAsync', async () => {
   })
 })
 
+await describe('Utils', async () => {
+  await describe('`Result.combine`', async () => {
+    await describe('Synchronous `combine`', async () => {
+      await it('Combines a list of results into an Ok value', async () => {
+        const resultList = [ok(123), ok(456), ok(789)]
+
+        const result = Result.combine(resultList)
+
+        isTrue(result.isOk())
+        deepEqual(result._unsafeUnwrap(), [123, 456, 789])
+      })
+    })
+
+    await it('Combines a list of results into an Err value', async () => {
+      const resultList: Array<Result<number, string>> = [
+        ok(123),
+        err('boooom!'),
+        ok(456),
+        err('ahhhhh!'),
+      ]
+
+      const result = Result.combine(resultList)
+
+      isTrue(result.isErr())
+      equal(result._unsafeUnwrapErr(), 'boooom!')
+    })
+
+    await it('Combines heterogeneous lists', async () => {
+      type HeterogenousList = [ Result<string, string>, Result<number, number>, Result<boolean, boolean> ]
+
+      const heterogenousList: HeterogenousList = [
+        ok('Yooooo'),
+        ok(123),
+        ok(true),
+      ]
+
+      type ExpecteResult = Result<[ string, number, boolean ], string | number | boolean>
+
+      const result: ExpecteResult = Result.combine(heterogenousList)
+
+      deepEqual(result._unsafeUnwrap(), ['Yooooo', 123, true])
+    })
+
+    await it('Does not destructure / concatenate arrays', async () => {
+      type HomogenousList = [
+        Result<string[], boolean>,
+        Result<number[], string>,
+      ]
+
+      const homogenousList: HomogenousList = [
+        ok(['hello', 'world']),
+        ok([1, 2, 3]),
+      ]
+
+      type ExpectedResult = Result<[ string[], number[] ], boolean | string>
+
+      const result: ExpectedResult = Result.combine(homogenousList)
+
+      deepEqual(result._unsafeUnwrap(), [['hello', 'world'], [1, 2, 3]])
+    })
+
+    await describe('`ResultAsync.combine`', async () => {
+      await it('Combines a list of async results into an Ok value', async () => {
+        const asyncResultList = [okAsync(123), okAsync(456), okAsync(789)]
+
+        const resultAsync: ResultAsync<number[], never[]> = ResultAsync.combine(asyncResultList)
+
+        isTrue(resultAsync instanceof ResultAsync)
+
+        const result = await ResultAsync.combine(asyncResultList)
+
+        isTrue(result.isOk())
+        deepEqual(result._unsafeUnwrap(), [123, 456, 789])
+      })
+
+      await it('Combines a list of results into an Err value', async () => {
+        const resultList: Array<ResultAsync<number, string>> = [
+          okAsync(123),
+          errAsync('boooom!'),
+          okAsync(456),
+          errAsync('ahhhhh!'),
+        ]
+
+        const result = await ResultAsync.combine(resultList)
+
+        isTrue(result.isErr())
+        equal(result._unsafeUnwrapErr(), 'boooom!')
+      })
+
+      await it('Combines heterogeneous lists', async () => {
+        type HeterogenousList = [
+          ResultAsync<string, string>,
+          ResultAsync<number, number>,
+          ResultAsync<boolean, boolean>,
+          ResultAsync<number[], string>,
+        ]
+
+        const heterogenousList: HeterogenousList = [
+          okAsync('Yooooo'),
+          okAsync(123),
+          okAsync(true),
+          okAsync([1, 2, 3]),
+        ]
+
+        type ExpecteResult = Result<[ string, number, boolean, number[] ], string | number | boolean>
+
+        const result: ExpecteResult = await ResultAsync.combine(heterogenousList)
+
+        deepEqual(result._unsafeUnwrap(), ['Yooooo', 123, true, [1, 2, 3]])
+      })
+    })
+  })
+
+  await describe('`Result.combineWithAllErrors`', async () => {
+    await describe('Synchronous `combineWithAllErrors`', async () => {
+      await it('Combines a list of results into an Ok value', async () => {
+        const resultList = [ok(123), ok(456), ok(789)]
+
+        const result = Result.combineWithAllErrors(resultList)
+
+        isTrue(result.isOk())
+        deepEqual(result._unsafeUnwrap(), [123, 456, 789])
+      })
+
+      await it('Combines a list of results into an Err value', async () => {
+        const resultList: Array<Result<number, string>> = [
+          ok(123),
+          err('boooom!'),
+          ok(456),
+          err('ahhhhh!'),
+        ]
+
+        const result = Result.combineWithAllErrors(resultList)
+
+        // expect(result.isErr()).toBe(true)
+        // expect(result._unsafeUnwrapErr()).toEqual(['boooom!', 'ahhhhh!'])
+        isTrue(result.isErr())
+        deepEqual(result._unsafeUnwrapErr(), ['boooom!', 'ahhhhh!'])
+      })
+
+      await it('Combines heterogeneous lists', async () => {
+        type HeterogenousList = [ Result<string, string>, Result<number, number>, Result<boolean, boolean> ]
+
+        const heterogenousList: HeterogenousList = [
+          ok('Yooooo'),
+          ok(123),
+          ok(true),
+        ]
+
+        type ExpecteResult = Result<[ string, number, boolean ], Array<string | number | boolean>>
+
+        const result: ExpecteResult = Result.combineWithAllErrors(heterogenousList)
+
+        deepEqual(result._unsafeUnwrap(), ['Yooooo', 123, true])
+      })
+
+      await it('Does not destructure / concatenate arrays', async () => {
+        type HomogenousList = [
+          Result<string[], boolean>,
+          Result<number[], string>,
+        ]
+
+        const homogenousList: HomogenousList = [
+          ok(['hello', 'world']),
+          ok([1, 2, 3]),
+        ]
+
+        type ExpectedResult = Result<[ string[], number[] ], Array<boolean | string>>
+
+        const result: ExpectedResult = Result.combineWithAllErrors(homogenousList)
+
+        // expect(result._unsafeUnwrap()).toEqual([['hello', 'world'], [1, 2, 3]])
+        deepEqual(result._unsafeUnwrap(), [['hello', 'world'], [1, 2, 3]])
+      })
+    })
+
+    await describe('`ResultAsync.combineWithAllErrors`', async () => {
+      await it('Combines a list of async results into an Ok value', async () => {
+        const asyncResultList = [okAsync(123), okAsync(456), okAsync(789)]
+
+        const result = await ResultAsync.combineWithAllErrors(asyncResultList)
+
+        isTrue(result.isOk())
+        deepEqual(result._unsafeUnwrap(), [123, 456, 789])
+      })
+
+      await it('Combines a list of results into an Err value', async () => {
+        const asyncResultList: Array<ResultAsync<number, string>> = [
+          okAsync(123),
+          errAsync('boooom!'),
+          okAsync(456),
+          errAsync('ahhhhh!'),
+        ]
+
+        const result = await ResultAsync.combineWithAllErrors(asyncResultList)
+
+        isTrue(result.isErr())
+        deepEqual(result._unsafeUnwrapErr(), ['boooom!', 'ahhhhh!'])
+      })
+
+      await it('Combines heterogeneous lists', async () => {
+        type HeterogenousList = [ ResultAsync<string, string>, ResultAsync<number, number>, ResultAsync<boolean, boolean> ]
+
+        const heterogenousList: HeterogenousList = [
+          okAsync('Yooooo'),
+          okAsync(123),
+          okAsync(true),
+        ]
+
+        type ExpecteResult = Result<[ string, number, boolean ], [string, number, boolean]>
+
+        const result: ExpecteResult = await ResultAsync.combineWithAllErrors(heterogenousList)
+
+        deepEqual(result._unsafeUnwrap(), ['Yooooo', 123, true])
+      })
+    })
+
+    await describe('testdouble `ResultAsync.combine`', async () => {
+      interface ITestInterface {
+        getName(): string
+        setName(name: string): void
+        getAsyncResult(): ResultAsync<ITestInterface, Error>
+      }
+
+      await it('Combines `testdouble` proxies from mocks generated via interfaces', async () => {
+        const mock = td.object<ITestInterface>()
+
+        const result = await ResultAsync.combine([okAsync(mock)] as const)
+
+        isTrue(result !== undefined)
+        isTrue(result.isOk())
+        const unwrappedResult = result._unsafeUnwrap()
+        equal(unwrappedResult.length, 1)
+        strictEqual(unwrappedResult[0], mock)
+      })
+    })
+  })
+})

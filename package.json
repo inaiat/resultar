@@ -21,7 +21,8 @@
   ],
   "scripts": {
     "build": "rimraf ./dist && mkdir dist && tsup && git rev-parse HEAD > BUILD_SHA",
-    "lint": "xo --fix",
+    "lint": "xo",
+    "lint:fix": "xo --fix",
     "prepublishOnly": "pnpm run build",
     "test": "xo && tsx --test tests/*.ts",
     "prepare": "husky || true"
@@ -53,6 +54,7 @@
     "husky": "^9.0.11",
     "rimraf": "^5.0.5",
     "semver": "^7.6.0",
+    "testdouble": "^3.20.2",
     "tsup": "^8.0.2",
     "tsx": "^4.7.1",
     "typescript": "5.4.2",
@@ -127,13 +129,18 @@
       "@typescript-eslint/no-empty-function": "warn",
       "@typescript-eslint/no-unsafe-call": "off",
       "@typescript-eslint/object-curly-spacing": "off",
-      "@typescript-eslint/no-unused-vars": "off",
-      "unused-imports/no-unused-imports": "error",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          "argsIgnorePattern": "^_",
+          "varsIgnorePattern": "^_"
+        }
+      ],
       "functional/no-classes": "off"
     },
     "overrides": [
       {
-        "files": "tests/**/*.ts",
+        "files": "tests/*.ts",
         "rules": {
           "functional/no-method-signature": "off",
           "@typescript-eslint/prefer-readonly-parameter-types": "off",
