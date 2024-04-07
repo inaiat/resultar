@@ -4,14 +4,14 @@ import {
 import { ErrorConfig, createResultarError } from './error.js'
 import { ResultAsync, errAsync } from './result-async.js'
 
-interface Ok<T> {
-  ok: true
-  value: T
+class Ok<T> {
+  readonly ok = true // eslint-disable-line @typescript-eslint/class-literal-property-style
+  constructor(public readonly value: T) {}
 }
 
-interface Err<E> {
-  ok: false
-  error: E
+class Err<E> {
+  readonly ok = false // eslint-disable-line @typescript-eslint/class-literal-property-style
+  constructor(public readonly error: E) {}
 }
 
 export class Result<T, E> {
@@ -41,11 +41,11 @@ export class Result<T, E> {
   }
 
   static ok<T, E=never>(value: T): Result<T, E> {
-    return new Result<T, E>({ ok: true, value })
+    return new Result<T, E>(new Ok(value))
   }
 
   static err<T=never, E=unknown>(error: E): Result<T, E> {
-    return new Result<T, E>({ ok: false, error })
+    return new Result<T, E>(new Err(error))
   }
 
   static combine<
