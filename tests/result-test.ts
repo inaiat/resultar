@@ -430,17 +430,13 @@ await describe('ResultAsync', async () => {
     await it('Can be used with Promise.all', async () => {
       const allResult = await Promise.all([okAsync<string, Error>('1')])
 
-      // expect(allResult).toHaveLength(1)
       equal(allResult.length, 1)
-      // expect(allResult[0]).toBeInstanceOf(Ok)
       equal(allResult[0] instanceof Result, true)
       if (!(allResult[0] instanceof Result)) {
         return
       }
 
-      // expect(allResult[0].isOk()).toBe(true)
       isTrue(allResult[0].isOk())
-      // expect(allResult[0]._unsafeUnwrap()).toEqual('1')
       equal(allResult[0]._unsafeUnwrap(), '1')
     })
   })
@@ -751,9 +747,6 @@ await describe('ResultAsync', async () => {
 
       const newVal = await mapped
 
-      // expect(newVal.isOk()).toBe(true)
-      // expect(newVal._unsafeUnwrap()).toEqual(original)
-      // expect(sideEffect).toHaveBeenCalledTimes(1)
       isTrue(newVal.isOk())
       deepEqual(newVal._unsafeUnwrap(), original)
       equal(sideEffect.mock.calls.length, 1)
@@ -768,14 +761,10 @@ await describe('ResultAsync', async () => {
 
       const notMapped = asyncErr.tap(sideEffect)
 
-      // expect(notMapped).toBeInstanceOf(ResultAsync)
       isTrue(notMapped instanceof ResultAsync)
 
       const newVal = await notMapped
 
-      // expect(newVal.isErr()).toBe(true)
-      // expect(newVal._unsafeUnwrapErr()).toBe('Wrong format')
-      // expect(sideEffect).toHaveBeenCalledTimes(0)
       isTrue(newVal.isErr())
       equal(newVal._unsafeUnwrapErr(), 'Wrong format')
       equal(sideEffect.mock.calls.length, 0)
@@ -917,8 +906,6 @@ await describe('Utils', async () => {
 
         const result = Result.combineWithAllErrors(resultList)
 
-        // expect(result.isErr()).toBe(true)
-        // expect(result._unsafeUnwrapErr()).toEqual(['boooom!', 'ahhhhh!'])
         isTrue(result.isErr())
         deepEqual(result._unsafeUnwrapErr(), ['boooom!', 'ahhhhh!'])
       })
@@ -954,7 +941,6 @@ await describe('Utils', async () => {
 
         const result: ExpectedResult = Result.combineWithAllErrors(homogenousList)
 
-        // expect(result._unsafeUnwrap()).toEqual([['hello', 'world'], [1, 2, 3]])
         deepEqual(result._unsafeUnwrap(), [['hello', 'world'], [1, 2, 3]])
       })
     })

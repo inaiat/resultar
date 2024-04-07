@@ -97,14 +97,6 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     return x
   }
 
-  // andThen<R extends Result<unknown, unknown>>(
-  //   f: (t: T) => R,
-  // ): ResultAsync<R, R | E>
-  // andThen<R extends ResultAsync<unknown, unknown>>(
-  //   f: (t: T) => R,
-  // ): ResultAsync<R, R | E>
-  // andThen<X, Y>(f: (t: T) => ResultAsync<X, Y>): ResultAsync<X, E | Y>
-  // andThen<X, Y>(f: (t: T) => ResultAsync<X, E>): ResultAsync<X, E | Y> {
   andThen<R extends Result<unknown, unknown>>(
     f: (t: T) => R,
   ): ResultAsync<InferOkTypes<R>, InferErrTypes<R> | E>

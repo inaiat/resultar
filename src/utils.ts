@@ -3,12 +3,9 @@ import { ResultAsync } from './result-async.js'
 import { Result, ok, err } from './result.js'
 
 // Deduplicates the result, as the result type is a union of Err and Ok types.
-// TODO verify if this is needed
 export type Dedup<T> = T extends Result<infer RL, infer RR>
-  ? [unknown] extends [RL] ? Result<RL, RR> : T : T
-  //   ? Result<RL, RR>
-  //   : Result<RL, RR
-  // : T
+  ? Result<RL, RR>
+  : T
 
 // Given a union, this gives the array of the union members.
 export type MemberListOf<T> = (
