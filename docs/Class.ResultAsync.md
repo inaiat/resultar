@@ -28,7 +28,7 @@
 
 #### Source
 
-[result-async.ts:65](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L65)
+[result-async.ts:65](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L65)
 
 ## Properties
 
@@ -38,7 +38,7 @@
 
 #### Source
 
-[result-async.ts:63](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L63)
+[result-async.ts:63](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L63)
 
 ## Methods
 
@@ -62,7 +62,7 @@
 
 ##### Source
 
-[result-async.ts:100](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L100)
+[result-async.ts:100](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L100)
 
 #### andThen(f)
 
@@ -82,7 +82,7 @@
 
 ##### Source
 
-[result-async.ts:103](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L103)
+[result-async.ts:103](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L103)
 
 #### andThen(f)
 
@@ -104,7 +104,7 @@
 
 ##### Source
 
-[result-async.ts:106](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L106)
+[result-async.ts:106](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L106)
 
 ***
 
@@ -126,7 +126,7 @@
 
 #### Source
 
-[result-async.ts:86](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L86)
+[result-async.ts:86](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L86)
 
 ***
 
@@ -148,7 +148,7 @@
 
 #### Source
 
-[result-async.ts:76](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L76)
+[result-async.ts:76](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L76)
 
 ***
 
@@ -172,7 +172,7 @@
 
 #### Source
 
-[result-async.ts:121](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L121)
+[result-async.ts:121](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L121)
 
 ***
 
@@ -188,7 +188,7 @@ Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
 
 #### Source
 
-[result-async.ts:146](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L146)
+[result-async.ts:146](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L146)
 
 ***
 
@@ -206,7 +206,7 @@ Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
 
 #### Source
 
-[result-async.ts:125](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L125)
+[result-async.ts:125](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L125)
 
 ***
 
@@ -236,7 +236,7 @@ Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
 
 #### Source
 
-[result-async.ts:69](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L69)
+[result-async.ts:69](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L69)
 
 ***
 
@@ -260,7 +260,7 @@ Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
 
 ##### Source
 
-[result-async.ts:37](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L37)
+[result-async.ts:37](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L37)
 
 #### combine(asyncResultList)
 
@@ -280,7 +280,7 @@ Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
 
 ##### Source
 
-[result-async.ts:40](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L40)
+[result-async.ts:40](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L40)
 
 ***
 
@@ -304,7 +304,7 @@ Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
 
 ##### Source
 
-[result-async.ts:49](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L49)
+[result-async.ts:49](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L49)
 
 #### combineWithAllErrors(asyncResultList)
 
@@ -324,7 +324,7 @@ Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
 
 ##### Source
 
-[result-async.ts:52](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L52)
+[result-async.ts:52](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L52)
 
 ***
 
@@ -350,7 +350,7 @@ Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
 
 #### Source
 
-[result-async.ts:28](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L28)
+[result-async.ts:28](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L28)
 
 ***
 
@@ -374,4 +374,4 @@ Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
 
 #### Source
 
-[result-async.ts:20](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L20)
+[result-async.ts:20](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L20)

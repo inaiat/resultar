@@ -28,7 +28,7 @@
 
 #### Source
 
-[result.ts:133](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L133)
+[result.ts:133](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L133)
 
 ## Properties
 
@@ -42,7 +42,7 @@
 
 #### Source
 
-[result.ts:131](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L131)
+[result.ts:131](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L131)
 
 ***
 
@@ -52,7 +52,7 @@
 
 #### Source
 
-[result.ts:133](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L133)
+[result.ts:133](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L133)
 
 ***
 
@@ -66,7 +66,7 @@
 
 #### Source
 
-[result.ts:130](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L130)
+[result.ts:130](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L130)
 
 ## Methods
 
@@ -92,7 +92,7 @@ Takes a `Result<T, E>` and returns a `T` when the result is an `Ok`, otherwise i
 
 #### Source
 
-[result.ts:342](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L342)
+[result.ts:342](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L342)
 
 ***
 
@@ -119,7 +119,7 @@ otherwise it throws a custom object.
 
 #### Source
 
-[result.ts:358](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L358)
+[result.ts:358](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L358)
 
 ***
 
@@ -152,7 +152,7 @@ The function to apply to the current value
 
 #### Source
 
-[result.ts:206](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L206)
+[result.ts:206](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L206)
 
 ***
 
@@ -184,7 +184,7 @@ value
 
 #### Source
 
-[result.ts:242](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L242)
+[result.ts:242](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L242)
 
 ***
 
@@ -212,7 +212,7 @@ An async function to apply an `OK` value
 
 #### Source
 
-[result.ts:258](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L258)
+[result.ts:258](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L258)
 
 ***
 
@@ -240,7 +240,7 @@ The function that will be called to clean up the resources
 
 #### Source
 
-[result.ts:325](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L325)
+[result.ts:325](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L325)
 
 ***
 
@@ -262,7 +262,7 @@ Used to check if a `Result` is an `Err`
 
 #### Source
 
-[result.ts:157](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L157)
+[result.ts:157](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L157)
 
 ***
 
@@ -284,7 +284,7 @@ Used to check if a `Result` is an `OK`
 
 #### Source
 
-[result.ts:148](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L148)
+[result.ts:148](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L148)
 
 ***
 
@@ -316,7 +316,7 @@ the result of applying `f` or an `Err` untouched
 
 #### Source
 
-[result.ts:169](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L169)
+[result.ts:169](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L169)
 
 ***
 
@@ -344,7 +344,7 @@ handling an error.
 
 #### Source
 
-[result.ts:188](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L188)
+[result.ts:188](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L188)
 
 ***
 
@@ -377,7 +377,7 @@ with `match` both functions must have the same return type.
 
 #### Source
 
-[result.ts:293](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L293)
+[result.ts:293](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L293)
 
 ***
 
@@ -406,7 +406,7 @@ untouched.
 
 #### Source
 
-[result.ts:224](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L224)
+[result.ts:224](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L224)
 
 ***
 
@@ -420,7 +420,7 @@ untouched.
 
 #### Source
 
-[result.ts:366](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L366)
+[result.ts:366](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L366)
 
 ***
 
@@ -444,7 +444,7 @@ the result of applying `f` or an `Err` untouched
 
 #### Source
 
-[result.ts:307](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L307)
+[result.ts:307](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L307)
 
 ***
 
@@ -472,7 +472,7 @@ Unwrap the `Ok` value, or return the default if there is an `Err`
 
 #### Source
 
-[result.ts:271](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L271)
+[result.ts:271](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L271)
 
 ***
 
@@ -496,7 +496,7 @@ Unwrap the `Ok` value, or return the default if there is an `Err`
 
 ##### Source
 
-[result.ts:106](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L106)
+[result.ts:106](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L106)
 
 #### combine(resultList)
 
@@ -516,7 +516,7 @@ Unwrap the `Ok` value, or return the default if there is an `Err`
 
 ##### Source
 
-[result.ts:109](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L109)
+[result.ts:109](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L109)
 
 ***
 
@@ -540,7 +540,7 @@ Unwrap the `Ok` value, or return the default if there is an `Err`
 
 ##### Source
 
-[result.ts:118](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L118)
+[result.ts:118](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L118)
 
 #### combineWithAllErrors(resultList)
 
@@ -560,7 +560,7 @@ Unwrap the `Ok` value, or return the default if there is an `Err`
 
 ##### Source
 
-[result.ts:121](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L121)
+[result.ts:121](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L121)
 
 ***
 
@@ -584,7 +584,7 @@ Unwrap the `Ok` value, or return the default if there is an `Err`
 
 #### Source
 
-[result.ts:102](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L102)
+[result.ts:102](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L102)
 
 ***
 
@@ -626,7 +626,7 @@ when an error is thrown, this will wrap the error result if provided
 
 #### Source
 
-[result.ts:80](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L80)
+[result.ts:80](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L80)
 
 ***
 
@@ -650,4 +650,4 @@ when an error is thrown, this will wrap the error result if provided
 
 #### Source
 
-[result.ts:98](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L98)
+[result.ts:98](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L98)

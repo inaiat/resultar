@@ -20,4 +20,4 @@
 
 ## Source
 
-[result-async.ts:165](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result-async.ts#L165)
+[result-async.ts:165](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result-async.ts#L165)

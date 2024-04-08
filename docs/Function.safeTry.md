@@ -34,7 +34,7 @@ The first occurence of either an yielded Err or a returned Result.
 
 ### Source
 
-[result.ts:444](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L444)
+[result.ts:444](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L444)
 
 ## safeTry(body)
 
@@ -68,4 +68,4 @@ The first occurence of either an yielded Err or a returned Result.
 
 ### Source
 
-[result.ts:460](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L460)
+[result.ts:460](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L460)

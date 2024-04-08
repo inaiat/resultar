@@ -25,6 +25,7 @@
     "lint:fix": "xo --fix",
     "prepublishOnly": "pnpm run build",
     "test": "xo && tsx --test tests/*.ts",
+    "typedoc": "typedoc",
     "prepare": "husky || true"
   },
   "repository": {
@@ -45,9 +46,9 @@
     }
   ],
   "bugs": {
-    "url": "https://https://github.com/inaiat/resultar/issues"
+    "url": "https://github.com/inaiat/resultar/issues"
   },
-  "homepage": "https://https://github.com/inaiat/resultar",
+  "homepage": "https://github.com/inaiat/resultar",
   "devDependencies": {
     "@types/node": "^20.12.3",
     "eslint-plugin-unused-imports": "^3.1.0",

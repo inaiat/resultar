@@ -34,7 +34,7 @@ clean up resources.
 
 #### Source
 
-[result.ts:389](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L389)
+[result.ts:389](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L389)
 
 ## Properties
 
@@ -54,7 +54,7 @@ clean up resources.
 
 #### Source
 
-[result.ts:390](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L390)
+[result.ts:390](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L390)
 
 ***
 
@@ -64,7 +64,7 @@ clean up resources.
 
 #### Source
 
-[result.ts:389](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L389)
+[result.ts:389](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L389)
 
 ## Accessors
 
@@ -78,7 +78,7 @@ clean up resources.
 
 #### Source
 
-[result.ts:396](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L396)
+[result.ts:396](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L396)
 
 ***
 
@@ -92,7 +92,7 @@ clean up resources.
 
 #### Source
 
-[result.ts:392](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L392)
+[result.ts:392](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L392)
 
 ## Methods
 
@@ -110,7 +110,7 @@ clean up resources.
 
 #### Source
 
-[result.ts:420](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L420)
+[result.ts:420](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L420)
 
 ***
 
@@ -132,7 +132,7 @@ clean up resources.
 
 #### Source
 
-[result.ts:400](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L400)
+[result.ts:400](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L400)
 
 ***
 
@@ -154,7 +154,7 @@ clean up resources.
 
 #### Source
 
-[result.ts:404](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L404)
+[result.ts:404](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L404)
 
 ***
 
@@ -172,7 +172,7 @@ clean up resources.
 
 #### Source
 
-[result.ts:412](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L412)
+[result.ts:412](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L412)
 
 ***
 
@@ -190,7 +190,7 @@ clean up resources.
 
 #### Source
 
-[result.ts:408](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L408)
+[result.ts:408](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L408)
 
 ***
 
@@ -216,4 +216,4 @@ clean up resources.
 
 #### Source
 
-[result.ts:416](https://github.com/inaiat/resultar/blob/6bdf9a02220a7cdf3ada422bc826a1ae3bdd86e8/src/result.ts#L416)
+[result.ts:416](https://github.com/inaiat/resultar/blob/e9d397e3e0e8543e675ebf3b04ec4ad2e5577c52/src/result.ts#L416)
