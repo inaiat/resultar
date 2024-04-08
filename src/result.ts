@@ -69,6 +69,12 @@ interface Resultable<T, E> {
 
 }
 
+/**
+ * A `Result` is a type that represents either success (`Ok`) or failure (`Err`).
+ * It is often used to replace exceptions or `null` returns.
+ * `Result` is often used to handle errors in a functional way.
+ * The `Result` type is often used to handle errors in a functional way.
+ */
 export class Result<T, E> implements Resultable<T, E> {
   /**
    * Wraps a function with a try catch, creating a new function with the same

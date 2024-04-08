@@ -36,6 +36,8 @@ For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `P
     - [`Result.andThen` (method)](#resultandthen-method)
     - [`Result.asyncAndThen` (method)](#resultasyncandthen-method)
     - [`Result.orElse` (method)](#resultorelse-method)
+    - [`Result.tap` (method)](#resulttap-method)
+    - [`Result.finally` (method)](#resultfinally-method)
     - [`Result.match` (method)](#resultmatch-method)
     - [`Result.asyncMap` (method)](#resultasyncmap-method)
     - [`Result.fromThrowable` (static class method)](#resultfromthrowable-static-class-method)
@@ -52,6 +54,7 @@ For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `P
     - [`ResultAsync.unwrapOr` (method)](#resultasyncunwrapor-method)
     - [`ResultAsync.andThen` (method)](#resultasyncandthen-method)
     - [`ResultAsync.orElse` (method)](#resultasyncorelse-method)
+    - [`Result.tap` (method)](#resultasynctap-method)
     - [`ResultAsync.match` (method)](#resultasyncmatch-method)
     - [`ResultAsync.combine` (static class method)](#resultasynccombine-static-class-method)
     - [`ResultAsync.combineWithAllErrors` (static class method)](#resultasynccombinewithallerrors-static-class-method)
@@ -990,7 +993,34 @@ const mapped = okVal.tap((value) => {
   console.log(value) // print foo
 })
 // mapped.value === 'foo'
+```
+[⬆️  Back to top](#toc)
+---
 
+---
+#### `Result.finally` (method)
+Executes a cleanup function wether the is ok or error. This method is usefull to cleanup resources.
+**Signature:**
+```typescript
+class Result<T, E> {
+  finally(f: (value: T, error: E) => void): DisposableResult<T, E> {..}
+}
+```
+
+**Example:**
+```typescript
+const reader = ok(file) // content file is line 01
+
+const result = reader.map(it => it.content).finally(_ => {
+  file.close()
+})
+
+if (resul.isOk()) {
+  console.log(result.value) // print line 01
+}
+
+```
+[⬆️  Back to top](#toc)
 ---
 
 #### `ResultAsync.orElse` (method)
@@ -1009,6 +1039,25 @@ class ResultAsync<T, E> {
 
 [⬆️  Back to top](#toc)
 
+---
+
+#### `ResultAsync.tap` (method)
+
+Executes a side effect function with the `Ok` value and returns the original `ResultAsync`.
+This method is useful for performing actions that do not modify the `ResultAsyn` itself, such as logging or updating external state.
+**Signature:**
+```typescript
+class ResultAsync<T, E> {
+  tap(f: (t: T) => void | Promise<void>): ResultAsync<T, E> {...}
+}
+```
+
+**Example:**
+See [`Result.tap` (method)](#resulttap-method)
+
+```
+
+[⬆️  Back to top](#toc)
 ---
 
 #### `ResultAsync.match` (method)
@@ -1293,10 +1342,6 @@ _unsafeUnwrapErr({
 
 // ^ Now the error object will have a `.stack` property containing the current stack
 ```
-
----
-
-If you find this package useful, please consider [sponsoring me](https://github.com/sponsors/supermacro/) or simply [buying me a coffee](https://ko-fi.com/gdelgado)!
 
 ---
 

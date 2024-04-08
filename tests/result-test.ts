@@ -250,15 +250,22 @@ await describe('Result.Ok', async () => {
   })
 
   await it('Finally should be called', () => {
-    const foo = ok('foo')
-    const arrayResult = new Array<string>()
-    foo.map(_p => 'boo').tap(x => x)
-    const result = foo.map(_p => 'boo').finally((x, _) => {
-      arrayResult.push(x, 'finalized')
+    const closeFile = mock.fn(() => {
+      console.log('closing file')
     })
+    const file = {
+      file: 'file.txt', content: 'line 1', close: closeFile,
+    }
+
+    const reader = ok(file)
+
+    const result = reader.map(it => it.content).finally(_ => {
+      file.close()
+    })
+
     isTrue(result.isOk())
-    equal(arrayResult.length, 2)
-    deepEqual(arrayResult, ['boo', 'finalized'])
+    equal(result._unsafeUnwrap(), 'line 1')
+    equal(closeFile.mock.calls.length, 1)
   })
 })
 
