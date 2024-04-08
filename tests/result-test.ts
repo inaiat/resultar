@@ -248,6 +248,18 @@ await describe('Result.Ok', async () => {
     equal(mapped._unsafeUnwrap(), original)
     equal(sideEffect.mock.calls.length, 1)
   })
+
+  await it('Finally should be called', () => {
+    const foo = ok('foo')
+    const arrayResult = new Array<string>()
+    foo.map(_p => 'boo').tap(x => x)
+    const result = foo.map(_p => 'boo').finally((x, _) => {
+      arrayResult.push(x, 'finalized')
+    })
+    isTrue(result.isOk())
+    equal(arrayResult.length, 2)
+    deepEqual(arrayResult, ['boo', 'finalized'])
+  })
 })
 
 await describe('Result.Err', async () => {

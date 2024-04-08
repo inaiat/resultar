@@ -14,7 +14,62 @@ class Err<E> {
   constructor(public readonly error: E) {}
 }
 
-export class Result<T, E> {
+/**
+ * A Result interface that is used to define the methods that are available on a
+ * `Result` object.
+ *
+ * The immutability of the `Result` object is maintained by the interface.
+ */
+interface Resultable<T, E> {
+
+  get value(): T
+  get error(): E
+
+  /**
+   * Used to check if a `Result` is an `OK`
+   *
+   * @returns `true` if the result is an `OK` variant of Result
+   */
+  isOk(): boolean
+
+  /**
+   * Used to check if a `Result` is an `Err`
+   *
+   * @returns `true` if the result is an `Err` variant of Result
+   */
+  isErr(): boolean
+  /**
+   * Unwrap the `Ok` value, or return the default if there is an `Err`
+   *
+   * @param v the default value to return if there is an `Err`
+   */
+
+  unwrapOr<A>(defaultValue: A): T | A
+
+  // safeUnwrap(): Generator<Result<never, E>, T>
+
+  /**
+   * **This method is unsafe, and should only be used in a test environments**
+   *
+   * Takes a `Result<T, E>` and returns a `T` when the result is an `Ok`, otherwise it throws a custom object.
+   *
+   * @param config
+   */
+  _unsafeUnwrap(config?: ErrorConfig): T
+
+  /**
+   * **This method is unsafe, and should only be used in a test environments**
+   *
+   * takes a `Result<T, E>` and returns a `E` when the result is an `Err`,
+   * otherwise it throws a custom object.
+   *
+   * @param config
+   */
+  _unsafeUnwrapErr(config?: ErrorConfig): E
+
+}
+
+export class Result<T, E> implements Resultable<T, E> {
   /**
    * Wraps a function with a try catch, creating a new function with the same
    * arguments but returning `Ok` if successful, `Err` if the function throws
@@ -111,14 +166,14 @@ export class Result<T, E> {
    * @param f The function to apply an `OK` value
    * @returns the result of applying `f` or an `Err` untouched
    */
-  map<X, Y>(f: (t: T) => Exclude<X, Promise<any>>): Result<X, E | Y>
-  map<X>(f: (t: T) => Exclude<X, Promise<any>>): Result<X, E> {
+  map<X, Y>(f: (t: T) => X): Result<X, E | Y>
+  map<X>(f: (t: T) => X): Result<X, E> {
     if (this.state.ok) {
       const value = f(this.value)
       return ok(value)
     }
 
-    return err(this.error as Exclude<E, Promise<any>>)
+    return err(this.error)
   }
 
   /**
@@ -130,12 +185,12 @@ export class Result<T, E> {
    *
    * @param f a function to apply to the error `Err` value
    */
-  mapErr<X>(fn: (t: Exclude<E, Promise<any>>) => Exclude<X, Promise<any>>): Result<T, X> {
+  mapErr<X>(fn: (t: E) => X): Result<T, X> {
     if (this.state.ok) {
-      return ok(this.value as Exclude<T, Promise<any>>)
+      return ok(this.value)
     }
 
-    return err(fn(this.error as Exclude<E, Promise<any>>))
+    return err(fn(this.error))
   }
 
   /**
@@ -148,13 +203,13 @@ export class Result<T, E> {
    *
    * @param f The function to apply to the current value
    */
-  andThen<X, Y>(f: (t: T) => Exclude<Result<X, Y>, Promise<any>>): Result<X, E | Y>
-  andThen<X, Y>(f: (t: T) => Exclude<Result<X, Y>, Promise<any>>): Result<X, E | Y> {
+  andThen<X, Y>(f: (t: T) => Result<X, Y>): Result<X, E | Y>
+  andThen<X, Y>(f: (t: T) => Result<X, Y>): Result<X, E | Y> {
     if (this.state.ok) {
       return f(this.value)
     }
 
-    return err(this.error as Exclude<E, Promise<any>>)
+    return err(this.error)
   }
 
   /**
@@ -264,6 +319,20 @@ export class Result<T, E> {
   }
 
   /**
+   * This method is used to clean up and release any resources that the `Result`
+   * @param f The function that will be called to clean up the resources
+   */
+  finally<X=T, Y=E>(f: (value: X, error: Y) => void): DisposableResult<X, Y>
+  finally(f: (value: T, error: E) => void): DisposableResult<T, E> {
+    const resultDisposable = new DisposableResult(this, f)
+    try {
+      return resultDisposable
+    } finally {
+      resultDisposable[Symbol.dispose]() // eslint-disable-line no-use-extend-native/no-use-extend-native
+    }
+  }
+
+  /**
    * **This method is unsafe, and should only be used in a test environments**
    *
    * Takes a `Result<T, E>` and returns a `T` when the result is an `Ok`, otherwise it throws a custom object.
@@ -309,6 +378,47 @@ export class Result<T, E> {
 
       throw new Error('Do not use this generator out of `safeTry`')
     })()
+  }
+}
+
+/**
+ * A `Disposable` is an object that has a `dispose` method that can be used to
+ * clean up resources.
+ */
+export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
+  constructor(readonly result: Resultable<T, E>,
+    private readonly finalizer: (value: T, error: E) => void) {}
+
+  get value(): T {
+    return this.result.value
+  }
+
+  get error(): E {
+    return this.result.error
+  }
+
+  _unsafeUnwrap(config?: ErrorConfig | undefined): T {
+    return this.result._unsafeUnwrap(config)
+  }
+
+  _unsafeUnwrapErr(config?: ErrorConfig | undefined): E {
+    return this.result._unsafeUnwrapErr(config)
+  }
+
+  isOk(): boolean {
+    return this.result.isOk()
+  }
+
+  isErr(): boolean {
+    return this.result.isErr()
+  }
+
+  unwrapOr<A>(defaultValue: A): T | A {
+    return this.result.unwrapOr(defaultValue)
+  }
+
+  [Symbol.dispose](): void {
+    this.finalizer(this.result.value, this.result.error)
   }
 }
 

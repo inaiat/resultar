@@ -974,6 +974,26 @@ resAsync.then((res: Result<void, Error>) => {
 [⬆️  Back to top](#toc)
 
 ---
+#### `Result.tap` (method)
+Executes a side effect function with the `Ok` value and returns the original `Result`.
+This method is useful for performing actions that do not modify the `Result` itself, such as logging or updating external state.
+**Signature:**
+```typescript
+class ResultAsync<T, E> {
+  tap(f: (t: T) => void): Result<T, E> {..}
+}
+```
+
+**Example:**
+```typescript
+const fooValue = ok('foo')
+
+const mapped = okVal.tap((value) => {
+  console.log(value) // print foo
+})
+// mapped.value === 'foo'
+
+---
 
 #### `ResultAsync.orElse` (method)
 
