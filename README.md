@@ -14,7 +14,9 @@ This package contains a `Result` type that represents either success (`Ok`) or f
 
 For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `Promise<Result<T, E>>` and gives you the same level of expressivity and control as a regular `Result<T, E>`.
 
-`ResultAsync` is `thenable` meaning it **behaves exactly like a native `Promise<Result>`** ... except you have access to the same methods that `Result` provides without having to `await` or `.then` the promise! Check out [the wiki](https://github.com/inaiat/resultar/wiki) for examples and best practices.
+`ResultAsync` is `thenable` meaning it **behaves exactly like a native `Promise<Result>`** ... except you have access to the same methods that `Result` provides without having to `await` or `.then` the promise! 
+
+### Check out [the wiki](https://github.com/inaiat/resultar/wiki) for examples and best practices.
 
 <div id="toc"></div>
 
