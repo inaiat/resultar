@@ -1,0 +1,6 @@
+{
+    "plugin": [
+        "typedoc-plugin-markdown",
+        "typedoc-github-wiki-theme"
+    ]
+}

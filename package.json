@@ -57,6 +57,9 @@
     "testdouble": "^3.20.2",
     "tsup": "^8.0.2",
     "tsx": "^4.7.1",
+    "typedoc": "^0.25.13",
+    "typedoc-github-wiki-theme": "2.0.0-next.8",
+    "typedoc-plugin-markdown": "4.0.0-next.55",
     "typescript": "5.4.2",
     "xo": "0.58.0"
   },
