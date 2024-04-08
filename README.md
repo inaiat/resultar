@@ -2,11 +2,9 @@
 
 ## About
 
-Resultar is a TypeScript library that is a fork of the excellent [neverthrow](https://github.com/supermacro/neverthrow) library. The neverthrow library provides a robust and type-safe way to handle errors without throwing exceptions, using the Result type.
+Resultar is a TypeScript library for robust, type-safe error handling without throwing exceptions. It's a fork of the excellent [neverthrow](https://github.com/supermacro/neverthrow) library, adding features for more flexibility in error handling
 
-In the spirit of open-source development, **resultar** builds upon the solid foundation laid by neverthrow, extending its functionality to better suit specific needs. It introduces additional methods and functions such as tap, safeTryAsync, and fromThrowableAsync, providing more flexibility and control in error handling.
-
-While resultar owes its origins to neverthrow, it has evolved to offer its own unique features, making error handling in TypeScript even more powerful and expressive. It's a testament to the power of open-source collaboration and the continuous pursuit of improving code quality and developer experience.
+In the spirit of open-source development, **resultar** builds upon the solid foundation laid by neverthrow, extending its functionality to better suit specific needs. It introduces additional methods and functions such as tap, safeTryAsync, and fromThrowableAsync and finally providing more flexibility and control in error handling.
 
 ## Description
 
@@ -16,9 +14,7 @@ This package contains a `Result` type that represents either success (`Ok`) or f
 
 For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `Promise<Result<T, E>>` and gives you the same level of expressivity and control as a regular `Result<T, E>`.
 
-`ResultAsync` is `thenable` meaning it **behaves exactly like a native `Promise<Result>`** ... except you have access to the same methods that `Result` provides without having to `await` or `.then` the promise! Check out [the wiki](https://github.com/inaiat/resultar/wiki/Basic-Usage-Examples#asynchronous-api) for examples and best practices.
-
-> Need to see real-life examples of how to leverage this package for error handling? See this repo: https://github.com/parlez-vous/server
+`ResultAsync` is `thenable` meaning it **behaves exactly like a native `Promise<Result>`** ... except you have access to the same methods that `Result` provides without having to `await` or `.then` the promise! Check out [the wiki](https://github.com/inaiat/resultar/wiki) for examples and best practices.
 
 <div id="toc"></div>
 
