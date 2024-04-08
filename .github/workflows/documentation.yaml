@@ -1,0 +1,40 @@
+name: Documentation
+
+on:
+  push:
+    branches:
+      - docs
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '18'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install corepack
+        run: npm install -g corepack && corepack enable
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Generate documentation
+        run: pnpm typedoc
+
+      - name: Push to Wiki
+        run: |
+          git clone https://github.com/${{ github.repository }}.wiki.git wiki
+          cp -R docs/* wiki/
+          cd wiki
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add .
+          git commit -m "Update documentation"
+          git push
