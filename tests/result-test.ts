@@ -392,6 +392,19 @@ await describe('Result.Err', async () => {
       equal(errorCallback.mock.calls.length, 1)
     })
   })
+
+  await it('Finally should be called with error', () => {
+    const foo = err('foo')
+    const arrayResult = new Array<string>()
+    foo.map(_p => 'boo').tap(x => x)
+    const result = foo.map(_p => 'boo').finally((x, y) => {
+      isTrue(x === undefined)
+      arrayResult.push(y as string, 'finalized')
+    })
+    isTrue(result.isErr())
+    equal(arrayResult.length, 2)
+    deepEqual(arrayResult, ['foo', 'finalized'])
+  })
 })
 
 await describe('ResultAsync', async () => {
