@@ -29,6 +29,8 @@ jobs:
         run: pnpm typedoc
 
       - name: Push to Wiki
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git clone https://github.com/${{ github.repository }}.wiki.git wiki
           cp -R docs/* wiki/
