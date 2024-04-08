@@ -37,6 +37,7 @@ jobs:
           cd wiki
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.wiki.git
           git add .
           git commit -m "Update documentation"
           git push
