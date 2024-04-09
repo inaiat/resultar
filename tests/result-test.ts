@@ -486,38 +486,6 @@ await describe('ResultAsync', async () => {
     })
   })
 
-  await it('Maps a value using an asynchronous function', async () => {
-    const asyncVal = okAsync(12)
-
-    const mapAsyncFn = mock.fn(async (v: number) => v.toString())
-
-    const mapped = asyncVal.map(mapAsyncFn)
-
-    isTrue(mapped instanceof ResultAsync)
-
-    const newVal = await mapped
-
-    isTrue(newVal.isOk())
-    equal(newVal._unsafeUnwrap(), '12')
-    equal(mapAsyncFn.mock.calls.length, 1)
-  })
-
-  await it('Skips an error', async () => {
-    const asyncErr = errAsync<number, string>('Wrong format')
-
-    const mapSyncFn = mock.fn((v: number) => v.toString())
-
-    const notMapped = asyncErr.map(mapSyncFn)
-
-    isTrue(notMapped instanceof ResultAsync)
-
-    const newVal = await notMapped
-
-    isTrue(newVal.isErr())
-    equal(newVal._unsafeUnwrapErr(), 'Wrong format')
-    equal(mapSyncFn.mock.calls.length, 0)
-  })
-
   await describe('mapErr', async () => {
     await it('Maps an error using a synchronous function', async () => {
       const asyncErr = errAsync('Wrong format')
@@ -578,6 +546,207 @@ await describe('ResultAsync', async () => {
       const result = await validateUser({ name: 'Elizeu Drummond' }).andThen(createUser)
       equal(result._unsafeUnwrap(), 'Welcome Elizeu Drummond')
     })
+  })
+
+  await describe('andThen', async () => {
+    await it('Maps a value using a function returning a ResultAsync', async () => {
+      const asyncVal = okAsync(12)
+
+      const andThenResultAsyncFn = mock.fn(() => okAsync('good'))
+
+      const mapped = asyncVal.andThen(andThenResultAsyncFn)
+
+      isTrue(mapped instanceof ResultAsync)
+
+      const newVal = await mapped
+
+      isTrue(newVal.isOk())
+      equal(newVal._unsafeUnwrap(), 'good')
+      equal(andThenResultAsyncFn.mock.calls.length, 1)
+    })
+
+    await it('Maps a value using a function returning a Result', async () => {
+      const asyncVal = okAsync(12)
+
+      const andThenResultFn = mock.fn(() => ok('good'))
+
+      const mapped = asyncVal.andThen(andThenResultFn)
+
+      isTrue(mapped instanceof ResultAsync)
+
+      const newVal = await mapped
+
+      isTrue(newVal.isOk())
+      equal(newVal._unsafeUnwrap(), 'good')
+      equal(andThenResultFn.mock.calls.length, 1)
+    })
+
+    await it('Skips an Error', async () => {
+      const asyncVal = errAsync<string, string>('Wrong format')
+
+      const andThenResultFn = mock.fn(() => ok<string, string>('good'))
+
+      const notMapped = asyncVal.andThen(andThenResultFn)
+
+      isTrue(notMapped instanceof ResultAsync)
+
+      const newVal = await notMapped
+
+      isTrue(newVal.isErr())
+      equal(newVal._unsafeUnwrapErr(), 'Wrong format')
+      equal(andThenResultFn.mock.calls.length, 0)
+    })
+  })
+
+  await describe('orElse', async () => {
+    await it('Skips orElse on an Ok value', async () => {
+      const okVal = okAsync(12)
+      const errorCallback = mock.fn(_errVal => errAsync<number, string>('It is now a string'))
+
+      const result = await okVal.orElse(errorCallback)
+
+      deepEqual(result, ok(12))
+
+      equal(errorCallback.mock.calls.length, 0)
+    })
+
+    await it('Invokes the orElse callback on an Err value', async () => {
+      const myResult = errAsync('BOOOM!')
+      const errorCallback = mock.fn(_errVal => errAsync(true))
+
+      const result = await myResult.orElse(errorCallback)
+
+      deepEqual(result, err(true))
+      equal(errorCallback.mock.calls.length, 1)
+    })
+
+    await it('Accepts a regular Result in the callback', async () => {
+      const myResult = errAsync('BOOOM!')
+      const errorCallback = mock.fn(_errVal => err(true))
+
+      const result = await myResult.orElse(errorCallback)
+
+      deepEqual(result, err(true))
+      equal(errorCallback.mock.calls.length, 1)
+    })
+  })
+
+  await describe('match', async () => {
+    await it('Matches on an Ok', async () => {
+      const okMapper = mock.fn(_val => 'weeeeee')
+      const errMapper = mock.fn(_val => 'wooooo')
+
+      const matched = await okAsync(12).match(okMapper, errMapper)
+
+      equal(matched, 'weeeeee')
+      equal(okMapper.mock.calls.length, 1)
+      equal(errMapper.mock.calls.length, 0)
+    })
+
+    await it('Matches on an Error', async () => {
+      const okMapper = mock.fn(_val => 'weeeeee')
+      const errMapper = mock.fn(_val => 'wooooo')
+
+      const matched = await errAsync('bad').match(okMapper, errMapper)
+
+      equal(matched, 'wooooo')
+      equal(okMapper.mock.calls.length, 0)
+      equal(errMapper.mock.calls.length, 1)
+    })
+  })
+
+  await describe('unwrapOr', async () => {
+    await it('returns a promise to the result value on an Ok', async () => {
+      const unwrapped = await okAsync(12).unwrapOr(10)
+      equal(unwrapped, 12)
+    })
+
+    await it('returns a promise to the provided default value on an Error', async () => {
+      const unwrapped = await errAsync<number, number>(12).unwrapOr(10)
+      equal(unwrapped, 10)
+    })
+  })
+
+  await describe('fromSafePromise', async () => {
+    await it('Creates a ResultAsync from a Promise', async () => {
+      const res = ResultAsync.fromSafePromise(Promise.resolve(12))
+
+      equal(res instanceof ResultAsync, true)
+
+      const val = await res
+      isTrue(val.isOk())
+      equal(val._unsafeUnwrap(), 12)
+    })
+  })
+
+  await describe('fromPromise', async () => {
+    await it('Accepts an error handler as a second argument', async () => {
+      const res = ResultAsync.fromPromise(Promise.reject('No!'), e => new Error('Oops: '.concat(String(e))))
+
+      equal(res instanceof ResultAsync, true)
+
+      const val = await res
+      isTrue(val.isErr())
+      deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
+    })
+  })
+
+  await describe('okAsync', async () => {
+    await it('Creates a ResultAsync that resolves to an Ok', async () => {
+      const val = okAsync(12)
+
+      equal(val instanceof ResultAsync, true)
+
+      const res = await val
+
+      isTrue(res.isOk())
+      equal(res._unsafeUnwrap(), 12)
+    })
+  })
+
+  await describe('errAsync', async () => {
+    await it('Creates a ResultAsync that resolves to an Err', async () => {
+      const err = errAsync('bad')
+
+      equal(err instanceof ResultAsync, true)
+
+      const res = await err
+
+      isTrue(res.isErr())
+      equal(res._unsafeUnwrapErr(), 'bad')
+    })
+  })
+
+  await it('Maps a value using an asynchronous function', async () => {
+    const asyncVal = okAsync(12)
+
+    const mapAsyncFn = mock.fn(async (v: number) => v.toString())
+
+    const mapped = asyncVal.map(mapAsyncFn)
+
+    isTrue(mapped instanceof ResultAsync)
+
+    const newVal = await mapped
+
+    isTrue(newVal.isOk())
+    equal(newVal._unsafeUnwrap(), '12')
+    equal(mapAsyncFn.mock.calls.length, 1)
+  })
+
+  await it('Skips an error', async () => {
+    const asyncErr = errAsync<number, string>('Wrong format')
+
+    const mapSyncFn = mock.fn((v: number) => v.toString())
+
+    const notMapped = asyncErr.map(mapSyncFn)
+
+    isTrue(notMapped instanceof ResultAsync)
+
+    const newVal = await notMapped
+
+    isTrue(newVal.isErr())
+    equal(newVal._unsafeUnwrapErr(), 'Wrong format')
+    equal(mapSyncFn.mock.calls.length, 0)
   })
 
   await describe('Result.fromThrowable', async () => {

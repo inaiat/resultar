@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/ban-types */
+
 import {
   Result,
 } from './result.js'
@@ -15,6 +16,91 @@ import {
   combineResultAsyncList,
   combineResultAsyncListWithAllErrors,
 } from './utils.js'
+
+// Combines the array of async results into one result.
+export type CombineResultAsyncs<
+  T extends ReadonlyArray<ResultAsync<unknown, unknown>>,
+> = IsLiteralArray<T> extends 1
+  ? TraverseAsync<UnwrapAsync<T>>
+  : ResultAsync<ExtractOkAsyncTypes<T>, ExtractErrAsyncTypes<T>[number]>
+
+// Combines the array of async results into one result with all errors.
+export type CombineResultsWithAllErrorsArrayAsync<
+  T extends ReadonlyArray<ResultAsync<unknown, unknown>>,
+> = IsLiteralArray<T> extends 1
+  ? TraverseWithAllErrorsAsync<UnwrapAsync<T>>
+  : ResultAsync<ExtractOkAsyncTypes<T>, Array<ExtractErrAsyncTypes<T>[number]>>
+
+// Unwraps the inner `Result` from a `ResultAsync` for all elements.
+type UnwrapAsync<T> = IsLiteralArray<T> extends 1
+  ? Writable<T> extends [infer H, ...infer Rest]
+    ? H extends PromiseLike<infer HI>
+      ? HI extends Result<unknown, unknown>
+        ? [Dedup<HI>, ...UnwrapAsync<Rest>]
+        : never
+      : never
+    : []
+  : // If we got something too general such as ResultAsync<X, Y>[] then we
+  // simply need to map it to ResultAsync<X[], Y[]>. Yet `ResultAsync`
+  // itself is a union therefore it would be enough to cast it to Ok.
+  T extends Array<infer A>
+    ? A extends PromiseLike<infer HI>
+      ? HI extends Result<infer L, infer R>
+        ? Array<Result<L, R>>
+        : never
+      : never
+    : never
+
+// Traverse through the tuples of the async results and create one
+// `ResultAsync` where the collected tuples are merged.
+type TraverseAsync<T, Depth extends number = 5> = IsLiteralArray<T> extends 1
+  ? Combine<T, Depth> extends [infer Oks, infer Errs]
+    ? ResultAsync<EmptyArrayToNever<Oks>, MembersToUnion<Errs>>
+    : never
+  : // The following check is important if we somehow reach to the point of
+  // checking something similar to ResultAsync<X, Y>[]. In this case we don't
+  // know the length of the elements, therefore we need to traverse the X and Y
+  // in a way that the result should contain X[] and Y[].
+  T extends Array<infer I>
+    ? // The MemberListOf<I> here is to include all possible types. Therefore
+  // if we face (ResultAsync<X, Y> | ResultAsync<A, B>)[] this type should
+  // handle the case.
+    Combine<MemberListOf<I>, Depth> extends [infer Oks, infer Errs]
+      ? // The following `extends unknown[]` checks are just to satisfy the TS.
+    // we already expect them to be an array.
+      Oks extends unknown[]
+        ? Errs extends unknown[]
+          ? ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, MembersToUnion<Array<Errs[number]>>>
+          : ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, Errs>
+        : // The rest of the conditions are to satisfy the TS and support
+      // the edge cases which are not really expected to happen.
+        Errs extends unknown[]
+          ? ResultAsync<Oks, MembersToUnion<Array<Errs[number]>>>
+          : ResultAsync<Oks, Errs>
+      : never
+    : never
+
+// This type is similar to the `TraverseAsync` while the errors are also
+// collected in order. For the checks/conditions made here, see that type
+// for the documentation.
+type TraverseWithAllErrorsAsync<T, Depth extends number = 5> = IsLiteralArray<T> extends 1
+  ? Combine<T, Depth> extends [infer Oks, infer Errs]
+    ? ResultAsync<EmptyArrayToNever<Oks>, EmptyArrayToNever<Errs>>
+    : never
+  : Writable<T> extends Array<infer I>
+    ? Combine<MemberListOf<I>, Depth> extends [infer Oks, infer Errs]
+      ? Oks extends unknown[]
+        ? Errs extends unknown[]
+          ? ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, EmptyArrayToNever<Array<Errs[number]>>>
+          : ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, Errs>
+        : Errs extends unknown[]
+          ? ResultAsync<Oks, EmptyArrayToNever<Array<Errs[number]>>>
+          : ResultAsync<Oks, Errs>
+      : never
+    : never
+
+// Converts a reaodnly array into a writable array
+type Writable<T> = T extends readonly unknown[] ? [...T] : T
 
 export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   static fromSafePromise<T, E = never>(promise: PromiseLike<T>): ResultAsync<T, E>
@@ -118,8 +204,27 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     )
   }
 
+  orElse<R extends Result<T, unknown>>(f: (e: E) => R): ResultAsync<T, InferErrTypes<R>>
+  orElse<R extends ResultAsync<T, unknown>>(f: (e: E) => R): ResultAsync<T, InferAsyncErrTypes<R>>
+  orElse<A>(f: (e: E) => Result<T, A> | ResultAsync<T, A>): ResultAsync<T, A>
+  orElse(f: any): any {
+    return new ResultAsync(
+      this.innerPromise.then(async (res: Result<T, E>) => { // eslint-disable-line @typescript-eslint/no-unsafe-argument
+        if (res.isErr()) {
+          return f(res.error) // eslint-disable-line @typescript-eslint/no-unsafe-return
+        }
+
+        return okAsync(res.value)
+      }),
+    )
+  }
+
   async match<X>(ok: (t: T) => X, _err: (e: E) => X): Promise<X> {
     return this.innerPromise.then(res => res.match(ok, _err))
+  }
+
+  async unwrapOr<A>(t: A): Promise<T | A> {
+    return this.innerPromise.then(res => res.unwrapOr(t))
   }
 
   tap(f: (t: T) => void | Promise<void>): ResultAsync<T, E> {
@@ -202,87 +307,3 @@ export function safeTryAsync<T, E>(
   )
 }
 
-// Combines the array of async results into one result.
-export type CombineResultAsyncs<
-  T extends ReadonlyArray<ResultAsync<unknown, unknown>>,
-> = IsLiteralArray<T> extends 1
-  ? TraverseAsync<UnwrapAsync<T>>
-  : ResultAsync<ExtractOkAsyncTypes<T>, ExtractErrAsyncTypes<T>[number]>
-
-// Combines the array of async results into one result with all errors.
-export type CombineResultsWithAllErrorsArrayAsync<
-  T extends ReadonlyArray<ResultAsync<unknown, unknown>>,
-> = IsLiteralArray<T> extends 1
-  ? TraverseWithAllErrorsAsync<UnwrapAsync<T>>
-  : ResultAsync<ExtractOkAsyncTypes<T>, Array<ExtractErrAsyncTypes<T>[number]>>
-
-// Unwraps the inner `Result` from a `ResultAsync` for all elements.
-type UnwrapAsync<T> = IsLiteralArray<T> extends 1
-  ? Writable<T> extends [infer H, ...infer Rest]
-    ? H extends PromiseLike<infer HI>
-      ? HI extends Result<unknown, unknown>
-        ? [Dedup<HI>, ...UnwrapAsync<Rest>]
-        : never
-      : never
-    : []
-  : // If we got something too general such as ResultAsync<X, Y>[] then we
-  // simply need to map it to ResultAsync<X[], Y[]>. Yet `ResultAsync`
-  // itself is a union therefore it would be enough to cast it to Ok.
-  T extends Array<infer A>
-    ? A extends PromiseLike<infer HI>
-      ? HI extends Result<infer L, infer R>
-        ? Array<Result<L, R>>
-        : never
-      : never
-    : never
-
-// Traverse through the tuples of the async results and create one
-// `ResultAsync` where the collected tuples are merged.
-type TraverseAsync<T, Depth extends number = 5> = IsLiteralArray<T> extends 1
-  ? Combine<T, Depth> extends [infer Oks, infer Errs]
-    ? ResultAsync<EmptyArrayToNever<Oks>, MembersToUnion<Errs>>
-    : never
-  : // The following check is important if we somehow reach to the point of
-  // checking something similar to ResultAsync<X, Y>[]. In this case we don't
-  // know the length of the elements, therefore we need to traverse the X and Y
-  // in a way that the result should contain X[] and Y[].
-  T extends Array<infer I>
-    ? // The MemberListOf<I> here is to include all possible types. Therefore
-    // if we face (ResultAsync<X, Y> | ResultAsync<A, B>)[] this type should
-    // handle the case.
-    Combine<MemberListOf<I>, Depth> extends [infer Oks, infer Errs]
-      ? // The following `extends unknown[]` checks are just to satisfy the TS.
-      // we already expect them to be an array.
-      Oks extends unknown[]
-        ? Errs extends unknown[]
-          ? ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, MembersToUnion<Array<Errs[number]>>>
-          : ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, Errs>
-        : // The rest of the conditions are to satisfy the TS and support
-      // the edge cases which are not really expected to happen.
-        Errs extends unknown[]
-          ? ResultAsync<Oks, MembersToUnion<Array<Errs[number]>>>
-          : ResultAsync<Oks, Errs>
-      : never
-    : never
-
-// This type is similar to the `TraverseAsync` while the errors are also
-// collected in order. For the checks/conditions made here, see that type
-// for the documentation.
-type TraverseWithAllErrorsAsync<T, Depth extends number = 5> = IsLiteralArray<T> extends 1
-  ? Combine<T, Depth> extends [infer Oks, infer Errs]
-    ? ResultAsync<EmptyArrayToNever<Oks>, EmptyArrayToNever<Errs>>
-    : never
-  : Writable<T> extends Array<infer I>
-    ? Combine<MemberListOf<I>, Depth> extends [infer Oks, infer Errs]
-      ? Oks extends unknown[]
-        ? Errs extends unknown[]
-          ? ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, EmptyArrayToNever<Array<Errs[number]>>>
-          : ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, Errs>
-        : Errs extends unknown[]
-          ? ResultAsync<Oks, EmptyArrayToNever<Array<Errs[number]>>>
-          : ResultAsync<Oks, Errs>
-      : never
-    : never
-
-// Converts a reaodnly array into a writable array
-type Writable<T> = T extends readonly unknown[] ? [...T] : T
