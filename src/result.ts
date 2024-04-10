@@ -172,7 +172,6 @@ export class Result<T, E> implements Resultable<T, E> {
    * @param f The function to apply an `OK` value
    * @returns the result of applying `f` or an `Err` untouched
    */
-  map<X, Y>(f: (t: T) => X): Result<X, E | Y>
   map<X>(f: (t: T) => X): Result<X, E> {
     if (this.state.ok) {
       const value = f(this.value)
@@ -209,7 +208,6 @@ export class Result<T, E> implements Resultable<T, E> {
    *
    * @param f The function to apply to the current value
    */
-  andThen<X, Y>(f: (t: T) => Result<X, Y>): Result<X, E | Y>
   andThen<X, Y>(f: (t: T) => Result<X, Y>): Result<X, E | Y> {
     if (this.state.ok) {
       return f(this.value)

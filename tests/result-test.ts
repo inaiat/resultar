@@ -406,7 +406,7 @@ await describe('Result.Err', async () => {
     foo.map(_p => 'boo').tap(x => x)
     const result = foo.map(_p => 'boo').finally((x, y) => {
       isTrue(x === undefined)
-      arrayResult.push(y as string, 'finalized')
+      arrayResult.push(y, 'finalized')
     })
     isTrue(result.isErr())
     equal(arrayResult.length, 2)
