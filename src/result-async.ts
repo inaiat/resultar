@@ -204,9 +204,13 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     )
   }
 
-  orElse<R extends Result<T, unknown>>(f: (e: E) => R): ResultAsync<T, InferErrTypes<R>>
-  orElse<R extends ResultAsync<T, unknown>>(f: (e: E) => R): ResultAsync<T, InferAsyncErrTypes<R>>
-  orElse<A>(f: (e: E) => Result<T, A> | ResultAsync<T, A>): ResultAsync<T, A>
+  orElse<R extends Result<unknown, unknown>>(
+    f: (e: E) => R,
+  ): ResultAsync<InferOkTypes<R> | T, InferErrTypes<R>>
+  orElse<R extends ResultAsync<unknown, unknown>>(
+    f: (e: E) => R,
+  ): ResultAsync<InferAsyncOkTypes<R> | T, InferAsyncErrTypes<R>>
+  orElse<U, A>(f: (e: E) => Result<U, A> | ResultAsync<U, A>): ResultAsync<U | T, A>
   orElse(f: any): any {
     return new ResultAsync(
       this.innerPromise.then(async (res: Result<T, E>) => { // eslint-disable-line @typescript-eslint/no-unsafe-argument

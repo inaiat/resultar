@@ -1,4 +1,3 @@
-
 /* eslint-disable @typescript-eslint/prefer-promise-reject-errors */
 import { describe, it, mock } from 'node:test'
 import assert, {
@@ -970,6 +969,47 @@ await describe('ResultAsync', async () => {
       equal(newVal._unsafeUnwrapErr(), 'Wrong format')
       equal(sideEffect.mock.calls.length, 0)
     })
+  })
+})
+
+await describe('OrElse', async () => {
+  const foo = () => okAsync('foo')
+  const bar = () => errAsync(new Error('bar'))
+
+  class FooError extends Error {}
+  class BarError extends Error {}
+  class XooError extends Error {}
+
+  await it('Infer result', async () => {
+    type R = Result<string | number, never>
+    const result: R = await foo().orElse(() => okAsync(1))
+    equal(result._unsafeUnwrap(), 'foo')
+  })
+
+  await it('Set explicit type', async () => {
+    type R = Result<string | boolean, never>
+    const result: R = await foo().orElse<string | boolean, never>(() => okAsync(true))
+    equal(result._unsafeUnwrap(), 'foo')
+  })
+
+  await it('Infer multiples types', async () => {
+    type R = Result<string | undefined, string | Error>
+    const result: R = await bar().orElse(e => {
+      if (e instanceof BarError) {
+        return okAsync(undefined)
+      }
+
+      if (e instanceof FooError) {
+        return okAsync('foo')
+      }
+
+      if (e instanceof XooError) {
+        return errAsync('xoo')
+      }
+
+      return errAsync(e)
+    })
+    deepStrictEqual(result._unsafeUnwrapErr(), new Error('bar'))
   })
 })
 

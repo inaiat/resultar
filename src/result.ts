@@ -1,5 +1,5 @@
 import {
-  CombineResults, CombineResultsWithAllErrorsArray, combineResultList, combineResultListWithAllErrors,
+  CombineResults, CombineResultsWithAllErrorsArray, InferErrTypes, InferOkTypes, combineResultList, combineResultListWithAllErrors,
 } from './utils.js'
 import { ErrorConfig, createResultarError } from './error.js'
 import { ResultAsync, errAsync } from './result-async.js'
@@ -225,8 +225,10 @@ export class Result<T, E> implements Resultable<T, E> {
    * @param f  A function to apply to an `Err` value, leaving `Ok` values
    * untouched.
    */
-  orElse<Y>(f: (t: E) => Result<T, Y>): Result<T, Y>
-  orElse<Y>(f: (t: E) => Result<T, Y>): Result<T, E | Y> {
+  orElse<R extends Result<unknown, unknown>>(
+    f: (e: E) => R,
+  ): Result<InferOkTypes<R> | T, InferErrTypes<R>>
+  orElse<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A> {
     if (this.state.ok) {
       return ok(this.value as Exclude<T, Promise<any>>)
     }
