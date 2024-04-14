@@ -428,12 +428,7 @@ export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
   }
 }
 
-export const ok = <T, E = never>(value: T): Result<T, E> => Result.ok(value)
-export const err = <T = never, E = unknown>(error: E): Result<T, E> => Result.err(error)
-export const fromThrowable = <Fn extends (...args: readonly any[]) => unknown, E>(
-  fn: Fn,
-  errorFn?: (e: any) => E,
-): (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E> => Result.fromThrowable(fn, errorFn)
+export const { ok, err, fromThrowable } = Result
 
 /**
  * Evaluates the given generator to a Result returned or an Err yielded from it,

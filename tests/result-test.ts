@@ -862,6 +862,19 @@ await describe('ResultAsync', async () => {
     }
 
     await describe('ResultAsync.fromThrowable', async () => {
+      const readFile = mock.fn(async (file: string) => {
+        if (file === 'foo.txt') {
+          return Buffer.from('foo')
+        }
+
+        throw new Error('File not found')
+      })
+
+      const safeFileReader = fromThrowableAsync(
+        async (file: string) => readFile(file),
+        e => new Error('Oops: '.concat(String(e))),
+      )
+
       await it('creates a new function that returns a ResultAsync', async () => {
         const example = fromThrowableAsync(async (a: number, b: number) => a + b)
         const res = example(4, 8)
@@ -911,6 +924,20 @@ await describe('ResultAsync', async () => {
         const val = await example()
         isTrue(val.isErr())
         deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
+      })
+
+      await it('fromThrowableAsync for readfile ok', async () => {
+        const value = await safeFileReader('foo.txt')
+          .match(buffer => buffer.toString(), error => error.message)
+
+        equal(value, 'foo')
+      })
+
+      await it('fromThrowableAsync for readfile not found', async () => {
+        const value = await safeFileReader('bar.txt')
+          .match(buffer => buffer.toString(), error => error.message)
+
+        equal(value, 'Oops: Error: File not found')
       })
     })
   })

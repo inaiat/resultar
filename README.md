@@ -49,18 +49,20 @@ For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `P
     - [`errAsync`](#errasync)
     - [`ResultAsync.fromPromise` (static class method)](#resultasyncfrompromise-static-class-method)
     - [`ResultAsync.fromSafePromise` (static class method)](#resultasyncfromsafepromise-static-class-method)
+    - [`ResultAsync.fromThrowable` (static class method)](#resultasyncfromthrowable-static-class-method)
     - [`ResultAsync.map` (method)](#resultasyncmap-method)
     - [`ResultAsync.mapErr` (method)](#resultasyncmaperr-method)
     - [`ResultAsync.unwrapOr` (method)](#resultasyncunwrapor-method)
     - [`ResultAsync.andThen` (method)](#resultasyncandthen-method)
     - [`ResultAsync.orElse` (method)](#resultasyncorelse-method)
-    - [`Result.tap` (method)](#resultasynctap-method)
+    - [`ResultAsync.tap` (method)](#resultasynctap-method)
     - [`ResultAsync.match` (method)](#resultasyncmatch-method)
     - [`ResultAsync.combine` (static class method)](#resultasynccombine-static-class-method)
     - [`ResultAsync.combineWithAllErrors` (static class method)](#resultasynccombinewithallerrors-static-class-method)
     - [`ResultAsync.safeUnwrap()`](#resultasyncsafeunwrap)
   + [Utilities](#utilities)
     - [`fromThrowable`](#fromthrowable)
+    - [`fromThrowableAsync`](#fromthrowableasync)
     - [`fromPromise`](#frompromise)
     - [`fromSafePromise`](#fromsafepromise)
     - [`safeTry`](#safetry)
@@ -712,6 +714,44 @@ myResult.isErr() // true
 
 ---
 
+#### `ResultAsync.fromThrowable` (static class method)
+
+Similar to [Result.fromThrowable](#resultfromthrowable-static-class-method), but for functions that return a `Promise`.
+
+**Example**:
+
+```typescript
+import { ResultAsync } from 'neverthrow'
+import { insertIntoDb } from 'imaginary-database'
+// insertIntoDb(user: User): Promise<User>
+
+const insertUser = ResultAsync.fromThrowable(insertIntoDb, () => new Error('Database error'))
+// `res` has a type of (user: User) => ResultAsync<User, Error>
+```
+
+Note that this can be safer than using [ResultAsync.fromPromise](#resultasyncfrompromise-static-class-method) with
+the result of a function call, because not all functions that return a `Promise` are `async`, and thus they can throw
+errors synchronously rather than returning a rejected `Promise`. For example:
+
+```typescript
+import { readFile } from 'node:fs/promises'
+import { fromThrowableAsync } from 'resultar'
+
+const safeFileReader = fromThrowableAsync(
+  async (file: string) => readFile(file),
+  e => new Error('Oops: '.concat(String(e))),
+)
+const value = await safeFileReader('foo.txt')
+
+if (value.isOk()) {
+  console.log(value.value.toString())
+}
+```
+
+[⬆️  Back to top](#toc)
+
+---
+
 #### `ResultAsync.fromPromise` (static class method)
 
 Transforms a `PromiseLike<T>` (that may throw) into a `ResultAsync<T, E>`.
@@ -981,7 +1021,7 @@ This method is useful for performing actions that do not modify the `Result` its
 **Signature:**
 ```typescript
 class ResultAsync<T, E> {
-  tap(f: (t: T) => void): Result<T, E> {..}
+  tap(f: (t: T) => void | Promise<void>): ResultAsync<T, E> {
 }
 ```
 
@@ -995,9 +1035,9 @@ const mapped = okVal.tap((value) => {
 // mapped.value === 'foo'
 ```
 [⬆️  Back to top](#toc)
----
 
 ---
+
 #### `Result.finally` (method)
 Executes a cleanup function wether the is ok or error. This method is usefull to cleanup resources.
 **Signature:**
@@ -1021,6 +1061,7 @@ if (resul.isOk()) {
 
 ```
 [⬆️  Back to top](#toc)
+
 ---
 
 #### `ResultAsync.orElse` (method)
@@ -1055,9 +1096,9 @@ class ResultAsync<T, E> {
 **Example:**
 See [`Result.tap` (method)](#resulttap-method)
 
-```
 
 [⬆️  Back to top](#toc)
+
 ---
 
 #### `ResultAsync.match` (method)
@@ -1205,6 +1246,17 @@ Top level export of `Result.fromThrowable`.
 Please find documentation at [Result.fromThrowable](#resultfromthrowable-static-class-method)
 
 [⬆️  Back to top](#toc)
+
+---
+
+#### `fromThrowableAsync`
+
+Top level export of `ResultAsync.fromThrowable`.
+Please find documentation at [ResultAsync.fromThrowable](#resultasyncfromthrowable-static-class-method)
+
+[⬆️  Back to top](#toc)
+
+---
 
 #### `fromPromise`
 
