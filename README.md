@@ -56,6 +56,7 @@ For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `P
     - [`ResultAsync.andThen` (method)](#resultasyncandthen-method)
     - [`ResultAsync.orElse` (method)](#resultasyncorelse-method)
     - [`ResultAsync.tap` (method)](#resultasynctap-method)
+    - [`ResultAsync.finally` (method)](#resultasyncfinally-method)
     - [`ResultAsync.match` (method)](#resultasyncmatch-method)
     - [`ResultAsync.combine` (static class method)](#resultasynccombine-static-class-method)
     - [`ResultAsync.combineWithAllErrors` (static class method)](#resultasynccombinewithallerrors-static-class-method)
@@ -1093,9 +1094,41 @@ class ResultAsync<T, E> {
 }
 ```
 
+
+
 **Example:**
 See [`Result.tap` (method)](#resulttap-method)
 
+
+[⬆️  Back to top](#toc)
+
+---
+
+#### `ResultAsync.finally` (method)
+Executes a cleanup function wether the is ok or error. This method is usefull to cleanup resources for async operations.
+**Signature:**
+```typescript
+class ResultAsync<T, E> {
+  finally(f: (value: T, error: E) => void): DisposableResultAsync<T, E> {...}
+}
+```
+
+**Example:**
+```typescript
+const fileHandle = await fs.open('foo.txt', 'w')
+
+const result
+  = await fromPromise(fileHandle.write('A new line of text'), String)
+    .finally(async () => {
+      console.info('Closing file handle')
+      await fileHandle.close()
+    })
+
+if (result.isOk()) {
+  console.log(result.value) // == 'A new line of text'
+}
+
+```
 
 [⬆️  Back to top](#toc)
 
