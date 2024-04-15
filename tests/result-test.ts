@@ -108,6 +108,24 @@ await describe('Result.Ok', async () => {
     })
   })
 
+  await describe('if', async () => {
+    await it('returns the "true" part of the statement', async () => {
+      const okVal = ok(12)
+      const result = okVal.if(val => val > 10)
+        .true(v => ok(`The number ${v} is gerater than 10`))
+        .false(v => ok(`The number ${v} is smaller or equal to 10`))
+      deepEqual(result, ok('The number 12 is gerater than 10'))
+    })
+
+    await it('returns the "false" part of the statement', async () => {
+      const okVal = ok(9)
+      const result = okVal.if(val => val > 10)
+        .true(v => ok(`The number ${v} is gerater than 10`))
+        .false(v => ok(`The number ${v} is smaller or equal to 10`))
+      deepEqual(result, ok('The number 9 is smaller or equal to 10'))
+    })
+  })
+
   await describe('orElse', async () => {
     await it('Skips orElse on an Ok value', async () => {
       const okVal = ok(12)
@@ -563,6 +581,27 @@ await describe('ResultAsync', async () => {
       isTrue(newVal.isErr())
       equal(newVal._unsafeUnwrapErr(), 'Wrong format')
       equal(andThenResultFn.mock.calls.length, 0)
+    })
+  })
+
+  await describe('if', async () => {
+    await it('returns the "true" part of the statement', async () => {
+      const okVal = okAsync(12)
+      const result = okVal.if(val => val > 10)
+        .true(v => okAsync(`The number ${v} is gerater than 10`))
+        .false(v => okAsync(`The number ${v} is smaller or equal to 10`))
+
+      isTrue(result instanceof ResultAsync)
+      deepEqual(result, okAsync('The number 12 is gerater than 10'))
+    })
+
+    await it('returns the "false" part of the statement', async () => {
+      const okVal = okAsync(9)
+      const result = okVal.if(val => val > 10)
+        .true(v => okAsync(`The number ${v} is gerater than 10`))
+        .false(v => okAsync(`The number ${v} is smaller or equal to 10`))
+      isTrue(result instanceof ResultAsync)
+      deepEqual(result, okAsync('The number 9 is smaller or equal to 10'))
     })
   })
 
