@@ -102,7 +102,30 @@ type TraverseWithAllErrorsAsync<T, Depth extends number = 5> = IsLiteralArray<T>
 // Converts a reaodnly array into a writable array
 type Writable<T> = T extends readonly unknown[] ? [...T] : T
 
+export class DisposableResultAsync<T, E> implements PromiseLike<Result<T, E>> {
+  private readonly innerPromise: Promise<Result<T, E>>
+
+  constructor(res: Promise<Result<T, E>>) {
+    this.innerPromise = res
+  }
+
+  then<A, B>( // eslint-disable-line unicorn/no-thenable
+    successCallback?: (res: Result<T, E>) => A | PromiseLike<A>,
+    failureCallback?: (reason: unknown) => B | PromiseLike<B>,
+  ): PromiseLike<A | B> {
+    return this.innerPromise.then(successCallback, failureCallback)
+  }
+}
+
 export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
+  static okAsync<T, E = never>(value: T): ResultAsync<T, E> {
+    return new ResultAsync<T, E>(Promise.resolve(Result.ok(value)))
+  }
+
+  static errAsync<T = never, E = unknown>(error: E): ResultAsync<T, E> {
+    return new ResultAsync<T, E>(Promise.resolve(Result.err(error)))
+  }
+
   static fromSafePromise<T, E = never>(promise: PromiseLike<T>): ResultAsync<T, E>
   static fromSafePromise<T, E = never>(promise: Promise<T>): ResultAsync<T, E> {
     const newPromise = promise
@@ -144,6 +167,31 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     return combineResultAsyncListWithAllErrors(
       asyncResultList,
     ) as CombineResultsWithAllErrorsArrayAsync<T>
+  }
+
+  /**
+ * Wraps a async function with a try catch, creating a new function with the same
+ * arguments but returning `Ok` if successful, `Err` if the function throws
+ *
+ * @param fn function to wrap with ok on success or err on failure
+ * @param errorFn when an error is thrown, this will wrap the error result if provided
+ * @returns a new function that returns a `ResultAsync`
+ */
+  static fromThrowable<A extends readonly any[], T, E>(
+    fn: (...args: A) => Promise<T>,
+    errorFn?: (err: unknown) => E,
+  ): (...args: A) => ResultAsync<T, E> {
+    return (...args) => new ResultAsync<T, E>(
+      (async () => {
+        try {
+          const v = await fn(...args)
+          return Result.ok(v)
+        } catch (error) {
+          const e = errorFn ? errorFn(error) : error
+          return Result.err(e as E)
+        }
+      })(),
+    )
   }
 
   private readonly innerPromise: Promise<Result<T, E>>
@@ -249,6 +297,20 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     )
   }
 
+  finally(f: (value: T, error: E) => void): DisposableResultAsync<T, E> {
+    return new DisposableResultAsync(
+      this.innerPromise.then(async res => {
+        try {
+          res.finally(f)
+        } catch {
+          // Dont do anything. Its just a finally
+        }
+
+        return res
+      }),
+    )
+  }
+
   /**
    * Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
    */
@@ -257,45 +319,21 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   }
 }
 
-export function fromSafePromise<T, E = never>(promise: PromiseLike<T>): ResultAsync<T, E>
-export function fromSafePromise<T, E = never>(promise:
-| PromiseLike<T>
-| Promise<T>): ResultAsync<T, E> {
-  return ResultAsync.fromSafePromise(promise)
-}
+export const { okAsync, errAsync, fromPromise, fromSafePromise } = ResultAsync
+export const fromThrowableAsync = ResultAsync.fromThrowable
 
-export function fromPromise<T, E>(promise: PromiseLike<T>, errorFn: (e: unknown) => E): ResultAsync<T, E>
-export function fromPromise<T, E>(promise:
-| PromiseLike<T>
-| Promise<T>, errorFn: (e: unknown) => E): ResultAsync<T, E> {
-  return ResultAsync.fromPromise(promise, errorFn)
-}
-
-export function okAsync<T, E = never>(value: T): ResultAsync<T, E> {
-  return new ResultAsync<T, E>(Promise.resolve(Result.ok(value)))
-}
-
-export function errAsync<T = never, E = unknown>(error: E): ResultAsync<T, E> {
-  return new ResultAsync<T, E>(Promise.resolve(Result.err(error)))
-}
-
-export function fromThrowableAsync<A extends readonly any[], T, E>(
-  fn: (...args: A) => Promise<T>,
-  errorFn?: (err: unknown) => E,
-): (...args: A) => ResultAsync<T, E> {
-  return (...args) => new ResultAsync<T, E>(
-    (async () => {
-      try {
-        const v = await fn(...args)
-        return Result.ok(v)
-      } catch (error) {
-        const e = errorFn ? errorFn(error) : error
-        return Result.err(e as E)
-      }
-    })(),
-  )
-}
-
+/**
+ * Evaluates the given generator to a Result returned or an Err yielded from it,
+ * whichever comes first.
+ *
+ * This function, in combination with `Result.safeUnwrap()`, is intended to emulate
+ * Rust's ? operator.
+ * See `/tests/safeTry.test.ts` for examples.
+ *
+ * @param body - What is evaluated. In body, `yield* result.safeUnwrap()` works as
+ * Rust's `result?` expression.
+ * @returns The first occurence of either an yielded Err or a returned `ResultAsync`.
+ */
 export function safeTryAsync<T, E>(
   body: () => AsyncGenerator<Result<never, E>, Result<T, E>>,
 ): ResultAsync<T, E> {

@@ -3,12 +3,13 @@ import { describe, it, mock } from 'node:test'
 import assert, {
   equal, deepEqual, strictEqual, deepStrictEqual, notDeepStrictEqual, ok as isTrue, notEqual,
 } from 'node:assert'
+import * as fs from 'node:fs/promises'
 import * as td from 'testdouble'
 import {
   Result, err, ok,
 } from '../src/result.js'
 import {
-  ResultAsync, errAsync, fromThrowableAsync, okAsync,
+  ResultAsync, errAsync, fromPromise, fromThrowableAsync, okAsync,
 } from '../src/result-async.js'
 
 const validateUser = (user: Readonly<{name: string}>): ResultAsync<{name: string}, string> => {
@@ -247,25 +248,6 @@ await describe('Result.Ok', async () => {
     equal(mapped._unsafeUnwrap(), original)
     equal(sideEffect.mock.calls.length, 1)
   })
-
-  await it('Finally should be called', () => {
-    const closeFile = mock.fn(() => {
-      console.log('closing file')
-    })
-    const file = {
-      file: 'file.txt', content: 'line 1', close: closeFile,
-    }
-
-    const reader = ok(file)
-
-    const result = reader.map(it => it.content).finally(_ => {
-      file.close()
-    })
-
-    isTrue(result.isOk())
-    equal(result._unsafeUnwrap(), 'line 1')
-    equal(closeFile.mock.calls.length, 1)
-  })
 })
 
 await describe('Result.Err', async () => {
@@ -397,19 +379,6 @@ await describe('Result.Err', async () => {
       deepEqual(okVal.orElse(errorCallback), err(true))
       equal(errorCallback.mock.calls.length, 1)
     })
-  })
-
-  await it('Finally should be called with error', () => {
-    const foo = err('foo')
-    const arrayResult = new Array<string>()
-    foo.map(_p => 'boo').tap(x => x)
-    const result = foo.map(_p => 'boo').finally((x, y) => {
-      isTrue(x === undefined)
-      arrayResult.push(y, 'finalized')
-    })
-    isTrue(result.isErr())
-    equal(arrayResult.length, 2)
-    deepEqual(arrayResult, ['foo', 'finalized'])
   })
 })
 
@@ -862,6 +831,19 @@ await describe('ResultAsync', async () => {
     }
 
     await describe('ResultAsync.fromThrowable', async () => {
+      const readFile = mock.fn(async (file: string) => {
+        if (file === 'foo.txt') {
+          return Buffer.from('foo')
+        }
+
+        throw new Error('File not found')
+      })
+
+      const safeFileReader = fromThrowableAsync(
+        async (file: string) => readFile(file),
+        e => new Error('Oops: '.concat(String(e))),
+      )
+
       await it('creates a new function that returns a ResultAsync', async () => {
         const example = fromThrowableAsync(async (a: number, b: number) => a + b)
         const res = example(4, 8)
@@ -911,6 +893,20 @@ await describe('ResultAsync', async () => {
         const val = await example()
         isTrue(val.isErr())
         deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
+      })
+
+      await it('fromThrowableAsync for readfile ok', async () => {
+        const value = await safeFileReader('foo.txt')
+          .match(buffer => buffer.toString(), error => error.message)
+
+        equal(value, 'foo')
+      })
+
+      await it('fromThrowableAsync for readfile not found', async () => {
+        const value = await safeFileReader('bar.txt')
+          .match(buffer => buffer.toString(), error => error.message)
+
+        equal(value, 'Oops: Error: File not found')
       })
     })
   })
@@ -1010,6 +1006,93 @@ await describe('OrElse', async () => {
       return errAsync(e)
     })
     deepStrictEqual(result._unsafeUnwrapErr(), new Error('bar'))
+  })
+})
+
+await describe('Finally', async () => {
+  interface FileSystem {
+    open: typeof fs.open;
+    close: fs.FileHandle['close'];
+  }
+
+  const buffer = 'Not all those who wander are lost' // - J.R.R. Tolkien'
+
+  await it('Finally should be called', () => {
+    const closeFile = mock.fn(() => {
+      console.log('closing file')
+    })
+    const file = {
+      file: 'file.txt', content: 'line 1', close: closeFile,
+    }
+
+    const reader = ok(file)
+
+    const result = reader.map(it => it.content).finally(_ => {
+      file.close()
+    })
+
+    isTrue(result.isOk())
+    equal(result._unsafeUnwrap(), 'line 1')
+    equal(closeFile.mock.calls.length, 1)
+  })
+
+  await it('Finally should be called with error', () => {
+    const foo = err('foo')
+    const arrayResult = new Array<string>()
+    foo.map(_p => 'boo').tap(x => x)
+    const result = foo.map(_p => 'boo').finally((x, y) => {
+      isTrue(x === undefined)
+      arrayResult.push(y, 'finalized')
+    })
+    isTrue(result.isErr())
+    equal(arrayResult.length, 2)
+    deepEqual(arrayResult, ['foo', 'finalized'])
+  })
+
+  await it('Finally should be called with ok async', async () => {
+    const fileHandle = td.object<fs.FileHandle>()
+    const fileSystem = (await td.replaceEsm('node:fs/promises')).default as FileSystem
+    td.when(fileSystem.open('foo.txt', 'w')).thenResolve(fileHandle)
+    td.when(fileHandle.write(buffer)).thenResolve({ bytesWritten: 32, buffer })
+
+    const result
+      = await fromPromise(fileSystem.open('foo.txt', 'w'), String)
+        .andThen(
+          handle => fromPromise(handle.write(buffer),
+            String),
+        )
+        .finally(async (v, _) => {
+          equal(v.buffer, buffer)
+          await fileHandle.close()
+        })
+
+    td.verify(fileHandle.close(), { times: 1 })
+
+    equal(result.isOk(), true)
+    equal(result._unsafeUnwrap().bytesWritten, 32)
+  })
+
+  await it('Finally should be called with error async', async () => {
+    const fileHandle = td.object<fs.FileHandle>()
+    const fileSystem = (await td.replaceEsm('node:fs/promises')).default as FileSystem
+    td.when(fileSystem.open('bar.txt', 'w')).thenResolve(fileHandle)
+    td.when(fileHandle.write(buffer)).thenReject(new Error('Oops: Error: EACCES: permission denied, open \'foo.txt\''))
+
+    const result
+      = await fromPromise(fileSystem.open('bar.txt', 'w'), String)
+        .andThen(
+          handle => fromPromise(handle.write(buffer),
+            String),
+        )
+        .finally(async (_, e) => {
+          isTrue(typeof e === 'string')
+          await fileHandle.close()
+        })
+
+    td.verify(fileHandle.close(), { times: 1 })
+
+    equal(result.isErr(), true)
+    equal(result._unsafeUnwrapErr(), 'Error: Oops: Error: EACCES: permission denied, open \'foo.txt\'')
   })
 })
 
