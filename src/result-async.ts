@@ -102,6 +102,21 @@ type TraverseWithAllErrorsAsync<T, Depth extends number = 5> = IsLiteralArray<T>
 // Converts a reaodnly array into a writable array
 type Writable<T> = T extends readonly unknown[] ? [...T] : T
 
+export class DisposableResultAsync<T, E> implements PromiseLike<Result<T, E>> {
+  private readonly innerPromise: Promise<Result<T, E>>
+
+  constructor(res: Promise<Result<T, E>>) {
+    this.innerPromise = res
+  }
+
+  then<A, B>( // eslint-disable-line unicorn/no-thenable
+    successCallback?: (res: Result<T, E>) => A | PromiseLike<A>,
+    failureCallback?: (reason: unknown) => B | PromiseLike<B>,
+  ): PromiseLike<A | B> {
+    return this.innerPromise.then(successCallback, failureCallback)
+  }
+}
+
 export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   static okAsync<T, E = never>(value: T): ResultAsync<T, E> {
     return new ResultAsync<T, E>(Promise.resolve(Result.ok(value)))
@@ -278,6 +293,20 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
         }
 
         return okAsync(res.value)
+      }),
+    )
+  }
+
+  finally(f: (value: T, error: E) => void): DisposableResultAsync<T, E> {
+    return new DisposableResultAsync(
+      this.innerPromise.then(async res => {
+        try {
+          res.finally(f)
+        } catch {
+          // Dont do anything. Its just a finally
+        }
+
+        return res
       }),
     )
   }
