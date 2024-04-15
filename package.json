@@ -1,6 +1,6 @@
 {
   "name": "resultar",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Result pattern for typescript",
   "type": "module",
   "packageManager": "pnpm@8.15.6",
@@ -36,7 +36,8 @@
     "plugin"
   ],
   "contributors": [
-    "Inaiat <inaiat@gmail.com>"
+    "Inaiat <inaiat@gmail.com>",
+    "Tomaz Haidar <tomaz_haidar@hotmail.com>"
   ],
   "license": "MIT",
   "licenses": [
