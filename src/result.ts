@@ -340,6 +340,26 @@ export class Result<T, E> implements Resultable<T, E> {
   }
 
   /**
+   * Performs a side effect for the `Err` variant of `Result`.
+   *
+   * @param f The function to apply an `Err` value
+   * @returns the result of applying `f` or an `Err` untouched
+   */
+  tapErr(f: (t: T) => void): Result<T, E> {
+    if (this.state.ok) {
+      return ok(this.value)
+    }
+
+    try {
+      f(this.value)
+    } catch {
+      // Dont do anything. Its just a tap
+    }
+
+    return err(this.error)
+  }
+
+  /**
    * This method is used to clean up and release any resources that the `Result`
    * @param f The function that will be called to clean up the resources
    */

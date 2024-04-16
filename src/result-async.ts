@@ -314,6 +314,24 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     )
   }
 
+  tapErr(f: (t: T) => void | Promise<void>): ResultAsync<T, E> {
+    return new ResultAsync(
+      this.innerPromise.then(async res => {
+        if (res.isErr()) {
+          try {
+            await f(res.value)
+          } catch {
+            // Dont do anything. Its just a tap
+          }
+
+          return errAsync(res.error)
+        }
+
+        return okAsync(res.value)
+      }),
+    )
+  }
+
   finally(f: (value: T, error: E) => void): DisposableResultAsync<T, E> {
     return new DisposableResultAsync(
       this.innerPromise.then(async res => {
