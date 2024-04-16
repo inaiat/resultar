@@ -267,7 +267,6 @@ await describe('Result.Ok', async () => {
     equal(sideEffect.mock.calls.length, 1)
   })
 
-  // ----------
   await it('Taps into an Err value', () => {
     const errVal = err(12)
 
