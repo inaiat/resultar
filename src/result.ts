@@ -220,8 +220,8 @@ export class Result<T, E> implements Resultable<T, E> {
     return {
       true: <X1, Y1>(fTrue: (t: T) => Result<X1, Y1>) => ({
         false: <X2, Y2>(fFalse: (t: T) => Result<X2, Y2>): Result<X1 | X2, Y1 | Y2 | E> => {
-          const condition = fCondition(this.value)
           if (this.state.ok) {
+            const condition = fCondition(this.value)
             return condition ? fTrue(this.value) : fFalse(this.value)
           }
 
