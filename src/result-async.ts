@@ -257,8 +257,8 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
       true: <X1, Y1>(fTrue: (t: T) => ResultAsync<X1, Y1>) => ({
         false: <X2, Y2>(fFalse: (t: T) => ResultAsync<X2, Y2>): ResultAsync<X1 | X2, Y1 | Y2 | E> =>
           new ResultAsync(this.innerPromise.then(async res => {
-            const condition = fCondition(res.value)
             if (res.isOk()) {
+              const condition = fCondition(res.value)
               return condition ? fTrue(res.value) : fFalse(res.value)
             }
 
