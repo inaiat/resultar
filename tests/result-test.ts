@@ -240,10 +240,15 @@ await describe('Result.Ok', async () => {
       console.log('noooo')
     })
 
-    const hopefullyNotMapped = errVal.tap(sideEffect)
+    const sideEffectErr = mock.fn(_value => {
+      console.log('noooo')
+    })
+
+    const hopefullyNotMapped = errVal.tap(sideEffect).tapError(sideEffectErr)
 
     isTrue(hopefullyNotMapped.isErr())
     equal(sideEffect.mock.calls.length, 0)
+    equal(sideEffectErr.mock.calls.length, 1)
     equal(hopefullyNotMapped._unsafeUnwrapErr(), errVal._unsafeUnwrapErr())
   })
 
@@ -987,14 +992,18 @@ await describe('ResultAsync', async () => {
       equal(sideEffect.mock.calls.length, 1)
     })
 
-    await it('Skips an error when tapping into an asynchronous value', async () => {
+    await it('Skips side effect ok and taps into an error', async () => {
       const asyncErr = errAsync<number, string>('Wrong format')
 
       const sideEffect = mock.fn(number => {
         console.log(number)
       })
 
-      const notMapped = asyncErr.tap(sideEffect)
+      const sideEffectErr = mock.fn(number => {
+        console.error(number)
+      })
+
+      const notMapped = asyncErr.tap(sideEffect).tapError(sideEffectErr)
 
       isTrue(notMapped instanceof ResultAsync)
 
@@ -1003,6 +1012,7 @@ await describe('ResultAsync', async () => {
       isTrue(newVal.isErr())
       equal(newVal._unsafeUnwrapErr(), 'Wrong format')
       equal(sideEffect.mock.calls.length, 0)
+      equal(sideEffectErr.mock.calls.length, 1)
     })
   })
 })

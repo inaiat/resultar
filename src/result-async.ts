@@ -288,14 +288,20 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     )
   }
 
-  async match<X>(ok: (t: T) => X, _err: (e: E) => X): Promise<X> {
-    return this.innerPromise.then(res => res.match(ok, _err))
+  async match<X>(ok: (t: T) => X, err: (e: E) => X): Promise<X> {
+    return this.innerPromise.then(res => res.match(ok, err))
   }
 
   async unwrapOr<A>(t: A): Promise<T | A> {
     return this.innerPromise.then(res => res.unwrapOr(t))
   }
 
+  /**
+   * Performs a side effect for the `Ok` variant of `ResultAsync`.
+   * This function can be used for control flow based on result values.
+   * @param f The function to call if the result is `Ok`
+   * @returns `self` if the result is `Err`, otherwise the result of `f`
+   */
   tap(f: (t: T) => void | Promise<void>): ResultAsync<T, E> {
     return new ResultAsync(
       this.innerPromise.then(async res => {
@@ -305,8 +311,29 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
 
         try {
           await f(res.value)
-        } catch {
-          // Dont do anything. Its just a tap
+        } catch {}
+
+        return okAsync(res.value)
+      }),
+    )
+  }
+
+  /**
+  * Performs a side effect for the `Err` variant of `ResultAsync`.
+  * This function can be used for control flow based on result values.
+  * @param f The function to call if the result is `Err`
+  * @returns `self` if the result is `Ok`, otherwise the result of `f`
+  * @example
+  */
+  tapError(f: (e: E) => void | Promise<void>): ResultAsync<T, E> {
+    return new ResultAsync(
+      this.innerPromise.then(async res => {
+        if (res.isErr()) {
+          try {
+            await f(res.error)
+          } catch {}
+
+          return errAsync(res.error)
         }
 
         return okAsync(res.value)
