@@ -37,6 +37,7 @@ For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `P
     - [`Result.asyncAndThen` (method)](#resultasyncandthen-method)
     - [`Result.orElse` (method)](#resultorelse-method)
     - [`Result.tap` (method)](#resulttap-method)
+    - [`Result.tapError` (method)](#resulttaperror-method)
     - [`Result.finally` (method)](#resultfinally-method)
     - [`Result.match` (method)](#resultmatch-method)
     - [`Result.asyncMap` (method)](#resultasyncmap-method)
@@ -56,6 +57,7 @@ For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `P
     - [`ResultAsync.andThen` (method)](#resultasyncandthen-method)
     - [`ResultAsync.orElse` (method)](#resultasyncorelse-method)
     - [`ResultAsync.tap` (method)](#resultasynctap-method)
+    - [`ResultAsync.tapError` (method)](#resultasynctaperror-method)
     - [`ResultAsync.finally` (method)](#resultasyncfinally-method)
     - [`ResultAsync.match` (method)](#resultasyncmatch-method)
     - [`ResultAsync.combine` (static class method)](#resultasynccombine-static-class-method)
@@ -1022,20 +1024,54 @@ This method is useful for performing actions that do not modify the `Result` its
 **Signature:**
 ```typescript
 class ResultAsync<T, E> {
-  tap(f: (t: T) => void | Promise<void>): ResultAsync<T, E> {
+  tap(fn: (t: T) => void): Result<T, E>  {
 }
 ```
 
 **Example:**
 ```typescript
-const fooValue = ok('foo')
+import { ok } from "resultar"
+import { equal }  from 'node:assert'
 
-const mapped = okVal.tap((value) => {
-  console.log(value) // print foo
-})
+const foo = ok("foo")
+const value  = foo
+  .tap(console.error) // Prints "foo"
+  .map((value) => value.toUpperCase())
+  .tap(console.error) // Prints "FOO"
+  .match((v)=> v, (error) => "")
+equal(value, "FOO")
+```
+[⬆️  Back to top](#toc)
+
+---
+#### `Result.tapError` (method)
+Executes a side effect function with the `Err` value and returns the original `Result`.
+This method is useful for performing actions that do not modify the `Result` itself, such as logging or updating external state.
+**Signature:**
+```typescript
+class ResultAsync<T, E> {
+  tapError(fn: (e: E) => void): Result<T, E> {
+}
+```
+
+**Example:**
+```typescript
+import { err } from "resultar"
+import { equal }  from 'node:assert'
+
+const fooError = err("foo")
+const value  = fooError
+  .tapError(console.error) // Prints "foo"
+  .orElse((error) => {
+    return err("bar")
+  })
+  .tapError(console.error) // Prints "bar"
+  .match(()=> "", (error) => error)
+equal(value, "bar")
 // mapped.value === 'foo'
 ```
 [⬆️  Back to top](#toc)
+
 
 ---
 
@@ -1094,13 +1130,31 @@ class ResultAsync<T, E> {
 }
 ```
 
-
-
 **Example:**
 See [`Result.tap` (method)](#resulttap-method)
 
 
 [⬆️  Back to top](#toc)
+
+---
+
+#### `ResultAsync.tapError` (method)
+
+Executes a side effect function with the `Ok` value and returns the original `ResultAsync`.
+This method is useful for performing actions that do not modify the `ResultAsyn` itself, such as logging or updating external state.
+**Signature:**
+```typescript
+class ResultAsync<T, E> {
+  tapError(f: (e: E) => void | Promise<void>): ResultAsync<T, E> {...}
+}
+```
+
+**Example:**
+See [`Result.tapError` (method)](#resulttaperror-method)
+
+
+[⬆️  Back to top](#toc)
+
 
 ---
 
