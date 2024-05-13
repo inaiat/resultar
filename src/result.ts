@@ -320,21 +320,33 @@ export class Result<T, E> implements Resultable<T, E> {
   }
 
   /**
+   * Performs a side effect no matter what the `Result` variant is.
+   *
+   * @param fn The function to apply an `OK` value
+   * @returns the result of applying `f` or an `Err` untouched
+   */
+  log(fn: (t?: T, e?: E) => void): this {
+    try {
+      fn(this.value, this.error)
+    } catch {}
+
+    return this
+  }
+
+  /**
    * Performs a side effect for the `Ok` variant of `Result`.
    *
    * @param fn The function to apply an `OK` value
    * @returns the result of applying `f` or an `Err` untouched
    */
-  tap(fn: (t: T) => void): Result<T, E> {
+  tap(fn: (t: T) => void): this {
     if (this.state.ok) {
       try {
         fn(this.value)
       } catch {}
-
-      return ok(this.value)
     }
 
-    return err(this.error)
+    return this
   }
 
   /**
@@ -343,16 +355,14 @@ export class Result<T, E> implements Resultable<T, E> {
    * @param fn The function to apply an `Err` value
    * @returns the result of applying `f` or an `Ok` untouched
    */
-  tapError(fn: (e: E) => void): Result<T, E> {
-    if (this.state.ok) {
-      return ok(this.value)
+  tapError(fn: (e: E) => void): this {
+    if (!this.state.ok) {
+      try {
+        fn(this.error)
+      } catch {}
     }
 
-    try {
-      fn(this.error)
-    } catch {}
-
-    return err(this.error)
+    return this
   }
 
   /**

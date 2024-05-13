@@ -302,6 +302,32 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
    * @param f The function to call if the result is `Ok`
    * @returns `self` if the result is `Err`, otherwise the result of `f`
    */
+  log(f: (t?: T, e?: E) => void | Promise<void>): ResultAsync<T, E> {
+    return new ResultAsync(
+      this.innerPromise.then(async res => {
+        if (res.isOk()) {
+          try {
+            await f(res.value)
+          } catch {}
+
+          return okAsync(res.value)
+        }
+
+        try {
+          await f(undefined, res.error)
+        } catch {}
+
+        return errAsync(res.error)
+      }),
+    )
+  }
+
+  /**
+   * Performs a side effect for the `Ok` variant of `ResultAsync`.
+   * This function can be used for control flow based on result values.
+   * @param f The function to call if the result is `Ok`
+   * @returns `self` if the result is `Err`, otherwise the result of `f`
+   */
   tap(f: (t: T) => void | Promise<void>): ResultAsync<T, E> {
     return new ResultAsync(
       this.innerPromise.then(async res => {
