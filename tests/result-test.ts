@@ -1,5 +1,8 @@
 /* eslint-disable @typescript-eslint/prefer-promise-reject-errors */
-import { describe, it, mock } from 'node:test'
+import {
+  afterEach,
+  describe, it, mock,
+} from 'node:test'
 import assert, {
   equal, deepEqual, strictEqual, deepStrictEqual, notDeepStrictEqual, ok as isTrue, notEqual,
 } from 'node:assert'
@@ -202,6 +205,30 @@ await describe('Result.Ok', async () => {
     }
 
     equal(val.value, 'safe to read')
+  })
+
+  await describe('log', async () => {
+    const logSideEffect = mock.fn((v?: number, e?: number) => {
+      console.log('Just a side effect log', v, e)
+    })
+
+    afterEach(() => {
+      logSideEffect.mock.resetCalls()
+    })
+
+    await it('Log into an async ok value', async () => {
+      const val = ok(20).log(logSideEffect)
+      equal(val.isOk(), true)
+      equal(val._unsafeUnwrap(), 20)
+      equal(logSideEffect.mock.calls.length, 1)
+    })
+
+    await it('Taps into an async err value', async () => {
+      const val = err(40).log(logSideEffect)
+      equal(val.isOk(), false)
+      equal(val._unsafeUnwrapErr(), 40)
+      equal(logSideEffect.mock.calls.length, 1)
+    })
   })
 
   await it('Taps into an Ok value', () => {
@@ -952,6 +979,34 @@ await describe('ResultAsync', async () => {
 
         equal(value, 'Oops: Error: File not found')
       })
+    })
+  })
+
+  await describe('log result async', async () => {
+    const logSideEffect = mock.fn((v?: number, e?: number) => {
+      console.log('Just a side effect log', v, e)
+    })
+
+    afterEach(() => {
+      logSideEffect.mock.resetCalls()
+    })
+
+    await it('Log into an async ok value', async () => {
+      const asyncVal = okAsync(20)
+      const mapped = asyncVal.log(logSideEffect)
+      const newVal = await mapped
+      equal(newVal.isOk(), true)
+      equal(newVal._unsafeUnwrap(), 20)
+      equal(logSideEffect.mock.calls.length, 1)
+    })
+
+    await it('Taps into an async err value', async () => {
+      const asyncVal = errAsync(40)
+      const mapped = asyncVal.log(logSideEffect)
+      const newVal = await mapped
+      equal(newVal.isOk(), false)
+      equal(newVal._unsafeUnwrapErr(), 40)
+      equal(logSideEffect.mock.calls.length, 1)
     })
   })
 
