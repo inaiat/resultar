@@ -1,103 +1,91 @@
-/* eslint-disable @typescript-eslint/ban-types */
-
-import {
-  Result,
-} from './result.js'
-import {
+import { Result } from './result.js'
+import type {
   Combine,
   Dedup,
   EmptyArrayToNever,
   ExtractErrAsyncTypes,
   ExtractOkAsyncTypes,
-  InferAsyncErrTypes, InferAsyncOkTypes, InferErrTypes, InferOkTypes,
+  InferAsyncErrTypes,
+  InferAsyncOkTypes,
+  InferErrTypes,
+  InferOkTypes,
   IsLiteralArray,
   MemberListOf,
   MembersToUnion,
-  combineResultAsyncList,
-  combineResultAsyncListWithAllErrors,
 } from './utils.js'
+import { combineResultAsyncList, combineResultAsyncListWithAllErrors } from './utils.js'
 
 // Combines the array of async results into one result.
 export type CombineResultAsyncs<
   T extends ReadonlyArray<ResultAsync<unknown, unknown>>,
-> = IsLiteralArray<T> extends 1
-  ? TraverseAsync<UnwrapAsync<T>>
+> = IsLiteralArray<T> extends 1 ? TraverseAsync<UnwrapAsync<T>>
   : ResultAsync<ExtractOkAsyncTypes<T>, ExtractErrAsyncTypes<T>[number]>
 
 // Combines the array of async results into one result with all errors.
 export type CombineResultsWithAllErrorsArrayAsync<
   T extends ReadonlyArray<ResultAsync<unknown, unknown>>,
-> = IsLiteralArray<T> extends 1
-  ? TraverseWithAllErrorsAsync<UnwrapAsync<T>>
+> = IsLiteralArray<T> extends 1 ? TraverseWithAllErrorsAsync<UnwrapAsync<T>>
   : ResultAsync<ExtractOkAsyncTypes<T>, Array<ExtractErrAsyncTypes<T>[number]>>
 
 // Unwraps the inner `Result` from a `ResultAsync` for all elements.
 type UnwrapAsync<T> = IsLiteralArray<T> extends 1
   ? Writable<T> extends [infer H, ...infer Rest]
-    ? H extends PromiseLike<infer HI>
-      ? HI extends Result<unknown, unknown>
-        ? [Dedup<HI>, ...UnwrapAsync<Rest>]
-        : never
-      : never
-    : []
-  : // If we got something too general such as ResultAsync<X, Y>[] then we
-  // simply need to map it to ResultAsync<X[], Y[]>. Yet `ResultAsync`
-  // itself is a union therefore it would be enough to cast it to Ok.
-  T extends Array<infer A>
-    ? A extends PromiseLike<infer HI>
-      ? HI extends Result<infer L, infer R>
-        ? Array<Result<L, R>>
-        : never
+    ? H extends PromiseLike<infer HI> ? HI extends Result<unknown, unknown> ? [Dedup<HI>, ...UnwrapAsync<Rest>]
       : never
     : never
+  : []
+  // If we got something too general such as ResultAsync<X, Y>[] then we
+  // simply need to map it to ResultAsync<X[], Y[]>. Yet `ResultAsync`
+  // itself is a union therefore it would be enough to cast it to Ok.
+  : T extends Array<infer A>
+    ? A extends PromiseLike<infer HI> ? HI extends Result<infer L, infer R> ? Array<Result<L, R>>
+      : never
+    : never
+  : never
 
 // Traverse through the tuples of the async results and create one
 // `ResultAsync` where the collected tuples are merged.
 type TraverseAsync<T, Depth extends number = 5> = IsLiteralArray<T> extends 1
-  ? Combine<T, Depth> extends [infer Oks, infer Errs]
-    ? ResultAsync<EmptyArrayToNever<Oks>, MembersToUnion<Errs>>
-    : never
-  : // The following check is important if we somehow reach to the point of
+  ? Combine<T, Depth> extends [infer Oks, infer Errs] ? ResultAsync<EmptyArrayToNever<Oks>, MembersToUnion<Errs>>
+  : never
+  // The following check is important if we somehow reach to the point of
   // checking something similar to ResultAsync<X, Y>[]. In this case we don't
   // know the length of the elements, therefore we need to traverse the X and Y
   // in a way that the result should contain X[] and Y[].
-  T extends Array<infer I>
-    ? // The MemberListOf<I> here is to include all possible types. Therefore
+  : T extends Array<infer I>
+  // The MemberListOf<I> here is to include all possible types. Therefore
   // if we face (ResultAsync<X, Y> | ResultAsync<A, B>)[] this type should
   // handle the case.
-    Combine<MemberListOf<I>, Depth> extends [infer Oks, infer Errs]
-      ? // The following `extends unknown[]` checks are just to satisfy the TS.
-    // we already expect them to be an array.
-      Oks extends unknown[]
+    ? Combine<MemberListOf<I>, Depth> extends [infer Oks, infer Errs]
+      // The following `extends unknown[]` checks are just to satisfy the TS.
+      // we already expect them to be an array.
+      ? Oks extends unknown[]
         ? Errs extends unknown[]
           ? ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, MembersToUnion<Array<Errs[number]>>>
-          : ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, Errs>
-        : // The rest of the conditions are to satisfy the TS and support
-      // the edge cases which are not really expected to happen.
-        Errs extends unknown[]
-          ? ResultAsync<Oks, MembersToUnion<Array<Errs[number]>>>
-          : ResultAsync<Oks, Errs>
-      : never
+        : ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, Errs>
+        // The rest of the conditions are to satisfy the TS and support
+        // the edge cases which are not really expected to happen.
+      : Errs extends unknown[] ? ResultAsync<Oks, MembersToUnion<Array<Errs[number]>>>
+      : ResultAsync<Oks, Errs>
     : never
+  : never
 
 // This type is similar to the `TraverseAsync` while the errors are also
 // collected in order. For the checks/conditions made here, see that type
 // for the documentation.
 type TraverseWithAllErrorsAsync<T, Depth extends number = 5> = IsLiteralArray<T> extends 1
-  ? Combine<T, Depth> extends [infer Oks, infer Errs]
-    ? ResultAsync<EmptyArrayToNever<Oks>, EmptyArrayToNever<Errs>>
-    : never
+  ? Combine<T, Depth> extends [infer Oks, infer Errs] ? ResultAsync<EmptyArrayToNever<Oks>, EmptyArrayToNever<Errs>>
+  : never
   : Writable<T> extends Array<infer I>
     ? Combine<MemberListOf<I>, Depth> extends [infer Oks, infer Errs]
       ? Oks extends unknown[]
         ? Errs extends unknown[]
           ? ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, EmptyArrayToNever<Array<Errs[number]>>>
-          : ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, Errs>
-        : Errs extends unknown[]
-          ? ResultAsync<Oks, EmptyArrayToNever<Array<Errs[number]>>>
-          : ResultAsync<Oks, Errs>
-      : never
+        : ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, Errs>
+      : Errs extends unknown[] ? ResultAsync<Oks, EmptyArrayToNever<Array<Errs[number]>>>
+      : ResultAsync<Oks, Errs>
     : never
+  : never
 
 // Converts a reaodnly array into a writable array
 type Writable<T> = T extends readonly unknown[] ? [...T] : T
@@ -170,28 +158,30 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   }
 
   /**
- * Wraps a async function with a try catch, creating a new function with the same
- * arguments but returning `Ok` if successful, `Err` if the function throws
- *
- * @param fn function to wrap with ok on success or err on failure
- * @param errorFn when an error is thrown, this will wrap the error result if provided
- * @returns a new function that returns a `ResultAsync`
- */
+   * Wraps a async function with a try catch, creating a new function with the same
+   * arguments but returning `Ok` if successful, `Err` if the function throws
+   *
+   * @param fn function to wrap with ok on success or err on failure
+   * @param errorFn when an error is thrown, this will wrap the error result if provided
+   * @returns a new function that returns a `ResultAsync`
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   static fromThrowable<A extends readonly any[], T, E>(
     fn: (...args: A) => Promise<T>,
     errorFn?: (err: unknown) => E,
   ): (...args: A) => ResultAsync<T, E> {
-    return (...args) => new ResultAsync<T, E>(
-      (async () => {
-        try {
-          const v = await fn(...args)
-          return Result.ok(v)
-        } catch (error) {
-          const e = errorFn ? errorFn(error) : error
-          return Result.err(e as E)
-        }
-      })(),
-    )
+    return (...args) =>
+      new ResultAsync<T, E>(
+        (async () => {
+          try {
+            const v = await fn(...args)
+            return Result.ok(v)
+          } catch (error) {
+            const e = errorFn ? errorFn(error) : error
+            return Result.err(e as E)
+          }
+        })(),
+      )
   }
 
   private readonly innerPromise: Promise<Result<T, E>>
@@ -238,6 +228,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     f: (t: T) => R,
   ): ResultAsync<InferAsyncOkTypes<R>, InferAsyncErrTypes<R> | E>
   andThen<U, F>(f: (t: T) => Result<U, F> | ResultAsync<U, F>): ResultAsync<U, E | F>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   andThen(f: any): any {
     return new ResultAsync(
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
@@ -246,6 +237,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
           return errAsync(res.error)
         }
 
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
         const newValue = f(res.value) // eslint-disable-line @typescript-eslint/no-unsafe-assignment
         return newValue instanceof ResultAsync ? newValue.innerPromise : newValue // eslint-disable-line @typescript-eslint/no-unsafe-return
       }),
@@ -264,7 +256,6 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
 
             return errAsync(res.error)
           })),
-
       }),
     }
   }
@@ -276,10 +267,12 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     f: (e: E) => R,
   ): ResultAsync<InferAsyncOkTypes<R> | T, InferAsyncErrTypes<R>>
   orElse<U, A>(f: (e: E) => Result<U, A> | ResultAsync<U, A>): ResultAsync<U | T, A>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   orElse(f: any): any {
     return new ResultAsync(
       this.innerPromise.then(async (res: Result<T, E>) => { // eslint-disable-line @typescript-eslint/no-unsafe-argument
         if (res.isErr()) {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
           return f(res.error) // eslint-disable-line @typescript-eslint/no-unsafe-return
         }
 
@@ -308,14 +301,14 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
         if (res.isOk()) {
           try {
             await f(res.value)
-          } catch {}
+          } catch { /* empty */ }
 
           return okAsync(res.value)
         }
 
         try {
           await f(undefined, res.error)
-        } catch {}
+        } catch { /* empty */ }
 
         return errAsync(res.error)
       }),
@@ -337,7 +330,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
 
         try {
           await f(res.value)
-        } catch {}
+        } catch { /* empty */ }
 
         return okAsync(res.value)
       }),
@@ -345,19 +338,19 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   }
 
   /**
-  * Performs a side effect for the `Err` variant of `ResultAsync`.
-  * This function can be used for control flow based on result values.
-  * @param f The function to call if the result is `Err`
-  * @returns `self` if the result is `Ok`, otherwise the result of `f`
-  * @example
-  */
+   * Performs a side effect for the `Err` variant of `ResultAsync`.
+   * This function can be used for control flow based on result values.
+   * @param f The function to call if the result is `Err`
+   * @returns `self` if the result is `Ok`, otherwise the result of `f`
+   * @example
+   */
   tapError(f: (e: E) => void | Promise<void>): ResultAsync<T, E> {
     return new ResultAsync(
       this.innerPromise.then(async res => {
         if (res.isErr()) {
           try {
             await f(res.error)
-          } catch {}
+          } catch { /* empty */ }
 
           return errAsync(res.error)
         }
@@ -369,6 +362,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
 
   finally(f: (value: T, error: E) => void): DisposableResultAsync<T, E> {
     return new DisposableResultAsync(
+      // eslint-disable-next-line @typescript-eslint/require-await
       this.innerPromise.then(async res => {
         try {
           res.finally(f)
@@ -384,12 +378,14 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   /**
    * Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
    */
-  async * safeUnwrap(): AsyncGenerator<Result<never, E>, T> {
-    return yield * await this.innerPromise.then(res => res.safeUnwrap())
+  async *safeUnwrap(): AsyncGenerator<Result<never, E>, T> {
+    return yield* await this.innerPromise.then(res => res.safeUnwrap())
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/unbound-method
 export const { okAsync, errAsync, fromPromise, fromSafePromise } = ResultAsync
+// eslint-disable-next-line @typescript-eslint/unbound-method
 export const fromThrowableAsync = ResultAsync.fromThrowable
 
 /**
@@ -418,4 +414,3 @@ export function safeTryAsync<T, E>(
     })(),
   )
 }
-

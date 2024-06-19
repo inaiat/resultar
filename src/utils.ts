@@ -1,21 +1,18 @@
-/* eslint-disable @typescript-eslint/ban-types */
 import { ResultAsync } from './result-async.js'
-import { Result, ok, err } from './result.js'
+import type { Result } from './result.js'
+import { err, ok } from './result.js'
 
 // Deduplicates the result, as the result type is a union of Err and Ok types.
-export type Dedup<T> = T extends Result<infer RL, infer RR>
-  ? Result<RL, RR>
+export type Dedup<T> = T extends Result<infer RL, infer RR> ? Result<RL, RR>
   : T
 
 // Given a union, this gives the array of the union members.
 export type MemberListOf<T> = (
   (T extends unknown ? (t: T) => T : never) extends infer U
-    ? (U extends unknown ? (u: U) => unknown : never) extends (v: infer V) => unknown
-      ? V
-      : never
+    ? (U extends unknown ? (u: U) => unknown : never) extends (v: infer V) => unknown ? V
     : never
-) extends (_: unknown) => infer W
-  ? [...MemberListOf<Exclude<T, W>>, W]
+    : never
+) extends (_: unknown) => infer W ? [...MemberListOf<Exclude<T, W>>, W]
   : []
 
 // Given a list of Results, this extracts all the different `T` types from that list
@@ -45,12 +42,9 @@ export type InferAsyncOkTypes<R> = R extends ResultAsync<infer T, unknown> ? T :
 export type InferAsyncErrTypes<R> = R extends ResultAsync<unknown, infer E> ? E : never
 
 // Checks if the given type is a literal array.
-export type IsLiteralArray<T> = T extends { length: infer L }
-  ? L extends number
-    ? number extends L
-      ? 0
-      : 1
-    : 0
+export type IsLiteralArray<T> = T extends { length: infer L } ? L extends number ? number extends L ? 0
+    : 1
+  : 0
   : 0
 
 // Converts an empty array to never.
@@ -60,75 +54,71 @@ export type IsLiteralArray<T> = T extends { length: infer L }
 // a literal array such as `[ never, never ]`. Otherwise, set `0` or the default
 // type value will cause this to resolve the arrays containing only `never`
 // items as `never` only.
-export type EmptyArrayToNever<T, NeverArrayToNever extends number = 0> = T extends []
-  ? never
-  : NeverArrayToNever extends 1
-    ? T extends [never, ...infer Rest]
-      ? [EmptyArrayToNever<Rest>] extends [never]
-        ? never
-        : T
+export type EmptyArrayToNever<T, NeverArrayToNever extends number = 0> = T extends [] ? never
+  : NeverArrayToNever extends 1 ? T extends [never, ...infer Rest] ? [EmptyArrayToNever<Rest>] extends [never] ? never
       : T
     : T
+  : T
 
 // #region Combine - Types
 
-    // This is a helper type to prevent infinite recursion in typing rules.
-    //
-    // Use this with your `depth` variable in your types.
-    type Prev = [
-      never,
-      0,
-      1,
-      2,
-      3,
-      4,
-      5,
-      6,
-      7,
-      8,
-      9,
-      10,
-      11,
-      12,
-      13,
-      14,
-      15,
-      16,
-      17,
-      18,
-      19,
-      20,
-      21,
-      22,
-      23,
-      24,
-      25,
-      26,
-      27,
-      28,
-      29,
-      30,
-      31,
-      32,
-      33,
-      34,
-      35,
-      36,
-      37,
-      38,
-      39,
-      40,
-      41,
-      42,
-      43,
-      44,
-      45,
-      46,
-      47,
-      48,
-      49,
-      ...Array<0>,
-    ]
+// This is a helper type to prevent infinite recursion in typing rules.
+//
+// Use this with your `depth` variable in your types.
+type Prev = [
+  never,
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  24,
+  25,
+  26,
+  27,
+  28,
+  29,
+  30,
+  31,
+  32,
+  33,
+  34,
+  35,
+  36,
+  37,
+  38,
+  39,
+  40,
+  41,
+  42,
+  43,
+  44,
+  45,
+  46,
+  47,
+  48,
+  49,
+  ...Array<0>,
+]
 
 // Transposes an array
 //
@@ -142,13 +132,11 @@ export type Transpose<
 > = A extends [infer T, ...infer Rest]
   ? T extends [infer L, infer R]
     ? Transposed extends [infer PL, infer PR]
-      ? PL extends unknown[]
-        ? PR extends unknown[]
-          ? Transpose<Rest, [[...PL, L], [...PR, R]], Prev[Depth]>
-          : never
+      ? PL extends unknown[] ? PR extends unknown[] ? Transpose<Rest, [[...PL, L], [...PR, R]], Prev[Depth]>
         : never
-      : Transpose<Rest, [[L], [R]], Prev[Depth]>
-    : Transposed
+      : never
+    : Transpose<Rest, [[L], [R]], Prev[Depth]>
+  : Transposed
   : Transposed
 
 // Collects the results array into separate tuple array.
@@ -158,22 +146,21 @@ export type Transpose<
 // Depth     - The maximum depth.
 type CollectResults<T, Collected extends unknown[] = [], Depth extends number = 50> = [
   Depth,
-] extends [never]
-  ? []
+] extends [never] ? []
   : T extends [infer H, ...infer Rest]
-    ? // And test whether the head of the list is a result
-    H extends Result<infer L, infer R>
-      ? // Continue collecting...
-      CollectResults<
-      // the rest of the elements
-      Rest,
-      // The collected
-      [...Collected, [L, R]],
-      // and one less of the current depth
-      Prev[Depth]
+  // And test whether the head of the list is a result
+    ? H extends Result<infer L, infer R>
+      // Continue collecting...
+      ? CollectResults<
+        // the rest of the elements
+        Rest,
+        // The collected
+        [...Collected, [L, R]],
+        // and one less of the current depth
+        Prev[Depth]
       >
-      : never // Impossible
-    : Collected
+    : never // Impossible
+  : Collected
 
 // Converts the `unknown` items of an array to `never`s.
 type UnknownMembersToNever<T> = T extends [infer H, ...infer R]
@@ -191,11 +178,9 @@ export type MembersToUnion<T> = T extends unknown[] ? T[number] : never
 export type Combine<T, Depth extends number = 5> = Transpose<CollectResults<T>, [], Depth> extends [
   infer L,
   infer R,
-]
-  ? [UnknownMembersToNever<L>, UnknownMembersToNever<R>]
-  : Transpose<CollectResults<T>, [], Depth> extends []
-    ? [[], []]
-    : never
+] ? [UnknownMembersToNever<L>, UnknownMembersToNever<R>]
+  : Transpose<CollectResults<T>, [], Depth> extends [] ? [[], []]
+  : never
 
 // Traverses an array of results and returns a single result containing
 // the oks and errs union-ed/combined.
@@ -208,23 +193,20 @@ type Traverse<T, Depth extends number = 5> = Combine<T, Depth> extends [infer Ok
 type TraverseWithAllErrors<T, Depth extends number = 5> = Combine<T, Depth> extends [
   infer Oks,
   infer Errs,
-]
-  ? Result<EmptyArrayToNever<Oks>, EmptyArrayToNever<Errs>>
+] ? Result<EmptyArrayToNever<Oks>, EmptyArrayToNever<Errs>>
   : never
 
 const appendValueToEndOfList = <T>(value: T) => (list: T[]): T[] => [...list, value]
 
 export type CombineResults<
   T extends ReadonlyArray<Result<unknown, unknown>>,
-> = IsLiteralArray<T> extends 1
-  ? Traverse<T>
+> = IsLiteralArray<T> extends 1 ? Traverse<T>
   : Result<ExtractOkTypes<T>, ExtractErrTypes<T>[number]>
 
 // Combines the array of results into one result with all errors.
 export type CombineResultsWithAllErrorsArray<
   T extends ReadonlyArray<Result<unknown, unknown>>,
-> = IsLiteralArray<T> extends 1
-  ? TraverseWithAllErrors<T>
+> = IsLiteralArray<T> extends 1 ? TraverseWithAllErrors<T>
   : Result<ExtractOkTypes<T>, Array<ExtractErrTypes<T>[number]>>
 
 /* This is the typesafe version of Promise.all
@@ -286,4 +268,3 @@ export const combineResultListWithAllErrors = <T, E>(
           : ok([...acc.value, result.value])),
     ok([]),
   )
-

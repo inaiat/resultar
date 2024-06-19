@@ -1,13 +1,13 @@
 {
-    "$schema": "https://typedoc.org/schema.json",
-    "name": "resultar",
-    "plugin": [
-        "typedoc-plugin-markdown",
-        "typedoc-github-wiki-theme"
-    ],
-    "entryPoints": [
-        "./src/index.ts"
-    ],
-    "readme": "none",
-    "githubPages": false,
+  "$schema": "https://typedoc.org/schema.json",
+  "name": "resultar",
+  "plugin": [
+    "typedoc-plugin-markdown",
+    "typedoc-github-wiki-theme"
+  ],
+  "entryPoints": [
+    "./src/index.ts"
+  ],
+  "readme": "none",
+  "githubPages": false
 }
