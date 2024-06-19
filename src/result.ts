@@ -1,16 +1,16 @@
-import {
-  CombineResults, CombineResultsWithAllErrorsArray, InferErrTypes, InferOkTypes, combineResultList, combineResultListWithAllErrors,
-} from './utils.js'
-import { ErrorConfig, createResultarError } from './error.js'
-import { ResultAsync, errAsync } from './result-async.js'
+import type { ErrorConfig } from './error.js'
+import { createResultarError } from './error.js'
+import { errAsync, ResultAsync } from './result-async.js'
+import type { CombineResults, CombineResultsWithAllErrorsArray, InferErrTypes, InferOkTypes } from './utils.js'
+import { combineResultList, combineResultListWithAllErrors } from './utils.js'
 
 class Ok<T> {
-  readonly ok = true // eslint-disable-line @typescript-eslint/class-literal-property-style
+  readonly ok = true
   constructor(public readonly value: T) {}
 }
 
 class Err<E> {
-  readonly ok = false // eslint-disable-line @typescript-eslint/class-literal-property-style
+  readonly ok = false
   constructor(public readonly error: E) {}
 }
 
@@ -21,7 +21,6 @@ class Err<E> {
  * The immutability of the `Result` object is maintained by the interface.
  */
 interface Resultable<T, E> {
-
   get value(): T
   get error(): E
 
@@ -66,7 +65,6 @@ interface Resultable<T, E> {
    * @param config
    */
   _unsafeUnwrapErr(config?: ErrorConfig): E
-
 }
 
 /**
@@ -83,8 +81,10 @@ export class Result<T, E> implements Resultable<T, E> {
    * @param fn function to wrap with ok on success or err on failure
    * @param errorFn when an error is thrown, this will wrap the error result if provided
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   static fromThrowable<Fn extends (...args: readonly any[]) => unknown, E>(
     fn: Fn,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     errorFn?: (e: any) => E,
   ): (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E> {
     return (...args) => {
@@ -101,11 +101,11 @@ export class Result<T, E> implements Resultable<T, E> {
     }
   }
 
-  static ok<T, E=never>(value: T): Result<T, E> {
+  static ok<T, E = never>(value: T): Result<T, E> {
     return new Result<T, E>(new Ok(value))
   }
 
-  static err<T=never, E=unknown>(error: E): Result<T, E> {
+  static err<T = never, E = unknown>(error: E): Result<T, E> {
     return new Result<T, E>(new Err(error))
   }
 
@@ -236,7 +236,6 @@ export class Result<T, E> implements Resultable<T, E> {
    *
    * This is useful for error recovery.
    *
-   *
    * @param f  A function to apply to an `Err` value, leaving `Ok` values
    * untouched.
    */
@@ -245,6 +244,7 @@ export class Result<T, E> implements Resultable<T, E> {
   ): Result<InferOkTypes<R> | T, InferErrTypes<R>>
   orElse<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A> {
     if (this.state.ok) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return ok(this.value as Exclude<T, Promise<any>>)
     }
 
@@ -298,7 +298,6 @@ export class Result<T, E> implements Resultable<T, E> {
   }
 
   /**
-   *
    * Given 2 functions (one for the `Ok` variant and one for the `Err` variant)
    * execute the function that matches the `Result` variant.
    *
@@ -328,7 +327,7 @@ export class Result<T, E> implements Resultable<T, E> {
   log(fn: (t?: T, e?: E) => void): this {
     try {
       fn(this.value, this.error)
-    } catch {}
+    } catch { /* empty */ }
 
     return this
   }
@@ -343,7 +342,7 @@ export class Result<T, E> implements Resultable<T, E> {
     if (this.state.ok) {
       try {
         fn(this.value)
-      } catch {}
+      } catch { /* empty */ }
     }
 
     return this
@@ -359,7 +358,7 @@ export class Result<T, E> implements Resultable<T, E> {
     if (!this.state.ok) {
       try {
         fn(this.error)
-      } catch {}
+      } catch { /* empty */ }
     }
 
     return this
@@ -369,13 +368,13 @@ export class Result<T, E> implements Resultable<T, E> {
    * This method is used to clean up and release any resources that the `Result`
    * @param f The function that will be called to clean up the resources
    */
-  finally<X=T, Y=E>(f: (value: X, error: Y) => void): DisposableResult<X, Y>
+  finally<X = T, Y = E>(f: (value: X, error: Y) => void): DisposableResult<X, Y>
   finally(f: (value: T, error: E) => void): DisposableResult<T, E> {
     const resultDisposable = new DisposableResult(this, f)
     try {
       return resultDisposable
     } finally {
-      resultDisposable[Symbol.dispose]() // eslint-disable-line no-use-extend-native/no-use-extend-native
+      resultDisposable[Symbol.dispose]()
     }
   }
 
@@ -391,7 +390,7 @@ export class Result<T, E> implements Resultable<T, E> {
       return this.value
     }
 
-    throw createResultarError('Called `_unsafeUnwrap` on an Err', this, config) // eslint-disable-line @typescript-eslint/no-throw-literal
+    throw createResultarError('Called `_unsafeUnwrap` on an Err', this, config)
   }
 
   /**
@@ -404,7 +403,7 @@ export class Result<T, E> implements Resultable<T, E> {
    */
   _unsafeUnwrapErr(config?: ErrorConfig): E {
     if (this.state.ok) {
-      throw createResultarError('Called `_unsafeUnwrapErr` on an Ok', this, config) // eslint-disable-line @typescript-eslint/no-throw-literal
+      throw createResultarError('Called `_unsafeUnwrapErr` on an Ok', this, config)
     }
 
     return this.error
@@ -414,13 +413,13 @@ export class Result<T, E> implements Resultable<T, E> {
     if (this.state.ok) {
       const { value } = this
       /* eslint-disable-next-line require-yield */
-      return (function * () {
+      return (function*() {
         return value
       })()
     }
 
     const { error } = this
-    return (function * () {
+    return (function*() {
       yield err(error)
 
       throw new Error('Do not use this generator out of `safeTry`')
@@ -433,8 +432,7 @@ export class Result<T, E> implements Resultable<T, E> {
  * clean up resources.
  */
 export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
-  constructor(readonly result: Resultable<T, E>,
-    private readonly finalizer: (value: T, error: E) => void) {}
+  constructor(readonly result: Resultable<T, E>, private readonly finalizer: (value: T, error: E) => void) {}
 
   get value(): T {
     return this.result.value
@@ -469,6 +467,7 @@ export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/unbound-method
 export const { ok, err, fromThrowable } = Result
 
 /**
@@ -504,8 +503,8 @@ export function safeTry<T, E>(
 ): Promise<Result<T, E>>
 export function safeTry<T, E>(
   body:
-  | (() => Generator<Result<never, E>, Result<T, E>>)
-  | (() => AsyncGenerator<Result<never, E>, Result<T, E>>),
+    | (() => Generator<Result<never, E>, Result<T, E>>)
+    | (() => AsyncGenerator<Result<never, E>, Result<T, E>>),
 ): Result<T, E> | Promise<Result<T, E>> {
   const n = body().next()
   if (n instanceof Promise) {
@@ -514,4 +513,3 @@ export function safeTry<T, E>(
 
   return n.value
 }
-

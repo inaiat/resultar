@@ -1,6 +1,10 @@
 export {
-  Result, ok, err, fromThrowable, safeTry,
-} from './result.js'
-export {
-  ResultAsync, okAsync, errAsync, fromPromise, fromSafePromise, safeTryAsync, fromThrowableAsync,
+  errAsync,
+  fromPromise,
+  fromSafePromise,
+  fromThrowableAsync,
+  okAsync,
+  ResultAsync,
+  safeTryAsync,
 } from './result-async.js'
+export { err, fromThrowable, ok, Result, safeTry } from './result.js'

@@ -1,4 +1,4 @@
-import { Result } from './result.js'
+import type { Result } from './result.js'
 
 export interface ErrorConfig {
   withStackTrace: boolean
@@ -10,14 +10,14 @@ const defaultErrorConfig: ErrorConfig = {
 
 interface ResultarError<T, E> {
   data:
-  | {
-    type: string
-    value: T | undefined
-  }
-  | {
-    type: string
-    value: E | undefined
-  }
+    | {
+      type: string
+      value: T | undefined
+    }
+    | {
+      type: string
+      value: E | undefined
+    }
   message: string
   stack: string | undefined
 }

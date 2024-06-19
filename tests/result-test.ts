@@ -1,21 +1,19 @@
-/* eslint-disable @typescript-eslint/prefer-promise-reject-errors */
-import {
-  afterEach,
-  describe, it, mock,
-} from 'node:test'
 import assert, {
-  equal, deepEqual, strictEqual, deepStrictEqual, notDeepStrictEqual, ok as isTrue, notEqual,
+  deepEqual,
+  deepStrictEqual,
+  equal,
+  notDeepStrictEqual,
+  notEqual,
+  ok as isTrue,
+  strictEqual,
 } from 'node:assert'
-import * as fs from 'node:fs/promises'
+import type * as fs from 'node:fs/promises'
+import { afterEach, describe, it, mock } from 'node:test'
 import * as td from 'testdouble'
-import {
-  Result, err, ok,
-} from '../src/result.js'
-import {
-  ResultAsync, errAsync, fromPromise, fromThrowableAsync, okAsync,
-} from '../src/result-async.js'
+import { errAsync, fromPromise, fromThrowableAsync, okAsync, ResultAsync } from '../src/result-async.js'
+import { err, ok, Result } from '../src/result.js'
 
-const validateUser = (user: Readonly<{name: string}>): ResultAsync<{name: string}, string> => {
+const validateUser = (user: Readonly<{ name: string }>): ResultAsync<{ name: string }, string> => {
   if (user.name === 'superadmin') {
     return errAsync('You are not allowed to register')
   }
@@ -41,10 +39,11 @@ await describe('Result.Ok', async () => {
   })
 
   await it('Creates an Ok value with undefined', () => {
+    // eslint-disable-next-line unicorn/no-useless-undefined
     const okVal = ok(undefined)
     equal(okVal.isOk(), true)
     equal(okVal.isErr(), false)
-    equal(okVal._unsafeUnwrap(), undefined) // eslint-disable-line @typescript-eslint/no-confusing-void-expression
+    equal(okVal._unsafeUnwrap(), undefined)
   })
 
   await it('Is comparable', () => {
@@ -84,7 +83,7 @@ await describe('Result.Ok', async () => {
         // ...
         // complex logic
         // ...
-        ok(data),
+        ok(data)
       )
 
       isTrue(flattened.isOk())
@@ -98,7 +97,7 @@ await describe('Result.Ok', async () => {
         // ...
         // complex logic
         // ...
-        err('Whoopsies!'),
+        err('Whoopsies!')
       )
 
       const nextFn = mock.fn(_val => ok('noop'))
@@ -150,7 +149,7 @@ await describe('Result.Ok', async () => {
       // ...
       // complex async logic
       // ...
-      okAsync({ data: 'why not' }),
+      okAsync({ data: 'why not' })
     )
 
     isTrue(flattened instanceof ResultAsync)
@@ -286,7 +285,7 @@ await describe('Result.Ok', async () => {
     // value can be accessed, but is not changed
     const sideEffect = mock.fn((value: number) => {
       if (value === 12) {
-        throw new Error('Don\'t do that!')
+        throw new Error("Don't do that!")
       }
 
       return { name: 'Alice' }
@@ -372,15 +371,15 @@ await describe('Result.Err', async () => {
 
   await it('Does not invoke callback within `asyncMap`', async () => {
     const asyncMapper = mock.fn(async _val =>
-    // ...
-    // complex logic
-    // ..
+      // ...
+      // complex logic
+      // ..
 
       // db queries
       // network calls
       // disk io
       // etc ...
-      'Very Nice!',
+      'Very Nice!'
     )
 
     const errVal = err('nooooooo')
@@ -478,6 +477,7 @@ await describe('ResultAsync', async () => {
     })
 
     await it('Can be used with Promise.all', async () => {
+      // eslint-disable-next-line unicorn/no-single-promise-in-promise-methods
       const allResult = await Promise.all([okAsync<string, Error>('1')])
 
       equal(allResult.length, 1)
@@ -790,7 +790,8 @@ await describe('ResultAsync', async () => {
 
   await describe('Result.fromThrowable', async () => {
     await it('Parser JSON', async () => {
-      const safeJSONParse = (text: string, reviver?: (this: unknown, key: string, value: unknown) => unknown) => Result.fromThrowable(JSON.parse, () => 'parser error')(text, reviver) as Result<{name: string}, string>
+      const safeJSONParse = (text: string, reviver?: (this: unknown, key: string, value: unknown) => unknown) =>
+        Result.fromThrowable(JSON.parse, () => 'parser error')(text, reviver) as Result<{ name: string }, string>
 
       const result = safeJSONParse('{"name": "Elizeu Drummond"}')
 
@@ -839,18 +840,18 @@ await describe('ResultAsync', async () => {
         throw new Error() // eslint-disable-line unicorn/error-message
       }
 
-    type MessageObject = { message: string }
-    const toMessageObject = (): MessageObject => ({ message: 'error' })
+      type MessageObject = { message: string }
+      const toMessageObject = (): MessageObject => ({ message: 'error' })
 
-    // type: () => Result<string, MessageObject>
-    // received types from thrower fn and errorFn return type
-    const safeThrower = Result.fromThrowable(thrower, toMessageObject)
-    const result = safeThrower()
+      // type: () => Result<string, MessageObject>
+      // received types from thrower fn and errorFn return type
+      const safeThrower = Result.fromThrowable(thrower, toMessageObject)
+      const result = safeThrower()
 
-    isTrue(result.isErr())
-    isTrue(!result.isOk())
-    isTrue(result instanceof Result)
-    deepEqual(result._unsafeUnwrapErr(), { message: 'error' })
+      isTrue(result.isErr())
+      isTrue(!result.isOk())
+      isTrue(result instanceof Result)
+      deepEqual(result._unsafeUnwrapErr(), { message: 'error' })
     })
   })
 
@@ -861,7 +862,7 @@ await describe('ResultAsync', async () => {
   })
 
   await it('From promise rejected destructuring', async () => {
-    const getUserName = async (): Promise<{user: string}> => ({ user: 'Elizeu Drummond' })
+    const getUserName = async (): Promise<{ user: string }> => ({ user: 'Elizeu Drummond' })
 
     const x = getUserName()
     const user = ResultAsync.fromPromise(x, () => 'No!')
@@ -1096,6 +1097,7 @@ await describe('OrElse', async () => {
     type R = Result<string | undefined, string | Error>
     const result: R = await bar().orElse(e => {
       if (e instanceof BarError) {
+        // eslint-disable-next-line unicorn/no-useless-undefined
         return okAsync(undefined)
       }
 
@@ -1115,8 +1117,8 @@ await describe('OrElse', async () => {
 
 await describe('Finally', async () => {
   interface FileSystem {
-    open: typeof fs.open;
-    close: fs.FileHandle['close'];
+    open: typeof fs.open
+    close: fs.FileHandle['close']
   }
 
   const buffer = 'Not all those who wander are lost' // - J.R.R. Tolkien'
@@ -1126,7 +1128,9 @@ await describe('Finally', async () => {
       console.log('closing file')
     })
     const file = {
-      file: 'file.txt', content: 'line 1', close: closeFile,
+      file: 'file.txt',
+      content: 'line 1',
+      close: closeFile,
     }
 
     const reader = ok(file)
@@ -1159,16 +1163,14 @@ await describe('Finally', async () => {
     td.when(fileSystem.open('foo.txt', 'w')).thenResolve(fileHandle)
     td.when(fileHandle.write(buffer)).thenResolve({ bytesWritten: 32, buffer })
 
-    const result
-      = await fromPromise(fileSystem.open('foo.txt', 'w'), String)
-        .andThen(
-          handle => fromPromise(handle.write(buffer),
-            String),
-        )
-        .finally(async (v, _) => {
-          equal(v.buffer, buffer)
-          await fileHandle.close()
-        })
+    const result = await fromPromise(fileSystem.open('foo.txt', 'w'), String)
+      .andThen(
+        handle => fromPromise(handle.write(buffer), String),
+      )
+      .finally(async (v, _) => {
+        equal(v.buffer, buffer)
+        await fileHandle.close()
+      })
 
     td.verify(fileHandle.close(), { times: 1 })
 
@@ -1180,23 +1182,21 @@ await describe('Finally', async () => {
     const fileHandle = td.object<fs.FileHandle>()
     const fileSystem = (await td.replaceEsm('node:fs/promises')).default as FileSystem
     td.when(fileSystem.open('bar.txt', 'w')).thenResolve(fileHandle)
-    td.when(fileHandle.write(buffer)).thenReject(new Error('Oops: Error: EACCES: permission denied, open \'foo.txt\''))
+    td.when(fileHandle.write(buffer)).thenReject(new Error("Oops: Error: EACCES: permission denied, open 'foo.txt'"))
 
-    const result
-      = await fromPromise(fileSystem.open('bar.txt', 'w'), String)
-        .andThen(
-          handle => fromPromise(handle.write(buffer),
-            String),
-        )
-        .finally(async (_, e) => {
-          isTrue(typeof e === 'string')
-          await fileHandle.close()
-        })
+    const result = await fromPromise(fileSystem.open('bar.txt', 'w'), String)
+      .andThen(
+        handle => fromPromise(handle.write(buffer), String),
+      )
+      .finally(async (_, e) => {
+        isTrue(typeof e === 'string')
+        await fileHandle.close()
+      })
 
     td.verify(fileHandle.close(), { times: 1 })
 
     equal(result.isErr(), true)
-    equal(result._unsafeUnwrapErr(), 'Error: Oops: Error: EACCES: permission denied, open \'foo.txt\'')
+    equal(result._unsafeUnwrapErr(), "Error: Oops: Error: EACCES: permission denied, open 'foo.txt'")
   })
 })
 
@@ -1228,7 +1228,7 @@ await describe('Utils', async () => {
     })
 
     await it('Combines heterogeneous lists', async () => {
-      type HeterogenousList = [ Result<string, string>, Result<number, number>, Result<boolean, boolean> ]
+      type HeterogenousList = [Result<string, string>, Result<number, number>, Result<boolean, boolean>]
 
       const heterogenousList: HeterogenousList = [
         ok('Yooooo'),
@@ -1236,7 +1236,7 @@ await describe('Utils', async () => {
         ok(true),
       ]
 
-      type ExpecteResult = Result<[ string, number, boolean ], string | number | boolean>
+      type ExpecteResult = Result<[string, number, boolean], string | number | boolean>
 
       const result: ExpecteResult = Result.combine(heterogenousList)
 
@@ -1254,7 +1254,7 @@ await describe('Utils', async () => {
         ok([1, 2, 3]),
       ]
 
-      type ExpectedResult = Result<[ string[], number[] ], boolean | string>
+      type ExpectedResult = Result<[string[], number[]], boolean | string>
 
       const result: ExpectedResult = Result.combine(homogenousList)
 
@@ -1304,7 +1304,7 @@ await describe('Utils', async () => {
           okAsync([1, 2, 3]),
         ]
 
-        type ExpecteResult = Result<[ string, number, boolean, number[] ], string | number | boolean>
+        type ExpecteResult = Result<[string, number, boolean, number[]], string | number | boolean>
 
         const result: ExpecteResult = await ResultAsync.combine(heterogenousList)
 
@@ -1339,7 +1339,7 @@ await describe('Utils', async () => {
       })
 
       await it('Combines heterogeneous lists', async () => {
-        type HeterogenousList = [ Result<string, string>, Result<number, number>, Result<boolean, boolean> ]
+        type HeterogenousList = [Result<string, string>, Result<number, number>, Result<boolean, boolean>]
 
         const heterogenousList: HeterogenousList = [
           ok('Yooooo'),
@@ -1347,7 +1347,7 @@ await describe('Utils', async () => {
           ok(true),
         ]
 
-        type ExpecteResult = Result<[ string, number, boolean ], Array<string | number | boolean>>
+        type ExpecteResult = Result<[string, number, boolean], Array<string | number | boolean>>
 
         const result: ExpecteResult = Result.combineWithAllErrors(heterogenousList)
 
@@ -1365,7 +1365,7 @@ await describe('Utils', async () => {
           ok([1, 2, 3]),
         ]
 
-        type ExpectedResult = Result<[ string[], number[] ], Array<boolean | string>>
+        type ExpectedResult = Result<[string[], number[]], Array<boolean | string>>
 
         const result: ExpectedResult = Result.combineWithAllErrors(homogenousList)
 
@@ -1398,7 +1398,11 @@ await describe('Utils', async () => {
       })
 
       await it('Combines heterogeneous lists', async () => {
-        type HeterogenousList = [ ResultAsync<string, string>, ResultAsync<number, number>, ResultAsync<boolean, boolean> ]
+        type HeterogenousList = [
+          ResultAsync<string, string>,
+          ResultAsync<number, number>,
+          ResultAsync<boolean, boolean>,
+        ]
 
         const heterogenousList: HeterogenousList = [
           okAsync('Yooooo'),
@@ -1406,7 +1410,7 @@ await describe('Utils', async () => {
           okAsync(true),
         ]
 
-        type ExpecteResult = Result<[ string, number, boolean ], [string, number, boolean]>
+        type ExpecteResult = Result<[string, number, boolean], [string, number, boolean]>
 
         const result: ExpecteResult = await ResultAsync.combineWithAllErrors(heterogenousList)
 

@@ -2,10 +2,9 @@
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
-    "moduleResolution": "bundler",
+    "moduleResolution": "Bundler",
     "lib": [
-      "esnext",
-      "DOM"
+      "ESNext"
     ],
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
