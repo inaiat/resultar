@@ -1,6 +1,6 @@
 {
   "name": "resultar",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Result pattern for typescript",
   "type": "module",
   "packageManager": "pnpm@9.4.0",
@@ -16,9 +16,7 @@
     "node": ">=20"
   },
   "outDir": "./dist",
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "build": "tsup && git rev-parse HEAD > BUILD_SHA",
     "format": "dprint fmt",
@@ -33,9 +31,7 @@
     "type": "git",
     "url": "git+https://github.com/inaiat/resultar.git"
   },
-  "keywords": [
-    "plugin"
-  ],
+  "keywords": ["plugin"],
   "contributors": [
     "Inaiat <inaiat@gmail.com>",
     "Tomaz Haidar <tomaz_haidar@hotmail.com>"
@@ -52,8 +48,7 @@
   },
   "homepage": "https://github.com/inaiat/resultar",
   "devDependencies": {
-    "@sinclair/typebox": "^0.32.33",
-    "@types/node": "^20.14.5",
+    "@types/node": "^20.14.9",
     "dprint": "^0.46.3",
     "eslint": "^9.5.0",
     "eslint-plugin-import": "^2.29.1",
@@ -64,12 +59,12 @@
     "semver": "^7.6.2",
     "testdouble": "^3.20.2",
     "tsup": "^8.1.0",
-    "tsx": "^4.15.6",
-    "typedoc": "^0.25.13",
+    "tsx": "^4.15.7",
+    "typedoc": "^0.26.2",
     "typedoc-github-wiki-theme": "2.0.0",
-    "typedoc-plugin-markdown": "4.0.3",
-    "typescript": "5.4.5",
-    "typescript-eslint": "^7.13.1"
+    "typedoc-plugin-markdown": "4.1.0",
+    "typescript": "5.5.2",
+    "typescript-eslint": "^7.14.1"
   },
   "tsup": {
     "sourcemap": true,
@@ -77,13 +72,8 @@
     "clean": true,
     "bundle": true,
     "target": "node18",
-    "format": [
-      "esm",
-      "cjs"
-    ],
-    "entry": [
-      "src/**/*.ts"
-    ]
+    "format": ["esm", "cjs"],
+    "entry": ["src/**/*.ts"]
   },
   "directories": {
     "test": "test"

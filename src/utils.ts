@@ -196,8 +196,6 @@ type TraverseWithAllErrors<T, Depth extends number = 5> = Combine<T, Depth> exte
 ] ? Result<EmptyArrayToNever<Oks>, EmptyArrayToNever<Errs>>
   : never
 
-const appendValueToEndOfList = <T>(value: T) => (list: T[]): T[] => [...list, value]
-
 export type CombineResults<
   T extends ReadonlyArray<Result<unknown, unknown>>,
 > = IsLiteralArray<T> extends 1 ? Traverse<T>
@@ -226,17 +224,19 @@ export const combineResultAsyncList = <T, E>(
  */
 export const combineResultList = <T, E>(
   resultList: ReadonlyArray<Result<T, E>>,
-): Result<readonly T[], E> =>
-  resultList.reduce<Result<T[], E>>( // eslint-disable-line unicorn/no-array-reduce
-    (acc, result) =>
-      acc.isOk()
-        ? (result.isErr()
-          ? err(result.error)
-          : acc.map(appendValueToEndOfList(result.value)))
-        : acc,
-    ok([]),
-  )
+): Result<readonly T[], E> => {
+  let acc = ok([]) as Result<T[], E>
 
+  for (const result of resultList) {
+    if (result.isErr()) {
+      acc = err(result.error)
+      break
+    } else {
+      acc.map((list) => list.push(result.value))
+    }
+  }
+  return acc
+}
 /* This is the typesafe version of Promise.all
  *
  * Takes a list of ResultAsync<T, E> and success if all inner results are Ok values
@@ -256,15 +256,18 @@ export const combineResultAsyncListWithAllErrors = <T, E>(
  */
 export const combineResultListWithAllErrors = <T, E>(
   resultList: ReadonlyArray<Result<T, E>>,
-): Result<readonly T[], E[]> =>
-  resultList.reduce<Result<T[], E[]>>( // eslint-disable-line unicorn/no-array-reduce
-    (acc, result) =>
-      result.isErr()
-        ? (acc.isErr()
-          ? err([...acc.error, result.error])
-          : err([result.error]))
-        : (acc.isErr()
-          ? acc
-          : ok([...acc.value, result.value])),
-    ok([]),
-  )
+): Result<readonly T[], E[]> => {
+  let acc = ok([]) as Result<T[], E[]>
+
+  for (const result of resultList) {
+    if (result.isErr() && acc.isErr()) {
+      acc.error.push(result.error)
+    } else if (result.isErr() && acc.isOk()) {
+      acc = err([result.error])
+    } else if (result.isOk() && acc.isOk()) {
+      acc.value.push(result.value)
+    }
+    // do nothing when result.isOk() && acc.isErr()
+  }
+  return acc
+}
