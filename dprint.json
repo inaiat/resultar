@@ -4,7 +4,8 @@
     "quoteStyle": "preferSingle",
     "semiColons": "asi",
     "binaryExpression.operatorPosition": "sameLine",
-    "newLineKind": "auto"
+    "newLineKind": "auto",
+    "arguments.preferHanging": "always"
   },
   "json": {},
   "markdown": {},
