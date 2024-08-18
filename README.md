@@ -28,6 +28,7 @@ For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `P
   + [Synchronous API (`Result`)](#synchronous-api-result)
     - [`ok`](#ok)
     - [`err`](#err)
+    - [`unit`](#unit)
     - [`Result.isOk` (method)](#resultisok-method)
     - [`Result.isErr` (method)](#resultiserr-method)
     - [`Result.map` (method)](#resultmap-method)
@@ -38,6 +39,7 @@ For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `P
     - [`Result.orElse` (method)](#resultorelse-method)
     - [`Result.tap` (method)](#resulttap-method)
     - [`Result.tapError` (method)](#resulttaperror-method)
+    - [`Result.log` (method)](#resultlog-method)
     - [`Result.finally` (method)](#resultfinally-method)
     - [`Result.match` (method)](#resultmatch-method)
     - [`Result.asyncMap` (method)](#resultasyncmap-method)
@@ -48,6 +50,7 @@ For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `P
   + [Asynchronous API (`ResultAsync`)](#asynchronous-api-resultasync)
     - [`okAsync`](#okasync)
     - [`errAsync`](#errasync)
+    - [`unitAsync`](#unitasync)
     - [`ResultAsync.fromPromise` (static class method)](#resultasyncfrompromise-static-class-method)
     - [`ResultAsync.fromSafePromise` (static class method)](#resultasyncfromsafepromise-static-class-method)
     - [`ResultAsync.fromThrowable` (static class method)](#resultasyncfromthrowable-static-class-method)
@@ -165,7 +168,17 @@ myResult.isErr() // true
 ```
 
 [⬆️  Back to top](#toc)
+---
 
+#### `unit`
+
+Returns a `Result` with a `value` of `undefined`.
+
+**Signature:**
+```typescript
+unit(): Result<undefined, never> { ... }
+```
+[⬆️  Back to top](#toc)
 ---
 
 #### `Result.isOk` (method)
@@ -717,6 +730,33 @@ myResult.isErr() // true
 
 ---
 
+#### `unitAsync`
+
+Constructs a `ResultAsync` with a `value` of `undefined`.
+
+**Signature:**
+
+```typescript
+unit<E = never>(error: E): ResultAsync<undefined, E>
+```
+
+**Example:**
+
+```typescript
+import { errAsync } from 'resultar'
+
+const myResultAsync =unitAsync() // instance of `ResultAsync`
+
+const myResult = await myResultAsync // instance of `Err`
+
+myResult.isOk() // false
+myResult.value() // undefined
+```
+
+[⬆️  Back to top](#toc)
+
+---
+
 #### `ResultAsync.fromThrowable` (static class method)
 
 Similar to [Result.fromThrowable](#resultfromthrowable-static-class-method), but for functions that return a `Promise`.
@@ -1072,6 +1112,41 @@ equal(value, "bar")
 ```
 [⬆️  Back to top](#toc)
 
+---
+
+---
+#### `Result.log` (method)
+
+**Executes a side effect function with the `Ok` or `Err` value and returns the original `Result`.
+This method is useful for performing actions that do not modify the `Result` itself, such as logging or updating external state.**
+
+**Signature:**
+```typescript
+class Result<T, E> {
+  log(fn: (t?: T, e?: E) => void): this {
+```
+
+**Example:**
+```typescript
+
+const reader = ok(file) // content file is line 01
+
+reader
+  .log((value, error) => {
+    console.log("Logging file content:", error ? error : value)
+  })
+  .map(it => it.content)
+  .finally(_ => {
+    console.info('Closing file handle')
+    file.close()
+  })
+  .match((value) => {
+    console.log(value) // print line 01
+  }, (error) => {
+    console.error("Oops, something went wrong", error)
+  })
+```
+[⬆️  Back to top](#toc)
 
 ---
 

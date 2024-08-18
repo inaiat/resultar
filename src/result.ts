@@ -101,8 +101,23 @@ export class Result<T, E> implements Resultable<T, E> {
     }
   }
 
+  /**
+   * Creates a new `Result` instance representing a successful operation.
+   *
+   * @param {T} value - The value to be wrapped in the `Result` instance.
+   * @return {Result<T, E>} A new `Result` instance with the provided value.
+   */
   static ok<T, E = never>(value: T): Result<T, E> {
     return new Result<T, E>(new Ok(value))
+  }
+
+  /**
+   * Creates a new `Result` instance representing a successful operation with an undefined value.
+   *
+   * @return {Result<undefined, E>} A new `Result` instance with an undefined value.
+   */
+  static unit<E = never>(): Result<undefined, E> {
+    return new Result<undefined, E>(new Ok(undefined))
   }
 
   static err<T = never, E = unknown>(error: E): Result<T, E> {
@@ -319,7 +334,7 @@ export class Result<T, E> implements Resultable<T, E> {
   }
 
   /**
-   * Performs a side effect no matter what the `Result` variant is.
+   * Performs a side effect for the `Ok` or `Err` variant of `Result`.
    *
    * @param fn The function to apply an `OK` value
    * @returns the result of applying `f` or an `Err` untouched
@@ -468,7 +483,7 @@ export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
 }
 
 // eslint-disable-next-line @typescript-eslint/unbound-method
-export const { ok, err, fromThrowable } = Result
+export const { ok, err, fromThrowable, unit } = Result
 
 /**
  * Evaluates the given generator to a Result returned or an Err yielded from it,
