@@ -105,15 +105,47 @@ export class DisposableResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   }
 }
 
+/**
+ * The ResultAsync type.
+ * This is a union of `Result` and `PromiseLike<Result>`
+ */
 export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
+  /**
+   * Returns a ResultAsync instance that is immediately resolved with a Result.ok(value).
+   *
+   * @param {T} value - The value to be wrapped in a Result.ok.
+   * @return {ResultAsync<T, E>} A ResultAsync instance with the given value and error type E.
+   */
   static okAsync<T, E = never>(value: T): ResultAsync<T, E> {
     return new ResultAsync<T, E>(Promise.resolve(Result.ok(value)))
   }
 
+  /**
+   * Returns a ResultAsync that is immediately resolved with a Result.ok(undefined) value.
+   *
+   * @return {ResultAsync<undefined, E>} A ResultAsync instance with undefined as the value type and E as the error type.
+   */
+  static unitAsync<E = never>(): ResultAsync<undefined, E> {
+    return new ResultAsync<undefined, E>(Promise.resolve(Result.unit()))
+  }
+
+  /**
+   * Returns a ResultAsync instance that is immediately resolved with a Result.err(error).
+   *
+   * @param {E} error - The error to be wrapped in a Result.err.
+   * @return {ResultAsync<T, E>} A ResultAsync instance with the given error and value type T.
+   */
   static errAsync<T = never, E = unknown>(error: E): ResultAsync<T, E> {
     return new ResultAsync<T, E>(Promise.resolve(Result.err(error)))
   }
 
+  /**
+   * Returns a ResultAsync instance that is resolved with a Result.ok(value) or Result.err(error)
+   * based on the provided promise.
+   *
+   * @param {Promise<T>} promise - The promise to be wrapped in a ResultAsync.
+   * @return {ResultAsync<T, E>} A ResultAsync instance with the given promise and error type E.
+   */
   static fromSafePromise<T, E = never>(promise: PromiseLike<T>): ResultAsync<T, E>
   static fromSafePromise<T, E = never>(promise: Promise<T>): ResultAsync<T, E> {
     const newPromise = promise
@@ -122,6 +154,14 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     return new ResultAsync<T, E>(newPromise)
   }
 
+  /**
+   * Returns a ResultAsync instance that is resolved with a Result.ok(value) or Result.err(error)
+   * based on the provided promise.
+   *
+   * @param {Promise<T>} promise - The promise to be wrapped in a ResultAsync.
+   * @param {(e: unknown) => E} errorFn - A function that transforms the error from the promise into the error type E.
+   * @return {ResultAsync<T, E>} A ResultAsync instance with the given promise and error type E.
+   */
   static fromPromise<T, E>(promise: PromiseLike<T>, errorFn: (e: unknown) => E): ResultAsync<T, E>
   static fromPromise<T, E>(promise: Promise<T>, errorFn: (e: unknown) => E): ResultAsync<T, E> {
     const newPromise = promise
@@ -384,7 +424,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
 }
 
 // eslint-disable-next-line @typescript-eslint/unbound-method
-export const { okAsync, errAsync, fromPromise, fromSafePromise } = ResultAsync
+export const { okAsync, errAsync, fromPromise, fromSafePromise, unitAsync } = ResultAsync
 // eslint-disable-next-line @typescript-eslint/unbound-method
 export const fromThrowableAsync = ResultAsync.fromThrowable
 

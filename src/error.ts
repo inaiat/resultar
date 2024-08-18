@@ -8,7 +8,7 @@ const defaultErrorConfig: ErrorConfig = {
   withStackTrace: false,
 }
 
-interface ResultarError<T, E> {
+interface ResultarError<T, E> extends Error {
   data:
     | {
       type: string
@@ -34,6 +34,7 @@ export const createResultarError = <T, E>(
   const maybeStack = config.withStackTrace ? new Error().stack : undefined // eslint-disable-line unicorn/error-message
 
   return {
+    name: 'ResultarError',
     data,
     message,
     stack: maybeStack,

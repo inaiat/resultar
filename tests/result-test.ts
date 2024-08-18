@@ -10,8 +10,8 @@ import assert, {
 import type * as fs from 'node:fs/promises'
 import { afterEach, describe, it, mock } from 'node:test'
 import * as td from 'testdouble'
-import { errAsync, fromPromise, fromThrowableAsync, okAsync, ResultAsync } from '../src/result-async.js'
-import { err, ok, Result } from '../src/result.js'
+import { errAsync, fromPromise, fromThrowableAsync, okAsync, ResultAsync, unitAsync } from '../src/result-async.js'
+import { err, ok, Result, unit } from '../src/result.js'
 
 const validateUser = (user: Readonly<{ name: string }>): ResultAsync<{ name: string }, string> => {
   if (user.name === 'superadmin') {
@@ -28,6 +28,15 @@ await describe('Result.Ok', async () => {
     equal(okVal.isOk(), true)
     equal(okVal.isErr(), false)
     ok(okVal instanceof Result)
+  })
+
+  await it('Creates an Ok value with undefined using unit', () => {
+    const okUndefined = unit()
+
+    equal(okUndefined.isOk(), true)
+    equal(okUndefined.isErr(), false)
+    equal(okUndefined.value, undefined)
+    ok(okUndefined instanceof Result)
   })
 
   await it('Creates an Ok value with null', () => {
@@ -720,6 +729,7 @@ await describe('ResultAsync', async () => {
 
   await describe('fromPromise', async () => {
     await it('Accepts an error handler as a second argument', async () => {
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
       const res = ResultAsync.fromPromise(Promise.reject('No!'), e => new Error('Oops: '.concat(String(e))))
 
       equal(res instanceof ResultAsync, true)
@@ -731,6 +741,17 @@ await describe('ResultAsync', async () => {
   })
 
   await describe('okAsync', async () => {
+    await it('Creates a ResultAsync that resolves to an undefined using unitAsync', async () => {
+      const val = unitAsync()
+
+      equal(val instanceof ResultAsync, true)
+
+      const res = await val
+      equal(res.isOk(), true)
+      equal(res.isErr(), false)
+      equal(res.value, undefined)
+    })
+
     await it('Creates a ResultAsync that resolves to an Ok', async () => {
       const val = okAsync(12)
 
@@ -856,6 +877,7 @@ await describe('ResultAsync', async () => {
   })
 
   await it('From promise rejected', async () => {
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
     const x = await ResultAsync.fromPromise(Promise.reject('No!'), String)
     isTrue(x.isErr())
     equal(x.error, 'No!')
@@ -894,6 +916,7 @@ await describe('ResultAsync', async () => {
   })
 
   await it('From promise error', async () => {
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
     const x = await ResultAsync.fromPromise(Promise.reject('boom'), e => 'Oops: ' + String(e))
 
     type R = string
