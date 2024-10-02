@@ -457,11 +457,11 @@ export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
     return this.result.error
   }
 
-  _unsafeUnwrap(config?: ErrorConfig | undefined): T {
+  _unsafeUnwrap(config?: ErrorConfig): T {
     return this.result._unsafeUnwrap(config)
   }
 
-  _unsafeUnwrapErr(config?: ErrorConfig | undefined): E {
+  _unsafeUnwrapErr(config?: ErrorConfig): E {
     return this.result._unsafeUnwrapErr(config)
   }
 
