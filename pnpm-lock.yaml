@@ -18,14 +18,14 @@ importers:
         specifier: ^9.11.1
         version: 9.11.1
       eslint-plugin-import:
-        specifier: ^2.30.0
-        version: 2.30.0(@typescript-eslint/parser@8.8.0(eslint@9.11.1)(typescript@5.6.2))(eslint@9.11.1)
+        specifier: ^2.31.0
+        version: 2.31.0(@typescript-eslint/parser@8.8.0(eslint@9.11.1)(typescript@5.6.2))(eslint@9.11.1)
       eslint-plugin-n:
         specifier: ^17.10.3
         version: 17.10.3(eslint@9.11.1)
       eslint-plugin-unicorn:
-        specifier: 55.0.0
-        version: 55.0.0(eslint@9.11.1)
+        specifier: ^56.0.0
+        version: 56.0.0(eslint@9.11.1)
       eslint-plugin-unused-imports:
         specifier: ^4.1.4
         version: 4.1.4(@typescript-eslint/eslint-plugin@8.8.0(@typescript-eslint/parser@8.8.0(eslint@9.11.1)(typescript@5.6.2))(eslint@9.11.1)(typescript@5.6.2))(eslint@9.11.1)
@@ -859,12 +859,12 @@ packages:
     peerDependencies:
       eslint: '>=8'
 
-  eslint-plugin-import@2.30.0:
-    resolution: {integrity: sha512-/mHNE9jINJfiD2EKkg1BKyPyUk4zdnT54YgbOgfjSakWT5oyX/qQLVNTkehyfpcMxZXMy1zyonZ2v7hZTX43Yw==}
+  eslint-plugin-import@2.31.0:
+    resolution: {integrity: sha512-ixmkI62Rbc2/w8Vfxyh1jQRTdRTF52VxwRVHl/ykPAmqG+Nb7/kNn+byLP0LxPgI7zWA16Jt82SybJInmMia3A==}
     engines: {node: '>=4'}
     peerDependencies:
       '@typescript-eslint/parser': '*'
-      eslint: ^2 || ^3 || ^4 || ^5 || ^6 || ^7.2.0 || ^8
+      eslint: ^2 || ^3 || ^4 || ^5 || ^6 || ^7.2.0 || ^8 || ^9
     peerDependenciesMeta:
       '@typescript-eslint/parser':
         optional: true
@@ -875,8 +875,8 @@ packages:
     peerDependencies:
       eslint: '>=8.23.0'
 
-  eslint-plugin-unicorn@55.0.0:
-    resolution: {integrity: sha512-n3AKiVpY2/uDcGrS3+QsYDkjPfaOrNrsfQxU9nt5nitd9KuvVXrfAvgCO9DYPSfap+Gqjw9EOrXIsBp5tlHZjA==}
+  eslint-plugin-unicorn@56.0.0:
+    resolution: {integrity: sha512-aXpddVz/PQMmd69uxO98PA4iidiVNvA0xOtbpUoz1WhBd4RxOQQYqN618v68drY0hmy5uU2jy1bheKEVWBjlPw==}
     engines: {node: '>=18.18'}
     peerDependencies:
       eslint: '>=8.56.0'
@@ -2747,7 +2747,7 @@ snapshots:
       eslint: 9.11.1
       eslint-compat-utils: 0.5.1(eslint@9.11.1)
 
-  eslint-plugin-import@2.30.0(@typescript-eslint/parser@8.8.0(eslint@9.11.1)(typescript@5.6.2))(eslint@9.11.1):
+  eslint-plugin-import@2.31.0(@typescript-eslint/parser@8.8.0(eslint@9.11.1)(typescript@5.6.2))(eslint@9.11.1):
     dependencies:
       '@rtsao/scc': 1.1.0
       array-includes: 3.1.8
@@ -2767,6 +2767,7 @@ snapshots:
       object.groupby: 1.0.3
       object.values: 1.2.0
       semver: 6.3.1
+      string.prototype.trimend: 1.0.8
       tsconfig-paths: 3.15.0
     optionalDependencies:
       '@typescript-eslint/parser': 8.8.0(eslint@9.11.1)(typescript@5.6.2)
@@ -2787,7 +2788,7 @@ snapshots:
       minimatch: 9.0.5
       semver: 7.6.3
 
-  eslint-plugin-unicorn@55.0.0(eslint@9.11.1):
+  eslint-plugin-unicorn@56.0.0(eslint@9.11.1):
     dependencies:
       '@babel/helper-validator-identifier': 7.25.7
       '@eslint-community/eslint-utils': 4.4.0(eslint@9.11.1)

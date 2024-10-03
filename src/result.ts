@@ -125,24 +125,24 @@ export class Result<T, E> implements Resultable<T, E> {
   }
 
   static combine<
-    T extends readonly [Result<unknown, unknown>, ...Array<Result<unknown, unknown>>],
+    T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
   >(resultList: T): CombineResults<T>
-  static combine<T extends ReadonlyArray<Result<unknown, unknown>>>(
+  static combine<T extends readonly Result<unknown, unknown>[]>(
     resultList: T,
   ): CombineResults<T>
   static combine<
-    T extends readonly [Result<unknown, unknown>, ...Array<Result<unknown, unknown>>],
+    T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
   >(resultList: T): CombineResults<T> {
     return combineResultList(resultList) as CombineResults<T>
   }
 
   static combineWithAllErrors<
-    T extends readonly [Result<unknown, unknown>, ...Array<Result<unknown, unknown>>],
+    T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
   >(resultList: T): CombineResultsWithAllErrorsArray<T>
-  static combineWithAllErrors<T extends ReadonlyArray<Result<unknown, unknown>>>(
+  static combineWithAllErrors<T extends readonly Result<unknown, unknown>[]>(
     resultList: T,
   ): CombineResultsWithAllErrorsArray<T>
-  static combineWithAllErrors<T extends ReadonlyArray<Result<unknown, unknown>>>(
+  static combineWithAllErrors<T extends readonly Result<unknown, unknown>[]>(
     resultList: T,
   ): CombineResultsWithAllErrorsArray<T> {
     return combineResultListWithAllErrors(resultList) as CombineResultsWithAllErrorsArray<T>
@@ -602,7 +602,7 @@ type Prev = [
   47,
   48,
   49,
-  ...Array<0>,
+  ...0[],
 ]
 
 // Collects the results array into separate tuple array.
@@ -715,14 +715,14 @@ type TraverseWithAllErrors<T, Depth extends number = 5> = Traverse<T, Depth> ext
 
 // Combines the array of results into one result.
 export type CombineResults<
-  T extends ReadonlyArray<Result<unknown, unknown>>,
+  T extends readonly Result<unknown, unknown>[],
 > = IsLiteralArray<T> extends 1 ? Traverse<T>
   : Result<ExtractOkTypes<T>, ExtractErrTypes<T>[number]>
 
 // Combines the array of results into one result with all errors.
 export type CombineResultsWithAllErrorsArray<
-  T extends ReadonlyArray<Result<unknown, unknown>>,
+  T extends readonly Result<unknown, unknown>[],
 > = IsLiteralArray<T> extends 1 ? TraverseWithAllErrors<T>
-  : Result<ExtractOkTypes<T>, Array<ExtractErrTypes<T>[number]>>
+  : Result<ExtractOkTypes<T>, ExtractErrTypes<T>[number][]>
 
 // #endregion
