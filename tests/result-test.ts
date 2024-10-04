@@ -1433,7 +1433,7 @@ await describe('Utils', async () => {
           okAsync(true),
         ]
 
-        type ExpecteResult = Result<[string, number, boolean], [string, number, boolean]>
+        type ExpecteResult = Result<[string, number, boolean], (string | number | boolean)[]>
 
         const result: ExpecteResult = await ResultAsync.combineWithAllErrors(heterogenousList)
 
