@@ -344,16 +344,10 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
 }
 
 /**
- * Evaluates the given generator to a Result returned or an Err yielded from it,
- * whichever comes first.
+ * @deprecated Use `safeTry` instead.
+ * @see `safeTry`
  *
- * This function, in combination with `Result.safeUnwrap()`, is intended to emulate
- * Rust's ? operator.
- * See `/tests/safeTry.test.ts` for examples.
- *
- * @param body - What is evaluated. In body, `yield* result.safeUnwrap()` works as
- * Rust's `result?` expression.
- * @returns The first occurence of either an yielded Err or a returned `ResultAsync`.
+ * This will be removed in the next major version.
  */
 export function safeTryAsync<T, E>(
   body: () => AsyncGenerator<Result<never, E>, Result<T, E>>,
