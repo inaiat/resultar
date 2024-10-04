@@ -1,6 +1,7 @@
 import { ResultAsync } from './result-async.js'
 import type { Result } from './result.js'
 import { err, ok } from './result.js'
+
 // Given a list of Results, this extracts all the different `T` types from that list
 export type ExtractOkTypes<T extends readonly Result<unknown, unknown>[]> = {
   [idx in keyof T]: T[idx] extends Result<infer U, unknown> ? U : never

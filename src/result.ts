@@ -660,9 +660,7 @@ export type Combine<T, Depth extends number = 5> = Transpose<CollectResults<T>, 
   : never
 
 // Deduplicates the result, as the result type is a union of Err and Ok types.
-export type Dedup<T> = T extends Result<infer RL, infer RR> ? Result<RL, RR>
-  : T
-
+export type Dedup<T> = T extends Result<infer RL, infer RR> ? Result<RL, RR> : T
 // Given a union, this gives the array of the union members.
 export type MemberListOf<T> = (
   (T extends unknown ? (t: T) => T : never) extends infer U
