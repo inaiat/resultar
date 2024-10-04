@@ -377,15 +377,15 @@ export function safeTryAsync<T, E>(
 
 // Combines the array of async results into one result.
 export type CombineResultAsyncs<
-  T extends ReadonlyArray<ResultAsync<unknown, unknown>>,
+  T extends readonly ResultAsync<unknown, unknown>[],
 > = IsLiteralArray<T> extends 1 ? TraverseAsync<UnwrapAsync<T>>
   : ResultAsync<ExtractOkAsyncTypes<T>, ExtractErrAsyncTypes<T>[number]>
 
 // Combines the array of async results into one result with all errors.
 export type CombineResultsWithAllErrorsArrayAsync<
-  T extends ReadonlyArray<ResultAsync<unknown, unknown>>,
+  T extends readonly ResultAsync<unknown, unknown>[],
 > = IsLiteralArray<T> extends 1 ? TraverseWithAllErrorsAsync<UnwrapAsync<T>>
-  : ResultAsync<ExtractOkAsyncTypes<T>, Array<ExtractErrAsyncTypes<T>[number]>>
+  : ResultAsync<ExtractOkAsyncTypes<T>, ExtractErrAsyncTypes<T>[number][]>
 
 // Unwraps the inner `Result` from a `ResultAsync` for all elements.
 type UnwrapAsync<T> = IsLiteralArray<T> extends 1
@@ -397,8 +397,8 @@ type UnwrapAsync<T> = IsLiteralArray<T> extends 1
   // If we got something too general such as ResultAsync<X, Y>[] then we
   // simply need to map it to ResultAsync<X[], Y[]>. Yet `ResultAsync`
   // itself is a union therefore it would be enough to cast it to Ok.
-  : T extends Array<infer A>
-    ? A extends PromiseLike<infer HI> ? HI extends Result<infer L, infer R> ? Array<Result<L, R>>
+  : T extends (infer A)[]
+    ? A extends PromiseLike<infer HI> ? HI extends Result<infer L, infer R> ? Result<L, R>[]
       : never
     : never
   : never
@@ -412,7 +412,7 @@ type TraverseAsync<T, Depth extends number = 5> = IsLiteralArray<T> extends 1
   // checking something similar to ResultAsync<X, Y>[]. In this case we don't
   // know the length of the elements, therefore we need to traverse the X and Y
   // in a way that the result should contain X[] and Y[].
-  : T extends Array<infer I>
+  : T extends (infer I)[]
   // The MemberListOf<I> here is to include all possible types. Therefore
   // if we face (ResultAsync<X, Y> | ResultAsync<A, B>)[] this type should
   // handle the case.
@@ -421,11 +421,11 @@ type TraverseAsync<T, Depth extends number = 5> = IsLiteralArray<T> extends 1
       // we already expect them to be an array.
       ? Oks extends unknown[]
         ? Errs extends unknown[]
-          ? ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, MembersToUnion<Array<Errs[number]>>>
-        : ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, Errs>
+          ? ResultAsync<EmptyArrayToNever<Oks[number][]>, MembersToUnion<Errs[number][]>>
+        : ResultAsync<EmptyArrayToNever<Oks[number][]>, Errs>
         // The rest of the conditions are to satisfy the TS and support
         // the edge cases which are not really expected to happen.
-      : Errs extends unknown[] ? ResultAsync<Oks, MembersToUnion<Array<Errs[number]>>>
+      : Errs extends unknown[] ? ResultAsync<Oks, MembersToUnion<Errs[number][]>>
       : ResultAsync<Oks, Errs>
     : never
   : never
@@ -436,13 +436,13 @@ type TraverseAsync<T, Depth extends number = 5> = IsLiteralArray<T> extends 1
 type TraverseWithAllErrorsAsync<T, Depth extends number = 5> = IsLiteralArray<T> extends 1
   ? Combine<T, Depth> extends [infer Oks, infer Errs] ? ResultAsync<EmptyArrayToNever<Oks>, EmptyArrayToNever<Errs>>
   : never
-  : Writable<T> extends Array<infer I>
+  : Writable<T> extends (infer I)[]
     ? Combine<MemberListOf<I>, Depth> extends [infer Oks, infer Errs]
       ? Oks extends unknown[]
         ? Errs extends unknown[]
-          ? ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, EmptyArrayToNever<Array<Errs[number]>>>
-        : ResultAsync<EmptyArrayToNever<Array<Oks[number]>>, Errs>
-      : Errs extends unknown[] ? ResultAsync<Oks, EmptyArrayToNever<Array<Errs[number]>>>
+          ? ResultAsync<EmptyArrayToNever<Oks[number][]>, EmptyArrayToNever<Errs[number][]>>
+        : ResultAsync<EmptyArrayToNever<Oks[number][]>, Errs>
+      : Errs extends unknown[] ? ResultAsync<Oks, EmptyArrayToNever<Errs[number][]>>
       : ResultAsync<Oks, Errs>
     : never
   : never
