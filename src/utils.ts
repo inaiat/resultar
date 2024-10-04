@@ -28,18 +28,6 @@ export type InferErrTypes<R> = R extends Result<unknown, infer E> ? E : never
 export type InferAsyncOkTypes<R> = R extends ResultAsync<infer T, unknown> ? T : never
 export type InferAsyncErrTypes<R> = R extends ResultAsync<unknown, infer E> ? E : never
 
-/* This is the typesafe version of Promise.all
- *
- * Takes a list of ResultAsync<T, E> and success if all inner results are Ok values
- * or fails if one (or more) of the inner results are Err values
- */
-export const combineResultAsyncList = <T, E>(
-  asyncResultList: readonly ResultAsync<T, E>[],
-): ResultAsync<readonly T[], E> =>
-  ResultAsync.fromSafePromise(Promise.all(asyncResultList)).andThen(
-    combineResultList,
-  ) as ResultAsync<T[], E>
-
 /**
  * Short circuits on the FIRST Err value that we find
  */
@@ -58,6 +46,19 @@ export const combineResultList = <T, E>(
   }
   return acc
 }
+
+/* This is the typesafe version of Promise.all
+ *
+ * Takes a list of ResultAsync<T, E> and success if all inner results are Ok values
+ * or fails if one (or more) of the inner results are Err values
+ */
+export const combineResultAsyncList = <T, E>(
+  asyncResultList: readonly ResultAsync<T, E>[],
+): ResultAsync<readonly T[], E> =>
+  ResultAsync.fromSafePromise(Promise.all(asyncResultList)).andThen(
+    combineResultList,
+  ) as ResultAsync<T[], E>
+
 /* This is the typesafe version of Promise.all
  *
  * Takes a list of ResultAsync<T, E> and success if all inner results are Ok values

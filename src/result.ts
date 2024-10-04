@@ -325,7 +325,7 @@ export class Result<T, E> implements Resultable<T, E> {
    * @param ok
    * @param err
    */
-  match<X>(fnOk: (t: T) => X, fnErr: (e: E) => X): X {
+  match<A, B = A>(fnOk: (t: T) => A, fnErr: (e: E) => B): A | B {
     if (this.state.ok) {
       return fnOk(this.value)
     }
@@ -707,10 +707,10 @@ type Traverse<T, Depth extends number = 5> = Combine<T, Depth> extends [infer Ok
 
 // Traverses an array of results and returns a single result containing
 // the oks combined and the array of errors combined.
-type TraverseWithAllErrors<T, Depth extends number = 5> = Combine<T, Depth> extends [
+type TraverseWithAllErrors<T, Depth extends number = 5> = Traverse<T, Depth> extends Result<
   infer Oks,
-  infer Errs,
-] ? Result<EmptyArrayToNever<Oks>, EmptyArrayToNever<Errs>>
+  infer Errs
+> ? Result<Oks, Errs[]>
   : never
 
 export type CombineResults<
