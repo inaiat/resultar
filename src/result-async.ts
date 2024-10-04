@@ -343,11 +343,6 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/unbound-method
-export const { okAsync, errAsync, fromPromise, fromSafePromise, unitAsync } = ResultAsync
-// eslint-disable-next-line @typescript-eslint/unbound-method
-export const fromThrowableAsync = ResultAsync.fromThrowable
-
 /**
  * Evaluates the given generator to a Result returned or an Err yielded from it,
  * whichever comes first.
@@ -374,6 +369,11 @@ export function safeTryAsync<T, E>(
     })(),
   )
 }
+
+// eslint-disable-next-line @typescript-eslint/unbound-method
+export const { okAsync, errAsync, fromPromise, fromSafePromise, unitAsync } = ResultAsync
+// eslint-disable-next-line @typescript-eslint/unbound-method
+export const fromThrowableAsync = ResultAsync.fromThrowable
 
 // Combines the array of async results into one result.
 export type CombineResultAsyncs<

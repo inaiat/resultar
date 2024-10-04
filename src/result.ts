@@ -482,9 +482,6 @@ export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/unbound-method
-export const { ok, err, fromThrowable, unit } = Result
-
 /**
  * Evaluates the given generator to a Result returned or an Err yielded from it,
  * whichever comes first.
@@ -544,6 +541,9 @@ export function safeTry<T, E>(
 
   return n.value
 }
+
+// eslint-disable-next-line @typescript-eslint/unbound-method
+export const { ok, err, fromThrowable, unit } = Result
 
 // #region Combine - Types
 
@@ -713,6 +713,7 @@ type TraverseWithAllErrors<T, Depth extends number = 5> = Traverse<T, Depth> ext
 > ? Result<Oks, Errs[]>
   : never
 
+// Combines the array of results into one result.
 export type CombineResults<
   T extends readonly Result<unknown, unknown>[],
 > = IsLiteralArray<T> extends 1 ? Traverse<T>
@@ -723,3 +724,5 @@ export type CombineResultsWithAllErrorsArray<
   T extends readonly Result<unknown, unknown>[],
 > = IsLiteralArray<T> extends 1 ? TraverseWithAllErrors<T>
   : Result<ExtractOkTypes<T>, ExtractErrTypes<T>[number][]>
+
+// #endregion
