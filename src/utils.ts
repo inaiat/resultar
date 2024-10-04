@@ -59,20 +59,6 @@ export const combineResultAsyncList = <T, E>(
     combineResultList,
   ) as ResultAsync<T[], E>
 
-/* This is the typesafe version of Promise.all
- *
- * Takes a list of ResultAsync<T, E> and success if all inner results are Ok values
- * or fails if one (or more) of the inner results are Err values
- */
-export const combineResultAsyncListWithAllErrors = <T, E>(
-  asyncResultList: readonly ResultAsync<T, E>[],
-): ResultAsync<readonly T[], E[]> => {
-  const x = ResultAsync.fromSafePromise(Promise.all(asyncResultList)).andThen(
-    combineResultListWithAllErrors,
-  )
-  return x as ResultAsync<T[], E[]>
-}
-
 /**
  * Give a list of all the errors we find
  */
@@ -93,3 +79,10 @@ export const combineResultListWithAllErrors = <T, E>(
   }
   return acc
 }
+
+export const combineResultAsyncListWithAllErrors = <T, E>(
+  asyncResultList: readonly ResultAsync<T, E>[],
+): ResultAsync<readonly T[], E[]> =>
+  ResultAsync.fromSafePromise(Promise.all(asyncResultList)).andThen(
+    combineResultListWithAllErrors,
+  ) as ResultAsync<T[], E[]>
