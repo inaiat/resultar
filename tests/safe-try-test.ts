@@ -3,7 +3,7 @@
 import { deepEqual, equal, ok as isOk } from 'node:assert'
 import { describe, it } from 'node:test'
 import type { ResultAsync } from '../src/result-async.js'
-import { errAsync, okAsync, safeTryAsync } from '../src/result-async.js'
+import { errAsync, okAsync } from '../src/result-async.js'
 import { err, ok, Result, safeTry } from '../src/result.js'
 
 await describe('safeTryAsync', async () => {
@@ -12,7 +12,7 @@ await describe('safeTryAsync', async () => {
   const errValue = errAsync('boom')
 
   await it('SafeTryAsync with all Ok', async () => {
-    const resultAsync = safeTryAsync(async function*() {
+    const resultAsync = safeTry(async function*() {
       const okValues = new Array<string>()
 
       const okFoo = yield* fooValue.safeUnwrap()
@@ -31,7 +31,7 @@ await describe('safeTryAsync', async () => {
   })
 
   await it('SafeTryAsync with Err', async () => {
-    const resultAsync = safeTryAsync(async function*() {
+    const resultAsync = safeTry(async function*() {
       const okValues = new Array<string>()
       const okFoo = yield* fooValue.safeUnwrap()
       okValues.push(okFoo)
@@ -224,7 +224,7 @@ await describe("Tests if README's examples work", async () => {
   })
 
   it('async mayFail1 error', async () => {
-    async function myFunc(): Promise<Result<number, string>> {
+    function myFunc(): ResultAsync<number, string> {
       return safeTry<number, string>(async function*() {
         return ok(
           (yield* (await promiseBad())
@@ -243,7 +243,7 @@ await describe("Tests if README's examples work", async () => {
   })
 
   it('async mayFail2 error', async () => {
-    async function myFunc(): Promise<Result<number, string>> {
+    function myFunc(): ResultAsync<number, string> {
       return safeTry<number, string>(async function*() {
         return ok(
           (yield* (await promiseGood())
@@ -262,7 +262,7 @@ await describe("Tests if README's examples work", async () => {
   })
 
   it('promise async all ok', async () => {
-    async function myFunc(): Promise<Result<number, string>> {
+    function myFunc(): ResultAsync<number, string> {
       return safeTry<number, string>(async function*() {
         return ok(
           (yield* (await promiseGood())

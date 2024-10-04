@@ -1237,7 +1237,7 @@ await describe('Utils', async () => {
     })
 
     await it('Combines a list of results into an Err value', async () => {
-      const resultList: Array<Result<number, string>> = [
+      const resultList: Result<number, string>[] = [
         ok(123),
         err('boooom!'),
         ok(456),
@@ -1299,7 +1299,7 @@ await describe('Utils', async () => {
       })
 
       await it('Combines a list of results into an Err value', async () => {
-        const resultList: Array<ResultAsync<number, string>> = [
+        const resultList: ResultAsync<number, string>[] = [
           okAsync(123),
           errAsync('boooom!'),
           okAsync(456),
@@ -1348,7 +1348,7 @@ await describe('Utils', async () => {
       })
 
       await it('Combines a list of results into an Err value', async () => {
-        const resultList: Array<Result<number, string>> = [
+        const resultList: Result<number, string>[] = [
           ok(123),
           err('boooom!'),
           ok(456),
@@ -1370,7 +1370,7 @@ await describe('Utils', async () => {
           ok(true),
         ]
 
-        type ExpecteResult = Result<[string, number, boolean], Array<string | number | boolean>>
+        type ExpecteResult = Result<[string, number, boolean], (string | number | boolean)[]>
 
         const result: ExpecteResult = Result.combineWithAllErrors(heterogenousList)
 
@@ -1388,7 +1388,7 @@ await describe('Utils', async () => {
           ok([1, 2, 3]),
         ]
 
-        type ExpectedResult = Result<[string[], number[]], Array<boolean | string>>
+        type ExpectedResult = Result<[string[], number[]], (boolean | string)[]>
 
         const result: ExpectedResult = Result.combineWithAllErrors(homogenousList)
 
@@ -1407,7 +1407,7 @@ await describe('Utils', async () => {
       })
 
       await it('Combines a list of results into an Err value', async () => {
-        const asyncResultList: Array<ResultAsync<number, string>> = [
+        const asyncResultList: ResultAsync<number, string>[] = [
           okAsync(123),
           errAsync('boooom!'),
           okAsync(456),
@@ -1433,7 +1433,7 @@ await describe('Utils', async () => {
           okAsync(true),
         ]
 
-        type ExpecteResult = Result<[string, number, boolean], [string, number, boolean]>
+        type ExpecteResult = Result<[string, number, boolean], (string | number | boolean)[]>
 
         const result: ExpecteResult = await ResultAsync.combineWithAllErrors(heterogenousList)
 

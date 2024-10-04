@@ -4,7 +4,7 @@ import unicorn from 'eslint-plugin-unicorn'
 import tseslint from 'typescript-eslint'
 
 const customRules = {
-  '@typescript-eslint/array-type': ['error', { 'default': 'array-simple' }],
+  '@typescript-eslint/array-type': ['error', { 'default': 'array' }],
   '@typescript-eslint/consistent-type-exports': 'error',
   '@typescript-eslint/consistent-type-imports': 'error',
   '@typescript-eslint/no-unused-vars': 'error',
