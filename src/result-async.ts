@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/unbound-method */
 import type { Combine, Dedup, EmptyArrayToNever, IsLiteralArray, MemberListOf, MembersToUnion } from './result.js'
 import { Result } from './result.js'
 import type {
@@ -204,7 +205,11 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     )
   }
 
-  if(fCondition: (t: T) => boolean) {
+  if(fCondition: (t: T) => boolean): {
+    true: <X1, Y1>(fTrue: (t: T) => ResultAsync<X1, Y1>) => {
+      false: <X2, Y2>(fFalse: (t: T) => ResultAsync<X2, Y2>) => ResultAsync<X1 | X2, Y1 | Y2 | E>
+    }
+  } {
     return {
       true: <X1, Y1>(fTrue: (t: T) => ResultAsync<X1, Y1>) => ({
         false: <X2, Y2>(fFalse: (t: T) => ResultAsync<X2, Y2>): ResultAsync<X1 | X2, Y1 | Y2 | E> =>
@@ -364,9 +369,11 @@ export function safeTryAsync<T, E>(
   )
 }
 
-// eslint-disable-next-line @typescript-eslint/unbound-method
-export const { okAsync, errAsync, fromPromise, fromSafePromise, unitAsync } = ResultAsync
-// eslint-disable-next-line @typescript-eslint/unbound-method
+export const okAsync = ResultAsync.okAsync
+export const errAsync = ResultAsync.errAsync
+export const fromPromise = ResultAsync.fromPromise
+export const fromSafePromise = ResultAsync.fromSafePromise
+export const unitAsync = ResultAsync.unitAsync
 export const fromThrowableAsync = ResultAsync.fromThrowable
 
 // Combines the array of async results into one result.

@@ -3,6 +3,8 @@ on:
   push:
     branches:
       - main
+      - chore/jsr
+      
 
 jobs:
   publish:
@@ -15,26 +17,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v2
-        with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
+      # - name: Set up Node.js
+      #   uses: actions/setup-node@v2
+      #   with:
+      #     node-version: '20'
+      #     registry-url: 'https://registry.npmjs.org'
 
-      - name: Install corepack
-        run: npm install -g corepack && corepack enable
+      # - name: Install corepack
+      #   run: npm install -g corepack && corepack enable
 
-      - name: Install dependencies
-        run: pnpm install
+      # - name: Install dependencies
+      #   run: pnpm install
 
-      - name: Build and test
-        run: pnpm build && pnpm test
+      # - name: Build and test
+      #   run: pnpm build && pnpm test
 
-      - name: Publish package
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # - name: Publish package
+      #   run: npm publish --access public
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      # - name: Publish package on JSR
-      #   run: pnpm dlx jsr publish
-
+      - name: Publish package on JSR
+        run: npx jsr publish
