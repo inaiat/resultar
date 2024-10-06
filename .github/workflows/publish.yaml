@@ -3,6 +3,8 @@ on:
   push:
     branches:
       - main
+      - chore/jsr
+      
 
 jobs:
   publish:
@@ -30,19 +32,10 @@ jobs:
       - name: Build and test
         run: pnpm build && pnpm test
 
-      - name: Publish package
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # - name: Publish package
+      #   run: npm publish --access public
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      # - name: Publish package on JSR
-      #   run: pnpm dlx jsr publish
-
-  publish-jsr:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write # The OIDC ID token is used for authentication with JSR.
-    steps:
-      - uses: actions/checkout@v4
-      - run: npx jsr publish
+      - name: Publish package on JSR
+        run: pnpm dlx jsr publish
