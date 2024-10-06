@@ -19,7 +19,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup && git rev-parse HEAD > BUILD_SHA",
+    "build": "tsup",
     "format": "dprint fmt",
     "lint": "dprint check && eslint",
     "lint:fix": "dprint fmt && eslint --fix",
