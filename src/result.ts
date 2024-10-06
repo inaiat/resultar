@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/unbound-method */
 import type { ErrorConfig } from './error.js'
 import { createResultarError } from './error.js'
 import { errAsync, ResultAsync } from './result-async.js'
@@ -231,7 +232,11 @@ export class Result<T, E> implements Resultable<T, E> {
     return err(this.error)
   }
 
-  if(fCondition: (t: T) => boolean) {
+  if(fCondition: (t: T) => boolean): {
+    true: <X1, Y1>(fTrue: (t: T) => Result<X1, Y1>) => {
+      false: <X2, Y2>(fFalse: (t: T) => Result<X2, Y2>) => Result<X1 | X2, Y1 | Y2 | E>
+    }
+  } {
     return {
       true: <X1, Y1>(fTrue: (t: T) => Result<X1, Y1>) => ({
         false: <X2, Y2>(fFalse: (t: T) => Result<X2, Y2>): Result<X1 | X2, Y1 | Y2 | E> => {
@@ -542,8 +547,10 @@ export function safeTry<T, E>(
   return n.value
 }
 
-// eslint-disable-next-line @typescript-eslint/unbound-method
-export const { ok, err, fromThrowable, unit } = Result
+export const ok = Result.ok
+export const err = Result.err
+export const fromThrowable = Result.fromThrowable
+export const unit = Result.unit
 
 // #region Combine - Types
 
