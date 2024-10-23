@@ -665,8 +665,6 @@ const result = Result.combineWithAllErrors(resultList)
 
 #### `Result.safeUnwrap()`
 
-**⚠️ You must use `.safeUnwrap` in a generator context with `safeTry`**. Please see [safeTry](#safeTry).
-
 Allows for unwrapping a `Result` or returning an `Err` implicitly, thereby reducing boilerplate.
 
 
@@ -1391,8 +1389,6 @@ const result = ResultAsync.combineWithAllErrors(resultList)
 ```
 
 #### `ResultAsync.safeUnwrap()`
-
-**⚠️ You must use `.safeUnwrap` in a generator context with `safeTry`**. Please see [safeTry](#safeTry).
 
 Allows for unwrapping a `Result` or returning an `Err` implicitly, thereby reducing boilerplate.
 

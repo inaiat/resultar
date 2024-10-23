@@ -254,6 +254,10 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     return this.innerPromise.then(res => res.unwrapOr(t))
   }
 
+  async unwrapOrThrow(): Promise<T | E> {
+    return this.innerPromise.then(res => res.unwrapOrThrow())
+  }
+
   /**
    * Performs a side effect for the `Ok` variant of `ResultAsync`.
    * This function can be used for control flow based on result values.
@@ -338,6 +342,16 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
         return res
       }),
     )
+  }
+
+  async *[Symbol.asyncIterator](): AsyncGenerator<Result<never, E>, T> {
+    const result = await this.innerPromise
+
+    if (result.isErr()) {
+      yield errAsync(result.error)
+    }
+
+    return result.value
   }
 
   /**
