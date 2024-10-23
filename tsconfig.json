@@ -8,14 +8,19 @@
     ],
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "sourceMap": true,
     "paths": {
       "src/*": [
         "./src"
       ]
     },
     "skipLibCheck": true,
-    "strict": true,
+    "noImplicitAny": true,
+    "sourceMap": false,
+    "downlevelIteration": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
     "declaration": true
   },
   "include": [

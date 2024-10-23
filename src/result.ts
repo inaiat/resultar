@@ -4,7 +4,6 @@ import { createResultarError } from './error.js'
 import { errAsync, ResultAsync } from './result-async.js'
 import type { ExtractErrTypes, ExtractOkTypes, InferErrTypes, InferOkTypes } from './utils.js'
 import { combineResultList, combineResultListWithAllErrors } from './utils.js'
-
 class Ok<T> {
   readonly ok = true
   constructor(public readonly value: T) {}
@@ -398,6 +397,15 @@ export class Result<T, E> implements Resultable<T, E> {
     }
   }
 
+  unwrapOrThrow(): T | E {
+    if (this.state.ok) {
+      return this.value
+    }
+
+    // eslint-disable-next-line @typescript-eslint/only-throw-error
+    throw this.error
+  }
+
   /**
    * **This method is unsafe, and should only be used in a test environments**
    *
@@ -427,6 +435,17 @@ export class Result<T, E> implements Resultable<T, E> {
     }
 
     return this.error
+  }
+
+  *[Symbol.iterator](): Generator<Result<never, E>, T> {
+    if (this.state.ok) {
+      return this.value
+    }
+
+    // eslint-disable-next-line unicorn/no-this-assignment, @typescript-eslint/no-this-alias
+    const self: Result<T, E> = this
+    yield self as Result<never, E>
+    return self as T
   }
 
   safeUnwrap(): Generator<Result<never, E>, T> {

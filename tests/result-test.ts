@@ -2,6 +2,7 @@ import assert, {
   deepEqual,
   deepStrictEqual,
   equal,
+  fail,
   notDeepStrictEqual,
   notEqual,
   ok as isTrue,
@@ -1458,6 +1459,62 @@ await describe('Utils', async () => {
         const unwrappedResult = result._unsafeUnwrap()
         equal(unwrappedResult.length, 1)
         strictEqual(unwrappedResult[0], mock)
+      })
+    })
+  })
+})
+
+await describe('unwrapOrThrow', async () => {
+  class CustomError extends Error {
+    constructor(message: string, readonly customProperty: string) {
+      super(message)
+    }
+  }
+
+  await describe('unwrapOrThrow sync', async () => {
+    await it('returns a promise to the result value on an Ok', async () => {
+      const unwrapped = ok(12).unwrapOrThrow()
+      equal(unwrapped, 12)
+    })
+
+    await it('should unwrapOrThrow throw an error', async () => {
+      try {
+        const errorValue = err(new CustomError('boooom!', 'bar')).unwrapOrThrow()
+        fail(`should not get here ${JSON.stringify(errorValue)}`)
+      } catch (error) {
+        assert(error instanceof CustomError)
+        equal(error.customProperty, 'bar')
+      }
+    })
+
+    await it('should throw error return a correct error', async () => {
+      assert.throws(() => err('boooom!').unwrapOrThrow(), /^boooom!$/)
+      assert.throws(() => err(new Error('boooom!')).unwrapOrThrow(), /^Error: boooom!$/)
+      assert.throws(() => err(new CustomError('boooom!', 'bar')).unwrapOrThrow(), { customProperty: 'bar' })
+    })
+  })
+
+  await describe('unwrapOrThrow async', async () => {
+    await it('returns a promise to the result value on an Ok', async () => {
+      const unwrapped = await okAsync(12).unwrapOrThrow()
+      equal(unwrapped, 12)
+    })
+
+    await it('should unwrapOrThrow throw an error', async () => {
+      try {
+        const errorValue = await errAsync(new CustomError('boooom!', 'bar')).unwrapOrThrow()
+        fail(`should not get here ${JSON.stringify(errorValue)}`)
+      } catch (error) {
+        assert(error instanceof CustomError)
+        equal(error.customProperty, 'bar')
+      }
+    })
+
+    await it('should throw error return a correct error', async () => {
+      await assert.rejects(async () => await errAsync('boooom!').unwrapOrThrow(), /^boooom!$/)
+      await assert.rejects(() => errAsync(new Error('boooom!')).unwrapOrThrow(), /^Error: boooom!$/)
+      await assert.rejects(() => errAsync(new CustomError('boooom!', 'bar')).unwrapOrThrow(), {
+        customProperty: 'bar',
       })
     })
   })
