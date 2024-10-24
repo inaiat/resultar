@@ -96,13 +96,13 @@ await describe("Returns the first occurence of Err instance as yiled*'s operand"
     const okValues = new Array<string>()
 
     const result = safeTry(function*() {
-      const okFoo = yield* ok('foo')
+      const okFoo = yield* ok('foo').safeUnwrap()
       okValues.push(okFoo)
 
-      const okBar = yield* ok('bar')
+      const okBar = yield* ok('bar').safeUnwrap()
       okValues.push(okBar)
 
-      yield* err(errVal)
+      yield* err(errVal).safeUnwrap()
 
       throw new Error('This line should not be executed')
     })
