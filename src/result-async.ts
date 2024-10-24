@@ -254,7 +254,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     return this.innerPromise.then(res => res.unwrapOr(t))
   }
 
-  async unwrapOrThrow(): Promise<T | E> {
+  async unwrapOrThrow(): Promise<T> {
     return this.innerPromise.then(res => res.unwrapOrThrow())
   }
 
