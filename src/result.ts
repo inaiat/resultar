@@ -397,7 +397,7 @@ export class Result<T, E> implements Resultable<T, E> {
     }
   }
 
-  unwrapOrThrow(): T | E {
+  unwrapOrThrow(): T {
     if (this.state.ok) {
       return this.value
     }
