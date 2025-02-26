@@ -14,7 +14,7 @@ This package contains a `Result` type that represents either success (`Ok`) or f
 
 For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `Promise<Result<T, E>>` and gives you the same level of expressivity and control as a regular `Result<T, E>`.
 
-`ResultAsync` is `thenable` meaning it **behaves exactly like a native `Promise<Result>`** ... except you have access to the same methods that `Result` provides without having to `await` or `.then` the promise! 
+`ResultAsync` is `thenable` meaning it **behaves exactly like a native `Promise<Result>`** ... except you have access to the same methods that `Result` provides without having to `await` or `.then` the promise!
 
 ### Check out [the wiki](https://github.com/inaiat/resultar/wiki) for examples and best practices.
 
@@ -47,6 +47,7 @@ For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `P
     - [`Result.combine` (static class method)](#resultcombine-static-class-method)
     - [`Result.combineWithAllErrors` (static class method)](#resultcombinewithallerrors-static-class-method)
     - [`Result.safeUnwrap()`](#resultsafeunwrap)
+    - [`Result.tryCatch` (static class method)](#resulttrycatch-static-class-method)
   + [Asynchronous API (`ResultAsync`)](#asynchronous-api-resultasync)
     - [`okAsync`](#okasync)
     - [`errAsync`](#errasync)
@@ -66,12 +67,15 @@ For asynchronous tasks, `resultar` offers a `ResultAsync` class which wraps a `P
     - [`ResultAsync.combine` (static class method)](#resultasynccombine-static-class-method)
     - [`ResultAsync.combineWithAllErrors` (static class method)](#resultasynccombinewithallerrors-static-class-method)
     - [`ResultAsync.safeUnwrap()`](#resultasyncsafeunwrap)
+    - [`ResultAsync.tryCatch` (static class method)](#resultasynctrycatch-static-class-method)
   + [Utilities](#utilities)
     - [`fromThrowable`](#fromthrowable)
     - [`fromThrowableAsync`](#fromthrowableasync)
     - [`fromPromise`](#frompromise)
     - [`fromSafePromise`](#fromsafepromise)
     - [`safeTry`](#safetry)
+    - [`tryCatch`](#trycatch)
+    - [`tryCatchAsync`](#trycatchasync)
   + [Testing](#testing)
 * [A note on the Package Name](#a-note-on-the-package-name)
 
@@ -423,9 +427,9 @@ const updatedQueryResult = dbQueryResult.orElse((dbError) =>
     //
     // err() can be called with a value of any new type that you want
     // it could also be called with the same error value
-    //     
+    //
     //     err(dbError)
-    : err(500) 
+    : err(500)
 )
 ```
 
@@ -534,7 +538,7 @@ const asyncRes = parseHeaders(rawHeader)
 ```
 
 Note that in the above example if `parseHeaders` returns an `Err` then `.map` and `.asyncMap` will not be invoked, and `asyncRes` variable will resolve to an `Err` when turned into a `Result` using `await` or `.then()`.
-  
+
 [⬆️  Back to top](#toc)
 
 ---
@@ -666,6 +670,42 @@ const result = Result.combineWithAllErrors(resultList)
 #### `Result.safeUnwrap()`
 
 Allows for unwrapping a `Result` or returning an `Err` implicitly, thereby reducing boilerplate.
+
+[⬆️  Back to top](#toc)
+
+#### `Result.tryCatch()` (static class method)
+
+Provides a convenient way to handle errors in a procedural style, similar to Go's error handling pattern. It wraps a synchronous function call in a try-catch block and returns a Result that can be destructured to access the value or error.
+
+**Signature:**
+```typescript
+static tryCatch<T, E>(fn: () => Exclude<T, Promise<any>>, errorFn?: (e: unknown) => E): Result<T, E>
+```
+
+**Example:**
+```typescript
+const divide = (a: number, b: number) => {
+  if (b === 0) throw new Error("Cannot divide by zero");
+  return a / b;
+};
+
+// Using destructuring to handle errors procedurally
+const { value, error } = Result.tryCatch(() => divide(10, 2));
+if (error) {
+  console.error("Division failed:", error);
+} else {
+  console.log("Result:", value); // Result: 5
+}
+
+// With custom error handling
+const result = Result.tryCatch(
+  () => divide(10, 0),
+  (e) => `Division error: ${e.message}`
+);
+if (result.isErr()) {
+  console.error(result.error); // Division error: Cannot divide by zero
+}
+```
 
 
 [⬆️  Back to top](#toc)
@@ -978,7 +1018,7 @@ usersInCanada.then((usersResult: Result<Array<User>, string>) => {
 
 #### `ResultAsync.unwrapOr` (method)
 
-Unwrap the `Ok` value, or return the default if there is an `Err`.  
+Unwrap the `Ok` value, or return the default if there is an `Err`.
 Works just like `Result.unwrapOr` but returns a `Promise<T>` instead of `T`.
 
 **Signature:**
@@ -1394,6 +1434,45 @@ Allows for unwrapping a `Result` or returning an `Err` implicitly, thereby reduc
 
 [⬆️  Back to top](#toc)
 
+#### `ResultAsync.tryCatch()` (static class method)
+
+Similar to `Result.tryCatch`, but for handling asynchronous operations. It wraps a Promise in a try-catch block and returns a ResultAsync that can be awaited and destructured to access the value or error.
+
+**Signature:**
+```typescript
+static tryCatch<T, E>(fn: Promise<T>, errorFn?: (e: unknown) => E): ResultAsync<T, E>
+```
+
+**Example:**
+```typescript
+const divideAsync = async (a: number, b: number) => {
+  await new Promise(resolve => setTimeout(resolve, 100)); // Simulate async operation
+  if (b === 0) throw new Error("Cannot divide by zero");
+  return a / b;
+};
+
+// Using async/await with destructuring
+const { value, error } = await ResultAsync.tryCatch(divideAsync(10, 2));
+if (error) {
+  console.error("Async division failed:", error);
+} else {
+  console.log("Result:", value); // Result: 5
+}
+
+// With custom error handling
+const result = await ResultAsync.tryCatch(
+  divideAsync(10, 0),
+  (e) => `Async division error: ${e.message}`
+);
+if (result.isErr()) {
+  console.error(result.error); // Async division error: Cannot divide by zero
+}
+```
+
+The `tryCatch` methods provide a more familiar error handling pattern for developers coming from languages like Go, while still maintaining the type safety and composability of the Result type.
+
+[⬆️  Back to top](#toc)
+
 ---
 
 ### Utilities
@@ -1423,10 +1502,28 @@ Please find documentation at [ResultAsync.fromPromise](#resultasyncfrompromise-s
 
 [⬆️  Back to top](#toc)
 
+---
+
+#### `tryCatch`
+
+Top level export of `Result.tryCatch`.
+Please find documentation at [Result.tryCatch](#resulttrycatch-static-class-method)
+
+[⬆️  Back to top](#toc)
+
+---
+
+#### `tryCatchAsync`
+
+Top level export of `ResultAsync.tryCatch`.
+Please find documentation at [ResultAsync.tryCatch](#resultasynctrycatch-static-class-method)
+
+[⬆️  Back to top](#toc)
+
 #### `fromSafePromise`
 
 Top level export of `ResultAsync.fromSafePromise`.
-Please find documentation at [ResultAsync.fromSafePromise](#resultasyncfromsafepromise-static-class-method)
+Please find documentation at [ResultAsync.fromSafePromise](#resulttasyncfromsafepromise-static-class-method)
 
 [⬆️  Back to top](#toc)
 

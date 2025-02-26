@@ -75,6 +75,29 @@ interface Resultable<T, E> {
  */
 export class Result<T, E> implements Resultable<T, E> {
   /**
+   * Creates a `Result` by running a function that might throw.
+   * If the function throws, the error will be caught and returned as an `Err`.
+   * If the function succeeds, the value will be wrapped in an `Ok`.
+   *
+   * @param fn - The function to execute, which might throw an error
+   * @param errorFn - Optional function to transform the thrown error before wrapping in `Err`
+   * @returns A `Result` containing either the function's return value or the caught error
+   */
+  static tryCatch<T, E>(
+    fn: () => Exclude<T, Promise<unknown>>,
+    errorFn?: (e: unknown) => E,
+  ): Result<T, E> {
+    try {
+      return ok(fn())
+    } catch (error) {
+      if (errorFn) {
+        return err(errorFn(error))
+      }
+      return err(error as E)
+    }
+  }
+
+  /**
    * Wraps a function with a try catch, creating a new function with the same
    * arguments but returning `Ok` if successful, `Err` if the function throws
    *
@@ -125,19 +148,28 @@ export class Result<T, E> implements Resultable<T, E> {
   }
 
   static combine<
-    T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
+    T extends readonly [
+      Result<unknown, unknown>,
+      ...Result<unknown, unknown>[],
+    ],
   >(resultList: T): CombineResults<T>
   static combine<T extends readonly Result<unknown, unknown>[]>(
     resultList: T,
   ): CombineResults<T>
   static combine<
-    T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
+    T extends readonly [
+      Result<unknown, unknown>,
+      ...Result<unknown, unknown>[],
+    ],
   >(resultList: T): CombineResults<T> {
     return combineResultList(resultList) as CombineResults<T>
   }
 
   static combineWithAllErrors<
-    T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
+    T extends readonly [
+      Result<unknown, unknown>,
+      ...Result<unknown, unknown>[],
+    ],
   >(resultList: T): CombineResultsWithAllErrorsArray<T>
   static combineWithAllErrors<T extends readonly Result<unknown, unknown>[]>(
     resultList: T,
@@ -145,7 +177,9 @@ export class Result<T, E> implements Resultable<T, E> {
   static combineWithAllErrors<T extends readonly Result<unknown, unknown>[]>(
     resultList: T,
   ): CombineResultsWithAllErrorsArray<T> {
-    return combineResultListWithAllErrors(resultList) as CombineResultsWithAllErrorsArray<T>
+    return combineResultListWithAllErrors(
+      resultList,
+    ) as CombineResultsWithAllErrorsArray<T>
   }
 
   readonly value: T
@@ -233,12 +267,16 @@ export class Result<T, E> implements Resultable<T, E> {
 
   if(fCondition: (t: T) => boolean): {
     true: <X1, Y1>(fTrue: (t: T) => Result<X1, Y1>) => {
-      false: <X2, Y2>(fFalse: (t: T) => Result<X2, Y2>) => Result<X1 | X2, Y1 | Y2 | E>
+      false: <X2, Y2>(
+        fFalse: (t: T) => Result<X2, Y2>,
+      ) => Result<X1 | X2, Y1 | Y2 | E>
     }
   } {
     return {
       true: <X1, Y1>(fTrue: (t: T) => Result<X1, Y1>) => ({
-        false: <X2, Y2>(fFalse: (t: T) => Result<X2, Y2>): Result<X1 | X2, Y1 | Y2 | E> => {
+        false: <X2, Y2>(
+          fFalse: (t: T) => Result<X2, Y2>,
+        ): Result<X1 | X2, Y1 | Y2 | E> => {
           if (this.state.ok) {
             const condition = fCondition(this.value)
             return condition ? fTrue(this.value) : fFalse(this.value)
@@ -387,7 +425,9 @@ export class Result<T, E> implements Resultable<T, E> {
    * This method is used to clean up and release any resources that the `Result`
    * @param f The function that will be called to clean up the resources
    */
-  finally<X = T, Y = E>(f: (value: X, error: Y) => void): DisposableResult<X, Y>
+  finally<X = T, Y = E>(
+    f: (value: X, error: Y) => void,
+  ): DisposableResult<X, Y>
   finally(f: (value: T, error: E) => void): DisposableResult<T, E> {
     const resultDisposable = new DisposableResult(this, f)
     try {
@@ -431,7 +471,11 @@ export class Result<T, E> implements Resultable<T, E> {
    */
   _unsafeUnwrapErr(config?: ErrorConfig): E {
     if (this.state.ok) {
-      throw createResultarError('Called `_unsafeUnwrapErr` on an Ok', this, config)
+      throw createResultarError(
+        'Called `_unsafeUnwrapErr` on an Ok',
+        this,
+        config,
+      )
     }
 
     return this.error
@@ -471,7 +515,10 @@ export class Result<T, E> implements Resultable<T, E> {
  * clean up resources.
  */
 export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
-  constructor(readonly result: Resultable<T, E>, private readonly finalizer: (value: T, error: E) => void) {}
+  constructor(
+    readonly result: Resultable<T, E>,
+    private readonly finalizer: (value: T, error: E) => void,
+  ) {}
 
   get value(): T {
     return this.result.value
@@ -518,7 +565,9 @@ export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
  * Rust's `result?` expression.
  * @returns The first occurence of either an yielded Err or a returned Result.
  */
-export function safeTry<T, E>(body: () => Generator<Result<never, E>, Result<T, E>>): Result<T, E>
+export function safeTry<T, E>(
+  body: () => Generator<Result<never, E>, Result<T, E>>,
+): Result<T, E>
 export function safeTry<
   YieldErr extends Result<never, unknown>,
   GeneratorReturnResult extends Result<unknown, unknown>,
@@ -570,6 +619,7 @@ export const ok = Result.ok
 export const err = Result.err
 export const fromThrowable = Result.fromThrowable
 export const unit = Result.unit
+export const tryCatch = Result.tryCatch
 
 // #region Combine - Types
 
@@ -636,7 +686,11 @@ type Prev = [
 // T         - The array of the results
 // Collected - The collected tuples.
 // Depth     - The maximum depth.
-type CollectResults<T, Collected extends unknown[] = [], Depth extends number = 50> = [
+type CollectResults<
+  T,
+  Collected extends unknown[] = [],
+  Depth extends number = 50,
+> = [
   Depth,
 ] extends [never] ? []
   : T extends [infer H, ...infer Rest]
