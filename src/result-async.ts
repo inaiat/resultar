@@ -27,8 +27,42 @@ export class DisposableResultAsync<T, E> implements PromiseLike<Result<T, E>> {
 }
 
 /**
- * The ResultAsync type.
- * This is a union of `Result` and `PromiseLike<Result>`
+ * Represents an asynchronous Result type that wraps a Promise of a Result<T, E>.
+ * This class provides a way to handle asynchronous operations that may succeed with a value of type T
+ * or fail with an error of type E.
+ *
+ * @template T - The type of the success value
+ * @template E - The type of the error value
+ *
+ * @implements {PromiseLike<Result<T, E>>}
+ *
+ * @example
+ * ```typescript
+ * // Create a successful async result
+ * const okAsync = ResultAsync.okAsync(42);
+ *
+ * // Create a failed async result
+ * const errAsync = ResultAsync.errAsync(new Error("Something went wrong"));
+ *
+ * // Transform a Promise into a ResultAsync
+ * const resultFromPromise = ResultAsync.fromPromise(
+ *   fetch("https://api.example.com/data"),
+ *   (error) => new Error(`API call failed: ${error}`)
+ * );
+ * ```
+ *
+ * @remarks
+ * ResultAsync implements the PromiseLike interface, allowing it to be used with async/await syntax.
+ * It provides various utility methods for transforming and combining results, similar to the Result type,
+ * but operating in an asynchronous context.
+ *
+ * The class includes methods for:
+ * - Creating ResultAsync instances (okAsync, errAsync, fromPromise)
+ * - Transforming values (map, mapErr)
+ * - Chaining operations (andThen, orElse)
+ * - Error handling (tapError)
+ * - Conditional branching (if)
+ * - Combining multiple ResultAsync instances (combine, combineWithAllErrors)
  */
 export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   /**
@@ -58,6 +92,39 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
    */
   static errAsync<T = never, E = unknown>(error: E): ResultAsync<T, E> {
     return new ResultAsync<T, E>(Promise.resolve(Result.err(error)))
+  }
+
+  /**
+   * Creates a ResultAsync from a Promise, catching any errors that occur during its execution.
+   *
+   * @param fn - The Promise to be wrapped in a ResultAsync.
+   * @param errorFn - Optional function to transform the caught error into a specific error type.
+   *                  If not provided, the original error will be used.
+   * @returns A ResultAsync that will resolve to Ok with the promise's value if successful,
+   *          or Err with either the transformed error (if errorFn is provided) or the original error.
+   *
+   * @example
+   * ```typescript
+   * // Without error transformer
+   * const result = ResultAsync.tryCatch(Promise.resolve(42));
+   *
+   * // With error transformer
+   * const result = ResultAsync.tryCatch(
+   *   fetch('https://api.example.com'),
+   *   (error) => new CustomError('API request failed')
+   * );
+   * ```
+   */
+  static tryCatch<T, E>(fn: Promise<T>, errorFn?: (e: unknown) => E): ResultAsync<T, E> {
+    const newPromise = fn
+      .then((value: T) => Result.ok(value))
+      .catch(error => {
+        if (errorFn) {
+          return Result.err(errorFn(error))
+        }
+        return Result.err(error)
+      })
+    return new ResultAsync<T, E>(newPromise)
   }
 
   /**
@@ -398,6 +465,7 @@ export const fromPromise = ResultAsync.fromPromise
 export const fromSafePromise = ResultAsync.fromSafePromise
 export const unitAsync = ResultAsync.unitAsync
 export const fromThrowableAsync = ResultAsync.fromThrowable
+export const tryCatchAsync = ResultAsync.tryCatch
 
 // Combines the array of async results into one result.
 export type CombineResultAsyncs<

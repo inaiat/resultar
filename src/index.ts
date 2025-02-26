@@ -6,6 +6,7 @@ export {
   okAsync,
   ResultAsync,
   safeTryAsync,
+  tryCatchAsync,
   unitAsync,
 } from './result-async.js'
-export { err, fromThrowable, ok, Result, safeTry, unit } from './result.js'
+export { err, fromThrowable, ok, Result, safeTry, tryCatch, unit } from './result.js'
