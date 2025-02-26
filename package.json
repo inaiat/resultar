@@ -1,6 +1,6 @@
 {
   "name": "resultar",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Result pattern for typescript",
   "type": "module",
   "packageManager": "pnpm@10.5.1",
