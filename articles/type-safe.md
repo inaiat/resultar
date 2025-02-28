@@ -1,0 +1,299 @@
+# Programação Segura em TypeScript: Domando as Exceções com o [Resultar](https://github.com/inaiat/resultar)
+
+## O Problema das Exceções em JavaScript
+
+JavaScript, como muitas linguagens dinâmicas, permite que exceções sejam lançadas em praticamente qualquer ponto do código. Este comportamento, embora flexível, pode criar diversos problemas:
+
+   - Exceções Não Controladas
+   - Crashes inesperados em produção
+   - Stack traces confusos
+   - Difícil rastreamento da origem do erro
+
+Vou exemplificar alguns problemas mencionados acima:
+
+### O Erro silencioso (Swallowing Errors):
+Erro silencioso pode esconder bugs e dificultar a depuração. Além disso, pode ocultar informações importantes sobre o motivo da falha.
+```javascript
+function parseJSONSafe(jsonString: string) {
+    try {
+        return JSON.parse(jsonString);
+    } catch (error) {
+        return null; // O erro desaparece e não temos informações para depuração
+    }
+}
+
+const result = parseJSONSafe("{ invalid json }");
+console.log(result); // null (mas não sabemos o motivo da falha)
+```
+
+### Promessas não Tratadas
+Promessas não tratadas ainda hoje são fontes de muitos problemas, conseguimos minimiza-las com adoção correta de uma ferramenta de linting.
+```typescript
+// ❌ Problema: Try/catch não captura rejeições de promessas
+try {
+    Promise.reject(new Error('Falha'));
+    // O código continua executando...
+    console.log('Chegou aqui!');
+} catch (error) {
+    // Nunca chega aqui!
+    console.error('Erro:', error);
+}
+```
+### Callbacks Assíncronos
+
+```typescript
+// ❌ Problema: Try/catch não funciona com callbacks
+try {
+    setTimeout(() => {
+        throw new Error('Erro no callback');
+    }, 1000);
+} catch (error) {
+    // Nunca captura o erro!
+    console.error('Erro:', error);
+}
+```
+
+### Nested Try/Catch (Hadouken)
+```typescript
+// ❌ Problema: Try/catch aninhados
+async function processarUsuario(userId: string) {
+    try {
+        const user = await fetchUser(userId);
+        try {
+            const perfil = await fetchPerfil(user.perfilId);
+            try {
+                const preferencias = await fetchPreferencias(perfil.prefId);
+                return { user, perfil, preferencias };
+            } catch (error) {
+                console.error('Erro ao buscar preferências:', error);
+            }
+        } catch (error) {
+            console.error('Erro ao buscar perfil:', error);
+        }
+    } catch (error) {
+        console.error('Erro ao buscar usuário:', error);
+    }
+    return null;
+}
+```
+
+## 5. Tratamento Inconsistente de Null
+```typescript
+// ❌ Problema: Mistura de null check com try/catch
+function processarDados(data: any) {
+    try {
+        if (!data) return null;
+
+        if (!data.usuario) {
+            throw new Error('Usuário não encontrado');
+        }
+
+        if (!data.usuario.perfil) {
+            return null; // Por que não throw?
+        }
+
+        return data.usuario.perfil.preferencias;
+    } catch (error) {
+        return null; // Perdemos o erro original
+    }
+}
+```
+
+Estes exemplos mostram situações comuns onde o try/catch tradicional pode levar a código frágil, difícil de manter e propenso a erros. O Resultar oferece uma abordagem mais estruturada e segura para lidar com estes cenários.
+
+
+## [Resultar](https://github.com/inaiat/resultar)
+
+Vasculhando na internet fazendo pesquisas e testes para encontrar soluções eficientes e seguras eu acabei encontrando uma biblioteca chamanda [Neverthrow](https://github.com/supermacro/neverthrow). Eu já estava acostumado com o tratamento de erros usando o Rust (Result Pattern) e Golang (error handling). Essa biblioteca implementava um padrão de tratamento de erros semelhante ao Rust mas eu poderia usa-la em typescript/javascript.
+
+Depois de alguns meses usando o Neverthrow decidi fazer um fork da lib e implementar algumas coisas que eu queria adicionar como fechamento de arquivos usando o dispose, logs e algumas condicoes bem especificas para minha necessidade, ainda sim consegui manter compatibilidade com o neverthrow. Até então eu estava interessado na parte funcional do tratamento de erros, porém decidi expandir para incluir alguns outros paradigmas de programação.
+
+Vamos começar aqui com um paradigma full functional:
+
+```javascript
+const safeFetch = fromThrowableAsync(fetch, String);
+    safeFetch("https://jsonplaceholder.typicode.com/posts")
+        .map((r) => r.json() as Promise<Posts>)
+        .map((posts) => posts.at(-1)?.userId)
+        .andThen((id) =>
+            id ? safeFetch(`https://jsonplaceholder.typicode.com/posts/${id}/comments`) : err('Nenhum post encontrado')
+        )
+        .map((comments) => comments.json() as Promise<Comments>)
+        .match((comments) => console.log(comments),
+            (e) => console.error("Erro ao recuperar os comentários", e)
+        )
+```
+
+Eu acho esse código elegante e eficiente, pois ele utiliza o padrão Result Pattern, o que facilita a leitura e manutenção do código. E é um código extremamente seguro e eficiente e... Usa um padrão funcional para lidar com erros.
+Veja, eu adoro linguagens funcionais! Porém, eu percebi que muitas vezes as pessoas que são oriundas de linguagens imperativas não gostam de lidar com erros de forma funcional. Isso é porque elas estão acostumadas a lidar com erros de forma imperativa, onde o código é executado sequencialmente e o controle de fluxo é mais fácil de entender.
+
+Vou reescrever o mesmo código seguindo um padrão mais imperativo, utilizando error propagation e/ou o operador ? do Rust utilizando o **safeTry** do Resultar/Neverthrow.
+
+```javascript
+const { value, error } = await safeTry(async function* () {
+  const reqPosts = yield* tryCatchAsync(
+      fetch(`https://jsonplaceholder.typicode.com/posts`),
+      String,
+  );
+  const posts = yield* tryCatchAsync(reqPosts.json() as Promise<Posts>);
+
+  const lastPost = posts.at(-1)?.userId;
+  if (!lastPost) {
+      return err("Nenhum post encontrado");
+  }
+  const reqComments = yield* tryCatchAsync(
+      fetch(`https://jsonplaceholder.typicode.com/posts/${lastPost}/comments`),
+      String,
+  );
+  const comments = yield* tryCatchAsync(
+      reqComments.json() as Promise<Comments>,
+  );
+  return ok(comments);
+});
+if (value) {
+  console.log(value)
+} else {
+  console.log("Erro ao recuerar os comentários", error)
+}
+```
+
+Ok, essa abordagem é mais simples de ler e fácil de entender para quem não está familiarizado com código funcional, ainda sim é eficiente e seguro, pois todos os blocos que podem disparar exceções são tratados de forma consistente.
+
+Agora vamos para abordagem completamente imperativa e bem semelhante ao error handling do Golang.
+
+```javascript
+const { value: reqPosts, error: reqPostError } = await tryCatchAsync(
+    fetch(`https://jsonplaceholder.typicode.com/posts`),
+    String,
+);
+if (reqPostError) {
+    return errAsync(reqPostError);
+}
+
+const { value: posts, error: postParserError } = await tryCatchAsync(
+    reqPosts.json() as Promise<Posts>,
+    String,
+);
+if (postParserError) {
+    return errAsync(postParserError);
+}
+
+const lastPost = posts.at(-1)?.userId;
+if (!lastPost) {
+    return errAsync("Nenhum post encontrado");
+}
+
+const { value: reqComments, error: reqCommentsError } = await tryCatchAsync(
+    fetch(`https://jsonplaceholder.typicode.com/posts/${lastPost}/comments`),
+    String,
+);
+if (reqCommentsError) {
+    return errAsync(reqCommentsError);
+}
+
+const { value, error } = await tryCatchAsync(
+    reqComments.json() as Promise<Comments>,
+    String,
+);
+if (reqCommentsError) {
+    return errAsync(error);
+}
+return okAsync(value);
+```
+
+O código continua seguro, pois estamos tratando todas as possíveis exceções que podem ocorrer durante a execução do código com o **tryCatch** do **Resultar**
+
+Pedi para uma AI (sonet 3.5) comparar os 3 exemplos e jogar em uma tabela para compararmos os resultados.
+
+## Análise Comparativa
+
+### 1. Estilo Imperativo
+- ✅ Validações explícitas
+- ✅ Fácil de entender o fluxo
+- ✅ Mensagens de erro específicas
+- ❌ Código mais verboso
+- ❌ Múltiplos pontos de saída (returns)
+- ❌ Pode levar a muito código boilerplate
+
+### 2. SafeTry
+- ✅ Código conciso
+- ✅ Fácil de implementar
+- ✅ Bom para casos simples
+- ❌ Menos controle sobre validações
+- ❌ Pode mascarar erros específicos
+
+### 3. Abordagem Funcional
+- ✅ Composição elegante
+- ✅ Type-safe
+- ✅ Validações granulares
+- ✅ Fácil de estender
+- ❌ Requer conhecimento de programação funcional
+- ❌ Curva de aprendizado inicial
+
+Bom, dito isto, você é livre para escolher o estilo de programação que melhor se adapte às suas necessidades. Cada abordagem tem suas vantagens e desvantagens, e é importante escolher a que melhor se encaixa no seu projeto específico e seu time de desenvolvimento. O importante é que você saiba como lidar com erros e exceções de forma segura e eficiente. A idéia de fazer o fork do **neverthrow** foi justamente ter mais flexibilidade no estilo de programação.
+
+
+Para terminar vou colocar alguns exemplos de como é simples tornar o código mais seguro usando o **Resultar**."
+
+### 1. Swallowing Errors
+
+```typescript
+// ❌ Problema: Try/catch não captura rejeições de promessas
+try {
+    Promise.reject(new Error('Falha'));
+    // O código continua executando...
+    console.log('Chegou aqui!');
+} catch (error) {
+    // Nunca chega aqui!
+    console.error('Erro:', error);
+}
+
+// ✅ Resultar
+// A saíde é { value: undefined, error: Error('Falha') }
+// Você é obrigado a lidar com o resultado da função tryCatch
+const { value, error } = Result.tryCatch(() => JSON.parse("{'a'}"), () => 'parser error')
+assert.equal(error, 'parser error')
+```
+
+
+
+### 2. Promessas não Tratadas
+```javascript
+// ❌ Problema: Promessas não tratadas podem causar problemas de segurança
+try {
+  Promise.reject(new Error('Falha'));
+  // O código continua executando...
+  console.log('Não deveria chegar aqui!');
+} catch (error) {
+  // Nunca chega aqui!
+  console.error('Erro:', error);
+}
+
+// ✅ Resultar
+const resultado = await tryCatchAsync(
+        Promise.reject(new Error('Falha')), String
+    );
+assert.ok(resultado.isErr())
+```
+
+### 3. Callbacks Assíncronos
+```javascript
+try {
+    setTimeout(() => {
+        throw new Error('Erro no callback');
+    }, 1000);
+} catch (error) {
+    // Nunca captura o erro!
+    console.error('Erro:', error);
+}
+
+// ✅ Resultar
+const resultado = await tryCatchAsync(
+    new Promise((resolve, reject) => {
+        setTimeout(() => {
+            reject(new Error('Erro no callback'));
+        }, 1000);
+    })
+);
+assert.ok(resultado.isErr())
+```

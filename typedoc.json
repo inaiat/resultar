@@ -6,8 +6,11 @@
     "typedoc-github-wiki-theme"
   ],
   "entryPoints": [
-    "./src/index.ts"
+    "./src/index.ts",
   ],
   "readme": "none",
+  "projectDocuments": [
+    "./articles//*.md"
+  ],
   "githubPages": false
 }
