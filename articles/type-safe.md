@@ -1,4 +1,4 @@
-# Programação Segura em TypeScript: Domando as Exceções com o [Resultar](https://github.com/inaiat/resultar)
+# TypeScript Type-safe: Transformando Exceções em Valores com Resultar [Resultar](https://github.com/inaiat/resultar)
 
 ## O Problema das Exceções em JavaScript
 
@@ -412,3 +412,24 @@ Para tentar resumir aqui as principais vantagens do Result Pattern, podemos dest
 - Transformações funcionais
 - Combinação de operações
 - Railway oriented programming
+
+
+## Referências
+
+### Artigos e Documentações
+- [Railway Oriented Programming](https://fsharpforfunandprofit.com/rop/) - Scott Wlaschin
+- [Rust Error Handling](https://doc.rust-lang.org/book/ch09-00-error-handling.html) - Documentação Oficial Rust
+- [Error Handling in Go](https://go.dev/blog/error-handling-and-go) - Documentação Oficial Go
+- [TypeScript Handbook](https://www.typescriptlang.org/docs/handbook/intro.html) - Documentação Oficial TypeScript
+
+### Bibliotecas
+- [Resultar](https://github.com/inaiat/resultar) - Biblioteca de tratamento de erros type-safe para TypeScript
+- [Neverthrow](https://github.com/supermacro/neverthrow) - Biblioteca base que inspirou o Resultar
+
+### Exemplos e APIs utilizadas
+- [JSONPlaceholder](https://jsonplaceholder.typicode.com/) - API de teste utilizada nos exemplos
+- [HTTPBin](https://httpbin.org/) - Serviço de teste HTTP utilizado nos exemplos
+
+### Leitura Adicional
+- [Making Illegal States Unrepresentable](https://fsharpforfunandprofit.com/posts/designing-with-types-making-illegal-states-unrepresentable/)
+- [Functional Error Handling](https://www.typescriptlang.org/docs/handbook/typescript-in-5-minutes-func.html#error-handling)
