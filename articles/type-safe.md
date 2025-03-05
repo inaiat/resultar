@@ -120,7 +120,7 @@ Estes exemplos mostram situações comuns onde o try/catch tradicional pode leva
 
 ## [Resultar](https://github.com/inaiat/resultar)
 
-Vasculhando na internet fazendo pesquisas e testes para encontrar soluções eficientes e seguras eu acabei encontrando uma biblioteca chamada [Neverthrow](https://github.com/supermacro/neverthrow). Eu já estava acostumado com o tratamento de erros usando o Rust (Result Pattern) e Golang (error handling). Essa biblioteca implementava um padrão de tratamento de erros semelhante ao Rust mas eu poderia usa-la em typescript/javascript.
+Vasculhando na internet fazendo pesquisas e testes para encontrar soluções eficientes e seguras eu acabei encontrando uma biblioteca chamada [Neverthrow](https://github.com/supermacro/neverthrow). Eu já estava acostumado com o tratamento de erros usando o Rust (Result Pattern) e Golang (error handling). Essa biblioteca implementava um padrão de tratamento de erros semelhante ao Rust, seguindo o conceito de Railway Oriented Programming, onde o fluxo de execução é tratado como um pipe que encadeia operações de forma segura, mantendo separados os caminhos de sucesso e erro. Com isso, eu poderia usar este padrão robusto em TypeScript/JavaScript, trazendo as mesmas garantias de tipo e tratamento de erro que encontramos em Rust.
 
 Depois de alguns meses usando o Neverthrow decidi fazer um fork da lib e implementar algumas coisas que eu queria adicionar como fechamento de arquivos usando o dispose, logs e algumas condicoes bem especificas para minha necessidade, ainda sim consegui manter compatibilidade com o neverthrow. Até então eu estava interessado na parte funcional do tratamento de erros, porém decidi expandir para incluir alguns outros paradigmas de programação.
 
