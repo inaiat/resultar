@@ -130,6 +130,10 @@ export class Result<T, E> implements Resultable<T, E> {
    * @param {T} value - The value to be wrapped in the `Result` instance.
    * @return {Result<T, E>} A new `Result` instance with the provided value.
    */
+
+  static ok<T, E = never>(value: T): Result<T, E>
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  static ok<T extends void = void, E = never>(value: void): Result<void, E>
   static ok<T, E = never>(value: T): Result<T, E> {
     return new Result<T, E>(new Ok(value))
   }
@@ -143,6 +147,10 @@ export class Result<T, E> implements Resultable<T, E> {
     return new Result<undefined, E>(new Ok(undefined))
   }
 
+  static err<T = never, E extends string = string>(err: E): Result<T, E>
+  static err<T = never, E = unknown>(err: E): Result<T, E>
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  static err<T = never, E extends void = void>(err: void): Result<T, void>
   static err<T = never, E = unknown>(error: E): Result<T, E> {
     return new Result<T, E>(new Err(error))
   }

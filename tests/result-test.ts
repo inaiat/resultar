@@ -50,6 +50,15 @@ await describe('Result.Ok', async () => {
     ok(okUndefined instanceof Result)
   })
 
+  await it('Creates an Ok value with undefined using zero argument', () => {
+    const okUndefined = ok()
+
+    equal(okUndefined.isOk(), true)
+    equal(okUndefined.isErr(), false)
+    equal(okUndefined.value, undefined)
+    ok(okUndefined instanceof Result)
+  })
+
   await it('Creates an Ok value with null', () => {
     const okVal = ok(null)
 
@@ -765,6 +774,17 @@ await describe('ResultAsync', async () => {
   await describe('okAsync', async () => {
     await it('Creates a ResultAsync that resolves to an undefined using unitAsync', async () => {
       const val = unitAsync()
+
+      equal(val instanceof ResultAsync, true)
+
+      const res = await val
+      equal(res.isOk(), true)
+      equal(res.isErr(), false)
+      equal(res.value, undefined)
+    })
+
+    await it('Creates a ResultAsync that resolves to an undefined using zero argument', async () => {
+      const val = okAsync()
 
       equal(val instanceof ResultAsync, true)
 

@@ -71,6 +71,9 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
    * @param {T} value - The value to be wrapped in a Result.ok.
    * @return {ResultAsync<T, E>} A ResultAsync instance with the given value and error type E.
    */
+  static okAsync<T, E = never>(value: T): ResultAsync<T, E>
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  static okAsync<T extends void = void, E = never>(value: void): ResultAsync<void, E>
   static okAsync<T, E = never>(value: T): ResultAsync<T, E> {
     return new ResultAsync<T, E>(Promise.resolve(Result.ok(value)))
   }
@@ -90,6 +93,9 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
    * @param {E} error - The error to be wrapped in a Result.err.
    * @return {ResultAsync<T, E>} A ResultAsync instance with the given error and value type T.
    */
+  static errAsync<T = never, E = unknown>(err: E): ResultAsync<T, E>
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  static errAsync<T = never, E extends void = void>(err: void): ResultAsync<T, void>
   static errAsync<T = never, E = unknown>(error: E): ResultAsync<T, E> {
     return new ResultAsync<T, E>(Promise.resolve(Result.err(error)))
   }

@@ -11,7 +11,7 @@ JavaScript, como muitas linguagens dinâmicas, permite que exceções sejam lan�
 
 Vou exemplificar alguns problemas mencionados acima:
 
-### O Erro silencioso (Swallowing Errors):
+### 1. O Erro silencioso (Swallowing Errors):
 Erro silencioso pode esconder bugs e dificultar a depuração. Além disso, pode ocultar informações importantes sobre o motivo da falha.
 ```javascript
 function parseJSONSafe(jsonString: string) {
@@ -26,7 +26,7 @@ const result = parseJSONSafe("{ invalid json }");
 console.log(result); // null (mas não sabemos o motivo da falha)
 ```
 
-### Promessas não Tratadas
+### 2. Promessas não Tratadas
 Promessas não tratadas ainda hoje são fontes de muitos problemas, conseguimos minimiza-las com adoção correta de uma ferramenta de linting.
 ```typescript
 // ❌ Problema: Try/catch não captura rejeições de promessas
@@ -39,7 +39,7 @@ try {
     console.error('Erro:', error);
 }
 ```
-### Callbacks Assíncronos
+### 3. Callbacks Assíncronos
 
 ```typescript
 // ❌ Problema: Try/catch não funciona com callbacks
@@ -53,31 +53,47 @@ try {
 }
 ```
 
-### Nested Try/Catch (Hadouken)
+### 4. Nested Try/Catch -
+
 ```typescript
+
+type HttpError =
+     | { type: 'Http Client Error', value: number }
+     | { type: 'Infra Error', value: string}
+     | { type: 'Json parser Error', value: string}
+
+class HttpErrorHandler extends Error {
+    constructor(readonly httpError: HttpError) {
+        super(JSON.stringify(httpError))
+    }
+}
+
 // ❌ Problema: Try/catch aninhados
-async function processarUsuario(userId: string) {
+const getPosts = async (url: string) => {
     try {
-        const user = await fetchUser(userId);
+        const response = await fetch(url)
+        if (response.status>=400) {
+            // Tratamento de erro HTTP do cliente
+            throw new HttpErrorHandler({type:'Http Client Error', value: response.status})
+        }
         try {
-            const perfil = await fetchPerfil(user.perfilId);
-            try {
-                const preferencias = await fetchPreferencias(perfil.prefId);
-                return { user, perfil, preferencias };
-            } catch (error) {
-                console.error('Erro ao buscar preferências:', error);
-            }
+            const data = await response.json() as Comments
+            return data
         } catch (error) {
-            console.error('Erro ao buscar perfil:', error);
+            // Tratamento de erro JSON
+            throw new HttpErrorHandler({type:'Json parser Error', value: `${error}`})
         }
     } catch (error) {
-        console.error('Erro ao buscar usuário:', error);
+      // Catch externo - Pode capturar erros inesperados
+      // Este catch mais externo mascara o erro de HTTP cliente, por exemplo,
+      // ocorra um erro de bad request (Http Client Error) o erro retornado
+      // será um erro de infraestrutura
+        throw new HttpErrorHandler({type:'Infra Error', value: `${error}`})
     }
-    return null;
 }
 ```
 
-## 5. Tratamento Inconsistente de Null
+### 5. Tratamento Inconsistente de Null
 ```typescript
 // ❌ Problema: Mistura de null check com try/catch
 function processarDados(data: any) {
@@ -239,13 +255,12 @@ Para terminar vou colocar alguns exemplos de como é simples tornar o código ma
 
 ```typescript
 // ❌ Problema: Try/catch não captura rejeições de promessas
-try {
-    Promise.reject(new Error('Falha'));
-    // O código continua executando...
-    console.log('Chegou aqui!');
-} catch (error) {
-    // Nunca chega aqui!
-    console.error('Erro:', error);
+function parseJSONSafe(jsonString: string) {
+    try {
+        return JSON.parse(jsonString);
+    } catch (error) {
+        return null; // O erro desaparece e não temos informações para depuração
+    }
 }
 
 // ✅ Resultar
@@ -297,3 +312,103 @@ const resultado = await tryCatchAsync(
 );
 assert.ok(resultado.isErr())
 ```
+
+### 4. Nested TryCatch
+
+Dado esse teste:
+```javascript
+
+type HttpError =
+     | { type: 'Http Client Error', value: number }
+     | { type: 'Infra Error', value: string}
+     | { type: 'Json parser Error', value: string}
+
+class HttpErrorHandler extends Error {
+    constructor(readonly httpError: HttpError) {
+        super(JSON.stringify(httpError))
+    }
+}
+
+const getPosts = async (url: string) => {
+  try {
+      const response = await fetch(url)
+      if (response.status>=400) {
+          throw new HttpErrorHandler({type:'Http Client Error', value: response.status})
+      }
+      try {
+          const data = await response.json() as Comments
+          return data
+      } catch (error) {
+          throw new HttpErrorHandler({type:'Json parser Error', value: `${error}`})
+      }
+  } catch (error) {
+      throw new HttpErrorHandler({type:'Infra Error', value: `${error}`})
+  }
+}
+
+try {
+  const posts = await getPosts("https://httpbin.org/status/400")
+  console.log( posts)
+} catch (error) {
+  if (error instanceof HttpErrorHandler) {
+      assert.ok(error.httpError.type==='Http Client Error')
+      assert.equal(error.httpError.value, 400)
+  }
+}
+```
+Esse teste sempre falhará, pois o erro lançado será sempre um erro de infraestrutura, pois o erro é ocultado pelo catch mais externo. Vamos alterar o código para uma abordagem mais type-safe:
+
+```javascript
+const safeGetPosts = (url: string) => tryCatchAsync(fetch(url))
+  .mapErr(e => ({ type: 'Infra Error', value: `${e}` } satisfies HttpError))
+  .andThen(r => {
+      if (r.status >= 400) {
+          return err({
+              type: 'Http Client Error', value: r.status
+          } satisfies HttpError)
+      }
+      return ok(r)
+  })
+  .andThen(r => tryCatchAsync(r.json() as Promise<Posts>, e => ({ type: 'Json parser Error', value: `${e}` } satisfies HttpError)))
+const result = await safeGetPosts("https://httpbin.org/status/400")
+assert.ok(result.isErr())
+assert.ok(result.error.type === 'Http Client Error')
+assert.equal(result.error.value, 400)
+```
+
+O Result Pattern não só torna o código mais testável e previsível, como também oferece garantias mais fortes nas assertivas de teste. No exemplo, o assert.equal(e.value, 400) passou com sucesso, confirmando que o Result capturou e transportou corretamente o erro HTTP 400, demonstrando como a estrutura tipada do Result mantém a integridade dos dados através de toda a cadeia de operações até o ponto de teste.
+
+Ainda é possível usar o error-propagation (a.k.a ? Rust operator) para propagar erros de infraestrutura para o nível mais externo do código, garantindo que todos os erros sejam tratados de forma consistente e previsível. Acredito que desta forma ainda fica mais fácil de entender o código para desenvolvedores não familiarizados com o Railway Programming.
+
+```javascript
+const safeGetPosts =  (url: string) =>  safeTry(async function* () {
+    const response = yield* tryCatchAsync(fetch(url), e=> ({ type: 'Infra Error', value: `${e}` } satisfies HttpError))
+    if (response.status >= 400) {
+        return err({ type: 'Http Client Error', value: response.status } satisfies HttpError)
+    }
+    return tryCatchAsync(response.json() as Promise<Posts>, e => ({ type: 'Json parser Error', value: `${e}` } satisfies HttpError))
+})
+const { error } = await safeGetPosts("https://httpbin.org/status/400")
+assert.ok(error.type === 'Http Client Error')
+assert.ok(error.value === 400)
+```
+
+Para tentar resumir aqui as principais vantagens do Result Pattern, podemos destacar:
+
+1. **Type Safety**:
+- Contratos explícitos via tipos
+- Erros são tratados como ***first-class values***
+- Garantias em tempo de compilação
+- Sem undefined/null implícitos
+
+2. **Error Handling**:
+- Tratamento obrigatório de erros
+- Pattern matching expressivo
+- Transformações type-safe de erros
+- Rastreamento preciso de falhas
+
+3. **Composability**:
+- Encadeamento fluente
+- Transformações funcionais
+- Combinação de operações
+- Railway oriented programming
