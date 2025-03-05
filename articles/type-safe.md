@@ -120,7 +120,7 @@ Estes exemplos mostram situações comuns onde o try/catch tradicional pode leva
 
 ## [Resultar](https://github.com/inaiat/resultar)
 
-Vasculhando na internet fazendo pesquisas e testes para encontrar soluções eficientes e seguras eu acabei encontrando uma biblioteca chamanda [Neverthrow](https://github.com/supermacro/neverthrow). Eu já estava acostumado com o tratamento de erros usando o Rust (Result Pattern) e Golang (error handling). Essa biblioteca implementava um padrão de tratamento de erros semelhante ao Rust mas eu poderia usa-la em typescript/javascript.
+Vasculhando na internet fazendo pesquisas e testes para encontrar soluções eficientes e seguras eu acabei encontrando uma biblioteca chamada [Neverthrow](https://github.com/supermacro/neverthrow). Eu já estava acostumado com o tratamento de erros usando o Rust (Result Pattern) e Golang (error handling). Essa biblioteca implementava um padrão de tratamento de erros semelhante ao Rust mas eu poderia usa-la em typescript/javascript.
 
 Depois de alguns meses usando o Neverthrow decidi fazer um fork da lib e implementar algumas coisas que eu queria adicionar como fechamento de arquivos usando o dispose, logs e algumas condicoes bem especificas para minha necessidade, ainda sim consegui manter compatibilidade com o neverthrow. Até então eu estava interessado na parte funcional do tratamento de erros, porém decidi expandir para incluir alguns outros paradigmas de programação.
 
@@ -169,7 +169,7 @@ const { value, error } = await safeTry(async function* () {
 if (value) {
   console.log(value)
 } else {
-  console.log("Erro ao recuerar os comentários", error)
+  console.log("Erro ao recuperar os comentários", error)
 }
 ```
 
@@ -246,7 +246,7 @@ Pedi para uma AI (sonet 3.5) comparar os 3 exemplos e jogar em uma tabela para c
 - ❌ Requer conhecimento de programação funcional
 - ❌ Curva de aprendizado inicial
 
-Bom, dito isto, você é livre para escolher o estilo de programação que melhor se adapte às suas necessidades. Cada abordagem tem suas vantagens e desvantagens, e é importante escolher a que melhor se encaixa no seu projeto específico e seu time de desenvolvimento. O importante é que você saiba como lidar com erros e exceções de forma segura e eficiente. A idéia de fazer o fork do **neverthrow** foi justamente ter mais flexibilidade no estilo de programação.
+Bom, dito isto, você é livre para escolher o estilo de programação que melhor se adapte às suas necessidades. Cada abordagem tem suas vantagens e desvantagens, e é importante escolher a que melhor se encaixa no seu projeto específico e seu time de desenvolvimento. O importante é que você saiba como lidar com erros e exceções de forma segura e eficiente. A ideia de fazer o fork do **neverthrow** foi justamente ter mais flexibilidade no estilo de programação.
 
 
 Para terminar vou colocar alguns exemplos de como é simples tornar o código mais seguro usando o **Resultar**."
@@ -264,7 +264,7 @@ function parseJSONSafe(jsonString: string) {
 }
 
 // ✅ Resultar
-// A saíde é { value: undefined, error: Error('Falha') }
+// A saída é { value: undefined, error: Error('Falha') }
 // Você é obrigado a lidar com o resultado da função tryCatch
 const { value, error } = Result.tryCatch(() => JSON.parse("{'a'}"), () => 'parser error')
 assert.equal(error, 'parser error')
