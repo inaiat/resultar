@@ -21,8 +21,8 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v2
         with:
-          node-version: '18'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install corepack
         run: npm install -g corepack && corepack enable
@@ -39,6 +39,7 @@ jobs:
         run: |
           git clone https://github.com/${{ github.repository }}.wiki.git wiki
           cp -R docs/* wiki/
+          cp -R articles/* wiki/
           cd wiki
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"

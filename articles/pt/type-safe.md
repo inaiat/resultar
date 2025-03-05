@@ -1,4 +1,4 @@
-# TypeScript Type-safe: Transformando Exceções em Valores com Resultar [Resultar](https://github.com/inaiat/resultar)
+# TypeScript Type-safe: Transformando Exceções em Valores com [Resultar](https://github.com/inaiat/resultar)
 
 ## O Problema das Exceções em JavaScript
 

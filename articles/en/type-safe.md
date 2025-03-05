@@ -1,4 +1,4 @@
-# TypeScript Type-safe: Transforming Exceptions into Values with Resultar [Resultar](https://github.com/inaiat/resultar)
+# TypeScript Type-safe: Transforming Exceptions into Values with [Resultar](https://github.com/inaiat/resultar)
 
 ## The Problem with Exceptions in JavaScript
 
