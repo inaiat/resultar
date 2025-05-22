@@ -10,6 +10,7 @@ import assert, {
 } from 'node:assert'
 import type * as fs from 'node:fs/promises'
 import { afterEach, describe, it, mock } from 'node:test'
+import { setTimeout as sleep } from 'node:timers/promises'
 import * as td from 'testdouble'
 import {
   errAsync,
@@ -1635,7 +1636,7 @@ await describe('unwrapOrThrow', async () => {
 await describe('tryCatch', async () => {
   // Test utilities
   const divideAsync = async (a: number, b: number) => {
-    await new Promise((resolve) => setTimeout(resolve, 2))
+    await sleep(2)
     if (b === 0) throw new Error('Cannot divide by zero')
     return a / b
   }
@@ -1692,8 +1693,28 @@ await describe('tryCatch', async () => {
       equal(result._unsafeUnwrap(), 5)
     })
 
+    await it('should return ok result for successful async operation with anonymous function', async () => {
+      const result = await ResultAsync.tryCatch(async () => {
+        await sleep(2)
+        return 10 / 2
+      }, (e) => (e as Error).message)
+
+      isTrue(result.isOk())
+      equal(result._unsafeUnwrap(), 5)
+    })
+
     await it('should return err result for failed async operation', async () => {
       const result = await ResultAsync.tryCatch(divideAsync(10, 0), (e) => (e as Error).message)
+      isTrue(result.isErr())
+      ok(typeof result.error === 'string')
+      equal(result.error, 'Cannot divide by zero')
+    })
+
+    await it('should return err result for failed async operation with anonymous function', async () => {
+      const result = await ResultAsync.tryCatch(async () => {
+        await sleep(2)
+        throw new Error('Cannot divide by zero')
+      }, (e) => (e as Error).message)
       isTrue(result.isErr())
       ok(typeof result.error === 'string')
       equal(result.error, 'Cannot divide by zero')

@@ -103,7 +103,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   /**
    * Creates a ResultAsync from a Promise, catching any errors that occur during its execution.
    *
-   * @param fn - The Promise to be wrapped in a ResultAsync.
+   * @param fn - The Promise or a function returning a Promise to be wrapped in a ResultAsync.
    * @param errorFn - Optional function to transform the caught error into a specific error type.
    *                  If not provided, the original error will be used.
    * @returns A ResultAsync that will resolve to Ok with the promise's value if successful,
@@ -121,8 +121,12 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
    * );
    * ```
    */
-  static tryCatch<T, E>(fn: Promise<T>, errorFn?: (e: unknown) => E): ResultAsync<T, E> {
-    const newPromise = fn
+  static tryCatch<T, E>(
+    fn: Promise<T> | (() => Promise<T>),
+    errorFn?: (e: unknown) => E,
+  ): ResultAsync<T, E> {
+    const promiseToProcess = typeof fn === 'function' ? fn() : fn
+    const newPromise = promiseToProcess
       .then((value: T) => Result.ok(value))
       .catch(error => {
         if (errorFn) {
