@@ -32,7 +32,7 @@ jobs:
         run: pnpm build && pnpm test
 
       - name: Publish package
-        run: npm publish --access public
+        run: npm publish --access public --tag beta
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
