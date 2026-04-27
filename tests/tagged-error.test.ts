@@ -27,6 +27,8 @@ class StaticMessageError extends createTaggedError({
   name: 'StaticMessageError',
 }) {}
 
+class DynamicMessageError extends createTaggedError({ name: 'DynamicMessageError' }) {}
+
 class AppError extends Error {
   statusCode = 500
 }
@@ -112,6 +114,17 @@ describe('tagged errors', async () => {
     isTrue(result.isErr())
     isTrue(result.error instanceof StaticMessageError)
     equal(result.error.message, 'Static failure')
+  })
+
+  it('supports dynamic messages when the message template is omitted', () => {
+    const error = new DynamicMessageError({ message: 'Dynamic failure' })
+    const result = DynamicMessageError.err({ message: 'Result failure' })
+
+    equal(error.message, 'Dynamic failure')
+    equal(error.messageTemplate, '$message')
+    deepEqual(error.fingerprint, ['DynamicMessageError', '$message'])
+    isTrue(result.isErr())
+    equal(result.error.message, 'Result failure')
   })
 
   it('matches tagged error unions exhaustively', () => {

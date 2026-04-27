@@ -132,18 +132,6 @@ describe('Result.Ok', async () => {
     equal(mapErrorFunc.mock.calls.length, 0)
   })
 
-  it('sample 001 delete me', () => {
-    const fn = (x: number) => (x % 2 === 0 ? ok(x) : err(new Error('Cannot divide by odd number')))
-
-    const r = fn(13)
-
-    if (r.isErr()) {
-      equal(r.error.message, 'Cannot divide by odd number')
-    } else {
-      isTrue(r.value === undefined)
-    }
-  })
-
   describe('andThen', async () => {
     it('Maps to an Ok', async () => {
       const okVal = ok(12)

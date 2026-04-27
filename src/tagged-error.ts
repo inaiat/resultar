@@ -124,7 +124,7 @@ export interface TaggedErrorOptions<
   Base extends Error = Error,
 > {
   readonly extends?: ErrorBaseConstructor<Base>
-  readonly message: MessageTemplate
+  readonly message?: MessageTemplate
   readonly name: Tag
 }
 
@@ -178,6 +178,7 @@ type PartialMatchHandlers<ErrorType extends Error, ReturnType> = Partial<
 >
 
 const defaultBaseError: ErrorBaseConstructor = Error
+const defaultMessageTemplate = '$message'
 
 const nativeError = Error as typeof Error & { isError?: (value: unknown) => boolean }
 const templateVariableMatcher = /\$([a-zA-Z_][a-zA-Z0-9_]*)/g
@@ -237,6 +238,10 @@ const getTemplateVariableNames = (template: string): readonly string[] => {
 }
 
 const assertNoReservedTemplateVariables = (tag: string, template: string): void => {
+  if (template === defaultMessageTemplate) {
+    return
+  }
+
   const reservedVariables = getTemplateVariableNames(template).filter(
     (variable): variable is ReservedTemplateVariable =>
       reservedTemplateVariables.has(variable as ReservedTemplateVariable),
@@ -295,22 +300,23 @@ export const findCause = <T extends Error>(
 
 export function createTaggedError<
   const Tag extends string,
-  const MessageTemplate extends string,
+  const MessageTemplate extends string = typeof defaultMessageTemplate,
   Base extends Error = Error,
 >(
-  options: TaggedErrorOptions<Tag, MessageTemplate, Base> & {
-    readonly message: RejectReservedTemplateVariables<MessageTemplate>
+  options: Omit<TaggedErrorOptions<Tag, MessageTemplate, Base>, 'message'> & {
+    readonly message?: RejectReservedTemplateVariables<MessageTemplate>
   },
 ): TaggedErrorClass<Tag, MessageTemplate, Base> {
   const BaseError = options.extends ?? defaultBaseError
-  assertNoReservedTemplateVariables(options.name, options.message)
-  const interpolate = compileMessageInterpolator(options.message)
+  const messageTemplate = options.message ?? (defaultMessageTemplate as MessageTemplate)
+  assertNoReservedTemplateVariables(options.name, messageTemplate)
+  const interpolate = compileMessageInterpolator(messageTemplate)
 
   class GeneratedTaggedError extends BaseError {
     static readonly tag = options.name
     readonly _tag = options.name
-    readonly fingerprint = [options.name, options.message] as const
-    readonly messageTemplate = options.message
+    readonly fingerprint = [options.name, messageTemplate] as const
+    readonly messageTemplate = messageTemplate
 
     constructor(props?: ConstructorProps<MessageTemplate>) {
       const message = interpolate(props)
