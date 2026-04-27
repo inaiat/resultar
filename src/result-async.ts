@@ -50,6 +50,13 @@ type MatchTagHandlers<E, Handlers> = {
   : { readonly Error: (error: UntaggedError<E>) => unknown }) & {
     readonly [Tag in keyof Handlers]: Tag extends ErrorTagsOf<E> | 'Error' ? Handlers[Tag] : never
   }
+type PartialMatchTagHandlers<E, Handlers> = {
+  readonly [Tag in keyof Handlers]: Tag extends ErrorTagsOf<E>
+    ? (error: ErrorForTag<E, Tag & string>) => unknown
+    : Tag extends 'Error'
+      ? (error: Extract<E, Error>) => unknown
+      : never
+}
 type PipeFn<Input, Output> = (input: Input) => Output
 
 const hasTag = <Tag extends string>(value: unknown, tag: Tag): value is { readonly _tag: Tag } =>
@@ -287,26 +294,24 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     return new ResultAsync<T, U>(
       this.innerPromise.then(async (res) => {
         if (res.isOk()) {
-          return okAsync(res.value)
+          return Result.ok<T, U>(res.value)
         }
 
-        return errAsync(await f(res.error))
+        return Result.err<T, U>(await f(res.error))
       }),
     )
   }
 
   map<X>(f: (t: T) => X | Promise<X>): ResultAsync<X, E> {
-    const x = new ResultAsync(
+    return new ResultAsync<X, E>(
       this.innerPromise.then(async (res: Result<T, E>) => {
         if (res.isErr()) {
-          return errAsync(res.error)
+          return Result.err<X, E>(res.error)
         }
 
-        return okAsync(await f(res.value))
+        return Result.ok<X, E>(await f(res.value))
       }),
     )
-
-    return x
   }
 
   filterOrElse<U extends T, F>(
@@ -343,18 +348,15 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     f: (t: T) => R,
   ): ResultAsync<InferAsyncOkTypes<R>, InferAsyncErrTypes<R> | E>
   andThen<U, F>(f: (t: T) => Result<U, F> | ResultAsync<U, F>): ResultAsync<U, E | F>
-  // eslint-disable-next-line explicit-module-boundary-types
-  andThen(f: any): any {
-    return new ResultAsync(
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+  andThen<U, F>(f: (t: T) => Result<U, F> | ResultAsync<U, F>): ResultAsync<U, E | F> {
+    return new ResultAsync<U, E | F>(
       this.innerPromise.then((res) => {
         if (res.isErr()) {
-          return errAsync(res.error)
+          return Result.err<U, E | F>(res.error)
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-        const newValue = f(res.value) // eslint-disable-line @typescript-eslint/no-unsafe-assignment
-        return newValue instanceof ResultAsync ? newValue.innerPromise : newValue // eslint-disable-line @typescript-eslint/no-unsafe-return
+        const next = f(res.value)
+        return next instanceof ResultAsync ? next.innerPromise : next
       }),
     )
   }
@@ -390,17 +392,15 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     f: (e: E) => R,
   ): ResultAsync<InferAsyncOkTypes<R> | T, InferAsyncErrTypes<R>>
   orElse<U, A>(f: (e: E) => Result<U, A> | ResultAsync<U, A>): ResultAsync<U | T, A>
-  // eslint-disable-next-line explicit-module-boundary-types
-  orElse(f: any): any {
-    return new ResultAsync(
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      this.innerPromise.then((res: Result<T, E>) => {
+  orElse<U, A>(f: (e: E) => Result<U, A> | ResultAsync<U, A>): ResultAsync<U | T, A> {
+    return new ResultAsync<U | T, A>(
+      this.innerPromise.then((res) => {
         if (res.isErr()) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call @typescript-eslint/no-unsafe-return
-          return f(res.error)
+          const next = f(res.error)
+          return next instanceof ResultAsync ? next.innerPromise : next
         }
 
-        return okAsync(res.value)
+        return Result.ok<U | T, A>(res.value)
       }),
     )
   }
@@ -504,6 +504,37 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
 
       // eslint-disable-next-line @typescript-eslint/only-throw-error
       throw error
+    })
+  }
+
+  async matchTagsPartial<A, B, const Handlers extends object>(
+    ok: (t: T) => A,
+    handlers: Handlers & PartialMatchTagHandlers<E, Handlers>,
+    fallback: (error: E) => B,
+  ): Promise<A | MatchTagHandlerResult<Handlers> | B> {
+    return this.innerPromise.then((res) => {
+      if (res.isOk()) {
+        return ok(res.value)
+      }
+
+      const error = res.error
+      const errorHandler = (
+        handlers as { readonly Error?: (error: E) => MatchTagHandlerResult<Handlers> }
+      ).Error
+
+      if (typeof error === 'object' && error !== null && '_tag' in error) {
+        const handler = handlers[error._tag as keyof typeof handlers]
+
+        if (handler !== undefined) {
+          return (handler as (error: E) => MatchTagHandlerResult<Handlers>)(error)
+        }
+      }
+
+      if (errorHandler) {
+        return errorHandler(error)
+      }
+
+      return fallback(error)
     })
   }
 
@@ -620,16 +651,18 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
    * Runs a cleanup side effect with `(value, error)` after the inner promise
    * settles to a `Result`, then preserves the original async result.
    *
-   * Callback errors are intentionally ignored by the underlying `Result.finally`.
+   * Callback errors and rejected callback promises are intentionally ignored.
    */
-  finally(f: (value: T, error: E) => void): DisposableResultAsync<T, E> {
+  finally(f: (value: T, error: E) => void | Promise<void>): DisposableResultAsync<T, E> {
     return new DisposableResultAsync(
-      // eslint-disable-next-line @typescript-eslint/require-await
       this.innerPromise.then(async (res) => {
         try {
-          res.finally(f)
+          await f(
+            res.isOk() ? res.value : (undefined as T),
+            res.isErr() ? res.error : (undefined as E),
+          )
         } catch {
-          // Dont do anything. Its just a finally
+          /* empty */
         }
 
         return res
@@ -673,6 +706,8 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     throw new Error('Do not use this generator out of `safeTry`')
   }
 }
+
+export type StrictResultAsync<T, E extends Error = Error> = ResultAsync<T, E>
 
 /**
  * @deprecated Use `safeTry` instead.

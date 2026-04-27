@@ -10,7 +10,12 @@ Resultar is an ESM-only TypeScript library for explicit error handling:
 ```ts
 Result<T, E>
 ResultAsync<T, E>
+StrictResult<T, E extends Error>
+StrictResultAsync<T, E extends Error>
 ```
+
+Resultar began as an initial fork of `neverthrow`, but v2 should be treated as its own API direction:
+explicit wrappers, tagged errors, strict service-boundary aliases, and ESM-only packaging.
 
 Use this skill to produce Resultar-native code, examples, reviews, tests, and documentation. Favor the library's public API over ad hoc unions, thrown exceptions, or nullable returns.
 
@@ -29,8 +34,12 @@ Use this skill to produce Resultar-native code, examples, reviews, tests, and do
 
 - Use `Result<T, E>` for synchronous fallible work.
 - Use `ResultAsync<T, E>` for promise-based fallible work.
+- Prefer `StrictResult<T, E extends Error>` and `StrictResultAsync<T, E extends Error>` at
+  application and backend service boundaries.
 - Use `ok(value)` and `err(error)` to construct plain results.
 - Use tagged errors when `E` should be a real typed `Error` subclass with stable metadata.
+- Prefer `createTaggedError` for expected domain/application failures. Keep strings, enums, and
+  lightweight objects for narrow local flows only.
 - Match plain results at boundaries with `result.match(okHandler, errHandler)`.
 - Match tagged-error results at boundaries with `result.matchTags(okHandler, handlers)`.
 - Do not throw for expected domain failures; return `Err`.
@@ -41,14 +50,19 @@ Use this skill to produce Resultar-native code, examples, reviews, tests, and do
 For sync workflows:
 
 ```ts
-import type { Result } from 'resultar'
+import type { StrictResult } from 'resultar'
 
-import { err, ok } from 'resultar'
+import { createTaggedError, ok } from 'resultar'
 
-const parsePort = (value: string): Result<number, Error> => {
+class InvalidPortError extends createTaggedError({
+  name: 'InvalidPortError',
+  message: 'Invalid port $value',
+}) {}
+
+const parsePort = (value: string): StrictResult<number, InvalidPortError> => {
   const port = Number(value)
 
-  return Number.isInteger(port) && port > 0 ? ok(port) : err(new Error(`Invalid port: ${value}`))
+  return Number.isInteger(port) && port > 0 ? ok(port) : InvalidPortError.err({ value })
 }
 ```
 
@@ -119,7 +133,7 @@ standalone `matchError` when you only have an error value, and `matchErrorPartia
 fallback is intentional.
 
 Do not propose `partialCatchTags`: `catchTags` is already partial recovery. If the user needs partial
-boundary mapping, prefer a future `matchTagsPartial(okHandler, handlers, fallback)` style API.
+boundary mapping, use `matchTagsPartial(okHandler, handlers, fallback)`.
 
 Use `TaggedEnum<Members>` for lightweight tagged domain unions that do not need to extend `Error`.
 Prefer `createTaggedError` when the value should be throwable, carry `cause`, serialize like an

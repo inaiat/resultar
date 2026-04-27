@@ -2,6 +2,9 @@
 
 Use this reference when writing or reviewing code that consumes Resultar.
 
+Resultar began as an initial fork of `neverthrow`, but v2 should be documented and consumed as a
+Resultar-specific API with tagged errors, strict service-boundary aliases, and ESM-only packaging.
+
 ## Package Shape
 
 Resultar is ESM-only and targets Node.js 24+.
@@ -35,6 +38,8 @@ Use type-only imports for exported types:
 
 ```ts
 import type {
+  StrictResult,
+  StrictResultAsync,
   TaggedEnum,
   TaggedErrorClass,
   TaggedErrorInstance,
@@ -45,6 +50,8 @@ import type {
 ## Result<T, E>
 
 `Result<T, E>` is the sync fallible value type.
+It remains generic for local flows, but production-facing expected failures should usually be real
+`Error` instances through `StrictResult` and `createTaggedError`.
 
 Constructors:
 
@@ -69,6 +76,8 @@ Methods:
   in the `Err` side.
 - `match(okFn, errFn)` returns the output of the matching handler.
 - `matchTags(okFn, handlers)` matches `Ok` and tagged `Error` variants without nesting `matchError`.
+- `matchTagsPartial(okFn, handlers, fallback)` matches selected tagged `Error` variants and sends
+  unhandled errors to `fallback`.
 - `pipe(fn, ...)` applies reusable combinators to the current `Result`.
 - `unwrapOr(defaultValue)` returns the value or default.
 - `unwrapOrThrow()` returns the value or throws the error.
@@ -84,6 +93,47 @@ Static methods:
 - `Result.fromThrowable(fn, errorFn?)`
 - `Result.combine(results)` short-circuits at the first error.
 - `Result.combineWithAllErrors(results)` collects all errors.
+
+## StrictResult<T, E extends Error>
+
+`StrictResult<T, E extends Error>` is a type-only alias for `Result<T, E>` when the error channel
+must contain real `Error` instances.
+
+Use it at backend/application/service boundaries:
+
+```ts
+class InvalidEmailError extends createTaggedError({
+  name: 'InvalidEmailError',
+  message: 'Invalid email $email',
+}) {}
+
+const validateEmail = (email: string): StrictResult<string, InvalidEmailError> =>
+  email.includes('@') ? ok(email) : InvalidEmailError.err({ email })
+```
+
+Keep `Result<T, E>` for narrow local flows that intentionally use strings, enums, or lightweight
+domain objects. Prefer `StrictResult` when logging, `cause`, stack traces, and tagged-error matching
+matter.
+
+Expected domain/application failures should normally be Resultar tagged errors. Untagged `Error`
+subclasses are still appropriate for external/native/library failures that already carry useful
+identity, such as validation, database, abort, or platform errors.
+
+## API Decision Guide
+
+- Use `map` when an `Ok` value changes and the transform cannot fail.
+- Use `andThen` when the next step can fail and returns `Result`.
+- Use `asyncAndThen` when a sync `Result` continues into `ResultAsync`.
+- Use `mapErr` when an error should be transformed.
+- Use `orElse` when an error should recover into another result.
+- Use `catchTag` / `catchTags` for local tagged-error recovery.
+- Use `match` for simple boundaries.
+- Use `matchTags` when every tagged error must be mapped.
+- Use `matchTagsPartial` when selected tagged errors need custom handling and the rest should go to a
+  fallback.
+- Use `fromPromise(promise, toError)` when the promise already exists.
+- Use `tryCatchAsync(() => promiseFactory(), toError?)` when creating the promise can throw
+  synchronously.
 
 ## ResultAsync<T, E>
 
@@ -107,6 +157,8 @@ Methods mirror `Result` where useful:
 - `orElse(fn)` accepts recovery functions returning `Result` or `ResultAsync`.
 - `match(okFn, errFn)` resolves to the handler output.
 - `matchTags(okFn, handlers)` resolves to direct tagged-error boundary handling.
+- `matchTagsPartial(okFn, handlers, fallback)` resolves to selected tagged-error boundary handling
+  with a fallback for unhandled errors.
 - `unwrapOr(defaultValue)` resolves to value or default.
 - `unwrapOrThrow()` resolves to value or throws the error.
 - `safeUnwrap()` is legacy support for `safeTry`; prefer `yield* resultAsync`.
@@ -115,6 +167,8 @@ Static methods:
 
 - `ResultAsync.combine(results)` short-circuits at the first error after all promises settle.
 - `ResultAsync.combineWithAllErrors(results)` collects all errors after all promises settle.
+
+`StrictResultAsync<T, E extends Error>` is the async type-only alias for Error-only failure channels.
 
 ## Tagged Errors
 
@@ -186,15 +240,16 @@ const message = matchError(error, {
 
 Use `matchErrorPartial(error, handlers, fallback)` when only selected errors need custom handling.
 
-Do not add `partialCatchTags`; `catchTags` already has partial recovery semantics. If a partial
-boundary API is needed, prefer `matchTagsPartial(okHandler, handlers, fallback)`.
+Do not add `partialCatchTags`; `catchTags` already has partial recovery semantics. Use
+`matchTagsPartial(okHandler, handlers, fallback)` for partial boundary mapping.
 
 ## Side Effects
 
-`tap`, `tapError`, `log`, and `finally` are observation helpers, not transform helpers.
+`tap`, `tapError`, `log`, and `finally` are best-effort observation helpers, not transform helpers.
 
 - They preserve the original `Result` or `ResultAsync`.
 - Callback errors are intentionally ignored.
+- On `ResultAsync`, rejected callback promises are intentionally ignored.
 - Use them for metrics, logging, tracing, and cleanup.
 - Use `map`, `mapErr`, `andThen`, `orElse`, or `tryCatch` for fallible work that should affect the result.
 
@@ -218,3 +273,14 @@ try {
   return error
 }
 ```
+
+## Coming From Other Styles
+
+- From `try/catch`: convert uncontrolled throws at the edge with `tryCatch` / `tryCatchAsync`, then
+  return `Result` values from domain code.
+- From neverthrow-style wrappers: keep wrapper composition, but prefer tagged `Error` values for
+  production failure channels.
+- From raw `T | Error`: Resultar keeps `Ok` and `Err` structurally separate, so success values can be
+  `Error` objects without being mistaken for failures.
+- From Effect: Resultar does not provide dependency injection, fibers, schedules, streams, scopes, or
+  a runtime. Keep Resultar examples focused on explicit result composition.

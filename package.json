@@ -1,6 +1,6 @@
 {
   "name": "resultar",
-  "version": "1.4.5",
+  "version": "2.0.0-beta.1",
   "description": "Result pattern for typescript",
   "keywords": [
     "plugin"

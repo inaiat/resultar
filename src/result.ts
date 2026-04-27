@@ -39,6 +39,13 @@ type MatchTagHandlers<E, Handlers> = {
   : { readonly Error: (error: UntaggedError<E>) => unknown }) & {
     readonly [Tag in keyof Handlers]: Tag extends ErrorTagsOf<E> | 'Error' ? Handlers[Tag] : never
   }
+type PartialMatchTagHandlers<E, Handlers> = {
+  readonly [Tag in keyof Handlers]: Tag extends ErrorTagsOf<E>
+    ? (error: ErrorForTag<E, Tag & string>) => unknown
+    : Tag extends 'Error'
+      ? (error: Extract<E, Error>) => unknown
+      : never
+}
 type PipeFn<Input, Output> = (input: Input) => Output
 
 const hasTag = <Tag extends string>(value: unknown, tag: Tag): value is { readonly _tag: Tag } =>
@@ -136,6 +143,11 @@ export interface ResultOperations<T, E> {
     fnOk: (t: T) => A,
     handlers: Handlers & MatchTagHandlers<E, Handlers>,
   ): A | MatchTagHandlerResult<Handlers>
+  matchTagsPartial<A, B, const Handlers extends object>(
+    fnOk: (t: T) => A,
+    handlers: Handlers & PartialMatchTagHandlers<E, Handlers>,
+    fallback: (error: E) => B,
+  ): A | MatchTagHandlerResult<Handlers> | B
   pipe<A>(ab: PipeFn<Result<T, E>, A>): A
   pipe<A, B>(ab: PipeFn<Result<T, E>, A>, bc: PipeFn<A, B>): B
   pipe<A, B, C>(ab: PipeFn<Result<T, E>, A>, bc: PipeFn<A, B>, cd: PipeFn<B, C>): C
@@ -157,6 +169,7 @@ export interface ErrResult<T, E> extends ResultOperations<T, E> {
 }
 
 export type Result<T, E> = OkResult<T, E> | ErrResult<T, E>
+export type StrictResult<T, E extends Error = Error> = Result<T, E>
 
 interface ResultStatic {
   [Symbol.hasInstance](value: unknown): boolean
@@ -393,6 +406,14 @@ class Ok<T, E> {
     return fnOk(this.value)
   }
 
+  matchTagsPartial<A, B, const Handlers extends object>(
+    fnOk: (t: T) => A,
+    _handlers: Handlers & PartialMatchTagHandlers<E, Handlers>,
+    _fallback: (error: E) => B,
+  ): A | MatchTagHandlerResult<Handlers> | B {
+    return fnOk(this.value)
+  }
+
   pipe<A>(ab: PipeFn<this, A>): A
   pipe<A, B>(ab: PipeFn<this, A>, bc: PipeFn<A, B>): B
   pipe<A, B, C>(ab: PipeFn<this, A>, bc: PipeFn<A, B>, cd: PipeFn<B, C>): C
@@ -442,7 +463,11 @@ class Ok<T, E> {
     try {
       return resultDisposable
     } finally {
-      resultDisposable[Symbol.dispose]()
+      try {
+        resultDisposable[Symbol.dispose]()
+      } catch {
+        /* empty */
+      }
     }
   }
 
@@ -600,6 +625,31 @@ class Err<T, E> {
     throw error
   }
 
+  matchTagsPartial<A, B, const Handlers extends object>(
+    _fnOk: (t: T) => A,
+    handlers: Handlers & PartialMatchTagHandlers<E, Handlers>,
+    fallback: (error: E) => B,
+  ): A | MatchTagHandlerResult<Handlers> | B {
+    const error = this.error
+    const errorHandler = (
+      handlers as { readonly Error?: (error: E) => MatchTagHandlerResult<Handlers> }
+    ).Error
+
+    if (typeof error === 'object' && error !== null && '_tag' in error) {
+      const handler = handlers[error._tag as keyof typeof handlers]
+
+      if (handler !== undefined) {
+        return (handler as (error: E) => MatchTagHandlerResult<Handlers>)(error)
+      }
+    }
+
+    if (errorHandler) {
+      return errorHandler(error)
+    }
+
+    return fallback(error)
+  }
+
   pipe<A>(ab: PipeFn<this, A>): A
   pipe<A, B>(ab: PipeFn<this, A>, bc: PipeFn<A, B>): B
   pipe<A, B, C>(ab: PipeFn<this, A>, bc: PipeFn<A, B>, cd: PipeFn<B, C>): C
@@ -649,7 +699,11 @@ class Err<T, E> {
     try {
       return resultDisposable
     } finally {
-      resultDisposable[Symbol.dispose]()
+      try {
+        resultDisposable[Symbol.dispose]()
+      } catch {
+        /* empty */
+      }
     }
   }
 

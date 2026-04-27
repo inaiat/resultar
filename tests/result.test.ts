@@ -379,6 +379,60 @@ describe('Result.Ok', async () => {
     }
   })
 
+  it('partially matches tagged errors with a fallback at a result boundary', () => {
+    const validationError = new ValidationError({ field: 'email' })
+    const permissionError = new PermissionError({ permission: 'admin:read' })
+
+    const handled = err<number, ValidationError | PermissionError>(
+      validationError,
+    ).matchTagsPartial(
+      String,
+      { ValidationError: (error) => `validation:${error.field}` },
+      (error) => `fallback:${error.message}`,
+    )
+    const fallback = err<number, ValidationError | PermissionError>(
+      permissionError,
+    ).matchTagsPartial(
+      String,
+      { ValidationError: (error) => `validation:${error.field}` },
+      (error) => `fallback:${error.message}`,
+    )
+    const okValue = ok<number, ValidationError>(123).matchTagsPartial(
+      String,
+      { ValidationError: (error) => `validation:${error.field}` },
+      (error) => `fallback:${error.message}`,
+    )
+
+    equal(handled, 'validation:email')
+    equal(fallback, 'fallback:Missing permission admin:read')
+    equal(okValue, '123')
+
+    if (false) {
+      const result = err<number, ValidationError>(validationError)
+
+      result.matchTagsPartial(
+        String,
+        {
+          // @ts-expect-error PermissionError is not part of this error union.
+          PermissionError: () => 'permission',
+        },
+        (error) => error.message,
+      )
+    }
+  })
+
+  it('partially matches plain Error through the Error handler before fallback', () => {
+    const result = err<number, ValidationError | Error>(new Error('plain failure'))
+
+    const message = result.matchTagsPartial(
+      String,
+      { Error: (error) => `plain:${error.message}` },
+      (error) => `fallback:${error.message}`,
+    )
+
+    equal(message, 'plain:plain failure')
+  })
+
   it('Unwraps without issue', () => {
     const okVal = ok(12)
 
@@ -968,6 +1022,48 @@ describe('ResultAsync', async () => {
       equal(matched, 'wooooo')
       equal(okMapper.mock.calls.length, 0)
       equal(errMapper.mock.calls.length, 1)
+    })
+
+    it('partially matches tagged async errors with a fallback', async () => {
+      const validationError = new ValidationError({ field: 'email' })
+      const permissionError = new PermissionError({ permission: 'admin:read' })
+
+      const handled = await errAsync<number, ValidationError | PermissionError>(
+        validationError,
+      ).matchTagsPartial(
+        String,
+        { ValidationError: (error) => `validation:${error.field}` },
+        (error) => `fallback:${error.message}`,
+      )
+      const fallback = await errAsync<number, ValidationError | PermissionError>(
+        permissionError,
+      ).matchTagsPartial(
+        String,
+        { ValidationError: (error) => `validation:${error.field}` },
+        (error) => `fallback:${error.message}`,
+      )
+      const okValue = await okAsync<number, ValidationError>(123).matchTagsPartial(
+        String,
+        { ValidationError: (error) => `validation:${error.field}` },
+        (error) => `fallback:${error.message}`,
+      )
+
+      equal(handled, 'validation:email')
+      equal(fallback, 'fallback:Missing permission admin:read')
+      equal(okValue, '123')
+
+      if (false) {
+        const result = errAsync<number, ValidationError>(validationError)
+
+        await result.matchTagsPartial(
+          String,
+          {
+            // @ts-expect-error PermissionError is not part of this error union.
+            PermissionError: () => 'permission',
+          },
+          (error) => error.message,
+        )
+      }
     })
   })
 

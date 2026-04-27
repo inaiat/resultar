@@ -5,7 +5,7 @@ Copy these patterns when implementing Resultar-based flows.
 ## Validate Then Transform
 
 ```ts
-import type { Result } from 'resultar'
+import type { StrictResult } from 'resultar'
 
 import { createTaggedError, ok } from 'resultar'
 
@@ -14,10 +14,10 @@ class InvalidEmailError extends createTaggedError({
   message: 'Invalid email $email',
 }) {}
 
-const validateEmail = (email: string): Result<string, InvalidEmailError> =>
+const validateEmail = (email: string): StrictResult<string, InvalidEmailError> =>
   email.includes('@') ? ok(email) : InvalidEmailError.err({ email })
 
-const normalizeEmail = (email: string): Result<string, InvalidEmailError> =>
+const normalizeEmail = (email: string): StrictResult<string, InvalidEmailError> =>
   validateEmail(email).map((value) => value.trim().toLowerCase())
 ```
 
@@ -26,7 +26,7 @@ const normalizeEmail = (email: string): Result<string, InvalidEmailError> =>
 ```ts
 type CreateUserError = InvalidEmailError | UserAlreadyExistsError | DatabaseError
 
-const createUser = (email: string): Result<User, CreateUserError> =>
+const createUser = (email: string): StrictResult<User, CreateUserError> =>
   validateEmail(email).andThen(ensureUserDoesNotExist).andThen(insertUser)
 ```
 
@@ -35,7 +35,9 @@ Keep each step's error type specific. Let composition widen the final error unio
 ## Compose Async Steps
 
 ```ts
-const createUser = (email: string): ResultAsync<User, CreateUserError> =>
+import type { StrictResultAsync } from 'resultar'
+
+const createUser = (email: string): StrictResultAsync<User, CreateUserError> =>
   validateEmail(email).asyncAndThen(ensureUserDoesNotExistAsync).andThen(insertUserAsync)
 ```
 
@@ -44,7 +46,7 @@ Use `asyncAndThen` when starting from `Result`, and `andThen` once already insid
 ## Use safeTry For Linear Control Flow
 
 ```ts
-const createUser = (email: string): Result<User, CreateUserError> =>
+const createUser = (email: string): StrictResult<User, CreateUserError> =>
   safeTry(function* () {
     const validEmail = yield* validateEmail(email)
     const user = yield* insertUser(validEmail)
@@ -56,7 +58,9 @@ const createUser = (email: string): Result<User, CreateUserError> =>
 For async flows:
 
 ```ts
-const createUser = (email: string): ResultAsync<User, CreateUserError> =>
+import type { StrictResultAsync } from 'resultar'
+
+const createUser = (email: string): StrictResultAsync<User, CreateUserError> =>
   safeTry(async function* () {
     const validEmail = yield* validateEmail(email)
     const user = yield* insertUserAsync(validEmail)
@@ -70,7 +74,7 @@ Prefer `yield* result` over `yield* result.safeUnwrap()`.
 ## Handle Errors At Boundaries
 
 ```ts
-const toHttpResponse = (result: Result<User, CreateUserError>) =>
+const toHttpResponse = (result: StrictResult<User, CreateUserError>) =>
   result.matchTags((user) => ({ body: user, statusCode: 201 }), {
     InvalidEmailError: (error) => ({
       body: { code: error._tag, message: error.message },
@@ -139,6 +143,10 @@ type PaymentState = TaggedEnum<{
 Use `createTaggedError` instead when the value needs `message`, `cause`, `toJSON`, `.err()`, or
 `matchError`.
 
+Keep `TaggedEnum`, strings, enums, and lightweight objects for narrow local flows. Use
+`createTaggedError` and `StrictResult` when a failure crosses an application, service, HTTP, job, or
+integration boundary.
+
 ## Wrap External Promises
 
 ```ts
@@ -147,7 +155,7 @@ class UpstreamError extends createTaggedError({
   message: 'Upstream $service failed',
 }) {}
 
-const loadProfile = (id: string): ResultAsync<Profile, UpstreamError> =>
+const loadProfile = (id: string): StrictResultAsync<Profile, UpstreamError> =>
   fromPromise(
     client.getProfile(id),
     (cause) => new UpstreamError({ cause, service: 'profile-api' }),

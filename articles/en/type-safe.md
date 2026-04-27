@@ -120,19 +120,51 @@ These examples show common situations where traditional try/catch can lead to fr
 
 While searching the internet for efficient and secure solutions, I found a library called [Neverthrow](https://github.com/supermacro/neverthrow). I was already familiar with error handling using Rust (Result Pattern) and Golang (error handling). This library implemented an error handling pattern similar to Rust, following the concept of Railway Oriented Programming, where execution flow is treated as a pipe that chains operations safely, keeping success and error paths separate. With this, I could use this robust pattern in TypeScript/JavaScript, bringing the same type guarantees and error handling we find in Rust.
 
-After using Neverthrow for a few months, I decided to fork the library and implement additional features I wanted, such as file closing using dispose, logs, and some specific conditions for my needs, while maintaining compatibility with Neverthrow. Until then, I was interested in the functional part of error handling, but I decided to expand to include other programming paradigms.
+After using Neverthrow for a few months, I decided to create an initial fork and implement additional features I wanted, such as cleanup hooks, logging helpers, typed tagged errors, and some specific conditions for my needs. Resultar v2 should be treated as its own API direction: it keeps the explicit `Result` wrapper model, but strongly prefers `createTaggedError`, `StrictResult`, and `StrictResultAsync` for production-facing expected failures.
+
+In v2, generic `Result<T, E>` still supports strings, enums, and lightweight objects for narrow local flows. For backend and application boundaries, expected failures should usually be real `Error` instances with `message`, `cause`, stack traces, and structured metadata.
 
 Let's start with a fully functional paradigm:
 
 ```javascript
-const safeFetch = fromThrowableAsync(fetch, String);
-    safeFetch("https://jsonplaceholder.typicode.com/posts")
-        .map((r) => r.json() as Promise<Posts>)
+class FetchPostsError extends createTaggedError({
+  name: 'FetchPostsError',
+  message: 'Could not fetch posts',
+}) {}
+
+class FetchCommentsError extends createTaggedError({
+  name: 'FetchCommentsError',
+  message: 'Could not fetch comments',
+}) {}
+
+class ParsePostsError extends createTaggedError({
+  name: 'ParsePostsError',
+  message: 'Could not parse posts',
+}) {}
+
+class ParseCommentsError extends createTaggedError({
+  name: 'ParseCommentsError',
+  message: 'Could not parse comments',
+}) {}
+
+class NoPostsFoundError extends createTaggedError({
+  name: 'NoPostsFoundError',
+  message: 'No posts found',
+}) {}
+
+const fetchPosts = () =>
+  fromPromise(fetch("https://jsonplaceholder.typicode.com/posts"), (cause) => new FetchPostsError({ cause }))
+
+const fetchComments = (id: number) =>
+  fromPromise(fetch(`https://jsonplaceholder.typicode.com/posts/${id}/comments`), (cause) => new FetchCommentsError({ cause }))
+
+fetchPosts()
+        .andThen((r) => fromPromise(r.json() as Promise<Posts>, (cause) => new ParsePostsError({ cause })))
         .map((posts) => posts.at(-1)?.userId)
         .andThen((id) =>
-            id ? safeFetch(`https://jsonplaceholder.typicode.com/posts/${id}/comments`) : err('No posts found')
+            id ? fetchComments(id) : NoPostsFoundError.err()
         )
-        .map((comments) => comments.json() as Promise<Comments>)
+        .andThen((comments) => fromPromise(comments.json() as Promise<Comments>, (cause) => new ParseCommentsError({ cause })))
         .match((comments) => console.log(comments),
             (e) => console.error("Error retrieving comments", e)
         )
@@ -141,34 +173,34 @@ const safeFetch = fromThrowableAsync(fetch, String);
 I find this code elegant and efficient as it uses the Result Pattern, which makes the code easier to read and maintain. It's an extremely safe and efficient code that uses a functional pattern to handle errors.
 You see, I love functional languages! However, I noticed that people coming from imperative languages often don't like dealing with errors functionally. This is because they're used to handling errors imperatively, where code is executed sequentially and flow control is easier to understand.
 
-Let's rewrite the same code following a more imperative pattern, using error propagation and/or Rust's ? operator using Resultar/Neverthrow's **safeTry**.
+Let's rewrite the same code following a more imperative pattern, using error propagation and/or Rust's `?` operator using Resultar's **safeTry**.
 
 ```javascript
-const { value, error } = await safeTry(async function* () {
+const result = await safeTry(async function* () {
   const reqPosts = yield* tryCatchAsync(
       fetch(`https://jsonplaceholder.typicode.com/posts`),
-      String,
+      (cause) => new FetchPostsError({ cause }),
   );
   const posts = yield* tryCatchAsync(reqPosts.json() as Promise<Posts>);
 
   const lastPost = posts.at(-1)?.userId;
   if (!lastPost) {
-      return err("No posts found");
+      return NoPostsFoundError.err();
   }
   const reqComments = yield* tryCatchAsync(
       fetch(`https://jsonplaceholder.typicode.com/posts/${lastPost}/comments`),
-      String,
+      (cause) => new FetchCommentsError({ cause }),
   );
   const comments = yield* tryCatchAsync(
       reqComments.json() as Promise<Comments>,
   );
   return ok(comments);
 });
-if (value) {
-  console.log(value)
-} else {
-  console.log("Error retrieving comments", error)
-}
+
+result.match(
+  (comments) => console.log(comments),
+  (error) => console.error("Error retrieving comments", error.message),
+)
 ```
 
 Okay, this approach is simpler to read and easier to understand for those not familiar with functional code, yet it's still efficient and secure as all blocks that can throw exceptions are handled consistently.
@@ -176,43 +208,43 @@ Okay, this approach is simpler to read and easier to understand for those not fa
 Now let's look at a completely imperative approach that's very similar to Golang's error handling.
 
 ```javascript
-const { value: reqPosts, error: reqPostError } = await tryCatchAsync(
+const reqPostsResult = await tryCatchAsync(
     fetch(`https://jsonplaceholder.typicode.com/posts`),
-    String,
+    (cause) => new FetchPostsError({ cause }),
 );
-if (reqPostError) {
-    return errAsync(reqPostError);
+if (reqPostsResult.isErr()) {
+    return errAsync(reqPostsResult.error);
 }
 
-const { value: posts, error: postParserError } = await tryCatchAsync(
-    reqPosts.json() as Promise<Posts>,
-    String,
+const postsResult = await tryCatchAsync(
+    reqPostsResult.value.json() as Promise<Posts>,
+    (cause) => new ParsePostsError({ cause }),
 );
-if (postParserError) {
-    return errAsync(postParserError);
+if (postsResult.isErr()) {
+    return errAsync(postsResult.error);
 }
 
-const lastPost = posts.at(-1)?.userId;
+const lastPost = postsResult.value.at(-1)?.userId;
 if (!lastPost) {
-    return errAsync("No posts found");
+    return errAsync(new NoPostsFoundError());
 }
 
-const { value: reqComments, error: reqCommentsError } = await tryCatchAsync(
+const reqCommentsResult = await tryCatchAsync(
     fetch(`https://jsonplaceholder.typicode.com/posts/${lastPost}/comments`),
-    String,
+    (cause) => new FetchCommentsError({ cause }),
 );
-if (reqCommentsError) {
-    return errAsync(reqCommentsError);
+if (reqCommentsResult.isErr()) {
+    return errAsync(reqCommentsResult.error);
 }
 
-const { value, error } = await tryCatchAsync(
-    reqComments.json() as Promise<Comments>,
-    String,
+const commentsResult = await tryCatchAsync(
+    reqCommentsResult.value.json() as Promise<Comments>,
+    (cause) => new ParseCommentsError({ cause }),
 );
-if (error) {
-    return errAsync(error);
+if (commentsResult.isErr()) {
+    return errAsync(commentsResult.error);
 }
-return okAsync(value);
+return okAsync(commentsResult.value);
 ```
 
 The code remains secure because we're handling all possible exceptions that can occur during code execution with Resultar's **tryCatch**.
@@ -244,7 +276,7 @@ I asked ChatGPT 3.5 to compare the 3 examples and put them in a table to compare
 - ❌ Requires functional programming knowledge
 - ❌ Initial learning curve
 
-Well, having said that, you're free to choose the programming style that best suits your needs. Each approach has its advantages and disadvantages, and it's important to choose the one that best fits your specific project and development team. The important thing is that you know how to handle errors and exceptions safely and efficiently. The idea of forking **neverthrow** was precisely to have more flexibility in programming style.
+Well, having said that, you're free to choose the programming style that best suits your needs. Each approach has its advantages and disadvantages, and it's important to choose the one that best fits your specific project and development team. The important thing is that you know how to handle errors and exceptions safely and efficiently. The initial fork of **neverthrow** gave Resultar its starting point; Resultar v2 now adds its own direction around tagged errors, strict error channels, and service-boundary ergonomics.
 
 To finish, let's look at some examples of how simple it is to make code safer using **Resultar**.
 
@@ -261,10 +293,20 @@ function parseJSONSafe(jsonString: string) {
 }
 
 // ✅ Resultar
-// The output is { value: undefined, error: Error('Failure') }
-// You are forced to handle the result of the tryCatch function
-const { value, error } = Result.tryCatch(() => JSON.parse("{'a'}"), () => 'parser error')
-assert.equal(error, 'parser error')
+class JsonParseError extends createTaggedError({
+  name: 'JsonParseError',
+  message: 'Could not parse JSON',
+}) {}
+
+const result = Result.tryCatch(
+  () => JSON.parse("{'a'}"),
+  (cause) => new JsonParseError({ cause }),
+)
+
+assert.ok(result.isErr())
+if (result.isErr()) {
+  assert.ok(result.error instanceof JsonParseError)
+}
 ```
 
 ### 2. Unhandled Promises
@@ -367,8 +409,10 @@ const safeGetPosts = (url: string) => tryCatchAsync(fetch(url))
   .andThen(r => tryCatchAsync(r.json() as Promise<Posts>, e => ({ type: 'Json parser Error', value: `${e}` } satisfies HttpError)))
 const result = await safeGetPosts("https://httpbin.org/status/400")
 assert.ok(result.isErr())
-assert.ok(result.error.type === 'Http Client Error')
-assert.equal(result.error.value, 400)
+if (result.isErr()) {
+  assert.ok(result.error.type === 'Http Client Error')
+  assert.equal(result.error.value, 400)
+}
 ```
 
 The Result Pattern not only makes the code more testable and predictable but also offers stronger guarantees in test assertions. In the example, assert.equal(e.value, 400) passed successfully, confirming that Result correctly captured and transported the HTTP 400 error, demonstrating how Result's typed structure maintains data integrity throughout the entire chain of operations up to the test point.
@@ -383,9 +427,12 @@ const safeGetPosts = (url: string) => safeTry(async function* () {
     }
     return tryCatchAsync(response.json() as Promise<Posts>, e => ({ type: 'Json parser Error', value: `${e}` } satisfies HttpError))
 })
-const { error } = await safeGetPosts("https://httpbin.org/status/400")
-assert.ok(error.type === 'Http Client Error')
-assert.ok(error.value === 400)
+const result = await safeGetPosts("https://httpbin.org/status/400")
+assert.ok(result.isErr())
+if (result.isErr()) {
+  assert.ok(result.error.type === 'Http Client Error')
+  assert.ok(result.error.value === 400)
+}
 ```
 
 To summarize the main advantages of the Result Pattern:
@@ -418,7 +465,7 @@ To summarize the main advantages of the Result Pattern:
 
 ### Libraries
 - [Resultar](https://github.com/inaiat/resultar) - Type-safe error handling library for TypeScript
-- [Neverthrow](https://github.com/supermacro/neverthrow) - Base library that inspired Resultar
+- [Neverthrow](https://github.com/supermacro/neverthrow) - Resultar began as an initial fork of this project
 
 ### Examples and APIs Used
 - [JSONPlaceholder](https://jsonplaceholder.typicode.com/) - Test API used in examples
