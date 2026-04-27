@@ -223,7 +223,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   static combine<T extends readonly ResultAsync<unknown, unknown>[]>(
     asyncResultList: T,
   ): CombineResultAsyncs<T> {
-    return combineResultAsyncList(asyncResultList) as unknown as CombineResultAsyncs<T>
+    return combineResultAsyncList(asyncResultList) as CombineResultAsyncs<T>
   }
 
   static combineWithAllErrors<

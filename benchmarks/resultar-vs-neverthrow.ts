@@ -4,7 +4,7 @@ import { cronometro } from 'cronometro'
 import * as neverthrow from 'neverthrow'
 import { fail, strictEqual } from 'node:assert'
 
-import * as resultar from '../dist/index.mjs'
+import * as resultar from '../dist/index.js'
 
 const maybeResultNeverthrow = (value: number): neverthrow.Result<number, number> =>
   value % 2 === 0 ? neverthrow.ok(value) : neverthrow.err(value)

@@ -13,7 +13,14 @@ const ignorePatterns = [
 
 export default defineConfig({
   staged: { '*': 'vp check --fix' },
-  pack: { clean: true, dts: true, entry: ['src/index.ts'], format: ['esm'], sourcemap: true },
+  pack: {
+    clean: true,
+    dts: true,
+    entry: ['src/index.ts'],
+    format: ['esm'],
+    outExtensions: () => ({ dts: '.d.ts', js: '.js' }),
+    sourcemap: true,
+  },
   fmt: {
     experimentalSortImports: {
       groups: [
