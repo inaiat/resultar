@@ -1,0 +1,11 @@
+Add a no-discard lint rule or ESLint helper for Result / ResultAsync.
+The biggest safety hole is still this:
+
+saveUser(input) // result ignored
+TypeScript will not complain. Errore calls out the same gap. Resultar should have a rule that flags discarded Result / ResultAsync unless explicitly ignored with void.
+
+Standardize expected failures on Error / tagged errors.
+Resultar currently allows Err<string> and Err<object>, which is flexible but weak for production observability. I’d keep the generic type, but docs and examples should strongly prefer createTaggedError for domain failures.
+
+
+

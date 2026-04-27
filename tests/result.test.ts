@@ -1,0 +1,2076 @@
+import type * as fs from 'node:fs/promises'
+
+import assert, {
+  deepEqual,
+  deepStrictEqual,
+  equal,
+  fail,
+  ok as isTrue,
+  notDeepStrictEqual,
+  notEqual,
+  strictEqual,
+} from 'node:assert'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { afterEach, describe, expectTypeOf, it, vi } from 'vite-plus/test'
+
+import {
+  ResultAsync,
+  errAsync,
+  fromPromise,
+  fromThrowableAsync,
+  okAsync,
+  tryCatchAsync,
+  unitAsync,
+} from '../src/result-async.js'
+import { Result, err, ok, tryCatch, unit } from '../src/result.js'
+import { createTaggedError } from '../src/tagged-error.js'
+
+const validateUser = (user: Readonly<{ name: string }>): ResultAsync<{ name: string }, string> => {
+  if (user.name === 'superadmin') {
+    return errAsync('You are not allowed to register')
+  }
+
+  return okAsync(user)
+}
+
+class ValidationError extends createTaggedError({
+  message: 'Invalid field $field',
+  name: 'ValidationError',
+}) {}
+
+class PermissionError extends createTaggedError({
+  message: 'Missing permission $permission',
+  name: 'PermissionError',
+}) {}
+
+describe('Result.Ok', async () => {
+  it('narrows value and error types with isOk and isErr', () => {
+    const result = ok<number, string>(123)
+
+    if (result.isOk()) {
+      expectTypeOf(result.value).toEqualTypeOf<number>()
+      // @ts-expect-error Ok results do not expose an error property.
+      equal(result.error, undefined)
+      equal(result.value, 123)
+    }
+
+    const failed = err<number, string>('failure')
+
+    if (failed.isErr()) {
+      // @ts-expect-error Err results do not expose a value property.
+      equal(failed.value, undefined)
+      expectTypeOf(failed.error).toEqualTypeOf<string>()
+      equal(failed.error, 'failure')
+    }
+  })
+
+  it('Creates an Ok value', () => {
+    const okVal = ok(12)
+
+    equal(okVal.isOk(), true)
+    equal(okVal.isErr(), false)
+    ok(okVal instanceof Result)
+  })
+
+  it('Creates an Ok value with undefined using unit', () => {
+    const okUndefined = unit()
+
+    equal(okUndefined.isOk(), true)
+    equal(okUndefined.isErr(), false)
+    equal(okUndefined.value, undefined)
+    ok(okUndefined instanceof Result)
+  })
+
+  it('Creates an Ok value with undefined using zero argument', () => {
+    const okUndefined = ok()
+
+    equal(okUndefined.isOk(), true)
+    equal(okUndefined.isErr(), false)
+    equal(okUndefined.value, undefined)
+    ok(okUndefined instanceof Result)
+  })
+
+  it('Creates an Ok value with null', () => {
+    const okVal = ok(null)
+
+    equal(okVal.isOk(), true)
+    equal(okVal.isErr(), false)
+    equal(okVal._unsafeUnwrap(), null)
+  })
+
+  it('Creates an Ok value with undefined', () => {
+    const okVal = ok(undefined)
+    equal(okVal.isOk(), true)
+    equal(okVal.isErr(), false)
+    equal(okVal._unsafeUnwrap(), undefined)
+  })
+
+  it('Is comparable', () => {
+    deepStrictEqual(ok(42), ok(42))
+    notDeepStrictEqual(ok(42), ok(43))
+  })
+
+  it('Maps over an Ok value', () => {
+    const value = 12
+    const okVal = ok(value)
+
+    const mapFn = vi.fn(String)
+
+    const mapped = okVal.map(mapFn)
+
+    isTrue(mapped.isOk())
+    equal(mapped._unsafeUnwrap(), '12')
+    equal(mapFn.mock.calls.length, 1)
+  })
+
+  it('Skips `mapErr`', () => {
+    const mapErrorFunc = vi.fn(String)
+
+    const notMapped = ok(12).mapErr(mapErrorFunc)
+
+    isTrue(notMapped.isOk())
+    equal(mapErrorFunc.mock.calls.length, 0)
+  })
+
+  describe('andThen', async () => {
+    it('Maps to an Ok', async () => {
+      const okVal = ok(12)
+
+      const data = { data: 'why not' }
+
+      const flattened = okVal.andThen((_number) =>
+        // ...
+        // complex logic
+        // ...
+        ok(data),
+      )
+
+      isTrue(flattened.isOk())
+      strictEqual(flattened._unsafeUnwrap(), data)
+    })
+
+    it('Maps to an Err', () => {
+      const okval = ok(12)
+
+      const flattened = okval.andThen((_number) =>
+        // ...
+        // complex logic
+        // ...
+        err('Whoopsies!'),
+      )
+
+      const nextFn = vi.fn((_val) => ok('noop'))
+
+      equal(flattened.isOk(), false)
+
+      flattened.andThen(nextFn)
+
+      equal(nextFn.mock.calls.length, 0)
+    })
+  })
+
+  describe('if', async () => {
+    it('returns the "true" part of the statement', async () => {
+      const okVal = ok(12)
+      const result = okVal
+        .if((val) => val > 10)
+        .true((v) => ok(`The number ${v} is gerater than 10`))
+        .false((v) => ok(`The number ${v} is smaller or equal to 10`))
+      deepEqual(result, ok('The number 12 is gerater than 10'))
+    })
+
+    it('returns the "false" part of the statement', async () => {
+      const okVal = ok(9)
+      const result = okVal
+        .if((val) => val > 10)
+        .true((v) => ok(`The number ${v} is gerater than 10`))
+        .false((v) => ok(`The number ${v} is smaller or equal to 10`))
+      deepEqual(result, ok('The number 9 is smaller or equal to 10'))
+    })
+  })
+
+  describe('orElse', async () => {
+    it('Skips orElse on an Ok value', async () => {
+      const okVal = ok(12)
+      const errorCallback = vi.fn((_val) => err('It is now a string'))
+      deepEqual(okVal.orElse(errorCallback), ok(12))
+      equal(errorCallback.mock.calls.length, 0)
+    })
+  })
+
+  describe('catchTag', async () => {
+    it('recovers from a matching tagged error', () => {
+      const result = err<number, ValidationError | PermissionError>(
+        new ValidationError({ field: 'email' }),
+      ).catchTag('ValidationError', (error) => ok(`fixed:${error.field}`))
+
+      isTrue(result.isOk())
+      equal(result.value, 'fixed:email')
+      expectTypeOf(result).toMatchTypeOf<Result<number | string, PermissionError>>()
+    })
+
+    it('leaves non-matching tagged errors unchanged', () => {
+      const permissionError = new PermissionError({ permission: 'admin:write' })
+      const result = err<number, ValidationError | PermissionError>(permissionError).catchTag(
+        'ValidationError',
+        (error) => ok(`fixed:${error.field}`),
+      )
+
+      isTrue(result.isErr())
+      equal(result.error, permissionError)
+      expectTypeOf(result).toMatchTypeOf<Result<number | string, PermissionError>>()
+    })
+
+    it('recovers from multiple tagged errors', () => {
+      const result = err<number, ValidationError | PermissionError>(
+        new PermissionError({ permission: 'admin:read' }),
+      ).catchTags({
+        PermissionError: (error) => ok(String(error.permission).length),
+        ValidationError: (error) => err(error.field),
+      })
+
+      isTrue(result.isOk())
+      equal(result.value, 'admin:read'.length)
+    })
+
+    it('skips tagged recovery on Ok values and unhandled tagged errors', () => {
+      const okResult = ok<number, ValidationError>(123).catchTag('ValidationError', () => ok(456))
+
+      isTrue(okResult.isOk())
+      equal(okResult.value, 123)
+
+      const okTagsResult = ok<number, ValidationError>(123).catchTags({
+        ValidationError: () => ok(456),
+      })
+
+      isTrue(okTagsResult.isOk())
+      equal(okTagsResult.value, 123)
+
+      const validationError = new ValidationError({ field: 'email' })
+      const unhandled = err<number, ValidationError | PermissionError>(validationError).catchTags({
+        PermissionError: () => ok(456),
+      })
+
+      isTrue(unhandled.isErr())
+      equal(unhandled.error, validationError)
+    })
+
+    it('rejects unknown tags at type level', () => {
+      const result = err<number, ValidationError>(new ValidationError({ field: 'email' }))
+
+      if (false) {
+        // @ts-expect-error ValidationError is the only recoverable tag.
+        result.catchTag('PermissionError', () => ok(1))
+
+        result.catchTags({
+          // @ts-expect-error ValidationError is the only recoverable tag.
+          PermissionError: () => ok(1),
+        })
+      }
+
+      isTrue(result.isErr())
+    })
+  })
+
+  it('pipes a result through custom combinators', () => {
+    const result = ok<number, ValidationError>(2).pipe(
+      (value) => value.map((number) => number + 1),
+      (value) => value.andThen((number) => ok(String(number))),
+    )
+
+    isTrue(result.isOk())
+    equal(result.value, '3')
+    expectTypeOf(result).toMatchTypeOf<Result<string, ValidationError>>()
+
+    const unchanged = (ok(1) as unknown as { pipe: () => Result<number, never> }).pipe()
+    isTrue(unchanged.isOk())
+    equal(unchanged.value, 1)
+  })
+
+  it('unwrapOr and return the Ok value', async () => {
+    const okVal = ok(12)
+    equal(okVal.unwrapOr(1), 12)
+  })
+
+  it('Maps to a ResultAsync', async () => {
+    const okVal = ok(12)
+
+    const flattened = okVal.asyncAndThen((_number) =>
+      // ...
+      // complex async logic
+      // ...
+      okAsync({ data: 'why not' }),
+    )
+
+    isTrue(flattened instanceof ResultAsync)
+
+    const newResult = await flattened
+
+    isTrue(newResult.isOk())
+    deepEqual(newResult._unsafeUnwrap(), { data: 'why not' })
+  })
+
+  it('Maps to a promise', async () => {
+    const asyncMapper = vi.fn(async (_val: number) => 'Very Nice!')
+
+    const okVal = ok(12)
+
+    const promise = okVal.asyncMap(asyncMapper)
+
+    isTrue(promise instanceof ResultAsync)
+
+    const newResult = await promise
+
+    isTrue(newResult.isOk())
+    equal(newResult._unsafeUnwrap(), 'Very Nice!')
+    equal(asyncMapper.mock.calls.length, 1)
+  })
+
+  it('Matches on an Ok', () => {
+    const okMapper = vi.fn((_val) => 'weeeeee')
+    const errMapper = vi.fn((_val) => 'wooooo')
+
+    const matched = ok(12).match(okMapper, errMapper)
+
+    equal(matched, 'weeeeee')
+    equal(okMapper.mock.calls.length, 1)
+    equal(errMapper.mock.calls.length, 0)
+  })
+
+  it('matches tagged errors from a result boundary', () => {
+    const result = err<{ readonly id: string }, ValidationError | PermissionError>(
+      new PermissionError({ permission: 'admin:read' }),
+    )
+
+    const response = result.matchTags((user) => ({ body: user, statusCode: 201 }), {
+      PermissionError: (error) => ({
+        body: { code: error._tag, message: error.message, permission: error.permission },
+        statusCode: 403,
+      }),
+      ValidationError: (error) => ({
+        body: { code: error._tag, field: error.field, message: error.message },
+        statusCode: 400,
+      }),
+    })
+
+    deepEqual(response, {
+      body: {
+        code: 'PermissionError',
+        message: 'Missing permission admin:read',
+        permission: 'admin:read',
+      },
+      statusCode: 403,
+    })
+  })
+
+  it('requires an Error fallback when matching tagged errors mixed with plain errors', () => {
+    const result = err<number, ValidationError | Error>(new Error('plain failure'))
+
+    const message = result.matchTags(String, {
+      Error: (error) => error.message,
+      ValidationError: (error) => error.field,
+    })
+
+    equal(message, 'plain failure')
+
+    if (false) {
+      // @ts-expect-error Plain Error is possible, so the Error fallback is required.
+      result.matchTags(String, { ValidationError: (error) => error.field })
+    }
+  })
+
+  it('partially matches tagged errors with a fallback at a result boundary', () => {
+    const validationError = new ValidationError({ field: 'email' })
+    const permissionError = new PermissionError({ permission: 'admin:read' })
+
+    const handled = err<number, ValidationError | PermissionError>(
+      validationError,
+    ).matchTagsPartial(
+      String,
+      { ValidationError: (error) => `validation:${error.field}` },
+      (error) => `fallback:${error.message}`,
+    )
+    const fallback = err<number, ValidationError | PermissionError>(
+      permissionError,
+    ).matchTagsPartial(
+      String,
+      { ValidationError: (error) => `validation:${error.field}` },
+      (error) => `fallback:${error.message}`,
+    )
+    const okValue = ok<number, ValidationError>(123).matchTagsPartial(
+      String,
+      { ValidationError: (error) => `validation:${error.field}` },
+      (error) => `fallback:${error.message}`,
+    )
+
+    equal(handled, 'validation:email')
+    equal(fallback, 'fallback:Missing permission admin:read')
+    equal(okValue, '123')
+
+    if (false) {
+      const result = err<number, ValidationError>(validationError)
+
+      result.matchTagsPartial(
+        String,
+        {
+          // @ts-expect-error PermissionError is not part of this error union.
+          PermissionError: () => 'permission',
+        },
+        (error) => error.message,
+      )
+    }
+  })
+
+  it('partially matches plain Error through the Error handler before fallback', () => {
+    const result = err<number, ValidationError | Error>(new Error('plain failure'))
+
+    const message = result.matchTagsPartial(
+      String,
+      { Error: (error) => `plain:${error.message}` },
+      (error) => `fallback:${error.message}`,
+    )
+
+    equal(message, 'plain:plain failure')
+  })
+
+  it('Unwraps without issue', () => {
+    const okVal = ok(12)
+
+    equal(okVal._unsafeUnwrap(), 12)
+  })
+
+  it('Can read the value after narrowing', () => {
+    const fallible: () => Result<string, number> = () => ok('safe to read')
+    const val = fallible()
+
+    // After this check we val is narrowed to Ok<string, number>. Without this
+    // line TypeScript will not allow accessing val.value.
+    if (val.isErr()) {
+      return
+    }
+
+    equal(val.value, 'safe to read')
+  })
+
+  describe('log', async () => {
+    const logSideEffect = vi.fn((v?: number, e?: number) => {
+      console.log('Just a side effect log', v, e)
+    })
+
+    afterEach(() => {
+      logSideEffect.mockReset()
+    })
+
+    it('Log into an async ok value', async () => {
+      const val = ok(20).log(logSideEffect)
+      equal(val.isOk(), true)
+      equal(val._unsafeUnwrap(), 20)
+      equal(logSideEffect.mock.calls.length, 1)
+    })
+
+    it('Taps into an async err value', async () => {
+      const val = err(40).log(logSideEffect)
+      equal(val.isOk(), false)
+      equal(val._unsafeUnwrapErr(), 40)
+      equal(logSideEffect.mock.calls.length, 1)
+    })
+  })
+
+  it('Taps into an Ok value', () => {
+    const okVal = ok(12)
+
+    // value can be accessed, but is not changed
+    const sideEffect = vi.fn((number) => {
+      console.log(number)
+    })
+
+    const mapped = okVal.tap(sideEffect)
+
+    isTrue(mapped.isOk())
+    equal(mapped._unsafeUnwrap(), 12)
+    equal(sideEffect.mock.calls.length, 1)
+  })
+
+  it('Cannot change a value with .tap', () => {
+    const original = { name: 'John' }
+    const okVal = ok(original)
+
+    // value can be accessed, but is not changed
+    const sideEffect = vi.fn((_person) => ({ name: 'Alice' }))
+
+    const mapped = okVal.tap(sideEffect)
+
+    isTrue(mapped.isOk())
+    equal(mapped._unsafeUnwrap(), original)
+    equal(sideEffect.mock.calls.length, 1)
+  })
+
+  it('Skips `tap`', () => {
+    const errVal = err('I am your father')
+
+    const sideEffect = vi.fn((_value) => {
+      console.log('noooo')
+    })
+
+    const sideEffectErr = vi.fn((_value) => {
+      console.log('noooo')
+    })
+
+    const hopefullyNotMapped = errVal.tap(sideEffect).tapError(sideEffectErr)
+
+    isTrue(hopefullyNotMapped.isErr())
+    equal(sideEffect.mock.calls.length, 0)
+    equal(sideEffectErr.mock.calls.length, 1)
+    equal(hopefullyNotMapped._unsafeUnwrapErr(), errVal._unsafeUnwrapErr())
+  })
+
+  it('Cannot change a value with .tap and does not raise exception if tap has one', () => {
+    const original = { name: 'John' }
+    const okVal = ok(original)
+
+    // value can be accessed, but is not changed
+    const sideEffect = vi.fn((value: number) => {
+      if (value === 12) {
+        throw new Error("Don't do that!")
+      }
+
+      return { name: 'Alice' }
+    })
+
+    const mapped = okVal.tap((_x) => sideEffect(12))
+
+    isTrue(mapped.isOk())
+    equal(mapped._unsafeUnwrap(), original)
+    equal(sideEffect.mock.calls.length, 1)
+  })
+})
+
+describe('Result.Err', async () => {
+  it('Creates an Err value', () => {
+    const errVal = err('I have you now.')
+
+    equal(errVal.isOk(), false)
+    isTrue(errVal.isErr())
+    isTrue(typeof errVal.error === 'string')
+  })
+
+  it('Is comparable', () => {
+    deepEqual(err(42), err(42))
+    notEqual(err(42), err(43))
+  })
+
+  it('Skips `map`', () => {
+    const errVal = err('I am your father')
+
+    const mapper = vi.fn((_value) => 'noooo')
+
+    const hopefullyNotMapped = errVal.map(mapper)
+
+    isTrue(hopefullyNotMapped.isErr())
+    equal(mapper.mock.calls.length, 0)
+    equal(hopefullyNotMapped._unsafeUnwrapErr(), errVal._unsafeUnwrapErr())
+  })
+
+  it('Maps over an Err', () => {
+    const errVal = err('Round 1, Fight!')
+
+    const mapper = vi.fn((error: string) => error.replace('1', '2'))
+
+    const mapped = errVal.mapErr(mapper)
+
+    isTrue(mapped.isErr())
+    equal(mapper.mock.calls.length, 1)
+    notEqual(mapped._unsafeUnwrapErr(), errVal._unsafeUnwrapErr())
+  })
+
+  it('unwrapOr and return the default value', () => {
+    const okVal = err<number, string>('Oh nooo')
+    equal(okVal.unwrapOr(1), 1)
+  })
+
+  it('Skips over andThen', () => {
+    const errVal = err('Yolo')
+
+    const mapper = vi.fn((_val) => ok<string, string>('yooyo'))
+
+    const hopefullyNotFlattened = errVal.andThen(mapper)
+
+    isTrue(hopefullyNotFlattened.isErr())
+    equal(mapper.mock.calls.length, 0)
+    equal(errVal._unsafeUnwrapErr(), 'Yolo')
+  })
+
+  it('Transforms error into ResultAsync within `asyncAndThen`', async () => {
+    const errVal = err('Yolo')
+
+    const asyncMapper = vi.fn((_val) => okAsync<string, string>('yooyo'))
+
+    const hopefullyNotFlattened = errVal.asyncAndThen(asyncMapper)
+
+    equal(hopefullyNotFlattened instanceof ResultAsync, true)
+
+    equal(asyncMapper.mock.calls.length, 0)
+
+    const syncResult = await hopefullyNotFlattened
+    equal(syncResult._unsafeUnwrapErr(), 'Yolo')
+  })
+
+  it('Does not invoke callback within `asyncMap`', async () => {
+    const asyncMapper = vi.fn(
+      async (_val) =>
+        // ...
+        // complex logic
+        // ..
+
+        // db queries
+        // network calls
+        // disk io
+        // etc ...
+        'Very Nice!',
+    )
+
+    const errVal = err('nooooooo')
+
+    const promise = errVal.asyncMap(asyncMapper)
+
+    isTrue(promise instanceof ResultAsync)
+
+    const sameResult = await promise
+
+    isTrue(sameResult.isErr())
+    equal(asyncMapper.mock.calls.length, 0)
+    equal(sameResult._unsafeUnwrapErr(), errVal._unsafeUnwrapErr())
+  })
+
+  it('Matches on an Err', () => {
+    const okMapper = vi.fn((_val) => 'weeeeee')
+    const errMapper = vi.fn((_val) => 'wooooo')
+
+    const matched = err(12).match(okMapper, errMapper)
+
+    equal(matched, 'wooooo')
+    equal(okMapper.mock.calls.length, 0)
+    equal(errMapper.mock.calls.length, 1)
+  })
+
+  it('Throws when you unwrap an Err', () => {
+    const errVal = err('woopsies')
+
+    assert.throws(
+      () => {
+        errVal._unsafeUnwrap()
+      },
+      {
+        data: { type: 'Err', value: 'woopsies' },
+        message: 'Called `_unsafeUnwrap` on an Err',
+        stack: undefined,
+      },
+    )
+  })
+
+  it('Unwraps without issue', () => {
+    const okVal = err(12)
+
+    equal(okVal._unsafeUnwrapErr(), 12)
+  })
+
+  describe('orElse', async () => {
+    it('invokes the orElse callback on an Err value', async () => {
+      const okVal = err('BOOOM!')
+      const errorCallback = vi.fn((_errVal) => err(true))
+
+      deepEqual(okVal.orElse(errorCallback), err(true))
+      equal(errorCallback.mock.calls.length, 1)
+    })
+  })
+})
+
+describe('ResultAsync', async () => {
+  it('Is awaitable to a Result', async () => {
+    // For a success value
+    const asyncVal = okAsync(12)
+    equal(asyncVal instanceof ResultAsync, true)
+
+    const val = await asyncVal
+
+    equal(val._unsafeUnwrap(), 12)
+
+    // For an error
+    const asyncErr = errAsync('Wrong format')
+    isTrue(asyncErr instanceof ResultAsync)
+
+    const err = await asyncErr
+
+    isTrue(err.isErr())
+    equal(err._unsafeUnwrapErr(), 'Wrong format')
+  })
+
+  describe('acting as a Promise<Result>', async () => {
+    it('Is chainable like any Promise', async () => {
+      // For a success value
+      const asyncValChained = okAsync(12).then((res) => {
+        if (res.isOk()) {
+          return res.value + 2
+        }
+
+        return undefined
+      })
+
+      equal(asyncValChained instanceof Promise, true)
+      const val = await asyncValChained
+      equal(val, 14)
+
+      // For an error
+      const asyncErrChained = errAsync('Oops').then((res) => {
+        if (res.isErr()) {
+          return res.error + '!'
+        }
+
+        return undefined
+      })
+
+      equal(asyncErrChained instanceof Promise, true)
+      const err = await asyncErrChained
+      equal(err, 'Oops!')
+    })
+
+    it('Can be used with Promise.all', async () => {
+      // eslint-disable-next-line unicorn/no-single-promise-in-promise-methods
+      const allResult = await Promise.all([okAsync<string, Error>('1')])
+
+      equal(allResult.length, 1)
+      equal(allResult[0] instanceof Result, true)
+      if (!(allResult[0] instanceof Result)) {
+        return
+      }
+
+      isTrue(allResult[0].isOk())
+      equal(allResult[0]._unsafeUnwrap(), '1')
+    })
+  })
+
+  describe('map', async () => {
+    it('Maps a value using a synchronous function', async () => {
+      const asyncVal = okAsync(12)
+      const mapSyncFn = vi.fn((v: number) => v.toString())
+      const mapped = asyncVal.map(mapSyncFn)
+      isTrue(mapped instanceof ResultAsync)
+      const newVal = await mapped
+      isTrue(newVal.isOk())
+      equal(newVal._unsafeUnwrap(), '12')
+      equal(mapSyncFn.mock.calls.length, 1)
+    })
+  })
+
+  describe('mapErr', async () => {
+    it('Maps an error using a synchronous function', async () => {
+      const asyncErr = errAsync('Wrong format')
+
+      const mapErrSyncFn = vi.fn((str: string) => 'Error: '.concat(str))
+
+      const mappedErr = asyncErr.mapErr(mapErrSyncFn)
+
+      isTrue(mappedErr instanceof ResultAsync)
+
+      const newVal = await mappedErr
+
+      isTrue(newVal.isErr())
+      equal(newVal._unsafeUnwrapErr(), 'Error: Wrong format')
+      equal(mapErrSyncFn.mock.calls.length, 1)
+    })
+
+    it('Maps an error using an asynchronous function', async () => {
+      const asyncErr = errAsync('Wrong format')
+
+      const mapErrAsyncFn = vi.fn(async (str: string) => 'Error: '.concat(str))
+
+      const mappedErr = asyncErr.mapErr(mapErrAsyncFn)
+
+      isTrue(mappedErr instanceof ResultAsync)
+
+      const newVal = await mappedErr
+
+      isTrue(newVal.isErr())
+      equal(newVal._unsafeUnwrapErr(), 'Error: Wrong format')
+      equal(mapErrAsyncFn.mock.calls.length, 1)
+    })
+
+    it('Skips a value', async () => {
+      const asyncVal = okAsync(12)
+
+      const mapErrSyncFn = vi.fn((str: string) => 'Error: '.concat(str))
+
+      const notMapped = asyncVal.mapErr(mapErrSyncFn)
+
+      isTrue(notMapped instanceof ResultAsync)
+
+      const newVal = await notMapped
+
+      isTrue(newVal.isOk())
+      equal(newVal._unsafeUnwrap(), 12)
+      equal(mapErrSyncFn.mock.calls.length, 0)
+    })
+
+    it('Andthen chainning errors', async () => {
+      const createUser = vi.fn((v: { name: string }) => okAsync(v.name))
+      const result = await validateUser({ name: 'superadmin' }).andThen(createUser)
+      equal(result._unsafeUnwrapErr(), 'You are not allowed to register')
+    })
+
+    it('Andthen chaining success', async () => {
+      const createUser = vi.fn((v: { name: string }) => okAsync('Welcome '.concat(v.name)))
+      const result = await validateUser({ name: 'Elizeu Drummond' }).andThen(createUser)
+      equal(result._unsafeUnwrap(), 'Welcome Elizeu Drummond')
+    })
+  })
+
+  describe('andThen', async () => {
+    it('Maps a value using a function returning a ResultAsync', async () => {
+      const asyncVal = okAsync(12)
+
+      const andThenResultAsyncFn = vi.fn(() => okAsync('good'))
+
+      const mapped = asyncVal.andThen(andThenResultAsyncFn)
+
+      isTrue(mapped instanceof ResultAsync)
+
+      const newVal = await mapped
+
+      isTrue(newVal.isOk())
+      equal(newVal._unsafeUnwrap(), 'good')
+      equal(andThenResultAsyncFn.mock.calls.length, 1)
+    })
+
+    it('Maps a value using a function returning a Result', async () => {
+      const asyncVal = okAsync(12)
+
+      const andThenResultFn = vi.fn(() => ok('good'))
+
+      const mapped = asyncVal.andThen(andThenResultFn)
+
+      isTrue(mapped instanceof ResultAsync)
+
+      const newVal = await mapped
+
+      isTrue(newVal.isOk())
+      equal(newVal._unsafeUnwrap(), 'good')
+      equal(andThenResultFn.mock.calls.length, 1)
+    })
+
+    it('Skips an Error', async () => {
+      const asyncVal = errAsync<string, string>('Wrong format')
+
+      const andThenResultFn = vi.fn(() => ok<string, string>('good'))
+
+      const notMapped = asyncVal.andThen(andThenResultFn)
+
+      isTrue(notMapped instanceof ResultAsync)
+
+      const newVal = await notMapped
+
+      isTrue(newVal.isErr())
+      equal(newVal._unsafeUnwrapErr(), 'Wrong format')
+      equal(andThenResultFn.mock.calls.length, 0)
+    })
+  })
+
+  describe('if', async () => {
+    it('returns the "true" part of the statement', async () => {
+      const okVal = okAsync(12)
+      const result = okVal
+        .if((val) => val > 10)
+        .true((v) => okAsync(`The number ${v} is gerater than 10`))
+        .false((v) => okAsync(`The number ${v} is smaller or equal to 10`))
+
+      isTrue(result instanceof ResultAsync)
+      deepEqual(await result, ok('The number 12 is gerater than 10'))
+    })
+
+    it('returns the "false" part of the statement', async () => {
+      const okVal = okAsync(9)
+      const result = okVal
+        .if((val) => val > 10)
+        .true((v) => okAsync(`The number ${v} is gerater than 10`))
+        .false((v) => okAsync(`The number ${v} is smaller or equal to 10`))
+      isTrue(result instanceof ResultAsync)
+      deepEqual(await result, ok('The number 9 is smaller or equal to 10'))
+    })
+  })
+
+  describe('orElse', async () => {
+    it('Skips orElse on an Ok value', async () => {
+      const okVal = okAsync(12)
+      const errorCallback = vi.fn((_errVal) => errAsync<number, string>('It is now a string'))
+
+      const result = await okVal.orElse(errorCallback)
+
+      deepEqual(result, ok(12))
+
+      equal(errorCallback.mock.calls.length, 0)
+    })
+
+    it('Invokes the orElse callback on an Err value', async () => {
+      const myResult = errAsync('BOOOM!')
+      const errorCallback = vi.fn((_errVal) => errAsync(true))
+
+      const result = await myResult.orElse(errorCallback)
+
+      deepEqual(result, err(true))
+      equal(errorCallback.mock.calls.length, 1)
+    })
+
+    it('Accepts a regular Result in the callback', async () => {
+      const myResult = errAsync('BOOOM!')
+      const errorCallback = vi.fn((_errVal) => err(true))
+
+      const result = await myResult.orElse(errorCallback)
+
+      deepEqual(result, err(true))
+      equal(errorCallback.mock.calls.length, 1)
+    })
+  })
+
+  describe('catchTag', async () => {
+    it('recovers from a matching tagged async error with a Result', async () => {
+      const result = await errAsync<number, ValidationError | PermissionError>(
+        new ValidationError({ field: 'email' }),
+      ).catchTag('ValidationError', (error) => ok(`fixed:${error.field}`))
+
+      isTrue(result.isOk())
+      equal(result.value, 'fixed:email')
+      expectTypeOf(result).toMatchTypeOf<Result<number | string, PermissionError>>()
+    })
+
+    it('recovers from a matching tagged async error with a ResultAsync', async () => {
+      const result = await errAsync<number, ValidationError | PermissionError>(
+        new PermissionError({ permission: 'admin:write' }),
+      ).catchTags({ PermissionError: (error) => okAsync(String(error.permission).length) })
+
+      isTrue(result.isOk())
+      equal(result.value, 'admin:write'.length)
+      expectTypeOf(result.value).toEqualTypeOf<number>()
+    })
+
+    it('skips tagged async recovery on Ok values and unhandled tagged errors', async () => {
+      const okResult = await okAsync<number, ValidationError>(123).catchTag('ValidationError', () =>
+        ok(456),
+      )
+
+      isTrue(okResult.isOk())
+      equal(okResult.value, 123)
+
+      const permissionError = new PermissionError({ permission: 'admin:read' })
+      const unhandledTag = await errAsync<number, ValidationError | PermissionError>(
+        permissionError,
+      ).catchTag('ValidationError', () => ok(456))
+
+      isTrue(unhandledTag.isErr())
+      equal(unhandledTag.error, permissionError)
+
+      const okTagsResult = await okAsync<number, ValidationError>(123).catchTags({
+        ValidationError: () => ok(456),
+      })
+
+      isTrue(okTagsResult.isOk())
+      equal(okTagsResult.value, 123)
+
+      const validationError = new ValidationError({ field: 'email' })
+      const unhandledTags = await errAsync<number, ValidationError | PermissionError>(
+        validationError,
+      ).catchTags({ PermissionError: () => ok(456) })
+
+      isTrue(unhandledTags.isErr())
+      equal(unhandledTags.error, validationError)
+    })
+  })
+
+  it('pipes an async result through custom combinators', async () => {
+    const result = await okAsync<number, ValidationError>(2).pipe(
+      (value) => value.map((number) => number + 1),
+      (value) => value.andThen((number) => okAsync(String(number))),
+    )
+
+    isTrue(result.isOk())
+    equal(result.value, '3')
+    expectTypeOf(result).toMatchTypeOf<Result<string, ValidationError>>()
+
+    const unchanged = await (
+      okAsync(1) as unknown as { pipe: () => ResultAsync<number, never> }
+    ).pipe()
+    isTrue(unchanged.isOk())
+    equal(unchanged.value, 1)
+  })
+
+  describe('match', async () => {
+    it('Matches on an Ok', async () => {
+      const okMapper = vi.fn((_val) => 'weeeeee')
+      const errMapper = vi.fn((_val) => 'wooooo')
+
+      const matched = await okAsync(12).match(okMapper, errMapper)
+
+      equal(matched, 'weeeeee')
+      equal(okMapper.mock.calls.length, 1)
+      equal(errMapper.mock.calls.length, 0)
+    })
+
+    it('Matches on an Error', async () => {
+      const okMapper = vi.fn((_val) => 'weeeeee')
+      const errMapper = vi.fn((_val) => 'wooooo')
+
+      const matched = await errAsync('bad').match(okMapper, errMapper)
+
+      equal(matched, 'wooooo')
+      equal(okMapper.mock.calls.length, 0)
+      equal(errMapper.mock.calls.length, 1)
+    })
+
+    it('partially matches tagged async errors with a fallback', async () => {
+      const validationError = new ValidationError({ field: 'email' })
+      const permissionError = new PermissionError({ permission: 'admin:read' })
+
+      const handled = await errAsync<number, ValidationError | PermissionError>(
+        validationError,
+      ).matchTagsPartial(
+        String,
+        { ValidationError: (error) => `validation:${error.field}` },
+        (error) => `fallback:${error.message}`,
+      )
+      const fallback = await errAsync<number, ValidationError | PermissionError>(
+        permissionError,
+      ).matchTagsPartial(
+        String,
+        { ValidationError: (error) => `validation:${error.field}` },
+        (error) => `fallback:${error.message}`,
+      )
+      const okValue = await okAsync<number, ValidationError>(123).matchTagsPartial(
+        String,
+        { ValidationError: (error) => `validation:${error.field}` },
+        (error) => `fallback:${error.message}`,
+      )
+
+      equal(handled, 'validation:email')
+      equal(fallback, 'fallback:Missing permission admin:read')
+      equal(okValue, '123')
+
+      if (false) {
+        const result = errAsync<number, ValidationError>(validationError)
+
+        await result.matchTagsPartial(
+          String,
+          {
+            // @ts-expect-error PermissionError is not part of this error union.
+            PermissionError: () => 'permission',
+          },
+          (error) => error.message,
+        )
+      }
+    })
+  })
+
+  describe('unwrapOr', async () => {
+    it('returns a promise to the result value on an Ok', async () => {
+      const unwrapped = await okAsync(12).unwrapOr(10)
+      equal(unwrapped, 12)
+    })
+
+    it('returns a promise to the provided default value on an Error', async () => {
+      const unwrapped = await errAsync<number, number>(12).unwrapOr(10)
+      equal(unwrapped, 10)
+    })
+  })
+
+  describe('fromSafePromise', async () => {
+    it('Creates a ResultAsync from a Promise', async () => {
+      const res = ResultAsync.fromSafePromise(Promise.resolve(12))
+
+      equal(res instanceof ResultAsync, true)
+
+      const val = await res
+      isTrue(val.isOk())
+      equal(val._unsafeUnwrap(), 12)
+    })
+  })
+
+  describe('fromPromise', async () => {
+    it('Accepts an error handler as a second argument', async () => {
+      const res = ResultAsync.fromPromise(
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+        Promise.reject('No!'),
+        (e) => new Error('Oops: '.concat(String(e))),
+      )
+
+      equal(res instanceof ResultAsync, true)
+
+      const val = await res
+      isTrue(val.isErr())
+      deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
+    })
+  })
+
+  describe('okAsync', async () => {
+    it('Creates a ResultAsync that resolves to an undefined using unitAsync', async () => {
+      const val = unitAsync()
+
+      equal(val instanceof ResultAsync, true)
+
+      const res = await val
+      isTrue(res.isOk())
+      equal(res.isErr(), false)
+      equal(res.value, undefined)
+    })
+
+    it('Creates a ResultAsync that resolves to an undefined using zero argument', async () => {
+      const val = okAsync()
+
+      equal(val instanceof ResultAsync, true)
+
+      const res = await val
+      isTrue(res.isOk())
+      equal(res.isErr(), false)
+      equal(res.value, undefined)
+    })
+
+    it('Creates a ResultAsync that resolves to an Ok', async () => {
+      const val = okAsync(12)
+
+      equal(val instanceof ResultAsync, true)
+
+      const res = await val
+
+      isTrue(res.isOk())
+      equal(res._unsafeUnwrap(), 12)
+    })
+  })
+
+  describe('errAsync', async () => {
+    it('Creates a ResultAsync that resolves to an Err', async () => {
+      const err = errAsync('bad')
+
+      equal(err instanceof ResultAsync, true)
+
+      const res = await err
+
+      isTrue(res.isErr())
+      equal(res._unsafeUnwrapErr(), 'bad')
+    })
+  })
+
+  it('Maps a value using an asynchronous function', async () => {
+    const asyncVal = okAsync(12)
+
+    const mapAsyncFn = vi.fn(async (v: number) => v.toString())
+
+    const mapped = asyncVal.map(mapAsyncFn)
+
+    isTrue(mapped instanceof ResultAsync)
+
+    const newVal = await mapped
+
+    isTrue(newVal.isOk())
+    equal(newVal._unsafeUnwrap(), '12')
+    equal(mapAsyncFn.mock.calls.length, 1)
+  })
+
+  it('Skips an error', async () => {
+    const asyncErr = errAsync<number, string>('Wrong format')
+
+    const mapSyncFn = vi.fn((v: number) => v.toString())
+
+    const notMapped = asyncErr.map(mapSyncFn)
+
+    isTrue(notMapped instanceof ResultAsync)
+
+    const newVal = await notMapped
+
+    isTrue(newVal.isErr())
+    equal(newVal._unsafeUnwrapErr(), 'Wrong format')
+    equal(mapSyncFn.mock.calls.length, 0)
+  })
+
+  describe('Result.fromThrowable', async () => {
+    it('Parser JSON', async () => {
+      const safeJSONParse = (
+        text: string,
+        reviver?: (this: unknown, key: string, value: unknown) => unknown,
+      ) =>
+        Result.fromThrowable(JSON.parse, () => 'parser error')(text, reviver) as Result<
+          { name: string },
+          string
+        >
+
+      const result = safeJSONParse('{"name": "Elizeu Drummond"}')
+
+      isTrue(result.isOk())
+      deepEqual(result._unsafeUnwrap(), { name: 'Elizeu Drummond' })
+    })
+
+    it('does not expose value in an Err branch', async () => {
+      const resultarJsonParse = Result.fromThrowable(JSON.parse, () => 'JSON parse error')
+      const result = resultarJsonParse('boom')
+
+      if (result.isErr()) {
+        equal(result.error, 'JSON parse error')
+        // @ts-expect-error Err results do not expose a value property.
+        equal(result.value, undefined)
+      }
+    })
+
+    it('Creates a function that returns an OK result when the inner function does not throw', async () => {
+      const hello = (): string => 'hello'
+      const safeHello = Result.fromThrowable(hello)
+
+      const result = hello()
+      const safeResult = safeHello()
+
+      isTrue(safeResult.isOk())
+      equal(result, safeResult._unsafeUnwrap())
+    })
+
+    it('Accepts an inner function which takes arguments', async () => {
+      const hello = (fname: string): string => `hello, ${fname}`
+      const safeHello = Result.fromThrowable(hello)
+
+      const result = hello('Dikembe')
+      const safeResult = safeHello('Dikembe')
+
+      isTrue(safeResult.isOk())
+      equal(result, safeResult._unsafeUnwrap())
+    })
+
+    it('Creates a function that returns an err when the inner function throws', async () => {
+      const thrower = (): string => {
+        throw new Error() // eslint-disable-line unicorn/error-message
+      }
+
+      // type: () => Result<string, unknown>
+      // received types from thrower fn, no errorFn is provides therefore Err type is unknown
+      const safeThrower = Result.fromThrowable(thrower)
+      const result = safeThrower()
+
+      isTrue(result.isErr())
+      isTrue(result._unsafeUnwrapErr() instanceof Error)
+    })
+
+    it('Accepts an error handler as a second argument', async () => {
+      const thrower = (): string => {
+        throw new Error() // eslint-disable-line unicorn/error-message
+      }
+
+      type MessageObject = { message: string }
+      const toMessageObject = (): MessageObject => ({ message: 'error' })
+
+      // type: () => Result<string, MessageObject>
+      // received types from thrower fn and errorFn return type
+      const safeThrower = Result.fromThrowable(thrower, toMessageObject)
+      const result = safeThrower()
+
+      isTrue(result.isErr())
+      isTrue(!result.isOk())
+      isTrue(result instanceof Result)
+      deepEqual(result._unsafeUnwrapErr(), { message: 'error' })
+    })
+  })
+
+  it('From promise rejected', async () => {
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+    const x = await ResultAsync.fromPromise(Promise.reject('No!'), String)
+    isTrue(x.isErr())
+    equal(x.error, 'No!')
+  })
+
+  it('From promise rejected destructuring', async () => {
+    const getUserName = async (): Promise<{ user: string }> => ({ user: 'Elizeu Drummond' })
+
+    const x = getUserName()
+    const user = ResultAsync.fromPromise(x, () => 'No!').andThen(({ user }) => okAsync(user))
+
+    const result = await user
+
+    if (result.isErr()) {
+      isTrue(result.isErr())
+      equal(result.error, 'No!')
+    }
+
+    isTrue(result._unsafeUnwrap(), 'Elizeu Drummond')
+  })
+
+  it('From promise ok', async () => {
+    const x = await ResultAsync.fromPromise(
+      Promise.resolve('Yes!'),
+      (e) => new Error('Oops: ' + String(e)),
+    )
+    isTrue(x.isOk())
+    type R = string
+    if (x.isOk()) {
+      const r: R = x.value
+      equal(r, 'Yes!')
+    }
+
+    if (x.isErr()) {
+      const r = x.error
+      equal(r, 'No!')
+    }
+  })
+
+  it('From promise error', async () => {
+    const x = await ResultAsync.fromPromise(
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+      Promise.reject('boom'),
+      (e) => 'Oops: ' + String(e),
+    )
+
+    type R = string
+    if (x.isErr()) {
+      const r: R = x.error
+      equal(r, 'Oops: boom')
+    }
+  })
+
+  describe('ResultAsync.fromThrowable', async () => {
+    const readFile = vi.fn(async (file: string) => {
+      if (file === 'foo.txt') {
+        return Buffer.from('foo')
+      }
+
+      throw new Error('File not found')
+    })
+
+    const safeFileReader = fromThrowableAsync(
+      async (file: string) => readFile(file),
+      (e) => new Error('Oops: '.concat(String(e))),
+    )
+
+    it('creates a new function that returns a ResultAsync', async () => {
+      const example = fromThrowableAsync(async (a: number, b: number) => a + b)
+      const res = example(4, 8)
+      isTrue(res instanceof ResultAsync)
+
+      const val = await res
+      isTrue(val.isOk())
+      equal(val._unsafeUnwrap(), 12)
+    })
+
+    it('handles synchronous errors', async () => {
+      const example = fromThrowableAsync(async () => {
+        if (1 > 0) {
+          throw new Error('Oops: No!')
+        }
+
+        return 12
+      })
+
+      const val = await example()
+      isTrue(val.isErr())
+      deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
+    })
+
+    it('handles asynchronous errors', async () => {
+      const example = fromThrowableAsync(async () => {
+        if (1 > 0) {
+          throw new Error('Oops: No!')
+        }
+
+        return 12
+      })
+
+      const val = await example()
+      isTrue(val.isErr())
+      deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
+    })
+
+    it('Accepts an error handler as a second argument', async () => {
+      const example = fromThrowableAsync(
+        async () => {
+          throw new Error('No!')
+        },
+        (e) => new Error('Oops: '.concat((e as Error).message)),
+      )
+
+      const val = await example()
+      isTrue(val.isErr())
+      deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
+    })
+
+    it('fromThrowableAsync for readfile ok', async () => {
+      const value = await safeFileReader('foo.txt').match(
+        (buffer) => buffer.toString(),
+        (error) => error.message,
+      )
+
+      equal(value, 'foo')
+    })
+
+    it('fromThrowableAsync for readfile not found', async () => {
+      const value = await safeFileReader('bar.txt').match(
+        (buffer) => buffer.toString(),
+        (error) => error.message,
+      )
+
+      equal(value, 'Oops: Error: File not found')
+    })
+  })
+
+  describe('log result async', async () => {
+    const logSideEffect = vi.fn((v?: number, e?: number) => {
+      console.log('Just a side effect log', v, e)
+    })
+
+    afterEach(() => {
+      logSideEffect.mockReset()
+    })
+
+    it('Log into an async ok value', async () => {
+      const asyncVal = okAsync(20)
+      const mapped = asyncVal.log(logSideEffect)
+      const newVal = await mapped
+      equal(newVal.isOk(), true)
+      equal(newVal._unsafeUnwrap(), 20)
+      equal(logSideEffect.mock.calls.length, 1)
+    })
+
+    it('Taps into an async err value', async () => {
+      const asyncVal = errAsync(40)
+      const mapped = asyncVal.log(logSideEffect)
+      const newVal = await mapped
+      equal(newVal.isOk(), false)
+      equal(newVal._unsafeUnwrapErr(), 40)
+      equal(logSideEffect.mock.calls.length, 1)
+    })
+  })
+
+  describe('tap', async () => {
+    it('Taps into an async value', async () => {
+      const asyncVal = okAsync(12)
+
+      const sideEffect = vi.fn((number) => {
+        console.log(number)
+      })
+
+      const mapped = asyncVal.tap(sideEffect)
+
+      isTrue(mapped instanceof ResultAsync)
+
+      const newVal = await mapped
+
+      isTrue(newVal.isOk())
+      equal(newVal._unsafeUnwrap(), 12)
+      equal(sideEffect.mock.calls.length, 1)
+    })
+
+    it('Cannot change an async value with .tap', async () => {
+      const original = { name: 'John' }
+      const asyncVal = okAsync(original)
+
+      const sideEffect = vi.fn((_person) => okAsync({ name: 'Alice' }))
+
+      // @ts-expect-error  Ignoring this to run "dangerous code"
+      const mapped = asyncVal.tap(sideEffect)
+
+      isTrue(mapped instanceof ResultAsync)
+
+      const newVal = await mapped
+
+      isTrue(newVal.isOk())
+      deepEqual(newVal._unsafeUnwrap(), original)
+      equal(sideEffect.mock.calls.length, 1)
+    })
+
+    it('Skips side effect ok and taps into an error', async () => {
+      const asyncErr = errAsync<number, string>('Wrong format')
+
+      const sideEffect = vi.fn((number) => {
+        console.log(number)
+      })
+
+      const sideEffectErr = vi.fn((number) => {
+        console.error(number)
+      })
+
+      const notMapped = asyncErr.tap(sideEffect).tapError(sideEffectErr)
+
+      isTrue(notMapped instanceof ResultAsync)
+
+      const newVal = await notMapped
+
+      isTrue(newVal.isErr())
+      equal(newVal._unsafeUnwrapErr(), 'Wrong format')
+      equal(sideEffect.mock.calls.length, 0)
+      equal(sideEffectErr.mock.calls.length, 1)
+    })
+  })
+})
+
+describe('OrElse', async () => {
+  const foo = () => okAsync('foo')
+  const bar = () => errAsync(new Error('bar'))
+
+  class FooError extends Error {}
+  class BarError extends Error {}
+  class XooError extends Error {}
+
+  it('Infer result', async () => {
+    type R = Result<string | number, never>
+    const result: R = await foo().orElse(() => okAsync(1))
+    equal(result._unsafeUnwrap(), 'foo')
+  })
+
+  it('Set explicit type', async () => {
+    type R = Result<string | boolean, never>
+    const result: R = await foo().orElse<string | boolean, never>(() => okAsync(true))
+    equal(result._unsafeUnwrap(), 'foo')
+  })
+
+  it('Infer multiples types', async () => {
+    type R = Result<string | undefined, string | Error>
+    const result: R = await bar().orElse((e) => {
+      if (e instanceof BarError) {
+        return okAsync(undefined)
+      }
+
+      if (e instanceof FooError) {
+        return okAsync('foo')
+      }
+
+      if (e instanceof XooError) {
+        return errAsync('xoo')
+      }
+
+      return errAsync(e)
+    })
+    deepStrictEqual(result._unsafeUnwrapErr(), new Error('bar'))
+  })
+})
+
+describe('Finally', async () => {
+  const buffer = 'Not all those who wander are lost' // - J.R.R. Tolkien'
+
+  it('Finally should be called', () => {
+    const closeFile = vi.fn(() => {
+      console.log('closing file')
+    })
+    const file = { file: 'file.txt', content: 'line 1', close: closeFile }
+
+    const reader = ok(file)
+
+    const result = reader
+      .map((it) => it.content)
+      .finally((_) => {
+        file.close()
+      })
+
+    isTrue(result.isOk())
+    equal(result._unsafeUnwrap(), 'line 1')
+    equal(closeFile.mock.calls.length, 1)
+  })
+
+  it('Finally should be called with error', () => {
+    const foo = err('foo')
+    const arrayResult = new Array<string>()
+    foo.map((_p) => 'boo').tap((x) => x)
+    const result = foo
+      .map((_p) => 'boo')
+      .finally((x, y) => {
+        isTrue(x === undefined)
+        arrayResult.push(y, 'finalized')
+      })
+    isTrue(result.isErr())
+    equal(arrayResult.length, 2)
+    deepEqual(arrayResult, ['foo', 'finalized'])
+  })
+
+  it('Finally should be called with ok async', async () => {
+    const close = vi.fn(async () => undefined)
+    const fileHandle = {
+      close,
+      write: vi.fn(async () => ({ buffer, bytesWritten: 32 })),
+    } as unknown as fs.FileHandle
+    const open = vi.fn(async (_path: string, _flags: string) => fileHandle)
+
+    const result = await fromPromise(open('foo.txt', 'w'), String)
+      .andThen((handle) => fromPromise(handle.write(buffer), String))
+      .finally(async (v, _) => {
+        equal(v.buffer, buffer)
+        await close()
+      })
+
+    equal(close.mock.calls.length, 1)
+
+    equal(result.isOk(), true)
+    equal(result._unsafeUnwrap().bytesWritten, 32)
+  })
+
+  it('Finally should be called with error async', async () => {
+    const close = vi.fn(async () => undefined)
+    const fileHandle = {
+      close,
+      write: vi.fn(async () => {
+        throw new Error("Oops: Error: EACCES: permission denied, open 'foo.txt'")
+      }),
+    } as unknown as fs.FileHandle
+    const open = vi.fn(async (_path: string, _flags: string) => fileHandle)
+
+    const result = await fromPromise(open('bar.txt', 'w'), String)
+      .andThen((handle) => fromPromise(handle.write(buffer), String))
+      .finally(async (_, e) => {
+        isTrue(typeof e === 'string')
+        await close()
+      })
+
+    equal(close.mock.calls.length, 1)
+
+    equal(result.isErr(), true)
+    equal(
+      result._unsafeUnwrapErr(),
+      "Error: Oops: Error: EACCES: permission denied, open 'foo.txt'",
+    )
+  })
+})
+
+describe('Utils', async () => {
+  describe('`Result.combine`', async () => {
+    describe('Synchronous `combine`', async () => {
+      it('Combines a list of results into an Ok value', async () => {
+        const resultList = [ok(123), ok(456), ok(789)]
+
+        const result = Result.combine(resultList)
+
+        isTrue(result.isOk())
+        deepEqual(result._unsafeUnwrap(), [123, 456, 789])
+      })
+    })
+
+    it('Combines a list of results into an Err value', async () => {
+      const resultList: Result<number, string>[] = [
+        ok(123),
+        err('boooom!'),
+        ok(456),
+        err('ahhhhh!'),
+      ]
+
+      const result = Result.combine(resultList)
+
+      isTrue(result.isErr())
+      equal(result._unsafeUnwrapErr(), 'boooom!')
+    })
+
+    it('Combines heterogeneous lists', async () => {
+      type HeterogenousList = [
+        Result<string, string>,
+        Result<number, number>,
+        Result<boolean, boolean>,
+      ]
+
+      const heterogenousList: HeterogenousList = [ok('Yooooo'), ok(123), ok(true)]
+
+      type ExpecteResult = Result<[string, number, boolean], string | number | boolean>
+
+      const result: ExpecteResult = Result.combine(heterogenousList)
+
+      deepEqual(result._unsafeUnwrap(), ['Yooooo', 123, true])
+    })
+
+    it('Does not destructure / concatenate arrays', async () => {
+      type HomogenousList = [Result<string[], boolean>, Result<number[], string>]
+
+      const homogenousList: HomogenousList = [ok(['hello', 'world']), ok([1, 2, 3])]
+
+      type ExpectedResult = Result<[string[], number[]], boolean | string>
+
+      const result: ExpectedResult = Result.combine(homogenousList)
+
+      deepEqual(result._unsafeUnwrap(), [
+        ['hello', 'world'],
+        [1, 2, 3],
+      ])
+    })
+
+    describe('`ResultAsync.combine`', async () => {
+      it('Combines a list of async results into an Ok value', async () => {
+        const asyncResultList = [okAsync(123), okAsync(456), okAsync(789)]
+
+        const resultAsync: ResultAsync<number[], never[]> = ResultAsync.combine(asyncResultList)
+
+        isTrue(resultAsync instanceof ResultAsync)
+
+        const result = await ResultAsync.combine(asyncResultList)
+
+        isTrue(result.isOk())
+        deepEqual(result._unsafeUnwrap(), [123, 456, 789])
+      })
+
+      it('Combines a list of results into an Err value', async () => {
+        const resultList: ResultAsync<number, string>[] = [
+          okAsync(123),
+          errAsync('boooom!'),
+          okAsync(456),
+          errAsync('ahhhhh!'),
+        ]
+
+        const result = await ResultAsync.combine(resultList)
+
+        isTrue(result.isErr())
+        equal(result._unsafeUnwrapErr(), 'boooom!')
+      })
+
+      it('Combines heterogeneous lists', async () => {
+        type HeterogenousList = [
+          ResultAsync<string, string>,
+          ResultAsync<number, number>,
+          ResultAsync<boolean, boolean>,
+          ResultAsync<number[], string>,
+        ]
+
+        const heterogenousList: HeterogenousList = [
+          okAsync('Yooooo'),
+          okAsync(123),
+          okAsync(true),
+          okAsync([1, 2, 3]),
+        ]
+
+        type ExpecteResult = Result<[string, number, boolean, number[]], string | number | boolean>
+
+        const result: ExpecteResult = await ResultAsync.combine(heterogenousList)
+
+        deepEqual(result._unsafeUnwrap(), ['Yooooo', 123, true, [1, 2, 3]])
+      })
+    })
+  })
+
+  describe('`Result.combineWithAllErrors`', async () => {
+    describe('Synchronous `combineWithAllErrors`', async () => {
+      it('Combines a list of results into an Ok value', async () => {
+        const resultList = [ok(123), ok(456), ok(789)]
+
+        const result = Result.combineWithAllErrors(resultList)
+
+        isTrue(result.isOk())
+        deepEqual(result._unsafeUnwrap(), [123, 456, 789])
+      })
+
+      it('Combines a list of results into an Err value', async () => {
+        const resultList: Result<number, string>[] = [
+          ok(123),
+          err('boooom!'),
+          ok(456),
+          err('ahhhhh!'),
+        ]
+
+        const result = Result.combineWithAllErrors(resultList)
+
+        isTrue(result.isErr())
+        deepEqual(result._unsafeUnwrapErr(), ['boooom!', 'ahhhhh!'])
+      })
+
+      it('Combines heterogeneous lists', async () => {
+        type HeterogenousList = [
+          Result<string, string>,
+          Result<number, number>,
+          Result<boolean, boolean>,
+        ]
+
+        const heterogenousList: HeterogenousList = [ok('Yooooo'), ok(123), ok(true)]
+
+        type ExpecteResult = Result<[string, number, boolean], (string | number | boolean)[]>
+
+        const result: ExpecteResult = Result.combineWithAllErrors(heterogenousList)
+
+        deepEqual(result._unsafeUnwrap(), ['Yooooo', 123, true])
+      })
+
+      it('Does not destructure / concatenate arrays', async () => {
+        type HomogenousList = [Result<string[], boolean>, Result<number[], string>]
+
+        const homogenousList: HomogenousList = [ok(['hello', 'world']), ok([1, 2, 3])]
+
+        type ExpectedResult = Result<[string[], number[]], (boolean | string)[]>
+
+        const result: ExpectedResult = Result.combineWithAllErrors(homogenousList)
+
+        deepEqual(result._unsafeUnwrap(), [
+          ['hello', 'world'],
+          [1, 2, 3],
+        ])
+      })
+    })
+
+    describe('`ResultAsync.combineWithAllErrors`', async () => {
+      it('Combines a list of async results into an Ok value', async () => {
+        const asyncResultList = [okAsync(123), okAsync(456), okAsync(789)]
+
+        const result = await ResultAsync.combineWithAllErrors(asyncResultList)
+
+        isTrue(result.isOk())
+        deepEqual(result._unsafeUnwrap(), [123, 456, 789])
+      })
+
+      it('Combines a list of results into an Err value', async () => {
+        const asyncResultList: ResultAsync<number, string>[] = [
+          okAsync(123),
+          errAsync('boooom!'),
+          okAsync(456),
+          errAsync('ahhhhh!'),
+        ]
+
+        const result = await ResultAsync.combineWithAllErrors(asyncResultList)
+
+        isTrue(result.isErr())
+        deepEqual(result._unsafeUnwrapErr(), ['boooom!', 'ahhhhh!'])
+      })
+
+      it('Combines heterogeneous lists', async () => {
+        type HeterogenousList = [
+          ResultAsync<string, string>,
+          ResultAsync<number, number>,
+          ResultAsync<boolean, boolean>,
+        ]
+
+        const heterogenousList: HeterogenousList = [okAsync('Yooooo'), okAsync(123), okAsync(true)]
+
+        type ExpecteResult = Result<[string, number, boolean], (string | number | boolean)[]>
+
+        const result: ExpecteResult = await ResultAsync.combineWithAllErrors(heterogenousList)
+
+        deepEqual(result._unsafeUnwrap(), ['Yooooo', 123, true])
+      })
+    })
+
+    describe('object `ResultAsync.combine`', async () => {
+      interface ITestInterface {
+        getName(): string
+        setName(name: string): void
+        getAsyncResult(): ResultAsync<ITestInterface, Error>
+      }
+
+      it('Combines objects typed through interfaces', async () => {
+        const mock = {
+          getAsyncResult: vi.fn(() => errAsync<ITestInterface, Error>(new Error('not used'))),
+          getName: vi.fn(() => 'mock'),
+          setName: vi.fn(),
+        } satisfies ITestInterface
+
+        const result = await ResultAsync.combine([okAsync(mock)] as const)
+
+        isTrue(result !== undefined)
+        isTrue(result.isOk())
+        const unwrappedResult = result._unsafeUnwrap()
+        equal(unwrappedResult.length, 1)
+        strictEqual(unwrappedResult[0], mock)
+      })
+    })
+  })
+})
+
+describe('unwrapOrThrow', async () => {
+  class CustomError extends Error {
+    constructor(
+      message: string,
+      readonly customProperty: string,
+    ) {
+      super(message)
+    }
+  }
+
+  describe('unwrapOrThrow sync', async () => {
+    it('returns a promise to the result value on an Ok', async () => {
+      const unwrapped = ok(12).unwrapOrThrow()
+      equal(unwrapped, 12)
+    })
+
+    it('should unwrapOrThrow throw an error', async () => {
+      try {
+        const errorValue = err(new CustomError('boooom!', 'bar')).unwrapOrThrow()
+        fail(`should not get here ${JSON.stringify(errorValue)}`)
+      } catch (error) {
+        assert.ok(error instanceof CustomError)
+        equal(error.customProperty, 'bar')
+      }
+    })
+
+    it('should throw error return a correct error', async () => {
+      assert.throws(() => err('boooom!').unwrapOrThrow(), /^boooom!$/)
+      assert.throws(() => err(new Error('boooom!')).unwrapOrThrow(), /^Error: boooom!$/)
+      assert.throws(() => err(new CustomError('boooom!', 'bar')).unwrapOrThrow(), {
+        customProperty: 'bar',
+      })
+    })
+  })
+
+  describe('unwrapOrThrow async', async () => {
+    it('returns a promise to the result value on an Ok', async () => {
+      const unwrapped = await okAsync(12).unwrapOrThrow()
+      equal(unwrapped, 12)
+    })
+
+    it('should unwrapOrThrow throw an error', async () => {
+      try {
+        const errorValue = await errAsync(new CustomError('boooom!', 'bar')).unwrapOrThrow()
+        fail(`should not get here ${JSON.stringify(errorValue)}`)
+      } catch (error) {
+        assert.ok(error instanceof CustomError)
+        equal(error.customProperty, 'bar')
+      }
+    })
+
+    it('should throw error return a correct error', async () => {
+      await assert.rejects(async () => await errAsync('boooom!').unwrapOrThrow(), /^boooom!$/)
+      await assert.rejects(() => errAsync(new Error('boooom!')).unwrapOrThrow(), /^Error: boooom!$/)
+      await assert.rejects(() => errAsync(new CustomError('boooom!', 'bar')).unwrapOrThrow(), {
+        customProperty: 'bar',
+      })
+    })
+  })
+})
+
+describe('tryCatch', async () => {
+  // Test utilities
+  const divideAsync = async (a: number, b: number) => {
+    await sleep(2)
+    if (b === 0) throw new Error('Cannot divide by zero')
+    return a / b
+  }
+
+  const divide = (a: number, b: number) => {
+    if (b === 0) throw new Error('Cannot divide by zero')
+    return a / b
+  }
+
+  class CustomError extends Error {
+    constructor(
+      message: string,
+      public code: number,
+    ) {
+      super(message)
+    }
+  }
+
+  describe('Synchronous tryCatch', async () => {
+    it('should return ok result for successful operation', () => {
+      const result = Result.tryCatch(() => divide(10, 2))
+      isTrue(result.isOk())
+      equal(result.value, 5)
+    })
+
+    it('should return err result with default error handling', () => {
+      const result = tryCatch(() => divide(10, 0))
+      isTrue(result.isErr())
+      ok(result.error instanceof Error)
+      equal((result.error as Error).message, 'Cannot divide by zero')
+    })
+
+    it('should handle custom error transformation', () => {
+      const result = tryCatch(
+        () => divide(10, 0),
+        (error) => new CustomError((error as Error).message, 400),
+      )
+      isTrue(result.isErr())
+      ok(result.error instanceof CustomError)
+      equal(result.error.code, 400)
+    })
+
+    it('should handle non-Error throws', () => {
+      const result = tryCatch(() => {
+        throw new Error('string error') // deliberately throwing non-Error
+      })
+      isTrue(result.isErr())
+      equal((result.error as Error).message, 'string error')
+    })
+  })
+
+  describe('Asynchronous tryCatch', async () => {
+    it('should return ok result for successful async operation', async () => {
+      const result = await ResultAsync.tryCatch(divideAsync(10, 2))
+      isTrue(result.isOk())
+      equal(result._unsafeUnwrap(), 5)
+    })
+
+    it('should return ok result for successful async operation with anonymous function', async () => {
+      const result = await ResultAsync.tryCatch(
+        async () => {
+          await sleep(2)
+          return 10 / 2
+        },
+        (e) => (e as Error).message,
+      )
+
+      expectTypeOf(result).toEqualTypeOf<Result<number, string>>()
+      isTrue(result.isOk())
+      equal(result._unsafeUnwrap(), 5)
+    })
+
+    it('should return err result for failed async operation', async () => {
+      const result = await ResultAsync.tryCatch(divideAsync(10, 0), (e) => (e as Error).message)
+      isTrue(result.isErr())
+      ok(typeof result.error === 'string')
+      equal(result.error, 'Cannot divide by zero')
+    })
+
+    it('should return err result for failed async operation with anonymous function', async () => {
+      const result = await ResultAsync.tryCatch(
+        async () => {
+          await sleep(2)
+          throw new Error('Cannot divide by zero')
+        },
+        (e) => (e as Error).message,
+      )
+      isTrue(result.isErr())
+      ok(typeof result.error === 'string')
+      equal(result.error, 'Cannot divide by zero')
+    })
+
+    it('should catch synchronous throws from async factories', async () => {
+      const result = await ResultAsync.tryCatch(
+        () => {
+          throw new Error('factory failed before returning a promise')
+        },
+        (e) => (e as Error).message,
+      )
+
+      isTrue(result.isErr())
+      equal(result.error, 'factory failed before returning a promise')
+    })
+
+    it('should handle custom error transformation in async context', async () => {
+      const result = await tryCatchAsync(
+        divideAsync(10, 0),
+        (error) => new CustomError((error as Error).message, 500),
+      )
+      isTrue(result.isErr())
+      ok(result.error instanceof CustomError)
+      equal(result.error.code, 500)
+    })
+
+    it('should handle promise rejection with non-Error values', async () => {
+      const result = await tryCatchAsync(
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+        Promise.reject('async string error'),
+      )
+      isTrue(result.isErr())
+      equal(result.error, 'async string error')
+    })
+  })
+
+  describe('Edge cases', async () => {
+    it('should handle undefined and null operations correctly', () => {
+      const undefinedResult = tryCatch(() => undefined)
+      isTrue(undefinedResult.isOk())
+      equal(undefinedResult._unsafeUnwrap(), undefined)
+
+      const nullResult = tryCatch(() => null)
+      isTrue(nullResult.isOk())
+      equal(nullResult._unsafeUnwrap(), null)
+    })
+
+    it('should handle nested tryCatch operations', async () => {
+      const result = await tryCatchAsync(
+        (async () => {
+          const inner = tryCatch(() => divide(10, 0))
+          if (inner.isErr()) throw inner.error
+          return inner.value
+        })(),
+      )
+      isTrue(result.isErr())
+      ok(result.error instanceof Error)
+      equal((result.error as Error).message, 'Cannot divide by zero')
+    })
+  })
+})
