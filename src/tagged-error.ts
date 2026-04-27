@@ -90,7 +90,7 @@ type ExtractTemplateVariables<Template extends string> =
 
 type TemplateProps<Template extends string> = [ExtractTemplateVariables<Template>] extends [never]
   ? Record<never, never>
-  : { readonly [Key in ExtractTemplateVariables<Template>]: string | number }
+  : Readonly<Record<ExtractTemplateVariables<Template>, string | number>>
 type ReservedVariablesIn<Template extends string> = Extract<
   ExtractTemplateVariables<Template>,
   ReservedTemplateVariable
@@ -197,12 +197,38 @@ export function isError(value: unknown): value is Error {
   return nativeError.isError?.(value) ?? value instanceof Error
 }
 
+const stringifyTemplateValue = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return value
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return value.toString()
+  }
+
+  if (typeof value === 'symbol') {
+    return value.description ?? value.toString()
+  }
+
+  if (typeof value === 'function') {
+    return value.name
+  }
+
+  if (typeof value === 'object') {
+    return value === null
+      ? 'null'
+      : (JSON.stringify(value) ?? Object.prototype.toString.call(value))
+  }
+
+  return ''
+}
+
 const compileMessageInterpolator =
   (template: string): ((values?: Record<string, unknown>) => string) =>
   (values) =>
     template.replaceAll(templateVariableMatcher, (variable, key: string) => {
       const value = values?.[key]
-      return value === undefined ? variable : String(value)
+      return value === undefined ? variable : stringifyTemplateValue(value)
     })
 
 const getTemplateVariableNames = (template: string): readonly string[] => {
@@ -289,7 +315,7 @@ export function createTaggedError<
     constructor(props?: ConstructorProps<MessageTemplate>) {
       const message = interpolate(props)
       super(message, getErrorOptions(props?.cause))
-
+      // eslint-disable-next-line nicorn/custom-error-definition
       this.name = options.name
 
       if (props) {

@@ -16,7 +16,7 @@ import type {
   InferOkTypes,
 } from './utils.js'
 
-import { err, Result } from './result.js'
+import { Result, err } from './result.js'
 import { combineResultAsyncList, combineResultAsyncListWithAllErrors } from './utils.js'
 
 type TaggedValue = { readonly _tag: string }
@@ -66,7 +66,6 @@ export class DisposableResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   }
 
   then<A, B>(
-    // eslint-disable-line unicorn/no-thenable
     successCallback?: (res: Result<T, E>) => A | PromiseLike<A>,
     failureCallback?: (reason: unknown) => B | PromiseLike<B>,
   ): PromiseLike<A | B> {
@@ -167,20 +166,25 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
    * );
    * ```
    */
+  static tryCatch<T>(fn: Promise<T> | (() => Promise<T>)): ResultAsync<T, unknown>
+  static tryCatch<T, E>(
+    fn: Promise<T> | (() => Promise<T>),
+    errorFn: (e: unknown) => E,
+  ): ResultAsync<T, E>
   static tryCatch<T, E>(
     fn: Promise<T> | (() => Promise<T>),
     errorFn?: (e: unknown) => E,
-  ): ResultAsync<T, E> {
+  ): ResultAsync<T, unknown> {
     const promiseToProcess = typeof fn === 'function' ? Promise.try(fn) : fn
     const newPromise = promiseToProcess
       .then((value: T) => Result.ok(value))
-      .catch((error) => {
+      .catch((error: unknown) => {
         if (errorFn) {
           return Result.err(errorFn(error))
         }
         return Result.err(error)
       })
-    return new ResultAsync<T, E>(newPromise)
+    return new ResultAsync<T, unknown>(newPromise)
   }
 
   /**
@@ -209,7 +213,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   static fromPromise<T, E>(promise: Promise<T>, errorFn: (e: unknown) => E): ResultAsync<T, E> {
     const newPromise = promise
       .then((value: T) => Result.ok(value))
-      .catch((error) => Result.err(errorFn(error)))
+      .catch((error: unknown) => Result.err(errorFn(error)))
 
     return new ResultAsync<T, E>(newPromise)
   }
@@ -248,8 +252,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
    * @param errorFn when an error is thrown, this will wrap the error result if provided
    * @returns a new function that returns a `ResultAsync`
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  static fromThrowable<A extends readonly any[], T, E>(
+  static fromThrowable<A extends readonly unknown[], T, E>(
     fn: (...args: A) => Promise<T>,
     errorFn?: (err: unknown) => E,
   ): (...args: A) => ResultAsync<T, E> {
@@ -274,7 +277,6 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
   }
 
   then<A, B>(
-    // eslint-disable-line unicorn/no-thenable
     successCallback?: (res: Result<T, E>) => A | PromiseLike<A>,
     failureCallback?: (reason: unknown) => B | PromiseLike<B>,
   ): PromiseLike<A | B> {
@@ -341,7 +343,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     f: (t: T) => R,
   ): ResultAsync<InferAsyncOkTypes<R>, InferAsyncErrTypes<R> | E>
   andThen<U, F>(f: (t: T) => Result<U, F> | ResultAsync<U, F>): ResultAsync<U, E | F>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line explicit-module-boundary-types
   andThen(f: any): any {
     return new ResultAsync(
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
@@ -388,14 +390,14 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
     f: (e: E) => R,
   ): ResultAsync<InferAsyncOkTypes<R> | T, InferAsyncErrTypes<R>>
   orElse<U, A>(f: (e: E) => Result<U, A> | ResultAsync<U, A>): ResultAsync<U | T, A>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line explicit-module-boundary-types
   orElse(f: any): any {
     return new ResultAsync(
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       this.innerPromise.then((res: Result<T, E>) => {
-        // eslint-disable-line @typescript-eslint/no-unsafe-argument
         if (res.isErr()) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-          return f(res.error) // eslint-disable-line @typescript-eslint/no-unsafe-return
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call @typescript-eslint/no-unsafe-return
+          return f(res.error)
         }
 
         return okAsync(res.value)
@@ -455,7 +457,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
         if (typeof error === 'object' && error !== null && '_tag' in error) {
           const handler = handlers[error._tag as keyof Handlers]
 
-          if (handler) {
+          if (handler !== undefined) {
             const next = (handler as (error: E) => CatchTagHandlerResult<Handlers>)(error) as
               | Result<unknown, unknown>
               | ResultAsync<unknown, unknown>
@@ -491,7 +493,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
       if (typeof error === 'object' && error !== null && '_tag' in error) {
         const handler = handlers[error._tag as keyof typeof handlers]
 
-        if (handler) {
+        if (handler !== undefined) {
           return (handler as (error: E) => MatchTagHandlerResult<Handlers>)(error)
         }
       }

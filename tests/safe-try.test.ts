@@ -1,12 +1,8 @@
-/* eslint-disable require-yield */
-/* eslint-disable @typescript-eslint/no-floating-promises */
 import { deepEqual, equal, ok as isOk } from 'node:assert'
 import { describe, it } from 'vite-plus/test'
 
-import type { ResultAsync } from '../src/result-async.js'
-
-import { errAsync, okAsync } from '../src/result-async.js'
-import { err, ok, Result, safeTry } from '../src/result.js'
+/* eslint-disable require-yield */
+import { Result, type ResultAsync, err, errAsync, ok, okAsync, safeTry } from '../src/index.js'
 
 describe('safeTryAsync', async () => {
   const fooValue = okAsync('foo')

@@ -5,24 +5,24 @@ import assert, {
   deepStrictEqual,
   equal,
   fail,
+  ok as isTrue,
   notDeepStrictEqual,
   notEqual,
-  ok as isTrue,
   strictEqual,
 } from 'node:assert'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { afterEach, describe, expectTypeOf, it, vi } from 'vite-plus/test'
 
 import {
+  ResultAsync,
   errAsync,
   fromPromise,
   fromThrowableAsync,
   okAsync,
-  ResultAsync,
   tryCatchAsync,
   unitAsync,
 } from '../src/result-async.js'
-import { err, ok, Result, tryCatch, unit } from '../src/result.js'
+import { Result, err, ok, tryCatch, unit } from '../src/result.js'
 import { createTaggedError } from '../src/tagged-error.js'
 
 const validateUser = (user: Readonly<{ name: string }>): ResultAsync<{ name: string }, string> => {
@@ -99,7 +99,6 @@ describe('Result.Ok', async () => {
   })
 
   it('Creates an Ok value with undefined', () => {
-    // eslint-disable-next-line unicorn/no-useless-undefined
     const okVal = ok(undefined)
     equal(okVal.isOk(), true)
     equal(okVal.isErr(), false)
@@ -671,6 +670,8 @@ describe('ResultAsync', async () => {
         if (res.isOk()) {
           return res.value + 2
         }
+
+        return undefined
       })
 
       equal(asyncValChained instanceof Promise, true)
@@ -682,6 +683,8 @@ describe('ResultAsync', async () => {
         if (res.isErr()) {
           return res.error + '!'
         }
+
+        return undefined
       })
 
       equal(asyncErrChained instanceof Promise, true)
@@ -766,21 +769,21 @@ describe('ResultAsync', async () => {
       equal(mapErrSyncFn.mock.calls.length, 0)
     })
 
-    await it('Andthen chainning errors', async () => {
+    it('Andthen chainning errors', async () => {
       const createUser = vi.fn((v: { name: string }) => okAsync(v.name))
       const result = await validateUser({ name: 'superadmin' }).andThen(createUser)
       equal(result._unsafeUnwrapErr(), 'You are not allowed to register')
     })
 
-    await it('Andthen chaining success', async () => {
+    it('Andthen chaining success', async () => {
       const createUser = vi.fn((v: { name: string }) => okAsync('Welcome '.concat(v.name)))
       const result = await validateUser({ name: 'Elizeu Drummond' }).andThen(createUser)
       equal(result._unsafeUnwrap(), 'Welcome Elizeu Drummond')
     })
   })
 
-  await describe('andThen', async () => {
-    await it('Maps a value using a function returning a ResultAsync', async () => {
+  describe('andThen', async () => {
+    it('Maps a value using a function returning a ResultAsync', async () => {
       const asyncVal = okAsync(12)
 
       const andThenResultAsyncFn = vi.fn(() => okAsync('good'))
@@ -796,7 +799,7 @@ describe('ResultAsync', async () => {
       equal(andThenResultAsyncFn.mock.calls.length, 1)
     })
 
-    await it('Maps a value using a function returning a Result', async () => {
+    it('Maps a value using a function returning a Result', async () => {
       const asyncVal = okAsync(12)
 
       const andThenResultFn = vi.fn(() => ok('good'))
@@ -812,7 +815,7 @@ describe('ResultAsync', async () => {
       equal(andThenResultFn.mock.calls.length, 1)
     })
 
-    await it('Skips an Error', async () => {
+    it('Skips an Error', async () => {
       const asyncVal = errAsync<string, string>('Wrong format')
 
       const andThenResultFn = vi.fn(() => ok<string, string>('good'))
@@ -829,8 +832,8 @@ describe('ResultAsync', async () => {
     })
   })
 
-  await describe('if', async () => {
-    await it('returns the "true" part of the statement', async () => {
+  describe('if', async () => {
+    it('returns the "true" part of the statement', async () => {
       const okVal = okAsync(12)
       const result = okVal
         .if((val) => val > 10)
@@ -841,7 +844,7 @@ describe('ResultAsync', async () => {
       deepEqual(await result, ok('The number 12 is gerater than 10'))
     })
 
-    await it('returns the "false" part of the statement', async () => {
+    it('returns the "false" part of the statement', async () => {
       const okVal = okAsync(9)
       const result = okVal
         .if((val) => val > 10)
@@ -864,7 +867,7 @@ describe('ResultAsync', async () => {
       equal(errorCallback.mock.calls.length, 0)
     })
 
-    await it('Invokes the orElse callback on an Err value', async () => {
+    it('Invokes the orElse callback on an Err value', async () => {
       const myResult = errAsync('BOOOM!')
       const errorCallback = vi.fn((_errVal) => errAsync(true))
 
@@ -874,7 +877,7 @@ describe('ResultAsync', async () => {
       equal(errorCallback.mock.calls.length, 1)
     })
 
-    await it('Accepts a regular Result in the callback', async () => {
+    it('Accepts a regular Result in the callback', async () => {
       const myResult = errAsync('BOOOM!')
       const errorCallback = vi.fn((_errVal) => err(true))
 
@@ -885,8 +888,8 @@ describe('ResultAsync', async () => {
     })
   })
 
-  await describe('catchTag', async () => {
-    await it('recovers from a matching tagged async error with a Result', async () => {
+  describe('catchTag', async () => {
+    it('recovers from a matching tagged async error with a Result', async () => {
       const result = await errAsync<number, ValidationError | PermissionError>(
         new ValidationError({ field: 'email' }),
       ).catchTag('ValidationError', (error) => ok(`fixed:${error.field}`))
@@ -896,7 +899,7 @@ describe('ResultAsync', async () => {
       expectTypeOf(result).toMatchTypeOf<Result<number | string, PermissionError>>()
     })
 
-    await it('recovers from a matching tagged async error with a ResultAsync', async () => {
+    it('recovers from a matching tagged async error with a ResultAsync', async () => {
       const result = await errAsync<number, ValidationError | PermissionError>(
         new PermissionError({ permission: 'admin:write' }),
       ).catchTags({ PermissionError: (error) => okAsync(String(error.permission).length) })
@@ -906,7 +909,7 @@ describe('ResultAsync', async () => {
       expectTypeOf(result.value).toEqualTypeOf<number>()
     })
 
-    await it('skips tagged async recovery on Ok values and unhandled tagged errors', async () => {
+    it('skips tagged async recovery on Ok values and unhandled tagged errors', async () => {
       const okResult = await okAsync<number, ValidationError>(123).catchTag('ValidationError', () =>
         ok(456),
       )
@@ -939,7 +942,7 @@ describe('ResultAsync', async () => {
     })
   })
 
-  await it('pipes an async result through custom combinators', async () => {
+  it('pipes an async result through custom combinators', async () => {
     const result = await okAsync<number, ValidationError>(2).pipe(
       (value) => value.map((number) => number + 1),
       (value) => value.andThen((number) => okAsync(String(number))),
@@ -956,8 +959,8 @@ describe('ResultAsync', async () => {
     equal(unchanged.value, 1)
   })
 
-  await describe('match', async () => {
-    await it('Matches on an Ok', async () => {
+  describe('match', async () => {
+    it('Matches on an Ok', async () => {
       const okMapper = vi.fn((_val) => 'weeeeee')
       const errMapper = vi.fn((_val) => 'wooooo')
 
@@ -968,7 +971,7 @@ describe('ResultAsync', async () => {
       equal(errMapper.mock.calls.length, 0)
     })
 
-    await it('Matches on an Error', async () => {
+    it('Matches on an Error', async () => {
       const okMapper = vi.fn((_val) => 'weeeeee')
       const errMapper = vi.fn((_val) => 'wooooo')
 
@@ -980,20 +983,20 @@ describe('ResultAsync', async () => {
     })
   })
 
-  await describe('unwrapOr', async () => {
-    await it('returns a promise to the result value on an Ok', async () => {
+  describe('unwrapOr', async () => {
+    it('returns a promise to the result value on an Ok', async () => {
       const unwrapped = await okAsync(12).unwrapOr(10)
       equal(unwrapped, 12)
     })
 
-    await it('returns a promise to the provided default value on an Error', async () => {
+    it('returns a promise to the provided default value on an Error', async () => {
       const unwrapped = await errAsync<number, number>(12).unwrapOr(10)
       equal(unwrapped, 10)
     })
   })
 
-  await describe('fromSafePromise', async () => {
-    await it('Creates a ResultAsync from a Promise', async () => {
+  describe('fromSafePromise', async () => {
+    it('Creates a ResultAsync from a Promise', async () => {
       const res = ResultAsync.fromSafePromise(Promise.resolve(12))
 
       equal(res instanceof ResultAsync, true)
@@ -1004,8 +1007,8 @@ describe('ResultAsync', async () => {
     })
   })
 
-  await describe('fromPromise', async () => {
-    await it('Accepts an error handler as a second argument', async () => {
+  describe('fromPromise', async () => {
+    it('Accepts an error handler as a second argument', async () => {
       const res = ResultAsync.fromPromise(
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         Promise.reject('No!'),
@@ -1020,8 +1023,8 @@ describe('ResultAsync', async () => {
     })
   })
 
-  await describe('okAsync', async () => {
-    await it('Creates a ResultAsync that resolves to an undefined using unitAsync', async () => {
+  describe('okAsync', async () => {
+    it('Creates a ResultAsync that resolves to an undefined using unitAsync', async () => {
       const val = unitAsync()
 
       equal(val instanceof ResultAsync, true)
@@ -1032,7 +1035,7 @@ describe('ResultAsync', async () => {
       equal(res.value, undefined)
     })
 
-    await it('Creates a ResultAsync that resolves to an undefined using zero argument', async () => {
+    it('Creates a ResultAsync that resolves to an undefined using zero argument', async () => {
       const val = okAsync()
 
       equal(val instanceof ResultAsync, true)
@@ -1043,7 +1046,7 @@ describe('ResultAsync', async () => {
       equal(res.value, undefined)
     })
 
-    await it('Creates a ResultAsync that resolves to an Ok', async () => {
+    it('Creates a ResultAsync that resolves to an Ok', async () => {
       const val = okAsync(12)
 
       equal(val instanceof ResultAsync, true)
@@ -1055,8 +1058,8 @@ describe('ResultAsync', async () => {
     })
   })
 
-  await describe('errAsync', async () => {
-    await it('Creates a ResultAsync that resolves to an Err', async () => {
+  describe('errAsync', async () => {
+    it('Creates a ResultAsync that resolves to an Err', async () => {
       const err = errAsync('bad')
 
       equal(err instanceof ResultAsync, true)
@@ -1068,7 +1071,7 @@ describe('ResultAsync', async () => {
     })
   })
 
-  await it('Maps a value using an asynchronous function', async () => {
+  it('Maps a value using an asynchronous function', async () => {
     const asyncVal = okAsync(12)
 
     const mapAsyncFn = vi.fn(async (v: number) => v.toString())
@@ -1084,7 +1087,7 @@ describe('ResultAsync', async () => {
     equal(mapAsyncFn.mock.calls.length, 1)
   })
 
-  await it('Skips an error', async () => {
+  it('Skips an error', async () => {
     const asyncErr = errAsync<number, string>('Wrong format')
 
     const mapSyncFn = vi.fn((v: number) => v.toString())
@@ -1100,8 +1103,8 @@ describe('ResultAsync', async () => {
     equal(mapSyncFn.mock.calls.length, 0)
   })
 
-  await describe('Result.fromThrowable', async () => {
-    await it('Parser JSON', async () => {
+  describe('Result.fromThrowable', async () => {
+    it('Parser JSON', async () => {
       const safeJSONParse = (
         text: string,
         reviver?: (this: unknown, key: string, value: unknown) => unknown,
@@ -1117,7 +1120,7 @@ describe('ResultAsync', async () => {
       deepEqual(result._unsafeUnwrap(), { name: 'Elizeu Drummond' })
     })
 
-    await it('does not expose value in an Err branch', async () => {
+    it('does not expose value in an Err branch', async () => {
       const resultarJsonParse = Result.fromThrowable(JSON.parse, () => 'JSON parse error')
       const result = resultarJsonParse('boom')
 
@@ -1128,7 +1131,7 @@ describe('ResultAsync', async () => {
       }
     })
 
-    await it('Creates a function that returns an OK result when the inner function does not throw', async () => {
+    it('Creates a function that returns an OK result when the inner function does not throw', async () => {
       const hello = (): string => 'hello'
       const safeHello = Result.fromThrowable(hello)
 
@@ -1139,7 +1142,7 @@ describe('ResultAsync', async () => {
       equal(result, safeResult._unsafeUnwrap())
     })
 
-    await it('Accepts an inner function which takes arguments', async () => {
+    it('Accepts an inner function which takes arguments', async () => {
       const hello = (fname: string): string => `hello, ${fname}`
       const safeHello = Result.fromThrowable(hello)
 
@@ -1150,7 +1153,7 @@ describe('ResultAsync', async () => {
       equal(result, safeResult._unsafeUnwrap())
     })
 
-    await it('Creates a function that returns an err when the inner function throws', async () => {
+    it('Creates a function that returns an err when the inner function throws', async () => {
       const thrower = (): string => {
         throw new Error() // eslint-disable-line unicorn/error-message
       }
@@ -1164,7 +1167,7 @@ describe('ResultAsync', async () => {
       isTrue(result._unsafeUnwrapErr() instanceof Error)
     })
 
-    await it('Accepts an error handler as a second argument', async () => {
+    it('Accepts an error handler as a second argument', async () => {
       const thrower = (): string => {
         throw new Error() // eslint-disable-line unicorn/error-message
       }
@@ -1184,14 +1187,14 @@ describe('ResultAsync', async () => {
     })
   })
 
-  await it('From promise rejected', async () => {
+  it('From promise rejected', async () => {
     // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
     const x = await ResultAsync.fromPromise(Promise.reject('No!'), String)
     isTrue(x.isErr())
     equal(x.error, 'No!')
   })
 
-  await it('From promise rejected destructuring', async () => {
+  it('From promise rejected destructuring', async () => {
     const getUserName = async (): Promise<{ user: string }> => ({ user: 'Elizeu Drummond' })
 
     const x = getUserName()
@@ -1207,7 +1210,7 @@ describe('ResultAsync', async () => {
     isTrue(result._unsafeUnwrap(), 'Elizeu Drummond')
   })
 
-  await it('From promise ok', async () => {
+  it('From promise ok', async () => {
     const x = await ResultAsync.fromPromise(
       Promise.resolve('Yes!'),
       (e) => new Error('Oops: ' + String(e)),
@@ -1225,7 +1228,7 @@ describe('ResultAsync', async () => {
     }
   })
 
-  await it('From promise error', async () => {
+  it('From promise error', async () => {
     const x = await ResultAsync.fromPromise(
       // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
       Promise.reject('boom'),
@@ -1239,7 +1242,7 @@ describe('ResultAsync', async () => {
     }
   })
 
-  await describe('ResultAsync.fromThrowable', async () => {
+  describe('ResultAsync.fromThrowable', async () => {
     const readFile = vi.fn(async (file: string) => {
       if (file === 'foo.txt') {
         return Buffer.from('foo')
@@ -1253,7 +1256,7 @@ describe('ResultAsync', async () => {
       (e) => new Error('Oops: '.concat(String(e))),
     )
 
-    await it('creates a new function that returns a ResultAsync', async () => {
+    it('creates a new function that returns a ResultAsync', async () => {
       const example = fromThrowableAsync(async (a: number, b: number) => a + b)
       const res = example(4, 8)
       isTrue(res instanceof ResultAsync)
@@ -1263,10 +1266,9 @@ describe('ResultAsync', async () => {
       equal(val._unsafeUnwrap(), 12)
     })
 
-    await it('handles synchronous errors', async () => {
+    it('handles synchronous errors', async () => {
       const example = fromThrowableAsync(async () => {
         if (1 > 0) {
-          // eslint-disable-line no-constant-condition
           throw new Error('Oops: No!')
         }
 
@@ -1278,10 +1280,9 @@ describe('ResultAsync', async () => {
       deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
     })
 
-    await it('handles asynchronous errors', async () => {
+    it('handles asynchronous errors', async () => {
       const example = fromThrowableAsync(async () => {
         if (1 > 0) {
-          // eslint-disable-line no-constant-condition
           throw new Error('Oops: No!')
         }
 
@@ -1293,7 +1294,7 @@ describe('ResultAsync', async () => {
       deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
     })
 
-    await it('Accepts an error handler as a second argument', async () => {
+    it('Accepts an error handler as a second argument', async () => {
       const example = fromThrowableAsync(
         async () => {
           throw new Error('No!')
@@ -1306,7 +1307,7 @@ describe('ResultAsync', async () => {
       deepEqual(val._unsafeUnwrapErr(), new Error('Oops: No!'))
     })
 
-    await it('fromThrowableAsync for readfile ok', async () => {
+    it('fromThrowableAsync for readfile ok', async () => {
       const value = await safeFileReader('foo.txt').match(
         (buffer) => buffer.toString(),
         (error) => error.message,
@@ -1315,7 +1316,7 @@ describe('ResultAsync', async () => {
       equal(value, 'foo')
     })
 
-    await it('fromThrowableAsync for readfile not found', async () => {
+    it('fromThrowableAsync for readfile not found', async () => {
       const value = await safeFileReader('bar.txt').match(
         (buffer) => buffer.toString(),
         (error) => error.message,
@@ -1325,7 +1326,7 @@ describe('ResultAsync', async () => {
     })
   })
 
-  await describe('log result async', async () => {
+  describe('log result async', async () => {
     const logSideEffect = vi.fn((v?: number, e?: number) => {
       console.log('Just a side effect log', v, e)
     })
@@ -1334,7 +1335,7 @@ describe('ResultAsync', async () => {
       logSideEffect.mockReset()
     })
 
-    await it('Log into an async ok value', async () => {
+    it('Log into an async ok value', async () => {
       const asyncVal = okAsync(20)
       const mapped = asyncVal.log(logSideEffect)
       const newVal = await mapped
@@ -1343,7 +1344,7 @@ describe('ResultAsync', async () => {
       equal(logSideEffect.mock.calls.length, 1)
     })
 
-    await it('Taps into an async err value', async () => {
+    it('Taps into an async err value', async () => {
       const asyncVal = errAsync(40)
       const mapped = asyncVal.log(logSideEffect)
       const newVal = await mapped
@@ -1353,8 +1354,8 @@ describe('ResultAsync', async () => {
     })
   })
 
-  await describe('tap', async () => {
-    await it('Taps into an async value', async () => {
+  describe('tap', async () => {
+    it('Taps into an async value', async () => {
       const asyncVal = okAsync(12)
 
       const sideEffect = vi.fn((number) => {
@@ -1372,7 +1373,7 @@ describe('ResultAsync', async () => {
       equal(sideEffect.mock.calls.length, 1)
     })
 
-    await it('Cannot change an async value with .tap', async () => {
+    it('Cannot change an async value with .tap', async () => {
       const original = { name: 'John' }
       const asyncVal = okAsync(original)
 
@@ -1390,7 +1391,7 @@ describe('ResultAsync', async () => {
       equal(sideEffect.mock.calls.length, 1)
     })
 
-    await it('Skips side effect ok and taps into an error', async () => {
+    it('Skips side effect ok and taps into an error', async () => {
       const asyncErr = errAsync<number, string>('Wrong format')
 
       const sideEffect = vi.fn((number) => {
@@ -1415,7 +1416,7 @@ describe('ResultAsync', async () => {
   })
 })
 
-await describe('OrElse', async () => {
+describe('OrElse', async () => {
   const foo = () => okAsync('foo')
   const bar = () => errAsync(new Error('bar'))
 
@@ -1423,23 +1424,22 @@ await describe('OrElse', async () => {
   class BarError extends Error {}
   class XooError extends Error {}
 
-  await it('Infer result', async () => {
+  it('Infer result', async () => {
     type R = Result<string | number, never>
     const result: R = await foo().orElse(() => okAsync(1))
     equal(result._unsafeUnwrap(), 'foo')
   })
 
-  await it('Set explicit type', async () => {
+  it('Set explicit type', async () => {
     type R = Result<string | boolean, never>
     const result: R = await foo().orElse<string | boolean, never>(() => okAsync(true))
     equal(result._unsafeUnwrap(), 'foo')
   })
 
-  await it('Infer multiples types', async () => {
+  it('Infer multiples types', async () => {
     type R = Result<string | undefined, string | Error>
     const result: R = await bar().orElse((e) => {
       if (e instanceof BarError) {
-        // eslint-disable-next-line unicorn/no-useless-undefined
         return okAsync(undefined)
       }
 
@@ -1457,10 +1457,10 @@ await describe('OrElse', async () => {
   })
 })
 
-await describe('Finally', async () => {
+describe('Finally', async () => {
   const buffer = 'Not all those who wander are lost' // - J.R.R. Tolkien'
 
-  await it('Finally should be called', () => {
+  it('Finally should be called', () => {
     const closeFile = vi.fn(() => {
       console.log('closing file')
     })
@@ -1479,7 +1479,7 @@ await describe('Finally', async () => {
     equal(closeFile.mock.calls.length, 1)
   })
 
-  await it('Finally should be called with error', () => {
+  it('Finally should be called with error', () => {
     const foo = err('foo')
     const arrayResult = new Array<string>()
     foo.map((_p) => 'boo').tap((x) => x)
@@ -1494,7 +1494,7 @@ await describe('Finally', async () => {
     deepEqual(arrayResult, ['foo', 'finalized'])
   })
 
-  await it('Finally should be called with ok async', async () => {
+  it('Finally should be called with ok async', async () => {
     const close = vi.fn(async () => undefined)
     const fileHandle = {
       close,
@@ -1515,7 +1515,7 @@ await describe('Finally', async () => {
     equal(result._unsafeUnwrap().bytesWritten, 32)
   })
 
-  await it('Finally should be called with error async', async () => {
+  it('Finally should be called with error async', async () => {
     const close = vi.fn(async () => undefined)
     const fileHandle = {
       close,
@@ -1542,10 +1542,10 @@ await describe('Finally', async () => {
   })
 })
 
-await describe('Utils', async () => {
-  await describe('`Result.combine`', async () => {
-    await describe('Synchronous `combine`', async () => {
-      await it('Combines a list of results into an Ok value', async () => {
+describe('Utils', async () => {
+  describe('`Result.combine`', async () => {
+    describe('Synchronous `combine`', async () => {
+      it('Combines a list of results into an Ok value', async () => {
         const resultList = [ok(123), ok(456), ok(789)]
 
         const result = Result.combine(resultList)
@@ -1555,7 +1555,7 @@ await describe('Utils', async () => {
       })
     })
 
-    await it('Combines a list of results into an Err value', async () => {
+    it('Combines a list of results into an Err value', async () => {
       const resultList: Result<number, string>[] = [
         ok(123),
         err('boooom!'),
@@ -1569,7 +1569,7 @@ await describe('Utils', async () => {
       equal(result._unsafeUnwrapErr(), 'boooom!')
     })
 
-    await it('Combines heterogeneous lists', async () => {
+    it('Combines heterogeneous lists', async () => {
       type HeterogenousList = [
         Result<string, string>,
         Result<number, number>,
@@ -1585,7 +1585,7 @@ await describe('Utils', async () => {
       deepEqual(result._unsafeUnwrap(), ['Yooooo', 123, true])
     })
 
-    await it('Does not destructure / concatenate arrays', async () => {
+    it('Does not destructure / concatenate arrays', async () => {
       type HomogenousList = [Result<string[], boolean>, Result<number[], string>]
 
       const homogenousList: HomogenousList = [ok(['hello', 'world']), ok([1, 2, 3])]
@@ -1600,8 +1600,8 @@ await describe('Utils', async () => {
       ])
     })
 
-    await describe('`ResultAsync.combine`', async () => {
-      await it('Combines a list of async results into an Ok value', async () => {
+    describe('`ResultAsync.combine`', async () => {
+      it('Combines a list of async results into an Ok value', async () => {
         const asyncResultList = [okAsync(123), okAsync(456), okAsync(789)]
 
         const resultAsync: ResultAsync<number[], never[]> = ResultAsync.combine(asyncResultList)
@@ -1614,7 +1614,7 @@ await describe('Utils', async () => {
         deepEqual(result._unsafeUnwrap(), [123, 456, 789])
       })
 
-      await it('Combines a list of results into an Err value', async () => {
+      it('Combines a list of results into an Err value', async () => {
         const resultList: ResultAsync<number, string>[] = [
           okAsync(123),
           errAsync('boooom!'),
@@ -1628,7 +1628,7 @@ await describe('Utils', async () => {
         equal(result._unsafeUnwrapErr(), 'boooom!')
       })
 
-      await it('Combines heterogeneous lists', async () => {
+      it('Combines heterogeneous lists', async () => {
         type HeterogenousList = [
           ResultAsync<string, string>,
           ResultAsync<number, number>,
@@ -1652,9 +1652,9 @@ await describe('Utils', async () => {
     })
   })
 
-  await describe('`Result.combineWithAllErrors`', async () => {
-    await describe('Synchronous `combineWithAllErrors`', async () => {
-      await it('Combines a list of results into an Ok value', async () => {
+  describe('`Result.combineWithAllErrors`', async () => {
+    describe('Synchronous `combineWithAllErrors`', async () => {
+      it('Combines a list of results into an Ok value', async () => {
         const resultList = [ok(123), ok(456), ok(789)]
 
         const result = Result.combineWithAllErrors(resultList)
@@ -1663,7 +1663,7 @@ await describe('Utils', async () => {
         deepEqual(result._unsafeUnwrap(), [123, 456, 789])
       })
 
-      await it('Combines a list of results into an Err value', async () => {
+      it('Combines a list of results into an Err value', async () => {
         const resultList: Result<number, string>[] = [
           ok(123),
           err('boooom!'),
@@ -1677,7 +1677,7 @@ await describe('Utils', async () => {
         deepEqual(result._unsafeUnwrapErr(), ['boooom!', 'ahhhhh!'])
       })
 
-      await it('Combines heterogeneous lists', async () => {
+      it('Combines heterogeneous lists', async () => {
         type HeterogenousList = [
           Result<string, string>,
           Result<number, number>,
@@ -1693,7 +1693,7 @@ await describe('Utils', async () => {
         deepEqual(result._unsafeUnwrap(), ['Yooooo', 123, true])
       })
 
-      await it('Does not destructure / concatenate arrays', async () => {
+      it('Does not destructure / concatenate arrays', async () => {
         type HomogenousList = [Result<string[], boolean>, Result<number[], string>]
 
         const homogenousList: HomogenousList = [ok(['hello', 'world']), ok([1, 2, 3])]
@@ -1709,8 +1709,8 @@ await describe('Utils', async () => {
       })
     })
 
-    await describe('`ResultAsync.combineWithAllErrors`', async () => {
-      await it('Combines a list of async results into an Ok value', async () => {
+    describe('`ResultAsync.combineWithAllErrors`', async () => {
+      it('Combines a list of async results into an Ok value', async () => {
         const asyncResultList = [okAsync(123), okAsync(456), okAsync(789)]
 
         const result = await ResultAsync.combineWithAllErrors(asyncResultList)
@@ -1719,7 +1719,7 @@ await describe('Utils', async () => {
         deepEqual(result._unsafeUnwrap(), [123, 456, 789])
       })
 
-      await it('Combines a list of results into an Err value', async () => {
+      it('Combines a list of results into an Err value', async () => {
         const asyncResultList: ResultAsync<number, string>[] = [
           okAsync(123),
           errAsync('boooom!'),
@@ -1733,7 +1733,7 @@ await describe('Utils', async () => {
         deepEqual(result._unsafeUnwrapErr(), ['boooom!', 'ahhhhh!'])
       })
 
-      await it('Combines heterogeneous lists', async () => {
+      it('Combines heterogeneous lists', async () => {
         type HeterogenousList = [
           ResultAsync<string, string>,
           ResultAsync<number, number>,
@@ -1750,14 +1750,14 @@ await describe('Utils', async () => {
       })
     })
 
-    await describe('object `ResultAsync.combine`', async () => {
+    describe('object `ResultAsync.combine`', async () => {
       interface ITestInterface {
         getName(): string
         setName(name: string): void
         getAsyncResult(): ResultAsync<ITestInterface, Error>
       }
 
-      await it('Combines objects typed through interfaces', async () => {
+      it('Combines objects typed through interfaces', async () => {
         const mock = {
           getAsyncResult: vi.fn(() => errAsync<ITestInterface, Error>(new Error('not used'))),
           getName: vi.fn(() => 'mock'),
@@ -1776,7 +1776,7 @@ await describe('Utils', async () => {
   })
 })
 
-await describe('unwrapOrThrow', async () => {
+describe('unwrapOrThrow', async () => {
   class CustomError extends Error {
     constructor(
       message: string,
@@ -1786,13 +1786,13 @@ await describe('unwrapOrThrow', async () => {
     }
   }
 
-  await describe('unwrapOrThrow sync', async () => {
-    await it('returns a promise to the result value on an Ok', async () => {
+  describe('unwrapOrThrow sync', async () => {
+    it('returns a promise to the result value on an Ok', async () => {
       const unwrapped = ok(12).unwrapOrThrow()
       equal(unwrapped, 12)
     })
 
-    await it('should unwrapOrThrow throw an error', async () => {
+    it('should unwrapOrThrow throw an error', async () => {
       try {
         const errorValue = err(new CustomError('boooom!', 'bar')).unwrapOrThrow()
         fail(`should not get here ${JSON.stringify(errorValue)}`)
@@ -1802,7 +1802,7 @@ await describe('unwrapOrThrow', async () => {
       }
     })
 
-    await it('should throw error return a correct error', async () => {
+    it('should throw error return a correct error', async () => {
       assert.throws(() => err('boooom!').unwrapOrThrow(), /^boooom!$/)
       assert.throws(() => err(new Error('boooom!')).unwrapOrThrow(), /^Error: boooom!$/)
       assert.throws(() => err(new CustomError('boooom!', 'bar')).unwrapOrThrow(), {
@@ -1811,13 +1811,13 @@ await describe('unwrapOrThrow', async () => {
     })
   })
 
-  await describe('unwrapOrThrow async', async () => {
-    await it('returns a promise to the result value on an Ok', async () => {
+  describe('unwrapOrThrow async', async () => {
+    it('returns a promise to the result value on an Ok', async () => {
       const unwrapped = await okAsync(12).unwrapOrThrow()
       equal(unwrapped, 12)
     })
 
-    await it('should unwrapOrThrow throw an error', async () => {
+    it('should unwrapOrThrow throw an error', async () => {
       try {
         const errorValue = await errAsync(new CustomError('boooom!', 'bar')).unwrapOrThrow()
         fail(`should not get here ${JSON.stringify(errorValue)}`)
@@ -1827,7 +1827,7 @@ await describe('unwrapOrThrow', async () => {
       }
     })
 
-    await it('should throw error return a correct error', async () => {
+    it('should throw error return a correct error', async () => {
       await assert.rejects(async () => await errAsync('boooom!').unwrapOrThrow(), /^boooom!$/)
       await assert.rejects(() => errAsync(new Error('boooom!')).unwrapOrThrow(), /^Error: boooom!$/)
       await assert.rejects(() => errAsync(new CustomError('boooom!', 'bar')).unwrapOrThrow(), {
@@ -1837,7 +1837,7 @@ await describe('unwrapOrThrow', async () => {
   })
 })
 
-await describe('tryCatch', async () => {
+describe('tryCatch', async () => {
   // Test utilities
   const divideAsync = async (a: number, b: number) => {
     await sleep(2)
@@ -1859,21 +1859,21 @@ await describe('tryCatch', async () => {
     }
   }
 
-  await describe('Synchronous tryCatch', async () => {
-    await it('should return ok result for successful operation', () => {
+  describe('Synchronous tryCatch', async () => {
+    it('should return ok result for successful operation', () => {
       const result = Result.tryCatch(() => divide(10, 2))
       isTrue(result.isOk())
       equal(result.value, 5)
     })
 
-    await it('should return err result with default error handling', () => {
+    it('should return err result with default error handling', () => {
       const result = tryCatch(() => divide(10, 0))
       isTrue(result.isErr())
       ok(result.error instanceof Error)
       equal((result.error as Error).message, 'Cannot divide by zero')
     })
 
-    await it('should handle custom error transformation', () => {
+    it('should handle custom error transformation', () => {
       const result = tryCatch(
         () => divide(10, 0),
         (error) => new CustomError((error as Error).message, 400),
@@ -1883,7 +1883,7 @@ await describe('tryCatch', async () => {
       equal(result.error.code, 400)
     })
 
-    await it('should handle non-Error throws', () => {
+    it('should handle non-Error throws', () => {
       const result = tryCatch(() => {
         throw new Error('string error') // deliberately throwing non-Error
       })
@@ -1892,14 +1892,14 @@ await describe('tryCatch', async () => {
     })
   })
 
-  await describe('Asynchronous tryCatch', async () => {
-    await it('should return ok result for successful async operation', async () => {
+  describe('Asynchronous tryCatch', async () => {
+    it('should return ok result for successful async operation', async () => {
       const result = await ResultAsync.tryCatch(divideAsync(10, 2))
       isTrue(result.isOk())
       equal(result._unsafeUnwrap(), 5)
     })
 
-    await it('should return ok result for successful async operation with anonymous function', async () => {
+    it('should return ok result for successful async operation with anonymous function', async () => {
       const result = await ResultAsync.tryCatch(
         async () => {
           await sleep(2)
@@ -1908,18 +1908,19 @@ await describe('tryCatch', async () => {
         (e) => (e as Error).message,
       )
 
+      expectTypeOf(result).toEqualTypeOf<Result<number, string>>()
       isTrue(result.isOk())
       equal(result._unsafeUnwrap(), 5)
     })
 
-    await it('should return err result for failed async operation', async () => {
+    it('should return err result for failed async operation', async () => {
       const result = await ResultAsync.tryCatch(divideAsync(10, 0), (e) => (e as Error).message)
       isTrue(result.isErr())
       ok(typeof result.error === 'string')
       equal(result.error, 'Cannot divide by zero')
     })
 
-    await it('should return err result for failed async operation with anonymous function', async () => {
+    it('should return err result for failed async operation with anonymous function', async () => {
       const result = await ResultAsync.tryCatch(
         async () => {
           await sleep(2)
@@ -1932,7 +1933,7 @@ await describe('tryCatch', async () => {
       equal(result.error, 'Cannot divide by zero')
     })
 
-    await it('should catch synchronous throws from async factories', async () => {
+    it('should catch synchronous throws from async factories', async () => {
       const result = await ResultAsync.tryCatch(
         () => {
           throw new Error('factory failed before returning a promise')
@@ -1944,7 +1945,7 @@ await describe('tryCatch', async () => {
       equal(result.error, 'factory failed before returning a promise')
     })
 
-    await it('should handle custom error transformation in async context', async () => {
+    it('should handle custom error transformation in async context', async () => {
       const result = await tryCatchAsync(
         divideAsync(10, 0),
         (error) => new CustomError((error as Error).message, 500),
@@ -1954,7 +1955,7 @@ await describe('tryCatch', async () => {
       equal(result.error.code, 500)
     })
 
-    await it('should handle promise rejection with non-Error values', async () => {
+    it('should handle promise rejection with non-Error values', async () => {
       const result = await tryCatchAsync(
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         Promise.reject('async string error'),
@@ -1964,9 +1965,8 @@ await describe('tryCatch', async () => {
     })
   })
 
-  await describe('Edge cases', async () => {
-    await it('should handle undefined and null operations correctly', () => {
-      // eslint-disable-next-line unicorn/no-useless-undefined
+  describe('Edge cases', async () => {
+    it('should handle undefined and null operations correctly', () => {
       const undefinedResult = tryCatch(() => undefined)
       isTrue(undefinedResult.isOk())
       equal(undefinedResult._unsafeUnwrap(), undefined)
@@ -1976,7 +1976,7 @@ await describe('tryCatch', async () => {
       equal(nullResult._unsafeUnwrap(), null)
     })
 
-    await it('should handle nested tryCatch operations', async () => {
+    it('should handle nested tryCatch operations', async () => {
       const result = await tryCatchAsync(
         (async () => {
           const inner = tryCatch(() => divide(10, 0))

@@ -4,12 +4,12 @@ import { describe, expectTypeOf, it } from 'vite-plus/test'
 import type { ErrResult, TaggedEnum } from '../src/index.js'
 
 import {
+  Result,
   createTaggedError,
   findCause,
   isError,
   matchError,
   matchErrorPartial,
-  Result,
 } from '../src/index.js'
 
 class UserNotFoundError extends createTaggedError({

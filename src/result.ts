@@ -1,10 +1,14 @@
 /* eslint-disable @typescript-eslint/unbound-method, class-methods-use-this */
-import type { ErrorConfig } from './error.js'
-import type { ExtractErrTypes, ExtractOkTypes, InferErrTypes, InferOkTypes } from './utils.js'
-
-import { createResultarError } from './error.js'
-import { errAsync, ResultAsync } from './result-async.js'
-import { combineResultList, combineResultListWithAllErrors } from './utils.js'
+import { type ErrorConfig, createResultarError } from './error.js'
+import { ResultAsync, errAsync } from './result-async.js'
+import {
+  type ExtractErrTypes,
+  type ExtractOkTypes,
+  type InferErrTypes,
+  type InferOkTypes,
+  combineResultList,
+  combineResultListWithAllErrors,
+} from './utils.js'
 
 type TaggedValue = { readonly _tag: string }
 type TaggedErrorValue = Error & TaggedValue
@@ -157,10 +161,8 @@ export type Result<T, E> = OkResult<T, E> | ErrResult<T, E>
 interface ResultStatic {
   [Symbol.hasInstance](value: unknown): boolean
   tryCatch<T, E>(fn: () => Exclude<T, Promise<unknown>>, errorFn?: (e: unknown) => E): Result<T, E>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   fromThrowable<Fn extends (...args: readonly any[]) => unknown, E>(
     fn: Fn,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     errorFn?: (e: any) => E,
   ): (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E>
   ok<T, E = never>(value: T): OkResult<T, E>
@@ -222,10 +224,8 @@ class ResultNamespace {
    * @param fn function to wrap with ok on success or err on failure
    * @param errorFn when an error is thrown, this will wrap the error result if provided
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   static fromThrowable<Fn extends (...args: readonly any[]) => unknown, E>(
     fn: Fn,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     errorFn?: (e: any) => E,
   ): (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E> {
     return (...args) => {
@@ -350,7 +350,6 @@ class Ok<T, E> {
   ): Result<InferOkTypes<R> | T, InferErrTypes<R>>
   orElse<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A>
   orElse<U, A>(_f: (e: E) => Result<U, A>): Result<U | T, A> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return ok<U | T, A>(this.value as Exclude<T, Promise<any>>)
   }
 
@@ -551,7 +550,7 @@ class Err<T, E> {
     if (typeof error === 'object' && error !== null && '_tag' in error) {
       const handler = handlers[error._tag as keyof Handlers]
 
-      if (handler) {
+      if (handler !== undefined) {
         return (handler as (error: E) => CatchTagHandlerResult<Handlers>)(error) as Result<
           T | InferOkTypes<CatchTagHandlerResult<Handlers>>,
           ExcludeTag<E, keyof Handlers & string> | InferErrTypes<CatchTagHandlerResult<Handlers>>
@@ -588,7 +587,7 @@ class Err<T, E> {
     if (typeof error === 'object' && error !== null && '_tag' in error) {
       const handler = handlers[error._tag as keyof typeof handlers]
 
-      if (handler) {
+      if (handler !== undefined) {
         return (handler as (error: E) => MatchTagHandlerResult<Handlers>)(error)
       }
     }
