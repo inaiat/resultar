@@ -1,5 +1,6 @@
-import { ResultAsync } from './result-async.js'
 import type { Result } from './result.js'
+
+import { ResultAsync } from './result-async.js'
 import { err, ok } from './result.js'
 
 // Given a list of Results, this extracts all the different `T` types from that list
@@ -34,17 +35,17 @@ export type InferAsyncErrTypes<R> = R extends ResultAsync<unknown, infer E> ? E 
 export const combineResultList = <T, E>(
   resultList: readonly Result<T, E>[],
 ): Result<readonly T[], E> => {
-  let acc = ok([]) as Result<T[], E>
+  const values: T[] = []
 
   for (const result of resultList) {
     if (result.isErr()) {
-      acc = err(result.error)
-      break
-    } else {
-      acc.map((list) => list.push(result.value))
+      return err(result.error)
     }
+
+    values.push(result.value)
   }
-  return acc
+
+  return ok(values)
 }
 
 /* This is the typesafe version of Promise.all

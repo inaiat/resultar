@@ -1,18 +1,20 @@
 /* eslint-disable require-yield */
 /* eslint-disable @typescript-eslint/no-floating-promises */
 import { deepEqual, equal, ok as isOk } from 'node:assert'
-import { describe, it } from 'node:test'
+import { describe, it } from 'vite-plus/test'
+
 import type { ResultAsync } from '../src/result-async.js'
+
 import { errAsync, okAsync } from '../src/result-async.js'
 import { err, ok, Result, safeTry } from '../src/result.js'
 
-await describe('safeTryAsync', async () => {
+describe('safeTryAsync', async () => {
   const fooValue = okAsync('foo')
   const barValue = okAsync('bar')
   const errValue = errAsync('boom')
 
-  await it('SafeTryAsync with all Ok', async () => {
-    const resultAsync = safeTry(async function*() {
+  it('SafeTryAsync with all Ok', async () => {
+    const resultAsync = safeTry(async function* () {
       const okValues = new Array<string>()
 
       const okFoo = yield* fooValue
@@ -30,8 +32,8 @@ await describe('safeTryAsync', async () => {
     deepEqual(result._unsafeUnwrap(), ['foo', 'bar'])
   })
 
-  await it('SafeTryAsync with Err', async () => {
-    const resultAsync = safeTry(async function*() {
+  it('SafeTryAsync with Err', async () => {
+    const resultAsync = safeTry(async function* () {
       const okValues = new Array<string>()
       const okFoo = yield* fooValue
       okValues.push(okFoo)
@@ -53,11 +55,11 @@ await describe('safeTryAsync', async () => {
   })
 })
 
-await describe('Returns what is returned from the generator function', async () => {
+describe('Returns what is returned from the generator function', async () => {
   const val = 'value'
 
   it('With synchronous Ok', () => {
-    const res = safeTry(function*() {
+    const res = safeTry(function* () {
       return ok(val)
     })
     isOk(res instanceof Result)
@@ -65,7 +67,7 @@ await describe('Returns what is returned from the generator function', async () 
   })
 
   it('With synchronous Err', () => {
-    const res = safeTry(function*() {
+    const res = safeTry(function* () {
       return err(val)
     })
 
@@ -74,7 +76,7 @@ await describe('Returns what is returned from the generator function', async () 
   })
 
   it('With async Ok', async () => {
-    const res = await safeTry(async function*() {
+    const res = await safeTry(async function* () {
       return okAsync(val)
     })
     isOk(res.isOk())
@@ -82,7 +84,7 @@ await describe('Returns what is returned from the generator function', async () 
   })
 
   it('With async Err', async () => {
-    const res = await safeTry(async function*() {
+    const res = await safeTry(async function* () {
       return errAsync(val)
     })
     isOk(res.isErr())
@@ -90,12 +92,12 @@ await describe('Returns what is returned from the generator function', async () 
   })
 })
 
-await describe("Returns the first occurence of Err instance as yiled*'s operand", async () => {
+describe("Returns the first occurence of Err instance as yiled*'s operand", async () => {
   it('With synchronous results', () => {
     const errVal = 'err'
     const okValues = new Array<string>()
 
-    const result = safeTry(function*() {
+    const result = safeTry(function* () {
       const okFoo = yield* ok('foo').safeUnwrap()
       okValues.push(okFoo)
 
@@ -117,7 +119,7 @@ await describe("Returns the first occurence of Err instance as yiled*'s operand"
     const errVal = 'err'
     const okValues = new Array<string>()
 
-    const result = await safeTry(async function*() {
+    const result = await safeTry(async function* () {
       const okFoo = yield* okAsync('foo')
       okValues.push(okFoo)
 
@@ -139,7 +141,7 @@ await describe("Returns the first occurence of Err instance as yiled*'s operand"
     const errVal = 'err'
     const okValues = new Array<string>()
 
-    const result = await safeTry(async function*() {
+    const result = await safeTry(async function* () {
       const okFoo = yield* okAsync('foo')
       okValues.push(okFoo)
 
@@ -158,7 +160,7 @@ await describe("Returns the first occurence of Err instance as yiled*'s operand"
   })
 })
 
-await describe("Tests if README's examples work", async () => {
+describe("Tests if README's examples work", async () => {
   const okValue = 3
   const errValue = 'err!'
   function good(): Result<number, string> {
@@ -187,12 +189,9 @@ await describe("Tests if README's examples work", async () => {
 
   it('mayFail2 error', () => {
     function myFunc(): Result<number, string> {
-      return safeTry<number, string>(function*() {
+      return safeTry<number, string>(function* () {
         return ok(
-          (yield* good()
-            .mapErr(e => `1st, ${e}`)) +
-            (yield* bad()
-              .mapErr(e => `2nd, ${e}`)),
+          (yield* good().mapErr((e) => `1st, ${e}`)) + (yield* bad().mapErr((e) => `2nd, ${e}`)),
         )
       })
     }
@@ -204,12 +203,9 @@ await describe("Tests if README's examples work", async () => {
 
   it('all ok', () => {
     function myFunc(): Result<number, string> {
-      return safeTry<number, string>(function*() {
+      return safeTry<number, string>(function* () {
         return ok(
-          (yield* good()
-            .mapErr(e => `1st, ${e}`)) +
-            (yield* good()
-              .mapErr(e => `2nd, ${e}`)),
+          (yield* good().mapErr((e) => `1st, ${e}`)) + (yield* good().mapErr((e) => `2nd, ${e}`)),
         )
       })
     }
@@ -221,12 +217,10 @@ await describe("Tests if README's examples work", async () => {
 
   it('async mayFail1 error', async () => {
     function myFunc(): ResultAsync<number, string> {
-      return safeTry<number, string>(async function*() {
+      return safeTry<number, string>(async function* () {
         return ok(
-          (yield* (await promiseBad())
-            .mapErr(e => `1st, ${e}`)) +
-            (yield* asyncGood()
-              .mapErr(e => `2nd, ${e}`)),
+          (yield* (await promiseBad()).mapErr((e) => `1st, ${e}`)) +
+            (yield* asyncGood().mapErr((e) => `2nd, ${e}`)),
         )
       })
     }
@@ -238,12 +232,10 @@ await describe("Tests if README's examples work", async () => {
 
   it('async mayFail2 error', async () => {
     function myFunc(): ResultAsync<number, string> {
-      return safeTry<number, string>(async function*() {
+      return safeTry<number, string>(async function* () {
         return ok(
-          (yield* (await promiseGood())
-            .mapErr(e => `1st, ${e}`)) +
-            (yield* asyncBad()
-              .mapErr(e => `2nd, ${e}`)),
+          (yield* (await promiseGood()).mapErr((e) => `1st, ${e}`)) +
+            (yield* asyncBad().mapErr((e) => `2nd, ${e}`)),
         )
       })
     }
@@ -255,12 +247,10 @@ await describe("Tests if README's examples work", async () => {
 
   it('promise async all ok', async () => {
     function myFunc(): ResultAsync<number, string> {
-      return safeTry<number, string>(async function*() {
+      return safeTry<number, string>(async function* () {
         return ok(
-          (yield* (await promiseGood())
-            .mapErr(e => `1st, ${e}`)) +
-            (yield* asyncGood()
-              .mapErr(e => `2nd, ${e}`)),
+          (yield* (await promiseGood()).mapErr((e) => `1st, ${e}`)) +
+            (yield* asyncGood().mapErr((e) => `2nd, ${e}`)),
         )
       })
     }
@@ -270,11 +260,11 @@ await describe("Tests if README's examples work", async () => {
     equal(result._unsafeUnwrap(), okValue + okValue)
   })
 
-  await describe('it yields and works without safeUnwrap', () => {
+  describe('it yields and works without safeUnwrap', () => {
     it('With synchronous Ok', () => {
       const res: Result<string, string> = ok('ok')
 
-      const actual = safeTry(function*() {
+      const actual = safeTry(function* () {
         const x = yield* res
         return ok(x)
       })
@@ -286,7 +276,7 @@ await describe("Tests if README's examples work", async () => {
     it('With synchronous Err', () => {
       const res: Result<number, string> = err('error')
 
-      const actual = safeTry(function*() {
+      const actual = safeTry(function* () {
         const x = yield* res
         return ok(x)
       })
@@ -319,7 +309,7 @@ await describe("Tests if README's examples work", async () => {
 
     it('mayFail2 error', () => {
       function fn(): Result<number, string> {
-        return safeTry<number, string>(function*() {
+        return safeTry<number, string>(function* () {
           const first = yield* good().mapErr((e) => `1st, ${e}`)
           const second = yield* bad().mapErr((e) => `2nd, ${e}`)
 
@@ -334,7 +324,7 @@ await describe("Tests if README's examples work", async () => {
 
     it('all ok', () => {
       function myFunc(): Result<number, string> {
-        return safeTry<number, string>(function*() {
+        return safeTry<number, string>(function* () {
           const first = yield* good().mapErr((e) => `1st, ${e}`)
           const second = yield* good().mapErr((e) => `2nd, ${e}`)
           return ok(first + second)
@@ -348,7 +338,7 @@ await describe("Tests if README's examples work", async () => {
 
     it('async mayFail1 error', async () => {
       function myFunc(): ResultAsync<number, string> {
-        return safeTry<number, string>(async function*() {
+        return safeTry<number, string>(async function* () {
           const first = yield* (await promiseBad()).mapErr((e) => `1st, ${e}`)
           const second = yield* asyncGood().mapErr((e) => `2nd, ${e}`)
           return ok(first + second)
@@ -362,7 +352,7 @@ await describe("Tests if README's examples work", async () => {
 
     it('async mayFail2 error', async () => {
       function myFunc(): ResultAsync<number, string> {
-        return safeTry<number, string>(async function*() {
+        return safeTry<number, string>(async function* () {
           const goodResult = await promiseGood()
           const value = yield* goodResult.mapErr((e) => `1st, ${e}`)
           const value2 = yield* asyncBad().mapErr((e) => `2nd, ${e}`)
@@ -378,7 +368,7 @@ await describe("Tests if README's examples work", async () => {
 
     it('promise async all ok', async () => {
       function myFunc(): ResultAsync<number, string> {
-        return safeTry<number, string>(async function*() {
+        return safeTry<number, string>(async function* () {
           const first = yield* (await promiseGood()).mapErr((e) => `1st, ${e}`)
           const second = yield* asyncGood().mapErr((e) => `2nd, ${e}`)
           return ok(first + second)

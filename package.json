@@ -2,89 +2,67 @@
   "name": "resultar",
   "version": "1.4.5",
   "description": "Result pattern for typescript",
-  "type": "module",
-  "packageManager": "pnpm@10.11.0",
-  "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    }
-  },
-  "types": "dist/index.d.ts",
-  "engines": {
-    "node": ">=22"
-  },
-  "outDir": "./dist",
-  "files": [
-    "dist"
-  ],
-  "scripts": {
-    "build": "tsup",
-    "fmt": "dprint fmt",
-    "lint": "dprint check && eslint",
-    "lint:fix": "dprint fmt && eslint --fix",
-    "prepublishOnly": "pnpm run build",
-    "test": "node --import=tsx/esm --test tests/*.ts",
-    "typedoc": "typedoc",
-    "prepare": "husky || true"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/inaiat/resultar.git"
-  },
   "keywords": [
     "plugin"
   ],
+  "homepage": "https://github.com/inaiat/resultar",
+  "bugs": {
+    "url": "https://github.com/inaiat/resultar/issues"
+  },
+  "license": "MIT",
+  "author": "inaiat@gmail.com",
   "contributors": [
     "Inaiat <inaiat@gmail.com>",
     "Tomaz Haidar <tomaz_haidar@hotmail.com>"
   ],
-  "license": "MIT",
-  "licenses": [
-    {
-      "type": "MIT",
-      "url": "http://opensource.org/licenses/MIT"
-    }
-  ],
-  "bugs": {
-    "url": "https://github.com/inaiat/resultar/issues"
-  },
-  "homepage": "https://github.com/inaiat/resultar",
-  "devDependencies": {
-    "@types/node": "^22.15.21",
-    "dprint": "0.50.0",
-    "eslint": "^9.27.0",
-    "eslint-plugin-import": "^2.31.0",
-    "eslint-plugin-n": "^17.18.0",
-    "eslint-plugin-unicorn": "59.0.1",
-    "eslint-plugin-unused-imports": "^4.1.4",
-    "husky": "^9.1.7",
-    "semver": "^7.7.2",
-    "testdouble": "^3.20.2",
-    "tsup": "^8.5.0",
-    "tsx": "^4.19.4",
-    "typedoc": "0.28.4",
-    "typedoc-github-wiki-theme": "~2.1.0",
-    "typedoc-plugin-markdown": "^4.6.3",
-    "typescript": "^5.8.3",
-    "typescript-eslint": "^8.32.1"
-  },
-  "tsup": {
-    "sourcemap": true,
-    "dts": true,
-    "clean": true,
-    "bundle": true,
-    "target": "node20",
-    "format": [
-      "esm",
-      "cjs"
-    ],
-    "entry": [
-      "src/**/*.ts"
-    ]
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inaiat/resultar.git"
   },
   "directories": {
     "test": "test"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "types": "dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "vp pack",
+    "check": "vp check",
+    "check:full": "vp check && vp test run --coverage",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "lint": "vp lint",
+    "lint:fix": "vp lint --fix",
+    "prepublishOnly": "pnpm run build",
+    "test": "vp test",
+    "test:watch": "vp test watch",
+    "test:ui": "vp test --ui --watch",
+    "test:cov": "vp test run --coverage",
+    "typedoc": "typedoc",
+    "prepare": "vp config || true",
+    "bench": "pnpm run build && node --import tsx benchmarks/resultar-vs-neverthrow.ts",
+    "bench:neverthrow": "pnpm run bench"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@vitest/coverage-v8": "^4.1.4",
+    "@vitest/ui": "^4.1.4",
+    "cronometro": "^6.0.3",
+    "neverthrow": "^8.2.0",
+    "tsx": "^4.21.0",
+    "typedoc": "0.28.19",
+    "typedoc-github-wiki-theme": "~2.1.0",
+    "typedoc-plugin-markdown": "^4.11.0",
+    "typescript": "^6.0.2",
+    "vite-plus": "0.1.18"
   },
   "release": {
     "branches": [
@@ -102,11 +80,14 @@
       }
     ]
   },
-  "author": "inaiat@gmail.com",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "dprint",
-      "esbuild"
-    ]
-  }
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "licenses": [
+    {
+      "type": "MIT",
+      "url": "http://opensource.org/licenses/MIT"
+    }
+  ]
 }

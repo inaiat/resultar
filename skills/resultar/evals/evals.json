@@ -1,0 +1,23 @@
+{
+  "skill_name": "resultar",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "In a TypeScript service using Resultar, refactor this createUser flow so expected failures are typed instead of thrown. It validates email, checks if the user exists, inserts into a repository, and the route needs HTTP responses for invalid email, duplicate user, and database failure. Show the Resultar code with tagged errors and boundary matching.",
+      "expected_output": "Uses Result<ResultAsync as appropriate), createTaggedError classes with inferred props, .err helpers, and matchError at the HTTP boundary. Avoids T | Error as the primary model and avoids throwing for expected domain failures.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I have a Resultar async pipeline that calls an external API and then saves the response. Please write an example using ResultAsync, fromPromise or tryCatchAsync, and add metrics/logging without changing the result. Explain when to use tap, tapError, log, and finally.",
+      "expected_output": "Shows ResultAsync composition, wraps external promises, uses side-effect helpers only for observation/cleanup, states that callback failures are ignored, and uses map/andThen/orElse for transformations.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Write Vite+ tests for a Resultar tagged error API. I need runtime tests for .err(), .is(), matchError exhaustiveness behavior, and type-level tests for required template props using expectTypeOf and @ts-expect-error.",
+      "expected_output": "Uses vite-plus/test, node:assert runtime checks, expectTypeOf for inferred types, and @ts-expect-error for invalid constructor/err props. Covers .err() returning Result<never, ErrorClass>.",
+      "files": []
+    }
+  ]
+}
