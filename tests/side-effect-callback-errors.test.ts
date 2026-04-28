@@ -1,5 +1,5 @@
 import { equal } from 'node:assert'
-import { describe, it, vi } from 'vite-plus/test'
+import { describe, it } from 'vite-plus/test'
 
 import { err, errAsync, ok, okAsync } from '../src/index.js'
 
@@ -38,17 +38,14 @@ describe('Result side-effect callback failures', () => {
     equal(errResult._unsafeUnwrapErr(), original)
   })
 
-  it('swallows finally callback errors and preserves the original result', () => {
-    const original = new Error('original')
-    const okResult = ok<number, Error>(1).finally(() => {
-      throw callbackError
-    })
-    const errResult = err<number, Error>(original).finally(() => {
+  it('swallows disposable callback errors and preserves the original result', () => {
+    const disposable = ok<number, Error>(1).toDisposable(() => {
       throw callbackError
     })
 
-    equal(okResult._unsafeUnwrap(), 1)
-    equal(errResult._unsafeUnwrapErr(), original)
+    disposable[Symbol.dispose]()
+
+    equal(disposable._unsafeUnwrap(), 1)
   })
 })
 
@@ -94,20 +91,13 @@ describe('ResultAsync side-effect callback failures', () => {
     equal(errResult._unsafeUnwrapErr(), original)
   })
 
-  it('awaits and swallows finally callback errors while preserving the original result', async () => {
-    const finalizer = vi.fn(async () => await Promise.reject(callbackError))
-    const result = await okAsync<number, Error>(1).finally(finalizer)
+  it('swallows async disposable callback errors and preserves the original result', async () => {
+    const disposable = okAsync<number, Error>(1).toAsyncDisposable(
+      async () => await Promise.reject(callbackError),
+    )
 
-    equal(finalizer.mock.calls.length, 1)
-    equal(result._unsafeUnwrap(), 1)
-  })
+    await disposable[Symbol.asyncDispose]()
 
-  it('swallows finally callback errors on Err results', async () => {
-    const original = new Error('original')
-    const result = await errAsync<number, Error>(original).finally(() => {
-      throw callbackError
-    })
-
-    equal(result._unsafeUnwrapErr(), original)
+    equal((await disposable)._unsafeUnwrap(), 1)
   })
 })

@@ -42,6 +42,19 @@ pnpm add resultar
 npm install resultar
 ```
 
+## V2 Deprecation Notice
+
+The `2.0.0` line removes deprecated APIs before stable release:
+
+| Removed API | Use instead |
+| --- | --- |
+| `Result#finally(fn)` | `Result#log(fn)` for immediate side effects, or `Result#toDisposable(fn)` for Node.js `using` cleanup |
+| `ResultAsync#finally(fn)` | `ResultAsync#log(fn)` for immediate side effects, or `ResultAsync#toAsyncDisposable(fn)` for Node.js `await using` cleanup |
+| `ResultAsync#safeUnwrap()` | `yield* resultAsync` inside `safeTry(async function* () { ... })` |
+| `safeTryAsync(...)` | `safeTry(async function* () { ... })` |
+
+`Result#safeUnwrap()` remains available for compatibility, but new code should prefer `yield* result`.
+
 ## Philosophy
 
 Resultar is a small explicit-result library, not an application runtime or an Effect-style framework.
@@ -70,7 +83,7 @@ For backend and application code, prefer this stack:
 2. Return them through `StrictResult` or `StrictResultAsync`.
 3. Compose with `map`, `andThen`, `asyncAndThen`, `orElse`, `catchTag`, and `catchTags`.
 4. Map outcomes at boundaries with `matchTags` or `matchTagsPartial`.
-5. Use `tap`, `tapError`, `log`, and `finally` only for best-effort side effects.
+5. Use `tap`, `tapError`, and `log` only for best-effort side effects.
 
 ```ts
 import type { StrictResult } from 'resultar'
@@ -93,6 +106,42 @@ Avoid using strings or loose objects for production-facing expected failures:
 ```ts
 // Local-only style. Avoid at service boundaries.
 type ParseError = 'InvalidPort'
+```
+
+### No-Discard Check
+
+Resultar ships a type-aware check for discarded `Result` and `ResultAsync` values:
+
+```json
+{
+  "scripts": {
+    "lint:resultar": "resultar-no-discard --project tsconfig.json"
+  }
+}
+```
+
+It fails code that ignores a returned result:
+
+```ts
+saveUser(input)
+```
+
+Handle the result, return it, or mark an intentional discard with `void`:
+
+```ts
+const result = saveUser(input)
+return saveUser(input)
+void saveUser(input)
+```
+
+For Oxlint users, run it next to Oxlint because this rule needs TypeScript return-type information:
+
+```json
+{
+  "scripts": {
+    "lint": "oxlint && resultar-no-discard --project tsconfig.json"
+  }
+}
 ```
 
 ## API Decision Guide
@@ -598,8 +647,8 @@ const savePort = (): ResultAsync<number, Error> =>
 
 ## Side Effects
 
-Use `tap`, `tapError`, `log`, and `finally` for best-effort observation and cleanup. They are not
-transform methods: use `map`, `mapErr`, `andThen`, or `orElse` when the value or error should change.
+Use `tap`, `tapError`, and `log` for best-effort observation. They are not transform methods: use
+`map`, `mapErr`, `andThen`, or `orElse` when the value or error should change.
 
 `tap(fn)` runs only for `Ok` and returns the original result unchanged.
 
@@ -651,18 +700,21 @@ const result = fetchUser('usr_123')
   .log((user, error) => audit.write({ error, user }))
 ```
 
-`finally(fn)` runs a best-effort cleanup callback with both `(value, error)`. On `Result`, the
-callback runs before the method returns. On `ResultAsync`, it runs when the inner promise settles to a
-`Result`, and async cleanup is awaited before the original result is returned.
+For Node.js 24 cleanup, use `toDisposable(fn)` or `toAsyncDisposable(fn)`. Those APIs defer cleanup
+until the resource is disposed with `using`, `await using`, or the matching symbol method.
 
 ```ts
-const result = findUser('usr_123').finally((_user, _error) => {
+using result = findUser('usr_123').toDisposable((_user, _error) => {
   span.end()
+})
+
+await using asyncResult = fetchUser('usr_123').toAsyncDisposable(async (_user, _error) => {
+  await span.end()
 })
 ```
 
-Callback errors thrown by `tap`, `tapError`, `log`, and `finally` are intentionally ignored so
-observability or cleanup code does not replace the original result. For `ResultAsync`, rejected
+Callback errors thrown by `tap`, `tapError`, `log`, and disposable cleanup are intentionally ignored
+so observability or cleanup code does not replace the original result. For `ResultAsync`, rejected
 callback promises are ignored too. Put fallible work in `andThen`, `orElse`, `tryCatch`, or
 `tryCatchAsync` when those failures should become part of the result type.
 
@@ -726,7 +778,7 @@ library around `Result` and `ResultAsync`.
 - `tap(fn)` run a side effect only when `Ok`; preserves the original result
 - `tapError(fn)` run a side effect only when `Err`; preserves the original result
 - `log(fn)` run a side effect for both states as `(value, error)`; preserves the original result
-- `finally(fn)` run best-effort cleanup with `(value, error)`; callback errors are ignored
+- `toDisposable(fn)` create a Node.js `Disposable` result for `using`
 - `match(okFn, errFn)`
 - `matchTags(okFn, handlers)`
 - `matchTagsPartial(okFn, handlers, fallback)`
@@ -757,7 +809,6 @@ library around `Result` and `ResultAsync`.
 - `fromSafePromise(promise)`
 - `fromThrowableAsync(fn, errorFn?)`
 - `tryCatchAsync(promiseOrFn, errorFn?)` catches rejections and synchronous throws from factories
-- `safeTryAsync(generator)` deprecated; use `safeTry`
 - `StrictResultAsync<T, E extends Error>` type alias for Error-only async failure channels
 
 ### ResultAsync Methods
@@ -769,14 +820,12 @@ library around `Result` and `ResultAsync`.
 - `tap(fn)` run a sync or async side effect only when `Ok`; preserves the original result
 - `tapError(fn)` run a sync or async side effect only when `Err`; preserves the original result
 - `log(fn)` run a sync or async side effect for both states as `(value, error)`
-- `finally(fn)` run best-effort cleanup with `(value, error)` after the inner promise settles to a
-  `Result`; callback errors and rejections are ignored
+- `toAsyncDisposable(fn)` create a Node.js `AsyncDisposable` result for `await using`
 - `match(okFn, errFn)`
 - `matchTags(okFn, handlers)`
 - `matchTagsPartial(okFn, handlers, fallback)`
 - `unwrapOr(defaultValue)`
 - `unwrapOrThrow()`
-- `safeUnwrap()`
 
 ### Tagged Error Helpers
 

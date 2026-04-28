@@ -18,22 +18,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version: '24'
-
-      - name: Enable Corepack
-        run: corepack enable
+          cache: true
+          run-install: false
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: vp install --frozen-lockfile
 
-      - name: Check
-        run: pnpm run check
+      - name: Check and coverage
+        run: vp run check:full
 
-      - name: Test
-        run: pnpm test
+      - name: Build
+        run: vp run build
+
+      - name: Package smoke
+        run: vp exec tsx scripts/smoke-package.ts
 
       - name: Publish to JSR
         run: pnpm dlx jsr publish

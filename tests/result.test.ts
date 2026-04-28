@@ -69,7 +69,7 @@ describe('Result.Ok', async () => {
 
     equal(okVal.isOk(), true)
     equal(okVal.isErr(), false)
-    ok(okVal instanceof Result)
+    isTrue(okVal instanceof Result)
   })
 
   it('Creates an Ok value with undefined using unit', () => {
@@ -78,7 +78,7 @@ describe('Result.Ok', async () => {
     equal(okUndefined.isOk(), true)
     equal(okUndefined.isErr(), false)
     equal(okUndefined.value, undefined)
-    ok(okUndefined instanceof Result)
+    isTrue(okUndefined instanceof Result)
   })
 
   it('Creates an Ok value with undefined using zero argument', () => {
@@ -87,7 +87,7 @@ describe('Result.Ok', async () => {
     equal(okUndefined.isOk(), true)
     equal(okUndefined.isErr(), false)
     equal(okUndefined.value, undefined)
-    ok(okUndefined instanceof Result)
+    isTrue(okUndefined instanceof Result)
   })
 
   it('Creates an Ok value with null', () => {
@@ -163,7 +163,7 @@ describe('Result.Ok', async () => {
 
       equal(flattened.isOk(), false)
 
-      flattened.andThen(nextFn)
+      void flattened.andThen(nextFn)
 
       equal(nextFn.mock.calls.length, 0)
     })
@@ -206,7 +206,7 @@ describe('Result.Ok', async () => {
 
       isTrue(result.isOk())
       equal(result.value, 'fixed:email')
-      expectTypeOf(result).toMatchTypeOf<Result<number | string, PermissionError>>()
+      expectTypeOf(result).toExtend<Result<number | string, PermissionError>>()
     })
 
     it('leaves non-matching tagged errors unchanged', () => {
@@ -218,7 +218,7 @@ describe('Result.Ok', async () => {
 
       isTrue(result.isErr())
       equal(result.error, permissionError)
-      expectTypeOf(result).toMatchTypeOf<Result<number | string, PermissionError>>()
+      expectTypeOf(result).toExtend<Result<number | string, PermissionError>>()
     })
 
     it('recovers from multiple tagged errors', () => {
@@ -260,9 +260,9 @@ describe('Result.Ok', async () => {
 
       if (false) {
         // @ts-expect-error ValidationError is the only recoverable tag.
-        result.catchTag('PermissionError', () => ok(1))
+        void result.catchTag('PermissionError', () => ok(1))
 
-        result.catchTags({
+        void result.catchTags({
           // @ts-expect-error ValidationError is the only recoverable tag.
           PermissionError: () => ok(1),
         })
@@ -280,7 +280,7 @@ describe('Result.Ok', async () => {
 
     isTrue(result.isOk())
     equal(result.value, '3')
-    expectTypeOf(result).toMatchTypeOf<Result<string, ValidationError>>()
+    expectTypeOf(result).toExtend<Result<string, ValidationError>>()
 
     const unchanged = (ok(1) as unknown as { pipe: () => Result<number, never> }).pipe()
     isTrue(unchanged.isOk())
@@ -663,7 +663,7 @@ describe('Result.Err', async () => {
       {
         data: { type: 'Err', value: 'woopsies' },
         message: 'Called `_unsafeUnwrap` on an Err',
-        stack: undefined,
+        name: 'ResultarError',
       },
     )
   })
@@ -938,7 +938,7 @@ describe('ResultAsync', async () => {
 
       isTrue(result.isOk())
       equal(result.value, 'fixed:email')
-      expectTypeOf(result).toMatchTypeOf<Result<number | string, PermissionError>>()
+      expectTypeOf(result).toExtend<Result<number | string, PermissionError>>()
     })
 
     it('recovers from a matching tagged async error with a ResultAsync', async () => {
@@ -992,7 +992,7 @@ describe('ResultAsync', async () => {
 
     isTrue(result.isOk())
     equal(result.value, '3')
-    expectTypeOf(result).toMatchTypeOf<Result<string, ValidationError>>()
+    expectTypeOf(result).toExtend<Result<string, ValidationError>>()
 
     const unchanged = await (
       okAsync(1) as unknown as { pipe: () => ResultAsync<number, never> }
@@ -1541,10 +1541,10 @@ describe('OrElse', async () => {
   })
 })
 
-describe('Finally', async () => {
+describe('Side effects and disposal', async () => {
   const buffer = 'Not all those who wander are lost' // - J.R.R. Tolkien'
 
-  it('Finally should be called', () => {
+  it('Log should be called for ok results', () => {
     const closeFile = vi.fn(() => {
       console.log('closing file')
     })
@@ -1554,7 +1554,7 @@ describe('Finally', async () => {
 
     const result = reader
       .map((it) => it.content)
-      .finally((_) => {
+      .log((_) => {
         file.close()
       })
 
@@ -1563,14 +1563,15 @@ describe('Finally', async () => {
     equal(closeFile.mock.calls.length, 1)
   })
 
-  it('Finally should be called with error', () => {
+  it('Log should be called for err results', () => {
     const foo = err('foo')
     const arrayResult = new Array<string>()
-    foo.map((_p) => 'boo').tap((x) => x)
+    void foo.map((_p) => 'boo').tap((x) => x)
     const result = foo
       .map((_p) => 'boo')
-      .finally((x, y) => {
+      .log((x, y) => {
         isTrue(x === undefined)
+        isTrue(y !== undefined)
         arrayResult.push(y, 'finalized')
       })
     isTrue(result.isErr())
@@ -1578,7 +1579,22 @@ describe('Finally', async () => {
     deepEqual(arrayResult, ['foo', 'finalized'])
   })
 
-  it('Finally should be called with ok async', async () => {
+  it('Creates a sync disposable for explicit Node resource management', () => {
+    const finalizer = vi.fn()
+    const result = ok<number, string>(42)
+    const disposable = result.toDisposable(finalizer)
+
+    strictEqual(finalizer.mock.calls.length, 0)
+    strictEqual(disposable._unsafeUnwrap(), 42)
+
+    disposable[Symbol.dispose]()
+    disposable[Symbol.dispose]()
+
+    strictEqual(finalizer.mock.calls.length, 1)
+    deepEqual(finalizer.mock.calls[0], [42, undefined])
+  })
+
+  it('Log should be called with ok async', async () => {
     const close = vi.fn(async () => undefined)
     const fileHandle = {
       close,
@@ -1588,7 +1604,8 @@ describe('Finally', async () => {
 
     const result = await fromPromise(open('foo.txt', 'w'), String)
       .andThen((handle) => fromPromise(handle.write(buffer), String))
-      .finally(async (v, _) => {
+      .log(async (v, _) => {
+        isTrue(v !== undefined)
         equal(v.buffer, buffer)
         await close()
       })
@@ -1599,7 +1616,7 @@ describe('Finally', async () => {
     equal(result._unsafeUnwrap().bytesWritten, 32)
   })
 
-  it('Finally should be called with error async', async () => {
+  it('Log should be called with error async', async () => {
     const close = vi.fn(async () => undefined)
     const fileHandle = {
       close,
@@ -1611,7 +1628,7 @@ describe('Finally', async () => {
 
     const result = await fromPromise(open('bar.txt', 'w'), String)
       .andThen((handle) => fromPromise(handle.write(buffer), String))
-      .finally(async (_, e) => {
+      .log(async (_, e) => {
         isTrue(typeof e === 'string')
         await close()
       })
@@ -1623,6 +1640,21 @@ describe('Finally', async () => {
       result._unsafeUnwrapErr(),
       "Error: Oops: Error: EACCES: permission denied, open 'foo.txt'",
     )
+  })
+
+  it('Creates an async disposable for explicit Node resource management', async () => {
+    const finalizer = vi.fn(async () => undefined)
+    const result = okAsync<number, string>(42)
+    const disposable = result.toAsyncDisposable(finalizer)
+
+    strictEqual(finalizer.mock.calls.length, 0)
+    strictEqual((await disposable)._unsafeUnwrap(), 42)
+
+    await disposable[Symbol.asyncDispose]()
+    await disposable[Symbol.asyncDispose]()
+
+    strictEqual(finalizer.mock.calls.length, 1)
+    deepEqual(finalizer.mock.calls[0], [42, undefined])
   })
 })
 
@@ -1862,11 +1894,11 @@ describe('Utils', async () => {
 
 describe('unwrapOrThrow', async () => {
   class CustomError extends Error {
-    constructor(
-      message: string,
-      readonly customProperty: string,
-    ) {
+    readonly customProperty: string
+
+    constructor(message: string, customProperty: string) {
       super(message)
+      this.customProperty = customProperty
     }
   }
 
@@ -1935,11 +1967,11 @@ describe('tryCatch', async () => {
   }
 
   class CustomError extends Error {
-    constructor(
-      message: string,
-      public code: number,
-    ) {
+    code: number
+
+    constructor(message: string, code: number) {
       super(message)
+      this.code = code
     }
   }
 
@@ -1953,8 +1985,8 @@ describe('tryCatch', async () => {
     it('should return err result with default error handling', () => {
       const result = tryCatch(() => divide(10, 0))
       isTrue(result.isErr())
-      ok(result.error instanceof Error)
-      equal((result.error as Error).message, 'Cannot divide by zero')
+      isTrue(result.error instanceof Error)
+      equal(result.error.message, 'Cannot divide by zero')
     })
 
     it('should handle custom error transformation', () => {
@@ -1963,7 +1995,7 @@ describe('tryCatch', async () => {
         (error) => new CustomError((error as Error).message, 400),
       )
       isTrue(result.isErr())
-      ok(result.error instanceof CustomError)
+      isTrue(result.error instanceof CustomError)
       equal(result.error.code, 400)
     })
 
@@ -2000,7 +2032,7 @@ describe('tryCatch', async () => {
     it('should return err result for failed async operation', async () => {
       const result = await ResultAsync.tryCatch(divideAsync(10, 0), (e) => (e as Error).message)
       isTrue(result.isErr())
-      ok(typeof result.error === 'string')
+      isTrue(typeof result.error === 'string')
       equal(result.error, 'Cannot divide by zero')
     })
 
@@ -2013,7 +2045,7 @@ describe('tryCatch', async () => {
         (e) => (e as Error).message,
       )
       isTrue(result.isErr())
-      ok(typeof result.error === 'string')
+      isTrue(typeof result.error === 'string')
       equal(result.error, 'Cannot divide by zero')
     })
 
@@ -2035,7 +2067,7 @@ describe('tryCatch', async () => {
         (error) => new CustomError((error as Error).message, 500),
       )
       isTrue(result.isErr())
-      ok(result.error instanceof CustomError)
+      isTrue(result.error instanceof CustomError)
       equal(result.error.code, 500)
     })
 
@@ -2069,8 +2101,8 @@ describe('tryCatch', async () => {
         })(),
       )
       isTrue(result.isErr())
-      ok(result.error instanceof Error)
-      equal((result.error as Error).message, 'Cannot divide by zero')
+      isTrue(result.error instanceof Error)
+      equal(result.error.message, 'Cannot divide by zero')
     })
   })
 })

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method, class-methods-use-this */
 import { type ErrorConfig, createResultarError } from './error.js'
 import { ResultAsync, errAsync } from './result-async.js'
 import {
@@ -9,6 +8,7 @@ import {
   combineResultList,
   combineResultListWithAllErrors,
 } from './utils.js'
+import { callErrorHandler, callTaggedHandler, hasTag } from './tagged-match.js'
 
 type TaggedValue = { readonly _tag: string }
 type TaggedErrorValue = Error & TaggedValue
@@ -47,9 +47,7 @@ type PartialMatchTagHandlers<E, Handlers> = {
       : never
 }
 type PipeFn<Input, Output> = (input: Input) => Output
-
-const hasTag = <Tag extends string>(value: unknown, tag: Tag): value is { readonly _tag: Tag } =>
-  typeof value === 'object' && value !== null && '_tag' in value && value._tag === tag
+type ResultFinalizer<T, E> = (value: T | undefined, error: E | undefined) => void
 
 /**
  * A Result interface that is used to define the methods that are available on a
@@ -154,7 +152,7 @@ export interface ResultOperations<T, E> {
   log(fn: (t?: T, e?: E) => void): this
   tap(fn: (t: T) => void): this
   tapError(fn: (e: E) => void): this
-  finally<X = T, Y = E>(f: (value: X, error: Y) => void): DisposableResult<X, Y>
+  toDisposable(f: ResultFinalizer<T, E>): DisposableResult<T, E>
   unwrapOrThrow(): T
   [Symbol.iterator](): Generator<Result<never, E>, T>
   safeUnwrap(): Generator<Result<never, E>, T>
@@ -173,27 +171,38 @@ export type StrictResult<T, E extends Error = Error> = Result<T, E>
 
 interface ResultStatic {
   [Symbol.hasInstance](value: unknown): boolean
-  tryCatch<T, E>(fn: () => Exclude<T, Promise<unknown>>, errorFn?: (e: unknown) => E): Result<T, E>
+  tryCatch<T, E>(
+    this: void,
+    fn: () => Exclude<T, Promise<unknown>>,
+    errorFn?: (e: unknown) => E,
+  ): Result<T, E>
   fromThrowable<Fn extends (...args: readonly any[]) => unknown, E>(
+    this: void,
     fn: Fn,
     errorFn?: (e: any) => E,
   ): (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E>
-  ok<T, E = never>(value: T): OkResult<T, E>
-  ok<E = never>(value: void): OkResult<void, E>
-  unit<E = never>(): Result<undefined, E>
-  err<T = never, E extends string = string>(err: E): ErrResult<T, E>
-  err<T = never, E = unknown>(err: E): ErrResult<T, E>
-  err<T = never>(err: void): ErrResult<T, void>
+  ok<T, E = never>(this: void, value: T): OkResult<T, E>
+  ok<E = never>(this: void, value: void): OkResult<void, E>
+  unit<E = never>(this: void): Result<undefined, E>
+  err<T = never, E extends string = string>(this: void, err: E): ErrResult<T, E>
+  err<T = never, E = unknown>(this: void, err: E): ErrResult<T, E>
+  err<T = never>(this: void, err: void): ErrResult<T, void>
   combine<T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
+    this: void,
     resultList: T,
   ): CombineResults<T>
-  combine<T extends readonly Result<unknown, unknown>[]>(resultList: T): CombineResults<T>
+  combine<T extends readonly Result<unknown, unknown>[]>(
+    this: void,
+    resultList: T,
+  ): CombineResults<T>
   combineWithAllErrors<
     T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
   >(
+    this: void,
     resultList: T,
   ): CombineResultsWithAllErrorsArray<T>
   combineWithAllErrors<T extends readonly Result<unknown, unknown>[]>(
+    this: void,
     resultList: T,
   ): CombineResultsWithAllErrorsArray<T>
 }
@@ -217,6 +226,7 @@ class ResultNamespace {
    * @returns A `Result` containing either the function's return value or the caught error
    */
   static tryCatch<T, E>(
+    this: void,
     fn: () => Exclude<T, Promise<unknown>>,
     errorFn?: (e: unknown) => E,
   ): Result<T, E> {
@@ -238,6 +248,7 @@ class ResultNamespace {
    * @param errorFn when an error is thrown, this will wrap the error result if provided
    */
   static fromThrowable<Fn extends (...args: readonly any[]) => unknown, E>(
+    this: void,
     fn: Fn,
     errorFn?: (e: any) => E,
   ): (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E> {
@@ -262,9 +273,9 @@ class ResultNamespace {
    * @return {Result<T, E>} A new `Result` instance with the provided value.
    */
 
-  static ok<T, E = never>(value: T): OkResult<T, E>
-  static ok<E = never>(value: void): OkResult<void, E>
-  static ok<T, E = never>(value: T): OkResult<T, E> {
+  static ok<T, E = never>(this: void, value: T): OkResult<T, E>
+  static ok<E = never>(this: void, value: void): OkResult<void, E>
+  static ok<T, E = never>(this: void, value: T): OkResult<T, E> {
     return ok<T, E>(value)
   }
 
@@ -273,22 +284,27 @@ class ResultNamespace {
    *
    * @return {Result<undefined, E>} A new `Result` instance with an undefined value.
    */
-  static unit<E = never>(): Result<undefined, E> {
+  static unit<E = never>(this: void): Result<undefined, E> {
     return unit<E>()
   }
 
-  static err<T = never, E extends string = string>(err: E): ErrResult<T, E>
-  static err<T = never, E = unknown>(err: E): ErrResult<T, E>
-  static err<T = never>(err: void): ErrResult<T, void>
-  static err<T = never, E = unknown>(error: E): ErrResult<T, E> {
+  static err<T = never, E extends string = string>(this: void, err: E): ErrResult<T, E>
+  static err<T = never, E = unknown>(this: void, err: E): ErrResult<T, E>
+  static err<T = never>(this: void, err: void): ErrResult<T, void>
+  static err<T = never, E = unknown>(this: void, error: E): ErrResult<T, E> {
     return err<T, E>(error)
   }
 
   static combine<T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
+    this: void,
     resultList: T,
   ): CombineResults<T>
-  static combine<T extends readonly Result<unknown, unknown>[]>(resultList: T): CombineResults<T>
+  static combine<T extends readonly Result<unknown, unknown>[]>(
+    this: void,
+    resultList: T,
+  ): CombineResults<T>
   static combine<T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
+    this: void,
     resultList: T,
   ): CombineResults<T> {
     return combineResultList(resultList) as CombineResults<T>
@@ -296,11 +312,13 @@ class ResultNamespace {
 
   static combineWithAllErrors<
     T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
-  >(resultList: T): CombineResultsWithAllErrorsArray<T>
+  >(this: void, resultList: T): CombineResultsWithAllErrorsArray<T>
   static combineWithAllErrors<T extends readonly Result<unknown, unknown>[]>(
+    this: void,
     resultList: T,
   ): CombineResultsWithAllErrorsArray<T>
   static combineWithAllErrors<T extends readonly Result<unknown, unknown>[]>(
+    this: void,
     resultList: T,
   ): CombineResultsWithAllErrorsArray<T> {
     return combineResultListWithAllErrors(resultList) as CombineResultsWithAllErrorsArray<T>
@@ -310,13 +328,19 @@ class ResultNamespace {
 export const Result: ResultStatic = ResultNamespace
 
 class Ok<T, E> {
-  constructor(readonly value: T) {}
+  readonly value: T
+
+  constructor(value: T) {
+    this.value = value
+  }
 
   isOk(): this is OkResult<T, E> {
+    void this
     return true
   }
 
   isErr(): this is ErrResult<T, E> {
+    void this
     return false
   }
 
@@ -457,18 +481,8 @@ class Ok<T, E> {
     return this
   }
 
-  finally<X = T, Y = E>(f: (value: X, error: Y) => void): DisposableResult<X, Y>
-  finally(f: (value: T, error: E) => void): DisposableResult<T, E> {
-    const resultDisposable = new DisposableResult(this, f)
-    try {
-      return resultDisposable
-    } finally {
-      try {
-        resultDisposable[Symbol.dispose]()
-      } catch {
-        /* empty */
-      }
-    }
+  toDisposable(f: ResultFinalizer<T, E>): DisposableResult<T, E> {
+    return new DisposableResult(this, f)
   }
 
   unwrapOrThrow(): T {
@@ -498,13 +512,19 @@ class Ok<T, E> {
 }
 
 class Err<T, E> {
-  constructor(readonly error: E) {}
+  readonly error: E
+
+  constructor(error: E) {
+    this.error = error
+  }
 
   isOk(): this is OkResult<T, E> {
+    void this
     return false
   }
 
   isErr(): this is ErrResult<T, E> {
+    void this
     return true
   }
 
@@ -571,16 +591,13 @@ class Err<T, E> {
     ExcludeTag<E, keyof Handlers & string> | InferErrTypes<CatchTagHandlerResult<Handlers>>
   > {
     const error = this.error
+    const handled = callTaggedHandler<CatchTagHandlerResult<Handlers>>(error, handlers)
 
-    if (typeof error === 'object' && error !== null && '_tag' in error) {
-      const handler = handlers[error._tag as keyof Handlers]
-
-      if (handler !== undefined) {
-        return (handler as (error: E) => CatchTagHandlerResult<Handlers>)(error) as Result<
-          T | InferOkTypes<CatchTagHandlerResult<Handlers>>,
-          ExcludeTag<E, keyof Handlers & string> | InferErrTypes<CatchTagHandlerResult<Handlers>>
-        >
-      }
+    if (handled.matched) {
+      return handled.value as Result<
+        T | InferOkTypes<CatchTagHandlerResult<Handlers>>,
+        ExcludeTag<E, keyof Handlers & string> | InferErrTypes<CatchTagHandlerResult<Handlers>>
+      >
     }
 
     return err(error as ExcludeTag<E, keyof Handlers & string>)
@@ -596,6 +613,7 @@ class Err<T, E> {
   }
 
   unwrapOr<A>(defaultValue: A): T | A {
+    void this
     return defaultValue
   }
 
@@ -608,17 +626,19 @@ class Err<T, E> {
     handlers: Handlers & MatchTagHandlers<E, Handlers>,
   ): A | MatchTagHandlerResult<Handlers> {
     const error = this.error
+    const tagged = callTaggedHandler<MatchTagHandlerResult<Handlers>>(error, handlers)
 
-    if (typeof error === 'object' && error !== null && '_tag' in error) {
-      const handler = handlers[error._tag as keyof typeof handlers]
-
-      if (handler !== undefined) {
-        return (handler as (error: E) => MatchTagHandlerResult<Handlers>)(error)
-      }
+    if (tagged.matched) {
+      return tagged.value
     }
 
-    if (handlers.Error) {
-      return (handlers.Error as (error: E) => MatchTagHandlerResult<Handlers>)(error)
+    const errorHandler = callErrorHandler(
+      error,
+      handlers as { readonly Error?: (error: E) => MatchTagHandlerResult<Handlers> },
+    )
+
+    if (errorHandler.matched) {
+      return errorHandler.value
     }
 
     // eslint-disable-next-line @typescript-eslint/only-throw-error
@@ -631,20 +651,19 @@ class Err<T, E> {
     fallback: (error: E) => B,
   ): A | MatchTagHandlerResult<Handlers> | B {
     const error = this.error
-    const errorHandler = (
-      handlers as { readonly Error?: (error: E) => MatchTagHandlerResult<Handlers> }
-    ).Error
+    const tagged = callTaggedHandler<MatchTagHandlerResult<Handlers>>(error, handlers)
 
-    if (typeof error === 'object' && error !== null && '_tag' in error) {
-      const handler = handlers[error._tag as keyof typeof handlers]
-
-      if (handler !== undefined) {
-        return (handler as (error: E) => MatchTagHandlerResult<Handlers>)(error)
-      }
+    if (tagged.matched) {
+      return tagged.value
     }
 
-    if (errorHandler) {
-      return errorHandler(error)
+    const errorHandler = callErrorHandler(
+      error,
+      handlers as { readonly Error?: (error: E) => MatchTagHandlerResult<Handlers> },
+    )
+
+    if (errorHandler.matched) {
+      return errorHandler.value
     }
 
     return fallback(error)
@@ -693,18 +712,8 @@ class Err<T, E> {
     return this
   }
 
-  finally<X = T, Y = E>(f: (value: X, error: Y) => void): DisposableResult<X, Y>
-  finally(f: (value: T, error: E) => void): DisposableResult<T, E> {
-    const resultDisposable = new DisposableResult(this, f)
-    try {
-      return resultDisposable
-    } finally {
-      try {
-        resultDisposable[Symbol.dispose]()
-      } catch {
-        /* empty */
-      }
-    }
+  toDisposable(f: ResultFinalizer<T, E>): DisposableResult<T, E> {
+    return new DisposableResult(this, f)
   }
 
   unwrapOrThrow(): T {
@@ -740,10 +749,14 @@ class Err<T, E> {
  * clean up resources.
  */
 export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
-  constructor(
-    readonly result: Result<T, E>,
-    private readonly finalizer: (value: T, error: E) => void,
-  ) {}
+  private disposed = false
+  private readonly finalizer: (value: unknown, error: unknown) => void
+  readonly result: Result<T, E>
+
+  constructor(result: Result<T, E>, finalizer: ResultFinalizer<T, E>) {
+    this.result = result
+    this.finalizer = finalizer as (value: unknown, error: unknown) => void
+  }
 
   get value(): T {
     return this.result.isOk() ? this.result.value : (undefined as T)
@@ -774,10 +787,19 @@ export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
   }
 
   [Symbol.dispose](): void {
-    this.finalizer(
-      this.result.isOk() ? this.result.value : (undefined as T),
-      this.result.isErr() ? this.result.error : (undefined as E),
-    )
+    if (this.disposed) {
+      return
+    }
+
+    this.disposed = true
+    try {
+      this.finalizer(
+        this.result.isOk() ? this.result.value : undefined,
+        this.result.isErr() ? this.result.error : undefined,
+      )
+    } catch {
+      /* empty */
+    }
   }
 }
 
@@ -812,8 +834,8 @@ export function safeTry<
  * Rust's ? operator.
  * See `/tests/safeTry.test.ts` for examples.
  *
- * @param body - What is evaluated. In body, `yield* result.safeUnwrap()` and
- * `yield* resultAsync.safeUnwrap()` work as Rust's `result?` expression.
+ * @param body - What is evaluated. In body, `yield* result.safeUnwrap()`,
+ * `yield* result`, and `yield* resultAsync` work as Rust's `result?` expression.
  * @returns The first occurence of either an yielded Err or a returned Result.
  */
 export function safeTry<T, E>(
@@ -854,12 +876,12 @@ export function err<T = never, E = unknown>(error: E): ErrResult<T, E> {
   return new Err<T, E>(error)
 }
 
-export const fromThrowable = Result.fromThrowable
+export const fromThrowable: typeof Result.fromThrowable = Result.fromThrowable
 export function unit<E = never>(): OkResult<undefined, E> {
   return ok<undefined, E>(undefined)
 }
 
-export const tryCatch = Result.tryCatch
+export const tryCatch: typeof Result.tryCatch = Result.tryCatch
 
 // #region Combine - Types
 

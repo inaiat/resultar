@@ -40,7 +40,7 @@ describe('coverage-focused public behavior', () => {
       .false(() => resultar.ok('no'))
 
     equal(ifResult._unsafeUnwrapErr(), 'failure')
-    resultar.ok('value').tapError(() => {
+    void resultar.ok('value').tapError(() => {
       throw new Error('should not run')
     })
 
@@ -53,8 +53,8 @@ describe('coverage-focused public behavior', () => {
       },
     )
 
-    const disposable = resultar.ok('value').finally(() => undefined)
-    const errDisposable = resultar.err<string, string>('failure').finally(() => undefined)
+    const disposable = resultar.ok('value').toDisposable(() => undefined)
+    const errDisposable = resultar.err<string, string>('failure').toDisposable(() => undefined)
 
     equal(disposable.value, 'value')
     equal(disposable.error, undefined)
@@ -66,7 +66,7 @@ describe('coverage-focused public behavior', () => {
     equal(errDisposable.unwrapOr('fallback'), 'fallback')
   })
 
-  it('covers ResultAsync error paths, async iterators, and deprecated safeTryAsync', async () => {
+  it('covers ResultAsync error paths and async iterators', async () => {
     const ifResult = await resultar
       .errAsync<string, string>('async failure')
       .if(() => true)
@@ -87,35 +87,6 @@ describe('coverage-focused public behavior', () => {
     isTrue(!yielded.done)
     equal(yielded.value._unsafeUnwrapErr(), 'async failure')
     deepEqual(await asyncIterator.next(), { done: true, value: undefined })
-
-    const safeUnwrap = resultar.okAsync('value').safeUnwrap()
-
-    deepEqual(await safeUnwrap.next(), { done: true, value: 'value' })
-
-    const errSafeUnwrap = resultar.errAsync<string, string>('async failure').safeUnwrap()
-    const errSafeUnwrapYielded = await errSafeUnwrap.next()
-
-    isTrue(!errSafeUnwrapYielded.done)
-    equal(errSafeUnwrapYielded.value._unsafeUnwrapErr(), 'async failure')
-    await rejects(async () => await errSafeUnwrap.next(), /Do not use this generator/)
-
-    const safeTryResult = await resultar.safeTryAsync(async function* () {
-      if (Date.now() < 0) {
-        yield resultar.err('unreachable')
-      }
-
-      return resultar.err('deprecated failure')
-    })
-    const safeTryOkResult = await resultar.safeTryAsync(async function* () {
-      if (Date.now() < 0) {
-        yield resultar.err('unreachable')
-      }
-
-      return resultar.ok('deprecated value')
-    })
-
-    equal(safeTryResult._unsafeUnwrapErr(), 'deprecated failure')
-    equal(safeTryOkResult._unsafeUnwrap(), 'deprecated value')
 
     await rejects(
       async () => await resultar.errAsync<never, Error>(new Error('boom')).unwrapOrThrow(),
@@ -199,7 +170,7 @@ describe('coverage-focused public behavior', () => {
     equal(partialTagged, '456')
     const partialMissingHandler = resultar.matchErrorPartial(
       tagged as TaggedFailure | OtherTaggedFailure,
-      { TaggedFailure: undefined },
+      {},
       () => 'fallback',
     )
 
@@ -230,7 +201,6 @@ describe('coverage-focused public behavior', () => {
     equal(typeof resultar.fromThrowableAsync, 'function')
     equal(typeof resultar.tryCatchAsync, 'function')
     equal(typeof resultar.safeTry, 'function')
-    equal(typeof resultar.safeTryAsync, 'function')
     equal(typeof resultar.createTaggedError, 'function')
     equal(typeof resultar.findCause, 'function')
     equal(typeof resultar.isError, 'function')

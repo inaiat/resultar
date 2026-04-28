@@ -11,7 +11,13 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "declaration": true,
+    "erasableSyntaxOnly": true,
+    "exactOptionalPropertyTypes": true,
+    "isolatedDeclarations": true,
     "noEmit": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUncheckedSideEffectImports": true,
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "isolatedModules": true,
@@ -19,6 +25,6 @@
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "include": ["benchmarks/**/*.ts", "scripts/**/*.ts", "src/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules"]
 }

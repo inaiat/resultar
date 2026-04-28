@@ -359,7 +359,7 @@ export function createTaggedError<
       }
 
       if (this.cause !== undefined) {
-        json.cause = serializeCause(this.cause)
+        json['cause'] = serializeCause(this.cause)
       }
 
       for (const [key, value] of Object.entries(this)) {

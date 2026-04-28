@@ -161,7 +161,7 @@ Methods mirror `Result` where useful:
   with a fallback for unhandled errors.
 - `unwrapOr(defaultValue)` resolves to value or default.
 - `unwrapOrThrow()` resolves to value or throws the error.
-- `safeUnwrap()` is legacy support for `safeTry`; prefer `yield* resultAsync`.
+- Prefer `yield* resultAsync`; async `safeUnwrap()` is not part of the v2 API.
 
 Static methods:
 
@@ -245,12 +245,13 @@ Do not add `partialCatchTags`; `catchTags` already has partial recovery semantic
 
 ## Side Effects
 
-`tap`, `tapError`, `log`, and `finally` are best-effort observation helpers, not transform helpers.
+`tap`, `tapError`, and `log` are best-effort observation helpers, not transform helpers.
 
 - They preserve the original `Result` or `ResultAsync`.
-- Callback errors are intentionally ignored.
+- Callback errors are intentionally ignored, including disposable cleanup callbacks.
 - On `ResultAsync`, rejected callback promises are intentionally ignored.
 - Use them for metrics, logging, tracing, and cleanup.
+- Use `toDisposable` and `toAsyncDisposable` for Node.js 24 `using` / `await using` cleanup scopes.
 - Use `map`, `mapErr`, `andThen`, `orElse`, or `tryCatch` for fallible work that should affect the result.
 
 ## Current Preferred Style

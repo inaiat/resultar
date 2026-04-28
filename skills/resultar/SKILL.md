@@ -165,7 +165,7 @@ const saveUser = (email: string) =>
   })
 ```
 
-Prefer `yield* result` and `yield* resultAsync`. `safeUnwrap()` exists for compatibility but is not usually needed.
+Prefer `yield* result` and `yield* resultAsync`. `Result.safeUnwrap()` exists for compatibility but is not usually needed.
 
 ## Side Effects
 
@@ -174,9 +174,11 @@ Use side-effect methods only for observation and cleanup:
 - `tap(fn)` runs only for `Ok` and preserves the result.
 - `tapError(fn)` runs only for `Err` and preserves the result.
 - `log(fn)` runs for both states as `(value, error)` and preserves the result.
-- `finally(fn)` runs cleanup with `(value, error)`.
+- `toDisposable(fn)` and `toAsyncDisposable(fn)` create Node.js 24 disposable wrappers for `using`
+  and `await using`.
 
-Callback errors are intentionally ignored. If callback failure should affect control flow, use `andThen`, `orElse`, or `tryCatch`.
+Callback errors are intentionally ignored, including disposable cleanup callbacks. If callback failure
+should affect control flow, use `andThen`, `orElse`, or `tryCatch`.
 
 ## Testing Guidance
 

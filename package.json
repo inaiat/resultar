@@ -1,6 +1,6 @@
 {
   "name": "resultar",
-  "version": "2.0.0-beta.1",
+  "version": "2.0.0-beta.2",
   "description": "Result pattern for typescript",
   "keywords": [
     "plugin"
@@ -19,6 +19,9 @@
     "type": "git",
     "url": "git+https://github.com/inaiat/resultar.git"
   },
+  "bin": {
+    "resultar-no-discard": "./dist/no-discard.js"
+  },
   "directories": {
     "test": "test"
   },
@@ -31,12 +34,17 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./no-discard": {
+      "types": "./dist/no-discard.d.ts",
+      "import": "./dist/no-discard.js"
     }
   },
   "scripts": {
     "build": "vp pack",
-    "check": "vp check",
-    "check:full": "vp check && vp test run --coverage",
+    "check": "vp check && pnpm run check:no-discard",
+    "check:full": "pnpm run check && vp test run --coverage",
+    "check:no-discard": "tsx src/no-discard.ts",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
     "lint": "vp lint",
@@ -48,21 +56,30 @@
     "test:cov": "vp test run --coverage",
     "typedoc": "typedoc",
     "prepare": "vp config || true",
+    "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts",
     "bench": "pnpm run build && node --import tsx benchmarks/resultar-vs-neverthrow.ts",
     "bench:neverthrow": "pnpm run bench"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
-    "@vitest/coverage-v8": "^4.1.4",
-    "@vitest/ui": "^4.1.4",
+    "@vitest/coverage-v8": "^4.1.5",
+    "@vitest/ui": "^4.1.5",
     "cronometro": "^6.0.3",
     "neverthrow": "^8.2.0",
     "tsx": "^4.21.0",
     "typedoc": "0.28.19",
     "typedoc-github-wiki-theme": "~2.1.0",
     "typedoc-plugin-markdown": "^4.11.0",
-    "typescript": "^6.0.2",
-    "vite-plus": "0.1.18"
+    "typescript": "^6.0.3",
+    "vite-plus": "0.1.19"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
   },
   "release": {
     "branches": [

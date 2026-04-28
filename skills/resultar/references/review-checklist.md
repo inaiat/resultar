@@ -45,7 +45,8 @@ Use this checklist when reviewing code that uses Resultar or when migrating thro
 
 ## Observability
 
-- `tap`, `tapError`, `log`, and `finally` are used only for observation and cleanup.
+- `tap`, `tapError`, and `log` are used only for observation.
+- `toDisposable` and `toAsyncDisposable` are used for scoped cleanup.
 - Callback failures in side-effect helpers are not expected to alter control flow.
 - Fallible side effects that matter are modeled with `andThen`, `orElse`, or `tryCatch`.
 

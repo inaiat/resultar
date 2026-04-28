@@ -1,21 +1,23 @@
-name: Publish NPM
+name: CI
 
 on:
+  pull_request:
   push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
+    branches:
+      - main
+      - beta
+      - next
 
 jobs:
-  publish:
+  validate:
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
-      id-token: write
 
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout code
+        uses: actions/checkout@v6
 
       - name: Set up Vite+
         uses: voidzero-dev/setup-vp@v1
@@ -23,9 +25,6 @@ jobs:
           node-version: '24'
           cache: true
           run-install: false
-          registry-url: 'https://registry.npmjs.org'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Install dependencies
         run: vp install --frozen-lockfile
@@ -38,8 +37,3 @@ jobs:
 
       - name: Package smoke
         run: vp exec tsx scripts/smoke-package.ts
-
-      - name: Publish package
-        run: npm publish --access public --tag beta --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

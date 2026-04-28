@@ -38,7 +38,7 @@ class ForbiddenError extends createTaggedError({
   message: 'Missing permission $permission',
   name: 'ForbiddenError',
 }) {
-  statusCode = 403
+  override statusCode = 403
 }
 
 const createKnownTaggedError = (): UserNotFoundError | DatabaseError =>
@@ -271,10 +271,10 @@ describe('tagged error types', async () => {
       new UserNotFoundError({ id: '123' })
 
       // @ts-expect-error id and source are required by the message template.
-      UserNotFoundError.err()
+      void UserNotFoundError.err()
 
       // @ts-expect-error source is required by the message template.
-      UserNotFoundError.err({ id: '123' })
+      void UserNotFoundError.err({ id: '123' })
 
       const union = new UserNotFoundError({ id: '123', source: 'users' }) as
         | UserNotFoundError

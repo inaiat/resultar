@@ -16,7 +16,8 @@ export default defineConfig({
   pack: {
     clean: true,
     dts: true,
-    entry: ['src/index.ts'],
+    deps: { onlyBundle: false },
+    entry: ['src/index.ts', 'src/no-discard.ts'],
     format: ['esm'],
     outExtensions: () => ({ dts: '.d.ts', js: '.js' }),
     sourcemap: true,
@@ -58,6 +59,7 @@ export default defineConfig({
       'no-ternary': 'allow',
       'no-undefined': 'allow',
       'no-use-before-define': 'allow',
+      'no-void': 'allow',
       'prefer-destructuring': 'allow',
       'prefer-readonly-parameter-types': 'allow',
       'require-await': 'allow',
@@ -66,14 +68,11 @@ export default defineConfig({
       'strict-void-return': 'allow',
       '@typescript-eslint/ban-types': 'allow',
       '@typescript-eslint/no-base-to-string': 'allow',
-      '@typescript-eslint/no-deprecated': 'allow',
-      '@typescript-eslint/no-explicit-any': 'allow',
       '@typescript-eslint/no-misused-promises': 'allow',
       '@typescript-eslint/no-invalid-void-type': 'allow',
       '@typescript-eslint/no-unnecessary-type-arguments': 'allow',
       '@typescript-eslint/no-unnecessary-type-parameters': 'allow',
       '@typescript-eslint/no-unsafe-type-assertion': 'allow',
-      '@typescript-eslint/parameter-properties': 'allow',
       '@typescript-eslint/promise-function-async': 'allow',
       'unicorn/filename-case': ['error', { case: 'kebabCase' }],
       'unicorn/no-array-callback-reference': 'allow',
@@ -84,6 +83,10 @@ export default defineConfig({
     },
     overrides: [
       {
+        files: ['src/result.ts', 'src/tagged-error.ts'],
+        rules: { '@typescript-eslint/no-explicit-any': 'allow' },
+      },
+      {
         files: ['**/tests/**', '**/test/**'],
         rules: {
           'prefer-readonly-parameter-types': 'allow',
@@ -92,7 +95,6 @@ export default defineConfig({
           '@typescript-eslint/strict-boolean-expressions': 'allow',
           '@typescript-eslint/return-await': 'allow',
           '@typescript-eslint/await-thenable': 'allow',
-          '@typescript-eslint/no-explicit-any': 'allow',
           '@typescript-eslint/no-confusing-void-expression': 'allow',
           '@typescript-eslint/no-unsafe-type-assertion': 'allow',
           '@typescript-eslint/require-await': 'allow',

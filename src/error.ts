@@ -8,8 +8,6 @@ const defaultErrorConfig: ErrorConfig = { withStackTrace: false }
 
 interface ResultarError<T, E> extends Error {
   data: { type: string; value: T | undefined } | { type: string; value: E | undefined }
-  message: string
-  stack: string | undefined
 }
 
 export const createResultarError = <T, E>(
@@ -23,5 +21,7 @@ export const createResultarError = <T, E>(
 
   const maybeStack = config.withStackTrace ? new Error().stack : undefined // eslint-disable-line unicorn/error-message
 
-  return { name: 'ResultarError', data, message, stack: maybeStack }
+  const error = { name: 'ResultarError', data, message }
+
+  return maybeStack === undefined ? error : Object.assign(error, { stack: maybeStack })
 }

@@ -171,10 +171,12 @@ const result = loadProfile(id)
   .tap((profile) => metrics.increment('profile.loaded', { id: profile.id }))
   .tapError((error) => metrics.increment('profile.failed', { tag: error.name }))
   .log((profile, error) => logger.info({ error, profile }, 'profile result'))
-  .finally(() => span.end())
 ```
 
-Use these helpers only for side effects. They intentionally ignore callback failures.
+Use these helpers only for side effects. They intentionally ignore callback failures. For Node.js 24
+explicit resource management, prefer `toDisposable(fn)` or `toAsyncDisposable(fn)` when cleanup
+should run at the end of a `using` / `await using` scope. Disposable cleanup callbacks are
+best-effort too.
 
 ## Test Runtime And Type Behavior
 

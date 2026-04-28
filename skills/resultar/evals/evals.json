@@ -9,7 +9,7 @@
     },
     {
       "id": 2,
-      "prompt": "I have a Resultar async pipeline that calls an external API and then saves the response. Please write an example using ResultAsync, fromPromise or tryCatchAsync, and add metrics/logging without changing the result. Explain when to use tap, tapError, log, and finally.",
+      "prompt": "I have a Resultar async pipeline that calls an external API and then saves the response. Please write an example using ResultAsync, fromPromise or tryCatchAsync, and add metrics/logging without changing the result. Explain when to use tap, tapError, log, and toAsyncDisposable.",
       "expected_output": "Shows ResultAsync composition, wraps external promises, uses side-effect helpers only for observation/cleanup, states that callback failures are ignored, and uses map/andThen/orElse for transformations.",
       "files": []
     },

@@ -33,9 +33,9 @@ describe('StrictResult', () => {
     )
     const genericFailure: StrictResult<number> = err(new Error('generic'))
 
-    expectTypeOf(domainFailure).toMatchTypeOf<Result<number, Error>>()
-    expectTypeOf(infrastructureFailure).toMatchTypeOf<Result<number, Error>>()
-    expectTypeOf(genericFailure).toMatchTypeOf<Result<number, Error>>()
+    expectTypeOf(domainFailure).toExtend<Result<number, Error>>()
+    expectTypeOf(infrastructureFailure).toExtend<Result<number, Error>>()
+    expectTypeOf(genericFailure).toExtend<Result<number, Error>>()
   })
 
   it('rejects non-Error failure channels at compile time', () => {
@@ -60,7 +60,7 @@ describe('StrictResult', () => {
     const stillStrict: StrictResult<string, DomainError | InfrastructureError> =
       strictResult.andThen(() => err(new InfrastructureError('unavailable')))
 
-    expectTypeOf(stillStrict).toMatchTypeOf<Result<string, Error>>()
+    expectTypeOf(stillStrict).toExtend<Result<string, Error>>()
 
     if (false) {
       // @ts-expect-error The chain introduced a string error, so it is not StrictResult-compatible.
@@ -99,9 +99,9 @@ describe('StrictResultAsync', () => {
     )
     const genericFailure: StrictResultAsync<number> = errAsync(new Error('generic'))
 
-    expectTypeOf(domainFailure).toMatchTypeOf<StrictResultAsync<number, Error>>()
-    expectTypeOf(infrastructureFailure).toMatchTypeOf<StrictResultAsync<number, Error>>()
-    expectTypeOf(genericFailure).toMatchTypeOf<StrictResultAsync<number, Error>>()
+    expectTypeOf(domainFailure).toExtend<StrictResultAsync<number, Error>>()
+    expectTypeOf(infrastructureFailure).toExtend<StrictResultAsync<number, Error>>()
+    expectTypeOf(genericFailure).toExtend<StrictResultAsync<number, Error>>()
   })
 
   it('rejects non-Error async failure channels at compile time', () => {

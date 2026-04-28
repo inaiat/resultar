@@ -4,7 +4,7 @@ import { describe, it } from 'vite-plus/test'
 /* eslint-disable require-yield */
 import { Result, type ResultAsync, err, errAsync, ok, okAsync, safeTry } from '../src/index.js'
 
-describe('safeTryAsync', async () => {
+describe('safeTry', async () => {
   const fooValue = okAsync('foo')
   const barValue = okAsync('bar')
   const errValue = errAsync('boom')
