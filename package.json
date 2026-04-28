@@ -43,7 +43,7 @@
   "scripts": {
     "build": "vp pack",
     "check": "vp check && pnpm run check:no-discard",
-    "check:full": "pnpm run check && vp test run --coverage",
+    "check:full": "pnpm run build && pnpm run check && vp test run --coverage",
     "check:no-discard": "tsx src/no-discard.ts",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
