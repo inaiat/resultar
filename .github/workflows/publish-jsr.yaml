@@ -38,4 +38,4 @@ jobs:
         run: vp exec tsx scripts/smoke-package.ts
 
       - name: Publish to JSR
-        run: pnpm dlx jsr publish
+        run: npm exec --yes --package jsr@0.14.3 -- jsr publish
