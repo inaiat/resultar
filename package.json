@@ -1,6 +1,6 @@
 {
   "name": "resultar",
-  "version": "2.0.0-beta.3",
+  "version": "2.0.0",
   "description": "Result pattern for TypeScript",
   "keywords": [
     "error-handling",
