@@ -41,6 +41,11 @@
       "types": "./dist/no-discard.d.ts",
       "require": "./dist/no-discard.js",
       "import": "./dist/no-discard.js"
+    },
+    "./oxlint": {
+      "types": "./dist/oxlint-plugin.d.ts",
+      "require": "./dist/oxlint-plugin.js",
+      "import": "./dist/oxlint-plugin.js"
     }
   },
   "scripts": {

@@ -43,6 +43,47 @@ version as the project:
 pnpm exec resultar-no-discard --project tsconfig.json
 ```
 
+## Oxlint And Vite+
+
+`resultar-ls` also exports an Oxlint JS plugin at `resultar-ls/oxlint`.
+
+```ts
+import { defineConfig } from "vite-plus";
+
+export default defineConfig({
+  lint: {
+    jsPlugins: [{ name: "resultar", specifier: "resultar-ls/oxlint" }],
+    options: {
+      typeAware: true,
+      typeCheck: true,
+    },
+    rules: {
+      "resultar/no-discard": "error",
+    },
+  },
+});
+```
+
+Rule options:
+
+```ts
+export default defineConfig({
+  lint: {
+    jsPlugins: [{ name: "resultar", specifier: "resultar-ls/oxlint" }],
+    rules: {
+      "resultar/no-discard": ["error", { project: "tsconfig.json" }],
+    },
+  },
+});
+```
+
+The Oxlint rule runs the same TypeScript compiler-backed no-discard checker internally and caches
+the project result for the current Oxlint process. This is necessary because Oxlint custom JS rules
+do not currently expose TypeScript services to plugin authors.
+
+See `examples/vite-plus` for a smoke test where `vp check` fails on ignored `Result` and
+`ResultAsync` values.
+
 ## Build-Time Diagnostics
 
 TypeScript language-service plugins are editor-only by default. To make `tsc` report Resultar

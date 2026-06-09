@@ -612,6 +612,26 @@ pnpm exec resultar-ls check
 pnpm exec resultar-ls unpatch
 ```
 
+For Oxlint or Vite+ projects, load the `resultar-ls/oxlint` JS plugin and enable
+`resultar/no-discard`:
+
+```ts
+import { defineConfig } from 'vite-plus'
+
+export default defineConfig({
+  lint: {
+    jsPlugins: [{ name: 'resultar', specifier: 'resultar-ls/oxlint' }],
+    options: {
+      typeAware: true,
+      typeCheck: true,
+    },
+    rules: {
+      'resultar/no-discard': 'error',
+    },
+  },
+})
+```
+
 For TypeScript 7 native-preview projects, `resultar-tsgo` exposes a `tsgo` wrapper that runs native
 TypeScript and then Resultar no-discard validation.
 
@@ -687,6 +707,7 @@ This repository is a pnpm workspace:
   validation.
 - `benchmarks`: benchmark package.
 - `examples/language-service`: TypeScript 6 no-discard smoke example.
+- `examples/vite-plus`: Vite+ `vp check` smoke example through Oxlint `jsPlugins`.
 - `examples/tsgo`: TypeScript 7 native-preview smoke example.
 
 Common commands:

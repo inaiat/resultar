@@ -18,6 +18,8 @@ const requiredFiles = [
   "dist/index.js",
   "dist/no-discard.d.ts",
   "dist/no-discard.js",
+  "dist/oxlint-plugin.d.ts",
+  "dist/oxlint-plugin.js",
   "dist/package.json",
   "dist/patch.d.ts",
   "dist/patch.js",
