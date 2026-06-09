@@ -56,6 +56,7 @@
     "test:cov": "vp test run --coverage",
     "prepare": "vp config || true",
     "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts",
+    "sync:jsr-version": "node scripts/sync-jsr-version.mjs && vp fmt jsr.json",
     "bench": "pnpm --filter resultar-benchmarks bench",
     "bench:neverthrow": "pnpm --filter resultar-benchmarks bench:neverthrow"
   },

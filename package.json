@@ -2,6 +2,7 @@
   "name": "resultar-workspace",
   "private": true,
   "scripts": {
+    "analyze": "pnpm --filter resultar analyze",
     "build": "pnpm --filter resultar build && pnpm --filter resultar-ls build && pnpm --filter resultar-tsgo build",
     "changeset": "changeset",
     "check": "pnpm --filter resultar check && pnpm --filter resultar-ls check && pnpm --filter resultar-tsgo check",
@@ -14,7 +15,7 @@
     "lint:fix": "pnpm --filter resultar lint:fix",
     "release:npm": "changeset publish --tag alpha --no-git-tag",
     "smoke:package": "pnpm --filter resultar smoke:package && pnpm --filter resultar-ls smoke:package",
-    "sync:jsr-version": "node packages/resultar/scripts/sync-jsr-version.mjs && pnpm --filter resultar exec vp fmt jsr.json",
+    "sync:jsr-version": "pnpm --filter resultar sync:jsr-version",
     "test:language-service": "pnpm run example:language-service && pnpm run example:tsgo",
     "test": "pnpm --filter resultar test",
     "test:watch": "pnpm --filter resultar test:watch",
