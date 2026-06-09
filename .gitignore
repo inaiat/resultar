@@ -4,6 +4,7 @@
 /examples/*/dist
 /examples/*/node_modules
 /packages/*/dist
+/packages/*/.vite-hooks
 /packages/*/node_modules
 /node_modules
 /report
