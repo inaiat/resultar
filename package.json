@@ -13,7 +13,7 @@
     "fmt:check": "pnpm --filter resultar fmt:check",
     "lint": "pnpm --filter resultar lint",
     "lint:fix": "pnpm --filter resultar lint:fix",
-    "release:npm": "changeset publish --tag alpha --no-git-tag",
+    "release:npm": "node scripts/publish-npm.mjs",
     "smoke:package": "pnpm --filter resultar smoke:package && pnpm --filter resultar-ls smoke:package && pnpm --filter resultar-tsgo smoke:package",
     "sync:jsr-version": "pnpm --filter resultar sync:jsr-version",
     "test:language-service": "pnpm run example:language-service && pnpm run example:tsgo",
