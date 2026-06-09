@@ -2,7 +2,17 @@
   "name": "resultar-tsgo",
   "version": "3.0.0-alpha.1",
   "description": "Resultar no-discard wrapper for the TypeScript 7 native preview tsgo binary",
+  "homepage": "https://github.com/inaiat/resultar",
+  "bugs": {
+    "url": "https://github.com/inaiat/resultar/issues"
+  },
   "license": "MIT",
+  "author": "inaiat@gmail.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inaiat/resultar.git",
+    "directory": "packages/resultar-tsgo"
+  },
   "bin": {
     "tsgo": "./dist/cli.js"
   },
