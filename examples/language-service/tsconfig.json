@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "plugins": [{ "name": "resultar-ls", "noDiscard": "error" }]
+  },
+  "include": ["src/**/*.ts"]
+}

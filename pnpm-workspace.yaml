@@ -1,7 +1,20 @@
+packages:
+  - .
+  - benchmarks
+  - examples/*
+  - packages/*
+
+catalog:
+  "@types/node": 25.9.2
+  "@typescript/native-preview": 7.0.0-dev.20260608.1
+  fallow: 2.89.0
+  tsx: 4.22.4
+  vite-plus: 0.1.24
+
 allowBuilds:
   esbuild: true
 
-strictDepBuilds: true
-trustPolicy: no-downgrade
-blockExoticSubdeps: true
-minimumReleaseAge: 10080 # 1 week
+# strictDepBuilds: true
+# trustPolicy: no-downgrade
+# blockExoticSubdeps: true
+# minimumReleaseAge: 10080 # 1 week

@@ -35,7 +35,8 @@ jobs:
         run: vp run build
 
       - name: Package smoke
-        run: vp exec tsx scripts/smoke-package.ts
+        run: vp run smoke:package
 
       - name: Publish to JSR
         run: npm exec --yes --package jsr@0.14.3 -- jsr publish
+        working-directory: packages/resultar

@@ -1,5 +1,10 @@
 # compiled output
 /dist
+/benchmarks/node_modules
+/examples/*/dist
+/examples/*/node_modules
+/packages/*/dist
+/packages/*/node_modules
 /node_modules
 /report
 .zed
@@ -17,7 +22,7 @@ lerna-debug.log*
 .DS_Store
 
 # Tests
-/coverage
+coverage/
 /.nyc_output
 
 # Docs

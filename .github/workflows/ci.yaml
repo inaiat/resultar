@@ -36,4 +36,4 @@ jobs:
         run: vp run build
 
       - name: Package smoke
-        run: vp exec tsx scripts/smoke-package.ts
+        run: vp run smoke:package
