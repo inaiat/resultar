@@ -4,7 +4,7 @@
   "description": "Resultar no-discard wrapper for the TypeScript 7 native preview tsgo binary",
   "license": "MIT",
   "bin": {
-    "tsgo": "./src/cli.ts"
+    "tsgo": "./dist/cli.js"
   },
   "files": [
     "dist",
@@ -14,7 +14,8 @@
   "scripts": {
     "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
     "check": "vp check",
-    "smoke": "pnpm run build && node dist/cli.js --version"
+    "smoke": "pnpm run smoke:package",
+    "smoke:package": "pnpm run build && node scripts/smoke-package.mjs"
   },
   "dependencies": {
     "resultar-ls": "workspace:*"

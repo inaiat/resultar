@@ -10,5 +10,3 @@ Typical flow:
 4. Run `pnpm run version:packages` when preparing a release.
 5. Commit the generated package version, changelog, and `jsr.json` updates.
 6. Push a `v*` tag or run the publish workflow manually.
-
-`resultar-tsgo` is ignored by Changesets so the release process matches the current npm publish surface.
