@@ -8,6 +8,7 @@
   },
   "changesets": [
     "plain-parks-behave",
-    "publish-resultar-tsgo"
+    "publish-resultar-tsgo",
+    "rename-resultar-lint"
   ]
 }

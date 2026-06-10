@@ -1,6 +1,6 @@
 {
   "name": "resultar-lint",
-  "version": "3.0.0-alpha.2",
+  "version": "3.0.0-alpha.3",
   "description": "Lint and build-time diagnostics for Resultar",
   "keywords": [
     "lint",
