@@ -1,6 +1,6 @@
 {
   "name": "resultar-tsgo",
-  "version": "3.0.0-alpha.1",
+  "version": "3.0.0-alpha.2",
   "description": "Resultar no-discard wrapper for the TypeScript 7 native preview tsgo binary",
   "homepage": "https://github.com/inaiat/resultar",
   "bugs": {
