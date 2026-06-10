@@ -159,6 +159,137 @@ describe("no-discard Result check", () => {
     );
   });
 
+  it("allows assigned Result values returned inside object and array literals", async () => {
+    const rootDir = await createFixtureProject(`
+      type Result<T, E> = { readonly error?: E; readonly value?: T }
+      declare function saveUser(input: string): Result<string, Error>
+
+      function objectReturn(): { readonly result: Result<string, Error> } {
+        const result = saveUser('object')
+        return { result }
+      }
+
+      function propertyReturn(): { readonly saved: Result<string, Error> } {
+        const result = saveUser('property')
+        return { saved: result }
+      }
+
+      function arrayReturn(): readonly Result<string, Error>[] {
+        const result = saveUser('array')
+        return [result]
+      }
+    `);
+
+    const result = findDiscardedResults({ rootDir });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    deepEqual(result.findings, []);
+  });
+
+  it("does not track functions or objects only because their rendered type mentions Result", async () => {
+    const rootDir = await createFixtureProject(`
+      type StrictResultAsync<T, E> = { readonly error?: E; readonly value?: T }
+      declare function buildUserValidation(): (userId: string) => StrictResultAsync<void, Error>
+      declare function asFunction<T>(value: T): { readonly resolver: T }
+
+      function createUsecase() {
+        const validateUserExists = buildUserValidation()
+        const findByUserId = buildUserValidation()
+
+        return { validateUserExists, findByUserId }
+      }
+
+      function createContainer() {
+        const register = {
+          userCrudUsecase: asFunction({
+            findById: buildUserValidation()
+          })
+        }
+
+        return register
+      }
+    `);
+
+    const result = findDiscardedResults({ rootDir });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    deepEqual(result.findings, []);
+  });
+
+  it("allows returned usecase methods whose return types are ResultAsync", async () => {
+    const rootDir = await createFixtureProject(`
+      type StrictResultAsync<T, E> = { readonly error?: E; readonly value?: T }
+      type AddressCreate = { readonly street: string }
+      type AddressDocument = { readonly id: string }
+      type AddressRepository = { readonly name: 'address' }
+      type AddressUpdate = { readonly street?: string }
+      type AppError = { readonly message: string }
+      type UserRepository = { readonly name: 'user' }
+
+      interface CreateAddressCrudUsecaseOptions {
+        readonly addressRepository: AddressRepository
+        readonly userRepository: UserRepository
+      }
+
+      declare function buildUserValidation(
+        userRepository: UserRepository
+      ): (userId: string) => StrictResultAsync<void, AppError>
+      declare function buildFindByUserId(
+        validateUserExists: (userId: string) => StrictResultAsync<void, AppError>,
+        addressRepository: AddressRepository
+      ): (userId: string) => StrictResultAsync<AddressDocument[], AppError>
+      declare function buildEnsureAddressExists(
+        validateUserExists: (userId: string) => StrictResultAsync<void, AppError>,
+        addressRepository: AddressRepository
+      ): (userId: string, addressId: string) => StrictResultAsync<AddressDocument, AppError>
+      declare function buildCreate(
+        validateUserExists: (userId: string) => StrictResultAsync<void, AppError>,
+        addressRepository: AddressRepository
+      ): (userId: string, address: AddressCreate) => StrictResultAsync<AddressDocument, AppError>
+      declare function buildUpdate(
+        ensureAddressExists: (userId: string, addressId: string) => StrictResultAsync<AddressDocument, AppError>,
+        addressRepository: AddressRepository
+      ): (userId: string, addressId: string, address: AddressUpdate) => StrictResultAsync<AddressDocument, AppError>
+      declare function buildDeleteOne(
+        ensureAddressExists: (userId: string, addressId: string) => StrictResultAsync<AddressDocument, AppError>,
+        addressRepository: AddressRepository
+      ): (userId: string, addressId: string) => StrictResultAsync<boolean, AppError>
+      declare function buildSetDefault(
+        ensureAddressExists: (userId: string, addressId: string) => StrictResultAsync<AddressDocument, AppError>,
+        addressRepository: AddressRepository
+      ): (userId: string, addressId: string) => StrictResultAsync<void, AppError>
+
+      export const createAddressCrudUsecase = ({
+        addressRepository,
+        userRepository,
+      }: CreateAddressCrudUsecaseOptions) => {
+        const validateUserExists = buildUserValidation(userRepository)
+        const findByUserId = buildFindByUserId(validateUserExists, addressRepository)
+        const ensureAddressExists = buildEnsureAddressExists(validateUserExists, addressRepository)
+        const create = buildCreate(validateUserExists, addressRepository)
+        const update = buildUpdate(ensureAddressExists, addressRepository)
+        const deleteOne = buildDeleteOne(ensureAddressExists, addressRepository)
+        const setDefault = buildSetDefault(ensureAddressExists, addressRepository)
+
+        return { findByUserId, create, update, deleteOne, setDefault }
+      }
+    `);
+
+    const result = findDiscardedResults({ rootDir });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    deepEqual(result.findings, []);
+  });
+
   it("uses direct mode from tsconfig plugin config when no mode is passed", async () => {
     const rootDir = await createFixtureProject(
       `

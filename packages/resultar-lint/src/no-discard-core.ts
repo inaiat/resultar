@@ -34,8 +34,16 @@ interface TrackedResult {
   handled: boolean;
 }
 
-const resultTypeMatcher =
-  /\b(?:DisposableResult|DisposableResultAsync|ErrResult|OkResult|Result|ResultAsync|StrictResult|StrictResultAsync)\b/;
+const resultTypeNames = new Set([
+  "DisposableResult",
+  "DisposableResultAsync",
+  "ErrResult",
+  "OkResult",
+  "Result",
+  "ResultAsync",
+  "StrictResult",
+  "StrictResultAsync",
+]);
 
 const consumerMethods = new Set([
   "_unsafeUnwrap",
@@ -64,13 +72,25 @@ export const isResultLikeType = (
     return type.types.some((innerType) => isResultLikeType(tsApi, checker, node, innerType));
   }
 
-  const typeName = checker.typeToString(
-    type,
-    node,
-    tsApi.TypeFormatFlags.NoTruncation + tsApi.TypeFormatFlags.UseFullyQualifiedType,
-  );
+  const aliasName = type.aliasSymbol?.getName();
+  const symbolName = type.getSymbol()?.getName();
 
-  return resultTypeMatcher.test(typeName);
+  if (
+    (aliasName !== undefined && resultTypeNames.has(aliasName)) ||
+    (symbolName !== undefined && resultTypeNames.has(symbolName))
+  ) {
+    return true;
+  }
+
+  if (tsApi.isTypeReferenceNode(node)) {
+    const typeName = node.typeName.getText();
+    const unqualifiedName = typeName.includes(".") ? typeName.split(".").at(-1) : typeName;
+
+    return unqualifiedName !== undefined && resultTypeNames.has(unqualifiedName);
+  }
+
+  void checker;
+  return false;
 };
 
 export const unwrapExpression = (
@@ -183,6 +203,23 @@ const isWrapperParent = (tsApi: TypeScriptApi, parent: ts.Node, child: ts.Node):
   (tsApi.isNonNullExpression(parent) && parent.expression === child) ||
   (tsApi.isSatisfiesExpression(parent) && parent.expression === child);
 
+const isReturnValueContainerParent = (
+  tsApi: TypeScriptApi,
+  parent: ts.Node,
+  child: ts.Node,
+): boolean =>
+  isWrapperParent(tsApi, parent, child) ||
+  (tsApi.isShorthandPropertyAssignment(parent) && parent.name === child) ||
+  (tsApi.isPropertyAssignment(parent) && parent.initializer === child) ||
+  (tsApi.isSpreadAssignment(parent) && parent.expression === child) ||
+  (tsApi.isSpreadElement(parent) && parent.expression === child) ||
+  (tsApi.isObjectLiteralExpression(parent) &&
+    parent.properties.some((property) => property === child)) ||
+  (tsApi.isArrayLiteralExpression(parent) &&
+    parent.elements.some((element) => element === child)) ||
+  (tsApi.isConditionalExpression(parent) &&
+    (parent.whenTrue === child || parent.whenFalse === child));
+
 const getReferenceChainRoot = (
   tsApi: TypeScriptApi,
   identifier: ts.Identifier,
@@ -221,10 +258,34 @@ const isReturnedReference = (
 ): boolean => {
   const { parent, root } = getReferenceChainRoot(tsApi, identifier, ancestors);
 
-  return (
+  if (
     (parent !== undefined && tsApi.isReturnStatement(parent) && parent.expression === root) ||
     (parent !== undefined && tsApi.isArrowFunction(parent) && parent.body === root)
-  );
+  ) {
+    return true;
+  }
+
+  let current: ts.Node = identifier;
+
+  for (let parentIndex = ancestors.length - 1; parentIndex >= 0; parentIndex -= 1) {
+    const containerParent = ancestors[parentIndex];
+
+    if (containerParent === undefined) {
+      return false;
+    }
+
+    if (isReturnValueContainerParent(tsApi, containerParent, current)) {
+      current = containerParent;
+      continue;
+    }
+
+    return (
+      (tsApi.isReturnStatement(containerParent) && containerParent.expression === current) ||
+      (tsApi.isArrowFunction(containerParent) && containerParent.body === current)
+    );
+  }
+
+  return false;
 };
 
 const isExplicitDiscardReference = (
@@ -326,7 +387,13 @@ const getTrackedResult = (
   trackedResults: readonly TrackedResult[],
   identifier: ts.Identifier,
 ): TrackedResult | undefined => {
-  const symbol = checker.getSymbolAtLocation(identifier);
+  const shorthandParent = identifier.parent;
+  const symbol =
+    shorthandParent !== undefined &&
+    tsApi.isShorthandPropertyAssignment(shorthandParent) &&
+    shorthandParent.name === identifier
+      ? checker.getShorthandAssignmentValueSymbol(shorthandParent)
+      : checker.getSymbolAtLocation(identifier);
 
   return symbol === undefined
     ? undefined
