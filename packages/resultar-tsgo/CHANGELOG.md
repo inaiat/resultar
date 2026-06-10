@@ -9,4 +9,4 @@
 ### Patch Changes
 
 - Updated dependencies [a65670f]
-  - resultar-ls@3.0.0-alpha.2
+  - resultar-lint@3.0.0-alpha.2

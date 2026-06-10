@@ -6,7 +6,7 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "noEmit": true,
-    "plugins": [{ "name": "resultar-ls", "noDiscard": "error" }]
+    "plugins": [{ "name": "resultar-lint", "noDiscard": "error" }]
   },
   "include": ["src/**/*.ts"]
 }

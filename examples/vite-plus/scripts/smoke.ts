@@ -49,7 +49,7 @@ const assertIncludes = (output: string, expected: string, message: string): void
 }
 
 pnpm(['--filter', 'resultar', 'build'], { cwd: workspaceDir })
-pnpm(['--filter', 'resultar-ls', 'build'], { cwd: workspaceDir })
+pnpm(['--filter', 'resultar-lint', 'build'], { cwd: workspaceDir })
 
 const check = pnpm(['check'], { cwd: exampleDir, expectFailure: true })
 
@@ -67,6 +67,11 @@ assertIncludes(
   check.output,
   'Ignored ResultAsync',
   'Expected Vite+ Oxlint output to report the ignored ResultAsync value',
+)
+assertIncludes(
+  check.output,
+  'assigned to `unhandled`',
+  'Expected Vite+ Oxlint output to report the must-use assignment diagnostic',
 )
 
 process.stdout.write('Resultar Vite+ example smoke passed.\n')

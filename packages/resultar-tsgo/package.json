@@ -28,7 +28,7 @@
     "smoke:package": "pnpm run build && node scripts/smoke-package.mjs"
   },
   "dependencies": {
-    "resultar-ls": "workspace:*"
+    "resultar-lint": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

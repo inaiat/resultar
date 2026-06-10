@@ -1,6 +1,6 @@
 ---
 "resultar-tsgo": major
-"resultar-ls": major
+"resultar-lint": major
 "resultar": major
 ---
 

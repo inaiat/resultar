@@ -4,7 +4,7 @@
     "lib": ["ESNext"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "plugins": [{ "name": "resultar-ls", "noDiscard": "error" }],
+    "plugins": [{ "name": "resultar-lint", "noDiscard": "error" }],
     "strict": true,
     "noEmit": true
   },

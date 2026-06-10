@@ -97,7 +97,7 @@ in normal TypeScript.
 | Production errors need stable names and metadata | `createTaggedError` classes with `_tag`, template props, `cause`, and `.toJSON()` |
 | Async flows turn into nested `try/catch` | `tryResultAsync`, `andThen`, `asyncAndThen`, `map`, `orElse`, `safeTry` |
 | Boundary handlers miss cases | `matchTags` for exhaustive tagged-error handling |
-| Results are easy to ignore | `resultar-no-discard` and the `resultar-ls` TypeScript plugin |
+| Results are easy to ignore | `resultar-lint check` and the `resultar-lint` TypeScript plugin |
 | You do not want another application runtime | A small ESM library around explicit values |
 
 Nested `try/catch` often masks the error the caller actually needs:
@@ -562,11 +562,11 @@ const config = safeTry({
 
 ## No-Discard Validation
 
-Resultar values should not be ignored. Install `resultar-ls` to report discarded `Result` and
+Resultar values should not be ignored. Install `resultar-lint` to report discarded `Result` and
 `ResultAsync` values.
 
 ```sh
-pnpm add -D resultar-ls typescript
+pnpm add -D resultar-lint typescript
 ```
 
 Add a lint-like script:
@@ -574,7 +574,7 @@ Add a lint-like script:
 ```json
 {
   "scripts": {
-    "lint:resultar": "resultar-no-discard --project tsconfig.json"
+    "lint:resultar": "resultar-lint check --project tsconfig.json"
   }
 }
 ```
@@ -593,12 +593,24 @@ return saveUser(input)
 void saveUser(input)
 ```
 
+The default mode is neverthrow-style `must-use`: it also reports assigned `Result` values that are
+only passed around and never consumed with `match`, `unwrapOr`, `_unsafeUnwrap`, `isOk`, `isErr`,
+returned, or explicitly discarded. Use `--mode direct` for the lower-noise expression-only check.
+
+```json
+{
+  "scripts": {
+    "lint:resultar": "resultar-lint check --project tsconfig.json"
+  }
+}
+```
+
 For editor diagnostics, enable the TypeScript language-service plugin:
 
 ```json
 {
   "compilerOptions": {
-    "plugins": [{ "name": "resultar-ls", "noDiscard": "error" }]
+    "plugins": [{ "name": "resultar-lint", "noDiscard": "error" }]
   }
 }
 ```
@@ -607,12 +619,12 @@ TypeScript language-service plugins are editor-only by default. To make `tsc` re
 diagnostics during builds, patch the local TypeScript installation:
 
 ```sh
-pnpm exec resultar-ls patch
-pnpm exec resultar-ls check
-pnpm exec resultar-ls unpatch
+pnpm exec resultar-lint patch
+pnpm exec resultar-lint doctor
+pnpm exec resultar-lint unpatch
 ```
 
-For Oxlint or Vite+ projects, load the `resultar-ls/oxlint` JS plugin and enable
+For Oxlint or Vite+ projects, load the `resultar-lint/oxlint` JS plugin and enable
 `resultar/no-discard`:
 
 ```ts
@@ -620,7 +632,7 @@ import { defineConfig } from 'vite-plus'
 
 export default defineConfig({
   lint: {
-    jsPlugins: [{ name: 'resultar', specifier: 'resultar-ls/oxlint' }],
+    jsPlugins: [{ name: 'resultar', specifier: 'resultar-lint/oxlint' }],
     options: {
       typeAware: true,
       typeCheck: true,
@@ -694,7 +706,7 @@ More focused material:
 
 - [Type-safe error handling article, English](articles/en/type-safe.md)
 - [Artigo sobre tratamento de erros type-safe, Portuguese](articles/pt/type-safe.md)
-- [resultar-ls package guide](packages/resultar-ls/README.md)
+- [resultar-lint package guide](packages/resultar-lint/README.md)
 - [resultar-tsgo package guide](packages/resultar-tsgo/README.md)
 
 ## Workspace
@@ -702,11 +714,11 @@ More focused material:
 This repository is a pnpm workspace:
 
 - `packages/resultar`: Resultar runtime package.
-- `packages/resultar-ls`: TypeScript language-service diagnostics and no-discard CLI.
+- `packages/resultar-lint`: TypeScript language-service diagnostics and no-discard CLI.
 - `packages/resultar-tsgo`: TypeScript 7 native-preview `tsgo` wrapper plus Resultar no-discard
   validation.
 - `benchmarks`: benchmark package.
-- `examples/language-service`: TypeScript 6 no-discard smoke example.
+- `examples/resultar-lint`: TypeScript 6 no-discard smoke example.
 - `examples/vite-plus`: Vite+ `vp check` smoke example through Oxlint `jsPlugins`.
 - `examples/tsgo`: TypeScript 7 native-preview smoke example.
 

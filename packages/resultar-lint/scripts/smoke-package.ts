@@ -1,11 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 type PackFile = Readonly<{ path: string }>;
 type PackManifest = Readonly<{ files: readonly PackFile[] }>;
 
 const rootDir = process.cwd();
+const packageJson = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8")) as {
+  readonly bin?: Record<string, string>;
+  readonly exports?: Record<string, unknown>;
+};
 
 const requiredFiles = [
   "LICENSE",
@@ -16,6 +20,8 @@ const requiredFiles = [
   "dist/diagnostics.js",
   "dist/index.d.ts",
   "dist/index.js",
+  "dist/no-discard-core.d.ts",
+  "dist/no-discard-core.js",
   "dist/no-discard.d.ts",
   "dist/no-discard.js",
   "dist/oxlint-plugin.d.ts",
@@ -69,7 +75,7 @@ const sortStrings = (items: readonly string[]): readonly string[] =>
 
 for (const file of requiredFiles) {
   if (!existsSync(join(rootDir, file))) {
-    throw new Error(`Missing language-service package smoke file: ${file}`);
+    throw new Error(`Missing lint package smoke file: ${file}`);
   }
 }
 
@@ -78,21 +84,29 @@ const help = execFileSync(process.execPath, [join(rootDir, "dist/cli.js"), "help
   encoding: "utf8",
 });
 
-if (!help.includes("Usage: resultar-ls")) {
-  throw new Error("Language-service binary help output is missing expected usage text");
+if (!help.includes("Usage: resultar-lint")) {
+  throw new Error("Lint binary help output is missing expected usage text");
 }
 
-const noDiscardHelp = execFileSync(
+const checkHelp = execFileSync(
   process.execPath,
-  [join(rootDir, "dist/no-discard.js"), "--help"],
+  [join(rootDir, "dist/cli.js"), "check", "--help"],
   {
     cwd: rootDir,
     encoding: "utf8",
   },
 );
 
-if (!noDiscardHelp.includes("Usage: resultar-no-discard")) {
-  throw new Error("Language-service no-discard help output is missing expected usage text");
+if (!checkHelp.includes("Usage: resultar-lint check")) {
+  throw new Error("Lint check help output is missing expected usage text");
+}
+
+if (packageJson.bin?.["resultar-no-discard"] !== undefined) {
+  throw new Error("Lint package should not expose the legacy resultar-no-discard binary");
+}
+
+if (packageJson.exports?.["./no-discard"] !== undefined) {
+  throw new Error("Lint package should not expose the legacy ./no-discard entrypoint");
 }
 
 const packOutput = execFileSync("npm", ["pack", "--dry-run", "--json"], {
@@ -103,7 +117,7 @@ const packedFiles = sortStrings(parsePackedFiles(packOutput));
 
 for (const file of requiredFiles) {
   if (!packedFiles.includes(file)) {
-    throw new Error(`Packed language-service package is missing required file: ${file}`);
+    throw new Error(`Packed lint package is missing required file: ${file}`);
   }
 }
 
@@ -112,11 +126,7 @@ const allowedPackedFile =
 const unexpectedFiles = packedFiles.filter((file: string) => !allowedPackedFile.test(file));
 
 if (unexpectedFiles.length > 0) {
-  throw new Error(
-    `Packed language-service package contains unexpected files:\n${unexpectedFiles.join("\n")}`,
-  );
+  throw new Error(`Packed lint package contains unexpected files:\n${unexpectedFiles.join("\n")}`);
 }
 
-process.stdout.write(
-  `Language-service package smoke passed with ${packedFiles.length} packed files.\n`,
-);
+process.stdout.write(`Lint package smoke passed with ${packedFiles.length} packed files.\n`);

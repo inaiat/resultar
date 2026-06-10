@@ -1,26 +1,25 @@
-#!/usr/bin/env node
-import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { relative, resolve } from "node:path";
 
 import type * as ts from "typescript";
 
-type TypeScriptApi = typeof ts;
-
-const resultTypeMatcher =
-  /\b(?:DisposableResult|DisposableResultAsync|ErrResult|OkResult|Result|ResultAsync|StrictResult|StrictResultAsync)\b/;
-
-export interface NoDiscardFinding {
-  readonly column: number;
-  readonly file: string;
-  readonly line: number;
-  readonly type: string;
-}
+import {
+  getProgramNoDiscardFindings,
+  normalizeNoDiscardMode,
+  type NoDiscardFinding,
+  type NoDiscardMode,
+} from "./no-discard-core";
+import { findResultarPluginConfig } from "./plugin-options";
 
 export interface NoDiscardOptions {
+  readonly mode?: NoDiscardMode;
   readonly project?: string;
   readonly rootDir?: string;
 }
+
+export type { NoDiscardFinding, NoDiscardMode };
+
+type TypeScriptApi = typeof ts;
 
 type NoDiscardFailure = { readonly error: Error; readonly ok: false };
 
@@ -32,9 +31,10 @@ interface CliOptions extends NoDiscardOptions {
   readonly help: boolean;
 }
 
-const usage = `Usage: resultar-no-discard [--project tsconfig.json]
+const usage = `Usage: resultar-lint check [--project tsconfig.json]
 
 Flags:
+  --mode <direct|must-use>  Check mode. Defaults to tsconfig plugin noDiscardMode or must-use.
   -p, --project <path>  TypeScript project file to inspect. Defaults to tsconfig.json.
   -h, --help            Show this help message.
 `;
@@ -51,6 +51,7 @@ const requireFromPackage = createRequire(__filename);
 const parseArgs = (
   args: readonly string[],
 ): NoDiscardFailure | { readonly ok: true; readonly options: CliOptions } => {
+  let mode: NoDiscardMode | undefined = undefined;
   let project: string | undefined = undefined;
   let help = false;
 
@@ -70,6 +71,27 @@ const parseArgs = (
       index += 1;
     } else if (arg !== undefined && arg.startsWith("--project=")) {
       project = arg.slice("--project=".length);
+    } else if (arg === "--mode") {
+      const nextArg = args[index + 1];
+
+      if (nextArg === undefined || nextArg === "") {
+        return cliError("--mode requires direct or must-use");
+      }
+
+      if (nextArg !== "direct" && nextArg !== "must-use") {
+        return cliError(`Unknown --mode value: ${nextArg}`);
+      }
+
+      mode = nextArg;
+      index += 1;
+    } else if (arg !== undefined && arg.startsWith("--mode=")) {
+      const nextMode = arg.slice("--mode=".length);
+
+      if (nextMode !== "direct" && nextMode !== "must-use") {
+        return cliError(`Unknown --mode value: ${nextMode}`);
+      }
+
+      mode = nextMode;
     } else if (arg !== undefined && arg !== "") {
       return cliError(`Unknown argument: ${arg}`);
     }
@@ -80,14 +102,20 @@ const parseArgs = (
   }
 
   return project === undefined
-    ? { ok: true, options: { help } }
-    : { ok: true, options: { help, project } };
+    ? { ok: true, options: mode === undefined ? { help } : { help, mode } }
+    : { ok: true, options: mode === undefined ? { help, project } : { help, mode, project } };
 };
 
 const readProject = (
   tsApi: TypeScriptApi,
   projectPath: string,
-): NoDiscardFailure | { readonly ok: true; readonly parsed: ts.ParsedCommandLine } => {
+):
+  | NoDiscardFailure
+  | {
+      readonly config: unknown;
+      readonly ok: true;
+      readonly parsed: ts.ParsedCommandLine;
+    } => {
   const formatHost: ts.FormatDiagnosticsHost = {
     getCanonicalFileName: (fileName) => fileName,
     getCurrentDirectory: () => process.cwd(),
@@ -115,7 +143,24 @@ const readProject = (
     );
   }
 
-  return { ok: true, parsed };
+  return { config: config.config, ok: true, parsed };
+};
+
+const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
+  typeof value === "object" && value !== null;
+
+const getProjectNoDiscardMode = (config: unknown): NoDiscardMode | undefined => {
+  if (!isRecord(config) || !isRecord(config.compilerOptions)) {
+    return undefined;
+  }
+
+  const { plugins } = config.compilerOptions;
+
+  if (!Array.isArray(plugins)) {
+    return undefined;
+  }
+
+  return findResultarPluginConfig(plugins)?.noDiscardMode;
 };
 
 const resolveTypeScriptApi = (
@@ -131,108 +176,11 @@ const resolveTypeScriptApi = (
     } catch {
       return failure(
         new Error(
-          "Unable to resolve TypeScript. Install typescript in this project or run resultar-no-discard from a project with local TypeScript.",
+          "Unable to resolve TypeScript. Install typescript in this project or run resultar-lint check from a project with local TypeScript.",
         ),
       );
     }
   }
-};
-
-const isResultLikeType = (
-  tsApi: TypeScriptApi,
-  checker: ts.TypeChecker,
-  node: ts.Node,
-  type: ts.Type,
-): boolean => {
-  if (type.isUnionOrIntersection()) {
-    return type.types.some((innerType) => isResultLikeType(tsApi, checker, node, innerType));
-  }
-
-  const typeName = checker.typeToString(
-    type,
-    node,
-    tsApi.TypeFormatFlags.NoTruncation + tsApi.TypeFormatFlags.UseFullyQualifiedType,
-  );
-
-  return resultTypeMatcher.test(typeName);
-};
-
-const unwrapExpression = (tsApi: TypeScriptApi, expression: ts.Expression): ts.Expression => {
-  let current = expression;
-
-  while (tsApi.isParenthesizedExpression(current)) {
-    current = current.expression;
-  }
-
-  return current;
-};
-
-const isExplicitDiscard = (tsApi: TypeScriptApi, expression: ts.Expression): boolean =>
-  tsApi.isVoidExpression(unwrapExpression(tsApi, expression));
-
-const isCallLikeDiscard = (tsApi: TypeScriptApi, expression: ts.Expression): boolean => {
-  const unwrapped = unwrapExpression(tsApi, expression);
-
-  if (tsApi.isAwaitExpression(unwrapped)) {
-    return isCallLikeDiscard(tsApi, unwrapped.expression);
-  }
-
-  if (tsApi.isCallExpression(unwrapped)) {
-    return true;
-  }
-
-  if (tsApi.isConditionalExpression(unwrapped)) {
-    return (
-      isCallLikeDiscard(tsApi, unwrapped.whenTrue) || isCallLikeDiscard(tsApi, unwrapped.whenFalse)
-    );
-  }
-
-  if (
-    tsApi.isBinaryExpression(unwrapped) &&
-    [
-      tsApi.SyntaxKind.AmpersandAmpersandToken,
-      tsApi.SyntaxKind.BarBarToken,
-      tsApi.SyntaxKind.QuestionQuestionToken,
-    ].includes(unwrapped.operatorToken.kind)
-  ) {
-    return isCallLikeDiscard(tsApi, unwrapped.right);
-  }
-
-  return false;
-};
-
-const inspectSourceFile = (
-  tsApi: TypeScriptApi,
-  checker: ts.TypeChecker,
-  sourceFile: ts.SourceFile,
-): readonly NoDiscardFinding[] => {
-  const findings: NoDiscardFinding[] = [];
-
-  const visit = (node: ts.Node): void => {
-    if (
-      tsApi.isExpressionStatement(node) &&
-      !isExplicitDiscard(tsApi, node.expression) &&
-      isCallLikeDiscard(tsApi, node.expression)
-    ) {
-      const type = checker.getTypeAtLocation(node.expression);
-
-      if (isResultLikeType(tsApi, checker, node.expression, type)) {
-        const position = sourceFile.getLineAndCharacterOfPosition(node.expression.getStart());
-        findings.push({
-          column: position.character + 1,
-          file: sourceFile.fileName,
-          line: position.line + 1,
-          type: checker.typeToString(type, node.expression, tsApi.TypeFormatFlags.NoTruncation),
-        });
-      }
-    }
-
-    tsApi.forEachChild(node, visit);
-  };
-
-  visit(sourceFile);
-
-  return findings;
 };
 
 export const findDiscardedResults = (options: NoDiscardOptions = {}): NoDiscardResult => {
@@ -252,14 +200,9 @@ export const findDiscardedResults = (options: NoDiscardOptions = {}): NoDiscardR
   }
 
   const program = tsApi.createProgram(project.parsed.fileNames, project.parsed.options);
-  const checker = program.getTypeChecker();
-  const findings: NoDiscardFinding[] = [];
-
-  for (const sourceFile of program.getSourceFiles()) {
-    if (!sourceFile.isDeclarationFile && !sourceFile.fileName.includes("/node_modules/")) {
-      findings.push(...inspectSourceFile(tsApi, checker, sourceFile));
-    }
-  }
+  const findings = getProgramNoDiscardFindings(tsApi, program, {
+    mode: normalizeNoDiscardMode(options.mode ?? getProjectNoDiscardMode(project.config)),
+  });
 
   return success(findings);
 };
@@ -267,10 +210,9 @@ export const findDiscardedResults = (options: NoDiscardOptions = {}): NoDiscardR
 const formatFinding = (finding: NoDiscardFinding, rootDir: string): string => {
   const file = relative(rootDir, finding.file);
 
-  return [
-    `${file}:${finding.line}:${finding.column} no-discard-result`,
-    `Ignored ${finding.type} value. Handle it or explicitly discard it with \`void\`.`,
-  ].join(" - ");
+  return [`${file}:${finding.line}:${finding.column} no-discard-result`, finding.message].join(
+    " - ",
+  );
 };
 
 export const runNoDiscardCli = (args: readonly string[] = process.argv.slice(2)): number => {
@@ -289,8 +231,12 @@ export const runNoDiscardCli = (args: readonly string[] = process.argv.slice(2))
 
   const result =
     parsedArgs.options.project === undefined
-      ? findDiscardedResults({ rootDir })
-      : findDiscardedResults({ project: parsedArgs.options.project, rootDir });
+      ? findDiscardedResults({ mode: parsedArgs.options.mode, rootDir })
+      : findDiscardedResults({
+          mode: parsedArgs.options.mode,
+          project: parsedArgs.options.project,
+          rootDir,
+        });
 
   if (!result.ok) {
     process.stderr.write(`${result.error.message}\n`);
@@ -307,21 +253,3 @@ export const runNoDiscardCli = (args: readonly string[] = process.argv.slice(2))
 
   return 1;
 };
-
-const isCliEntrypoint = (): boolean => {
-  const entrypoint = process.argv[1];
-
-  if (entrypoint === undefined) {
-    return false;
-  }
-
-  try {
-    return realpathSync(entrypoint) === realpathSync(__filename);
-  } catch {
-    return false;
-  }
-};
-
-if (isCliEntrypoint()) {
-  process.exitCode = runNoDiscardCli();
-}

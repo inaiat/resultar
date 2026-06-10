@@ -5,24 +5,31 @@ import {
   unpatchTypeScriptPackage,
   type TypeScriptPatchResult,
 } from "./patch";
+import { runNoDiscardCli } from "./no-discard";
 
-type Command = "check" | "help" | "patch" | "unpatch";
+type Command = "check" | "doctor" | "help" | "patch" | "unpatch";
 type PatchResultVerb = "checked" | "patched" | "unpatched";
 
 interface CliOptions {
   readonly command: Command;
+  readonly args?: readonly string[];
   readonly dir?: string;
 }
 
-const usage = `Usage: resultar-ls <command> [--dir ./node_modules/typescript]
+const usage = `Usage: resultar-lint <command> [flags]
 
 Commands:
+  check    Run Resultar lint diagnostics for a TypeScript project.
   patch    Patch local TypeScript so tsc emits Resultar diagnostics.
   unpatch  Remove Resultar patch blocks from local TypeScript.
-  check    Check whether local TypeScript is patched.
+  doctor   Check whether local TypeScript is patched.
   help     Show this help message.
 
-Flags:
+Check flags:
+  -p, --project <path>     TypeScript project file to inspect. Defaults to tsconfig.json.
+  --mode <direct|must-use> Check mode. Defaults to tsconfig plugin noDiscardMode or must-use.
+
+Patch flags:
   -d, --dir <path>  TypeScript package directory. Defaults to the local installed typescript package.
 `;
 
@@ -30,8 +37,12 @@ const parseArgs = (args: readonly string[]): CliOptions => {
   const [commandArg, ...rest] = args;
   const command = commandArg === "--help" || commandArg === "-h" ? "help" : (commandArg ?? "help");
 
-  if (!["check", "help", "patch", "unpatch"].includes(command)) {
+  if (!["check", "doctor", "help", "patch", "unpatch"].includes(command)) {
     throw new Error(`Unknown command: ${command}`);
+  }
+
+  if (command === "check") {
+    return { args: rest, command };
   }
 
   let dir: string | undefined = undefined;
@@ -90,6 +101,10 @@ const run = async (args: readonly string[] = process.argv.slice(2)): Promise<num
   if (options.command === "unpatch") {
     printPatchResult("unpatched", await unpatchTypeScriptPackage({ dir: options.dir }));
     return 0;
+  }
+
+  if (options.command === "check") {
+    return runNoDiscardCli(options.args ?? []);
   }
 
   const result = await getTypeScriptPatchStatus({ dir: options.dir });

@@ -9,7 +9,7 @@ The `tsconfig.json` includes the Resultar language-service plugin config:
 ```json
 {
   "compilerOptions": {
-    "plugins": [{ "name": "resultar-ls", "noDiscard": "error" }]
+    "plugins": [{ "name": "resultar-lint", "noDiscard": "error" }]
   }
 }
 ```
@@ -27,5 +27,6 @@ pnpm --filter resultar-tsgo-example run prepare
 pnpm --filter resultar-tsgo-example lint:resultar
 ```
 
-The source intentionally contains ignored `Result` and `ResultAsync` calls, so `lint:resultar` fails
-after `tsgo` type-checks successfully and reports the discarded values.
+The source intentionally contains ignored `Result` and `ResultAsync` calls plus one
+assigned-but-unhandled Resultar value, so `lint:resultar` fails after `tsgo` type-checks
+successfully and reports the no-discard and must-use diagnostics.

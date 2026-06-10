@@ -2,7 +2,6 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 const requireFromHere = createRequire(import.meta.url);
 const requireFromCwd = createRequire(join(process.cwd(), "package.json"));
@@ -17,7 +16,7 @@ const resolvePackage = (specifier: string): string => {
 
 const nativePackageJson = resolvePackage("@typescript/native-preview/package.json");
 const nativeTsgoBin = join(dirname(nativePackageJson), "bin/tsgo.js");
-const resultarNoDiscardBin = fileURLToPath(import.meta.resolve("resultar-ls/no-discard"));
+const resultarLintBin = join(dirname(resolvePackage("resultar-lint")), "cli.js");
 
 const passthroughArgs = new Set(["--help", "-h", "--version", "-v"]);
 
@@ -58,7 +57,7 @@ if (tsgoStatus !== 0 || shouldSkipNoDiscard(args)) {
 } else {
   const project = getProjectArg(args);
   process.exitCode = runNode(
-    resultarNoDiscardBin,
-    project === undefined ? [] : ["--project", project],
+    resultarLintBin,
+    project === undefined ? ["check"] : ["check", "--project", project],
   );
 }

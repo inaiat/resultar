@@ -1,9 +1,9 @@
 {
-  "name": "resultar-ls",
+  "name": "resultar-lint",
   "version": "3.0.0-alpha.2",
-  "description": "TypeScript language service diagnostics for Resultar",
+  "description": "Lint and build-time diagnostics for Resultar",
   "keywords": [
-    "language-service",
+    "lint",
     "no-discard",
     "resultar",
     "typescript"
@@ -17,11 +17,10 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/inaiat/resultar.git",
-    "directory": "packages/resultar-ls"
+    "directory": "packages/resultar-lint"
   },
   "bin": {
-    "resultar-ls": "./dist/cli.js",
-    "resultar-no-discard": "./dist/no-discard.js"
+    "resultar-lint": "./dist/cli.js"
   },
   "files": [
     "dist",
@@ -36,11 +35,6 @@
       "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
       "import": "./dist/index.js"
-    },
-    "./no-discard": {
-      "types": "./dist/no-discard.d.ts",
-      "require": "./dist/no-discard.js",
-      "import": "./dist/no-discard.js"
     },
     "./oxlint": {
       "types": "./dist/oxlint-plugin.d.ts",

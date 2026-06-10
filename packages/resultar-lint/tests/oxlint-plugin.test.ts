@@ -14,7 +14,16 @@ const tempDirs: string[] = [];
 type OxlintContext = Parameters<(typeof plugin.rules)["no-discard"]["createOnce"]>[0];
 type OxlintDiagnostic = Parameters<OxlintContext["report"]>[0];
 
-const createFixtureProject = async (): Promise<{
+const createFixtureProject = async (
+  source = [
+    "type Result<T, E> = { readonly error?: E; readonly value?: T }",
+    "declare function saveUser(): Result<string, Error>",
+    "",
+    "saveUser()",
+    "void saveUser()",
+    "",
+  ].join("\n"),
+): Promise<{
   readonly rootDir: string;
   readonly sourceFile: string;
 }> => {
@@ -34,17 +43,7 @@ const createFixtureProject = async (): Promise<{
       include: ["fixture.ts"],
     }),
   );
-  await writeFile(
-    sourceFile,
-    [
-      "type Result<T, E> = { readonly error?: E; readonly value?: T }",
-      "declare function saveUser(): Result<string, Error>",
-      "",
-      "saveUser()",
-      "void saveUser()",
-      "",
-    ].join("\n"),
-  );
+  await writeFile(sourceFile, source);
 
   return { rootDir, sourceFile };
 };
@@ -82,6 +81,44 @@ describe("Resultar Oxlint plugin", () => {
     equal(
       diagnostics[0]?.message,
       "Ignored Result<string, Error> value. Handle it or explicitly discard it with `void`.",
+    );
+  });
+
+  it("reports must-use diagnostics through the Oxlint rule visitor by default", async () => {
+    const { rootDir, sourceFile } = await createFixtureProject(
+      [
+        "type Result<T, E> = {",
+        "  readonly error?: E",
+        "  readonly value?: T",
+        "  match<A, B>(ok: (value: T) => A, error: (error: E) => B): A | B",
+        "}",
+        "declare function saveUser(): Result<string, Error>",
+        "declare function externalFunction(value: unknown): void",
+        "",
+        "const unhandled = saveUser()",
+        "externalFunction(unhandled)",
+        "",
+        "const handled = saveUser()",
+        "handled.match((value) => value, (error) => error.message)",
+        "",
+      ].join("\n"),
+    );
+    const diagnostics: OxlintDiagnostic[] = [];
+    const visitor = plugin.rules["no-discard"].createOnce({
+      cwd: rootDir,
+      filename: sourceFile,
+      options: [],
+      physicalFilename: sourceFile,
+      report: (diagnostic) => diagnostics.push(diagnostic),
+    });
+
+    visitor.Program();
+
+    equal(diagnostics.length, 1);
+    equal(diagnostics[0]?.loc.line, 9);
+    equal(
+      diagnostics[0]?.message,
+      "Unhandled Result<string, Error> value assigned to `unhandled`. Handle it, return it, or explicitly discard it with `void`.",
     );
   });
 });

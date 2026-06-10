@@ -1,6 +1,12 @@
 import { resolve } from "node:path";
 
-import { findDiscardedResults, type NoDiscardFinding, type NoDiscardResult } from "./no-discard";
+import {
+  findDiscardedResults,
+  type NoDiscardFinding,
+  type NoDiscardMode,
+  type NoDiscardResult,
+} from "./no-discard";
+import { normalizeNoDiscardMode } from "./no-discard-core";
 
 interface OxlintLineColumn {
   readonly column: number;
@@ -41,6 +47,7 @@ interface OxlintPlugin {
 }
 
 interface RuleOptions {
+  readonly mode?: NoDiscardMode;
   readonly project?: string;
 }
 
@@ -57,13 +64,19 @@ const normalizePath = (cwd: string, fileName: string): string =>
 const parseRuleOptions = (options: readonly unknown[]): RuleOptions => {
   const firstOption = options[0];
 
-  if (!isRecord(firstOption) || typeof firstOption.project !== "string") {
+  if (!isRecord(firstOption)) {
     return {};
+  }
+
+  const mode = normalizeNoDiscardMode(firstOption.mode);
+
+  if (typeof firstOption.project !== "string") {
+    return { mode };
   }
 
   const project = firstOption.project.trim();
 
-  return project === "" ? {} : { project };
+  return project === "" ? { mode } : { mode, project };
 };
 
 const getProjectPath = (context: OxlintContext): string => {
@@ -72,19 +85,23 @@ const getProjectPath = (context: OxlintContext): string => {
   return project;
 };
 
-const getCacheKey = (cwd: string, project: string): string =>
-  `${normalizePath(process.cwd(), cwd)}\0${normalizePath(cwd, project)}`;
+const getMode = (context: OxlintContext): NoDiscardMode =>
+  normalizeNoDiscardMode(parseRuleOptions(context.options).mode);
+
+const getCacheKey = (cwd: string, project: string, mode: NoDiscardMode): string =>
+  `${normalizePath(process.cwd(), cwd)}\0${normalizePath(cwd, project)}\0${mode}`;
 
 const getProjectResult = (context: OxlintContext): readonly [string, NoDiscardResult] => {
   const project = getProjectPath(context);
-  const cacheKey = getCacheKey(context.cwd, project);
+  const mode = getMode(context);
+  const cacheKey = getCacheKey(context.cwd, project, mode);
   const cachedResult = resultsByProject.get(cacheKey);
 
   if (cachedResult !== undefined) {
     return [cacheKey, cachedResult];
   }
 
-  const result = findDiscardedResults({ project, rootDir: context.cwd });
+  const result = findDiscardedResults({ mode, project, rootDir: context.cwd });
   resultsByProject.set(cacheKey, result);
 
   return [cacheKey, result];
@@ -97,8 +114,7 @@ const isFindingForContextFile = (context: OxlintContext, finding: NoDiscardFindi
   normalizePath(context.cwd, finding.file) ===
   normalizePath(context.cwd, getContextFileName(context));
 
-const formatFindingMessage = (finding: NoDiscardFinding): string =>
-  `Ignored ${finding.type} value. Handle it or explicitly discard it with \`void\`.`;
+const formatFindingMessage = (finding: NoDiscardFinding): string => finding.message;
 
 const reportProjectFailure = (
   context: OxlintContext,
@@ -147,6 +163,7 @@ const noDiscardRule: OxlintRule = {
       {
         additionalProperties: false,
         properties: {
+          mode: { enum: ["direct", "must-use"], type: "string" },
           project: { type: "string" },
         },
         type: "object",

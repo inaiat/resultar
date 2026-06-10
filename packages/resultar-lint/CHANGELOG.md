@@ -1,4 +1,4 @@
-# resultar-ls
+# resultar-lint
 
 ## 3.0.0-alpha.2
 

@@ -6,7 +6,7 @@ export default defineConfig({
     singleQuote: true,
   },
   lint: {
-    jsPlugins: [{ name: 'resultar', specifier: 'resultar-ls/oxlint' }],
+    jsPlugins: [{ name: 'resultar', specifier: 'resultar-lint/oxlint' }],
     options: {
       typeAware: true,
       typeCheck: true,

@@ -46,15 +46,15 @@ importers:
         specifier: 'catalog:'
         version: 4.22.4
 
-  examples/language-service:
+  examples/resultar-lint:
     dependencies:
       resultar:
         specifier: workspace:*
         version: link:../../packages/resultar
     devDependencies:
-      resultar-ls:
+      resultar-lint:
         specifier: workspace:*
-        version: link:../../packages/resultar-ls
+        version: link:../../packages/resultar-lint
       tsx:
         specifier: 'catalog:'
         version: 4.22.4
@@ -74,9 +74,9 @@ importers:
       '@typescript/native-preview':
         specifier: 'catalog:'
         version: 7.0.0-dev.20260608.1
-      resultar-ls:
+      resultar-lint:
         specifier: workspace:*
-        version: link:../../packages/resultar-ls
+        version: link:../../packages/resultar-lint
       tsx:
         specifier: 'catalog:'
         version: 4.22.4
@@ -90,9 +90,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 25.9.2
-      resultar-ls:
+      resultar-lint:
         specifier: workspace:*
-        version: link:../../packages/resultar-ls
+        version: link:../../packages/resultar-lint
       tsx:
         specifier: 'catalog:'
         version: 4.22.4
@@ -127,7 +127,7 @@ importers:
         specifier: 'catalog:'
         version: 0.1.24(@types/node@25.9.2)(@vitest/coverage-v8@4.1.8)(@vitest/ui@4.1.8)(esbuild@0.28.0)(tsx@4.22.4)(typescript@6.0.3)(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(tsx@4.22.4))
 
-  packages/resultar-ls:
+  packages/resultar-lint:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -144,9 +144,9 @@ importers:
 
   packages/resultar-tsgo:
     dependencies:
-      resultar-ls:
+      resultar-lint:
         specifier: workspace:*
-        version: link:../resultar-ls
+        version: link:../resultar-lint
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

@@ -11,7 +11,7 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "resultar-ls": "workspace:*",
+    "resultar-lint": "workspace:*",
     "tsx": "catalog:",
     "typescript": "^6.0.3",
     "vite-plus": "catalog:"

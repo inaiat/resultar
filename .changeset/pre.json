@@ -3,7 +3,7 @@
   "tag": "alpha",
   "initialVersions": {
     "resultar": "3.0.0-alpha.1",
-    "resultar-ls": "3.0.0-alpha.1",
+    "resultar-lint": "3.0.0-alpha.1",
     "resultar-tsgo": "3.0.0-alpha.1"
   },
   "changesets": [

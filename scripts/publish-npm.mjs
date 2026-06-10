@@ -8,7 +8,7 @@ const dryRun = process.argv.includes("--dry-run");
 
 const packages = [
   "packages/resultar",
-  "packages/resultar-ls",
+  "packages/resultar-lint",
   "packages/resultar-tsgo",
 ];
 

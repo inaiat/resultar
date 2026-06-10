@@ -27,6 +27,7 @@ type CreateLanguageServicePlugin = (modules: { readonly typescript: typeof ts })
 type GetProgramNoDiscardDiagnostics = (
   tsApi: typeof ts,
   program: ts.Program,
+  options?: { readonly noDiscard: "error" | "off"; readonly noDiscardMode?: "direct" | "must-use" },
 ) => readonly ts.Diagnostic[];
 
 type TypeScriptPatchCommand = (options: {
@@ -53,10 +54,13 @@ const getLoadedModules = (): LoadedLanguageServiceModules => {
 };
 
 before(() => {
-  execFileSync("pnpm", ["--filter", "resultar-ls", "build"], { cwd: workspaceDir, stdio: "pipe" });
+  execFileSync("pnpm", ["--filter", "resultar-lint", "build"], {
+    cwd: workspaceDir,
+    stdio: "pipe",
+  });
 
   const require = createRequire(import.meta.url);
-  const distDir = join(workspaceDir, "packages/resultar-ls/dist");
+  const distDir = join(workspaceDir, "packages/resultar-lint/dist");
   const diagnostics = require(join(distDir, "diagnostics.js")) as {
     readonly getProgramNoDiscardDiagnostics: GetProgramNoDiscardDiagnostics;
   };
@@ -84,7 +88,7 @@ const createTempDir = async (prefix: string): Promise<string> => {
 };
 
 const createFixtureProgram = async (source: string): Promise<ts.Program> => {
-  const rootDir = await createTempDir("resultar-ls-");
+  const rootDir = await createTempDir("resultar-lint-");
   const sourceFile = join(rootDir, "fixture.ts");
   const tsconfigFile = join(rootDir, "tsconfig.json");
 
@@ -114,12 +118,15 @@ const createFixtureProgram = async (source: string): Promise<ts.Program> => {
   return ts.createProgram(parsed.fileNames, parsed.options);
 };
 
-const createLanguageService = (source: string): ts.LanguageService => {
+const createLanguageService = (
+  source: string,
+  config: Record<string, unknown> = { noDiscard: "error" },
+): ts.LanguageService => {
   const fileName = join(process.cwd(), "fixture.ts");
   const compilerOptions: ts.CompilerOptions = {
     module: ts.ModuleKind.NodeNext,
     moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    plugins: [{ name: "resultar-ls" }],
+    plugins: [{ name: "resultar-lint" }],
     strict: true,
     target: ts.ScriptTarget.ESNext,
   };
@@ -149,7 +156,7 @@ const createLanguageService = (source: string): ts.LanguageService => {
   const plugin = createLanguageServicePlugin({ typescript: ts });
 
   return plugin.create({
-    config: { noDiscard: "error" },
+    config,
     languageService,
   } as ts.server.PluginCreateInfo);
 };
@@ -178,6 +185,22 @@ async function awaited(): Promise<Result<string, Error>> {
   return await saveUserAsync('awaited')
 }
 assigned.value
+`;
+
+const sourceWithMustUseCases = `
+type Result<T, E> = {
+  readonly error?: E
+  readonly value?: T
+  match<A, B>(ok: (value: T) => A, error: (error: E) => B): A | B
+}
+declare function saveUser(input: string): Result<string, Error>
+declare function externalFunction(value: unknown): void
+
+const unhandled = saveUser('unhandled')
+externalFunction(unhandled)
+
+const handled = saveUser('handled')
+handled.match((value) => value, (error) => error.message)
 `;
 
 afterEach(async () => {
@@ -217,8 +240,30 @@ describe("Resultar language-service no-discard diagnostics", () => {
     );
   });
 
+  it("reports assigned-but-unhandled Result values by default", async () => {
+    const program = await createFixtureProgram(sourceWithMustUseCases);
+    const { getProgramNoDiscardDiagnostics } = getLoadedModules();
+    const diagnostics = getProgramNoDiscardDiagnostics(ts, program, {
+      noDiscard: "error",
+    });
+
+    equal(diagnostics.length, 1);
+    isTrue(String(diagnostics[0]?.messageText).includes("assigned to `unhandled`"));
+  });
+
+  it("reports must-use diagnostics through the TypeScript language service plugin by default", () => {
+    const languageService = createLanguageService(sourceWithMustUseCases);
+    const diagnostics = languageService.getSemanticDiagnostics(join(process.cwd(), "fixture.ts"));
+    const resultarDiagnostics = diagnostics.filter(
+      (diagnostic) => diagnostic.source === "resultar",
+    );
+
+    equal(resultarDiagnostics.length, 1);
+    isTrue(String(resultarDiagnostics[0]?.messageText).includes("assigned to `unhandled`"));
+  });
+
   it("patches TypeScript so tsc fails builds on discarded Resultar values", async () => {
-    const tempDir = await createTempDir("resultar-ls-patch-");
+    const tempDir = await createTempDir("resultar-lint-patch-");
     const { patchTypeScriptPackage, unpatchTypeScriptPackage } = getLoadedModules();
     const require = createRequire(import.meta.url);
     const sourceTypeScriptDir = dirname(require.resolve("typescript/package.json"));
@@ -236,7 +281,7 @@ describe("Resultar language-service no-discard diagnostics", () => {
           module: "NodeNext",
           moduleResolution: "NodeNext",
           noEmit: true,
-          plugins: [{ name: "resultar-ls", noDiscard: "error" }],
+          plugins: [{ name: "resultar-lint", noDiscard: "error" }],
           strict: true,
           target: "ESNext",
         },
@@ -248,7 +293,10 @@ describe("Resultar language-service no-discard diagnostics", () => {
       `
 type Result<T, E> = { readonly error?: E; readonly value?: T }
 declare function saveUser(input: string): Result<string, Error>
+declare function externalFunction(value: unknown): void
 saveUser('ignored')
+const unhandled = saveUser('unhandled')
+externalFunction(unhandled)
 `,
     );
 
@@ -268,6 +316,7 @@ saveUser('ignored')
     const patchedRun = runTsc();
     notEqual(patchedRun.status, 0);
     isTrue(`${patchedRun.stdout}${patchedRun.stderr}`.includes("[resultar/noDiscard]"));
+    isTrue(`${patchedRun.stdout}${patchedRun.stderr}`.includes("assigned to `unhandled`"));
 
     await unpatchTypeScriptPackage({ dir: typeScriptDir });
     equal(runTsc().status, 0);

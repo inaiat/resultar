@@ -42,4 +42,8 @@ if (!lint.output.includes('no-discard-result')) {
   throw new Error(`Expected pnpm lint:resultar to fail with Resultar no-discard output\n${lint.output}`)
 }
 
+if (!lint.output.includes('assigned to `unhandled`')) {
+  throw new Error(`Expected pnpm lint:resultar to fail with Resultar must-use output\n${lint.output}`)
+}
+
 process.stdout.write('Resultar tsgo example smoke passed.\n')

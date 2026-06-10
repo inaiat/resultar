@@ -59,7 +59,7 @@ const assertIncludes = (output: string, expected: string, message: string): void
 }
 
 pnpm(['--filter', 'resultar', 'build'], { cwd: workspaceDir })
-pnpm(['--filter', 'resultar-ls', 'build'], { cwd: workspaceDir })
+pnpm(['--filter', 'resultar-lint', 'build'], { cwd: workspaceDir })
 
 const tscVersion = pnpm(['exec', 'tsc', '--version'], { cwd: exampleDir })
 
@@ -68,7 +68,7 @@ if (!tscVersion.output.trim().startsWith('Version 6.')) {
 }
 
 try {
-  pnpm(['exec', 'resultar-ls', 'unpatch'], {
+  pnpm(['exec', 'resultar-lint', 'unpatch'], {
     cwd: exampleDir,
   })
 
@@ -80,13 +80,18 @@ try {
     'no-discard-result',
     'Expected lint-like no-discard command to report discarded Resultar values',
   )
+  assertIncludes(
+    lint.output,
+    'assigned to `unhandled`',
+    'Expected lint-like no-discard command to report must-use assignment diagnostics',
+  )
 
-  pnpm(['exec', 'resultar-ls', 'patch'], {
+  pnpm(['exec', 'resultar-lint', 'patch'], {
     cwd: exampleDir,
   })
 
   const secondPatch = pnpm(
-    ['exec', 'resultar-ls', 'patch'],
+    ['exec', 'resultar-lint', 'patch'],
     { cwd: exampleDir },
   )
 
@@ -100,8 +105,13 @@ try {
     '[resultar/noDiscard]',
     'Patched TypeScript 6 tsc did not emit Resultar no-discard diagnostics',
   )
+  assertIncludes(
+    patchedTsc.output,
+    'assigned to `unhandled`',
+    'Patched TypeScript 6 tsc did not emit Resultar must-use diagnostics',
+  )
 } finally {
-  pnpm(['exec', 'resultar-ls', 'unpatch'], {
+  pnpm(['exec', 'resultar-lint', 'unpatch'], {
     cwd: exampleDir,
   })
 }

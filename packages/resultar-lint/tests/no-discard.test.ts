@@ -12,8 +12,11 @@ const { findDiscardedResults } = require("../dist/no-discard.js") as NoDiscardMo
 
 const tempDirs: string[] = [];
 
-const createFixtureProject = async (source: string): Promise<string> => {
-  const rootDir = await mkdtemp(join(tmpdir(), "resultar-no-discard-"));
+const createFixtureProject = async (
+  source: string,
+  compilerOptions: Record<string, unknown> = {},
+): Promise<string> => {
+  const rootDir = await mkdtemp(join(tmpdir(), "resultar-lint-"));
   tempDirs.push(rootDir);
 
   await writeFile(
@@ -22,6 +25,7 @@ const createFixtureProject = async (source: string): Promise<string> => {
       compilerOptions: {
         module: "NodeNext",
         moduleResolution: "NodeNext",
+        ...compilerOptions,
         strict: true,
         target: "ESNext",
       },
@@ -87,8 +91,98 @@ describe("no-discard Result check", () => {
     deepEqual(result.findings, []);
   });
 
+  it("allows assigned Result values in direct mode", async () => {
+    const rootDir = await createFixtureProject(`
+      type Result<T, E> = { readonly error?: E; readonly value?: T }
+      declare function saveUser(input: string): Result<string, Error>
+      declare function externalFunction(value: unknown): void
+
+      const result = saveUser('a')
+      externalFunction(result)
+    `);
+
+    const result = findDiscardedResults({ mode: "direct", rootDir });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    deepEqual(result.findings, []);
+  });
+
+  it("flags assigned Result values that are not handled by default", async () => {
+    const rootDir = await createFixtureProject(`
+      type Result<T, E> = {
+        readonly error?: E
+        readonly value?: T
+        match<A, B>(ok: (value: T) => A, error: (error: E) => B): A | B
+        unwrapOr(defaultValue: T): T
+        isErr(): boolean
+      }
+      declare function saveUser(input: string): Result<string, Error>
+      declare function externalFunction(value: unknown): void
+
+      const unhandled = saveUser('unhandled')
+      externalFunction(unhandled)
+
+      const matched = saveUser('matched')
+      matched.match((value) => value, (error) => error.message)
+
+      const unwrapped = saveUser('unwrapped')
+      unwrapped.unwrapOr('fallback')
+
+      const checked = saveUser('checked')
+      if (checked.isErr()) {
+        externalFunction(checked.error)
+      }
+
+      const returned = saveUser('returned')
+      function passThrough(): Result<string, Error> {
+        return returned
+      }
+
+      const discarded = saveUser('discarded')
+      void discarded
+    `);
+
+    const result = findDiscardedResults({ rootDir });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    equal(result.findings.length, 1);
+    equal(result.findings[0]?.line, 12);
+    equal(
+      result.findings[0]?.message,
+      "Unhandled Result<string, Error> value assigned to `unhandled`. Handle it, return it, or explicitly discard it with `void`.",
+    );
+  });
+
+  it("uses direct mode from tsconfig plugin config when no mode is passed", async () => {
+    const rootDir = await createFixtureProject(
+      `
+        type Result<T, E> = { readonly error?: E; readonly value?: T }
+        declare function saveUser(input: string): Result<string, Error>
+        declare function externalFunction(value: unknown): void
+
+        const unhandled = saveUser('unhandled')
+        externalFunction(unhandled)
+      `,
+      { plugins: [{ name: "resultar-lint", noDiscard: "error", noDiscardMode: "direct" }] },
+    );
+
+    const result = findDiscardedResults({ rootDir });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    deepEqual(result.findings, []);
+  });
+
   it("returns an Err when the project cannot be parsed", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "resultar-no-discard-invalid-"));
+    const rootDir = await mkdtemp(join(tmpdir(), "resultar-lint-invalid-"));
     tempDirs.push(rootDir);
     await writeFile(join(rootDir, "tsconfig.json"), "{");
 
@@ -99,7 +193,7 @@ describe("no-discard Result check", () => {
   });
 
   it("resolves TypeScript from the checked project before falling back to the package copy", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "resultar-no-discard-local-ts-"));
+    const rootDir = await mkdtemp(join(tmpdir(), "resultar-lint-local-ts-"));
     tempDirs.push(rootDir);
     const typeScriptDir = join(rootDir, "node_modules", "typescript");
 

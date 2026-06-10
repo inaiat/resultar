@@ -1,19 +1,19 @@
 {
-  "name": "resultar-ls-example",
+  "name": "resultar-lint-example",
   "private": true,
   "type": "module",
   "scripts": {
     "check": "tsc -p tsconfig.json --noEmit",
     "lint": "pnpm run lint:resultar",
-    "lint:resultar": "resultar-no-discard --project tsconfig.json",
-    "prepare": "pnpm --filter resultar build && pnpm --filter resultar-ls build && node ../../packages/resultar-ls/dist/cli.js patch",
+    "lint:resultar": "resultar-lint check --project tsconfig.json",
+    "prepare": "pnpm --filter resultar build && pnpm --filter resultar-lint build && node ../../packages/resultar-lint/dist/cli.js patch",
     "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
     "resultar": "workspace:*"
   },
   "devDependencies": {
-    "resultar-ls": "workspace:*",
+    "resultar-lint": "workspace:*",
     "tsx": "catalog:",
     "typescript": "^6.0.3"
   }

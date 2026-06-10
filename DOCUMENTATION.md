@@ -119,7 +119,7 @@ If you already know Result-style error handling, jump to:
 | Add logging or cleanup | [Side Effects And Cleanup](#side-effects-and-cleanup) | `tap`, `tapError`, `log`, `toDisposable`, `toAsyncDisposable` |
 | Understand callback exceptions | [Callback Failure Semantics](#callback-failure-semantics) | transform callbacks vs observation callbacks |
 | Unwrap at tests or final edges | [Unwrapping Results](#unwrapping-results) | `unwrapOr`, `unwrapOrThrow`, `_unsafeUnwrap`, `_unsafeUnwrapErr` |
-| Prevent ignored results | [No-Discard Validation](#no-discard-validation) | `resultar-no-discard`, `resultar-ls` |
+| Prevent ignored results | [No-Discard Validation](#no-discard-validation) | `resultar-lint check`, `resultar-lint` |
 | Check package exports and aliases | [Public Entry Point](#public-entry-point) | `try`, `tryAsync`, `default`, runtime exports |
 
 ## The Model
@@ -1291,7 +1291,7 @@ Add a lint-like script:
 ```json
 {
   "scripts": {
-    "lint:resultar": "resultar-no-discard --project tsconfig.json"
+    "lint:resultar": "resultar-lint check --project tsconfig.json"
   }
 }
 ```
@@ -1313,7 +1313,7 @@ void saveUser(input)
 For editor diagnostics, install the language-service package:
 
 ```sh
-pnpm add -D resultar-ls typescript
+pnpm add -D resultar-lint typescript
 ```
 
 Enable it in `tsconfig.json`:
@@ -1321,7 +1321,7 @@ Enable it in `tsconfig.json`:
 ```json
 {
   "compilerOptions": {
-    "plugins": [{ "name": "resultar-ls", "noDiscard": "error" }]
+    "plugins": [{ "name": "resultar-lint", "noDiscard": "error" }]
   }
 }
 ```
@@ -1330,10 +1330,10 @@ TypeScript language-service plugins are editor-only by default. To make `tsc` re
 diagnostics during builds, patch the local TypeScript installation:
 
 ```sh
-pnpm exec resultar-ls patch
+pnpm exec resultar-lint patch
 ```
 
-Use `resultar-ls check` to verify patch status and `resultar-ls unpatch` to remove only Resultar
+Use `resultar-lint doctor` to verify patch status and `resultar-lint unpatch` to remove only Resultar
 patch blocks.
 
 ## Testing Resultar Code
@@ -1864,11 +1864,11 @@ entry point and API map above list the exported runtime helpers and type-only na
 This repository is a pnpm workspace:
 
 - `packages/resultar`: the Resultar runtime package.
-- `packages/resultar-ls`: TypeScript language-service diagnostics and no-discard checks.
+- `packages/resultar-lint`: TypeScript language-service diagnostics and no-discard checks.
 - `packages/resultar-tsgo`: a TypeScript 7 native-preview wrapper for `tsgo` plus Resultar
   no-discard validation.
 - `benchmarks`: benchmark workspace package.
-- `examples/language-service`: smoke example for build-time no-discard diagnostics.
+- `examples/resultar-lint`: smoke example for build-time no-discard diagnostics.
 - `examples/tsgo`: TypeScript 7 native-preview smoke example.
 
 Common commands:
