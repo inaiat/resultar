@@ -37,9 +37,10 @@ jobs:
         run: vp run build
 
       - name: Package smoke
-        run: vp exec tsx scripts/smoke-package.ts
+        run: vp run smoke:package
 
-      - name: Publish package
-        run: npm publish --access public --tag beta --provenance
+      - name: Publish packages
+        run: vp run release:npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true

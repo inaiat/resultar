@@ -1,2 +1,2 @@
 pnpm test
-vp staged
+pnpm --filter resultar exec vp staged

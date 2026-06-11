@@ -1,0 +1,45 @@
+{
+  "name": "resultar-tsgo",
+  "version": "3.0.0",
+  "description": "Resultar no-discard wrapper for the TypeScript 7 native preview tsgo binary",
+  "homepage": "https://github.com/inaiat/resultar",
+  "bugs": {
+    "url": "https://github.com/inaiat/resultar/issues"
+  },
+  "license": "MIT",
+  "author": "inaiat@gmail.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inaiat/resultar.git",
+    "directory": "packages/resultar-tsgo"
+  },
+  "bin": {
+    "tsgo": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "check": "vp check",
+    "smoke": "pnpm run smoke:package",
+    "smoke:package": "pnpm run build && node scripts/smoke-package.mjs"
+  },
+  "dependencies": {
+    "resultar-lint": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "typescript": "^6.0.3",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "@typescript/native-preview": ">=7"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

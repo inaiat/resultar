@@ -1,3 +1,16 @@
+packages:
+  - .
+  - benchmarks
+  - examples/*
+  - packages/*
+
+catalog:
+  "@types/node": 25.9.2
+  "@typescript/native-preview": 7.0.0-dev.20260608.1
+  fallow: 2.89.0
+  tsx: 4.22.4
+  vite-plus: 0.1.24
+
 allowBuilds:
   esbuild: true
 
@@ -5,3 +18,22 @@ strictDepBuilds: true
 trustPolicy: no-downgrade
 blockExoticSubdeps: true
 minimumReleaseAge: 10080 # 1 week
+minimumReleaseAgeExclude:
+  - '@fallow-cli/darwin-arm64@2.89.0'
+  - '@fallow-cli/darwin-x64@2.89.0'
+  - '@fallow-cli/linux-arm64-gnu@2.89.0'
+  - '@fallow-cli/linux-arm64-musl@2.89.0'
+  - '@fallow-cli/linux-x64-gnu@2.89.0'
+  - '@fallow-cli/linux-x64-musl@2.89.0'
+  - '@fallow-cli/win32-arm64-msvc@2.89.0'
+  - '@fallow-cli/win32-x64-msvc@2.89.0'
+  - '@types/node@25.9.2'
+  - '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260608.1'
+  - '@typescript/native-preview-darwin-x64@7.0.0-dev.20260608.1'
+  - '@typescript/native-preview-linux-arm64@7.0.0-dev.20260608.1'
+  - '@typescript/native-preview-linux-arm@7.0.0-dev.20260608.1'
+  - '@typescript/native-preview-linux-x64@7.0.0-dev.20260608.1'
+  - '@typescript/native-preview-win32-arm64@7.0.0-dev.20260608.1'
+  - '@typescript/native-preview-win32-x64@7.0.0-dev.20260608.1'
+  - '@typescript/native-preview@7.0.0-dev.20260608.1'
+  - fallow@2.89.0

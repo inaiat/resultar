@@ -1,0 +1,68 @@
+{
+  "name": "resultar-lint",
+  "version": "3.0.0",
+  "description": "Lint and build-time diagnostics for Resultar",
+  "keywords": [
+    "lint",
+    "no-discard",
+    "resultar",
+    "typescript"
+  ],
+  "homepage": "https://github.com/inaiat/resultar",
+  "bugs": {
+    "url": "https://github.com/inaiat/resultar/issues"
+  },
+  "license": "MIT",
+  "author": "inaiat@gmail.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inaiat/resultar.git",
+    "directory": "packages/resultar-lint"
+  },
+  "bin": {
+    "resultar-lint": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js"
+    },
+    "./oxlint": {
+      "types": "./dist/oxlint-plugin.d.ts",
+      "require": "./dist/oxlint-plugin.js",
+      "import": "./dist/oxlint-plugin.js"
+    }
+  },
+  "scripts": {
+    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').writeFileSync('dist/package.json', JSON.stringify({ type: 'commonjs' }) + '\\n')\"",
+    "check": "vp check",
+    "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts",
+    "test": "pnpm run build && node --import tsx --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "^6.0.3",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "typescript": ">=6.0.0 <7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

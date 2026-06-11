@@ -1,0 +1,17 @@
+{
+  "name": "resultar-benchmarks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "pnpm --filter resultar build && node --import tsx resultar-vs-neverthrow.ts",
+    "bench:neverthrow": "pnpm run bench"
+  },
+  "dependencies": {
+    "resultar": "workspace:*"
+  },
+  "devDependencies": {
+    "cronometro": "^6.0.3",
+    "neverthrow": "^8.2.0",
+    "tsx": "catalog:"
+  }
+}

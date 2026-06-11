@@ -1,0 +1,18 @@
+entry = ["src/index.ts"]
+publicPackages = ["resultar"]
+
+ignoreUnresolvedImports = [
+  # Test fixture computes the workspace directory with new URL("../../..", import.meta.url).
+  "../../..",
+]
+
+[rules]
+circular-dependencies = "error"
+boundary-violation = "error"
+unused-class-members = "off"
+
+[duplicates]
+ignore = ["tests/**"]
+
+[health]
+ignore = ["tests/**"]
