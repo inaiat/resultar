@@ -26,19 +26,17 @@ function run(command, args, options = {}) {
 }
 
 async function jsrVersionExists(name, version) {
-  const response = await fetch(`${registry}/${name}/meta.json`);
+  const response = await fetch(`${registry}/${name}/${version}_meta.json`);
 
   if (response.status === 404) {
     return false;
   }
 
   if (!response.ok) {
-    throw new Error(`Could not fetch JSR metadata for ${name}: HTTP ${response.status}`);
+    throw new Error(`Could not fetch JSR metadata for ${name}@${version}: HTTP ${response.status}`);
   }
 
-  const metadata = await response.json();
-
-  return Object.hasOwn(metadata.versions ?? {}, version);
+  return true;
 }
 
 for (const packageDir of packages) {
