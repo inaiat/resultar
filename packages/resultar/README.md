@@ -22,8 +22,8 @@ Use it when expected failures should be impossible to miss:
   code.
 - Ignored `Result` values can be reported by a type-aware no-discard check.
 
-Resultar began as an initial fork of `neverthrow`. The v3 alpha line keeps the explicit wrapper
-model, then leans into Resultar-specific tagged errors, strict service-boundary types, TypeScript 6
+Resultar began as an initial fork of `neverthrow`. The v3 line keeps the explicit wrapper model,
+then leans into Resultar-specific tagged errors, strict service-boundary types, TypeScript 6
 support, and ESM-only packaging.
 
 ## Install
@@ -579,19 +579,24 @@ Add a lint-like script:
 }
 ```
 
-This fails:
+These fail in the default `must-use` mode:
 
 ```ts
 saveUser(input)
+const result = saveUser(input)
 ```
 
 These are intentional:
 
 ```ts
-const result = saveUser(input)
 return saveUser(input)
 void saveUser(input)
+saveUser(input).match(handleSaved, handleError)
 ```
+
+The default mode is neverthrow-style `must-use`: it also reports assigned `Result` values that are
+only passed around and never consumed with `match`, `unwrapOr`, `_unsafeUnwrap`, `isOk`, `isErr`,
+returned, or explicitly discarded. Use `--mode direct` for the lower-noise expression-only check.
 
 For editor diagnostics, enable the TypeScript language-service plugin:
 
@@ -645,9 +650,9 @@ TypeScript and then Resultar no-discard validation.
 | Throw intentionally at a final edge | `unwrapOrThrow()` |
 | Default intentionally at a final edge | `unwrapOr(defaultValue)` |
 
-## Version 3 Alpha Notes
+## Version 3 Notes
 
-`3.0.0-alpha.1` is a semver-major prerelease:
+`3.0.0` is a semver-major release:
 
 - `no-discard` tooling moved out of the runtime package and into dedicated packages.
 - TypeScript peer support is now `>=6.0.0`.
@@ -667,17 +672,18 @@ and `tryResultAsync` in new code and docs.
 
 ## Documentation
 
-This README is the project entry point. For a full guide with larger examples and the complete API
-map, see [DOCUMENTATION.md](DOCUMENTATION.md).
+This README is the runtime package entry point. For a full guide with larger examples and the
+complete API map, see the repository documentation.
 
 More focused material:
 
-- [Type-safe error handling article, English](articles/en/type-safe.md)
-- [Artigo sobre tratamento de erros type-safe, Portuguese](articles/pt/type-safe.md)
-- [resultar-lint package guide](packages/resultar-lint/README.md)
-- [resultar-tsgo package guide](packages/resultar-tsgo/README.md)
+- [Full guide](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md)
+- [Type-safe error handling article, English](https://github.com/inaiat/resultar/blob/main/articles/en/type-safe.md)
+- [Artigo sobre tratamento de erros type-safe, Portuguese](https://github.com/inaiat/resultar/blob/main/articles/pt/type-safe.md)
+- [resultar-lint package guide](https://github.com/inaiat/resultar/blob/main/packages/resultar-lint/README.md)
+- [resultar-tsgo package guide](https://github.com/inaiat/resultar/blob/main/packages/resultar-tsgo/README.md)
 
-## Workspace
+## Repository
 
 This repository is a pnpm workspace:
 

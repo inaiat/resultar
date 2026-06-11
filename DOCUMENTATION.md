@@ -1283,8 +1283,12 @@ result.isOk()
 
 ## No-Discard Validation
 
-Resultar values should not be ignored. The workspace ships a type-aware check for discarded
-`Result` and `ResultAsync` values.
+Resultar values should not be ignored. Install `resultar-lint` for a type-aware check that reports
+discarded `Result` and `ResultAsync` values.
+
+```sh
+pnpm add -D resultar-lint typescript
+```
 
 Add a lint-like script:
 
@@ -1296,25 +1300,26 @@ Add a lint-like script:
 }
 ```
 
-This fails:
+These fail in the default `must-use` mode:
 
 ```ts
 saveUser(input)
+const result = saveUser(input)
 ```
 
 These are intentional:
 
 ```ts
-const result = saveUser(input)
 return saveUser(input)
 void saveUser(input)
+saveUser(input).match(handleSaved, handleError)
 ```
 
-For editor diagnostics, install the language-service package:
+The default mode is neverthrow-style `must-use`: it also reports assigned `Result` values that are
+only passed around and never consumed with `match`, `unwrapOr`, `_unsafeUnwrap`, `isOk`, `isErr`,
+returned, or explicitly discarded. Use `--mode direct` for the lower-noise expression-only check.
 
-```sh
-pnpm add -D resultar-lint typescript
-```
+For editor diagnostics, enable the TypeScript language-service plugin from `resultar-lint`:
 
 Enable it in `tsconfig.json`:
 
