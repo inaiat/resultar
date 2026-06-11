@@ -37,11 +37,5 @@ jobs:
       - name: Package smoke
         run: vp run smoke:package
 
-      - name: Check JSR version
-        id: jsr-version
-        run: node scripts/check-jsr-version.mjs packages/resultar/jsr.json
-
       - name: Publish to JSR
-        if: steps.jsr-version.outputs.published != 'true'
-        run: npm exec --yes --package jsr@0.14.3 -- jsr publish
-        working-directory: packages/resultar
+        run: vp run release:jsr
