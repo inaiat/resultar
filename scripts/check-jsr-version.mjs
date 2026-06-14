@@ -13,16 +13,15 @@ if (typeof name !== "string" || typeof version !== "string") {
   throw new Error(`${jsrJsonPath} must contain string name and version fields`);
 }
 
-const response = await fetch(`https://jsr.io/${name}/meta.json`);
+const response = await fetch(`https://jsr.io/${name}/${version}_meta.json`);
 
 let published = false;
 if (response.status !== 404) {
   if (!response.ok) {
-    throw new Error(`Could not fetch JSR metadata for ${name}: HTTP ${response.status}`);
+    throw new Error(`Could not fetch JSR metadata for ${name}@${version}: HTTP ${response.status}`);
   }
 
-  const metadata = await response.json();
-  published = Object.hasOwn(metadata.versions ?? {}, version);
+  published = true;
 }
 
 console.log(`${name}@${version} is ${published ? "already published" : "not published"} on JSR`);

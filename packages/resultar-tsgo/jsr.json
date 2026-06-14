@@ -1,0 +1,9 @@
+{
+  "name": "@inaiat/resultar-tsgo",
+  "version": "3.0.0",
+  "license": "MIT",
+  "exports": "./src/cli.ts",
+  "publish": {
+    "include": ["LICENSE", "README.md", "src/**/*.ts"]
+  }
+}
