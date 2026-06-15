@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import {
+  type TypeScriptPatchResult,
   getTypeScriptPatchStatus,
   patchTypeScriptPackage,
   unpatchTypeScriptPackage,
-  type TypeScriptPatchResult,
-} from "./patch";
-import { runNoDiscardCli } from "./no-discard";
+} from "./patch.js";
+import { runResultarLintCli } from "./lint.js";
 
 type Command = "check" | "doctor" | "help" | "patch" | "unpatch";
 type PatchResultVerb = "checked" | "patched" | "unpatched";
@@ -104,7 +104,7 @@ const run = async (args: readonly string[] = process.argv.slice(2)): Promise<num
   }
 
   if (options.command === "check") {
-    return runNoDiscardCli(options.args ?? []);
+    return runResultarLintCli(options.args ?? []);
   }
 
   const result = await getTypeScriptPatchStatus({ dir: options.dir });

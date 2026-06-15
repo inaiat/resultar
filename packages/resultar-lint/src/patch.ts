@@ -7,16 +7,8 @@ const callStart = "/* resultar-lint-patch:start call */";
 const callEnd = "/* resultar-lint-patch:end call */";
 const helperStart = "/* resultar-lint-patch:start helper */";
 const helperEnd = "/* resultar-lint-patch:end helper */";
-const legacyLsCallStart = "/* resultar-ls-patch:start call */";
-const legacyLsCallEnd = "/* resultar-ls-patch:end call */";
-const legacyLsHelperStart = "/* resultar-ls-patch:start helper */";
-const legacyLsHelperEnd = "/* resultar-ls-patch:end helper */";
-const legacyCallStart = "/* resultar-language-service-patch:start call */";
-const legacyCallEnd = "/* resultar-language-service-patch:end call */";
-const legacyHelperStart = "/* resultar-language-service-patch:start helper */";
-const legacyHelperEnd = "/* resultar-language-service-patch:end helper */";
 const diagnosticsNeedle = "  const diagnostics = sortAndDeduplicateDiagnostics(allDiagnostics);";
-const patchVersion = "/* resultar-lint-patch:version 2 */";
+const patchVersion = "/* resultar-lint-patch:version 3 */";
 
 const moduleFiles = ["lib/_tsc.js", "lib/typescript.js"] as const;
 
@@ -36,18 +28,60 @@ export interface TypeScriptPatchResult {
 }
 
 const callBlock = `${callStart}
-  addRange(allDiagnostics, resultarLanguageServiceNoDiscardDiagnostics(program));
+  addRange(allDiagnostics, resultarLanguageServiceDiagnostics(program));
 ${callEnd}
 `;
 
 const helperBlock = `
 ${helperStart}
 ${patchVersion}
-function resultarLanguageServiceNoDiscardDiagnostics(program) {
+function resultarLanguageServiceDiagnostics(program) {
   const compilerOptions = program.getCompilerOptions();
   const plugins = compilerOptions && Array.isArray(compilerOptions.plugins) ? compilerOptions.plugins : [];
-  const plugin = plugins.find((entry) => entry && (entry.name === "resultar-lint" || entry.name === "resultar-ls" || entry.name === "resultar-language-service"));
-  if (!plugin || plugin.noDiscard === "off") return [];
+  const plugin = plugins.find((entry) => entry && entry.name === "resultar-lint");
+  if (!plugin) return [];
+  const runtimeDiagnostics = resultarLanguageServiceRuntimeDiagnostics(program, plugin);
+  if (runtimeDiagnostics) return runtimeDiagnostics;
+  return resultarLanguageServiceNoDiscardDiagnostics(program, plugin);
+}
+
+function resultarLanguageServiceRuntimeDiagnostics(program, plugin) {
+  const runtime = resultarLanguageServiceLoadRuntime();
+  if (!runtime || typeof runtime.getProgramResultarDiagnostics !== "function") return void 0;
+  const tsApi = resultarLanguageServiceLoadTypeScriptApi();
+  if (!tsApi) return void 0;
+  try {
+    return runtime.getProgramResultarDiagnostics(tsApi, program, plugin);
+  } catch (error) {
+    return [{
+      category: DiagnosticCategory.Error,
+      code: 91999,
+      messageText: "[resultar/internal] Failed to run Resultar diagnostics: " + (error && error.message ? error.message : String(error)),
+      source: "resultar"
+    }];
+  }
+}
+
+function resultarLanguageServiceLoadRuntime() {
+  if (typeof require !== "function") return void 0;
+  try {
+    return require("resultar-lint");
+  } catch {
+    return void 0;
+  }
+}
+
+function resultarLanguageServiceLoadTypeScriptApi() {
+  if (typeof require !== "function") return void 0;
+  try {
+    return require("typescript");
+  } catch {
+    return void 0;
+  }
+}
+
+function resultarLanguageServiceNoDiscardDiagnostics(program, plugin) {
+  if (plugin.noDiscard === "off") return [];
   const mode = plugin.noDiscardMode === "direct" ? "direct" : "must-use";
   const checker = program.getTypeChecker();
   const diagnostics = [];
@@ -408,23 +442,7 @@ const removeMarkedBlock = (source: string, startMarker: string, endMarker: strin
 };
 
 const removeResultarPatch = (source: string): string =>
-  removeMarkedBlock(
-    removeMarkedBlock(
-      removeMarkedBlock(
-        removeMarkedBlock(
-          removeMarkedBlock(removeMarkedBlock(source, callStart, callEnd), helperStart, helperEnd),
-          legacyLsCallStart,
-          legacyLsCallEnd,
-        ),
-        legacyLsHelperStart,
-        legacyLsHelperEnd,
-      ),
-      legacyCallStart,
-      legacyCallEnd,
-    ),
-    legacyHelperStart,
-    legacyHelperEnd,
-  );
+  removeMarkedBlock(removeMarkedBlock(source, callStart, callEnd), helperStart, helperEnd);
 
 const patchSource = (source: string): { readonly changed: boolean; readonly source: string } => {
   if (isPatched(source)) {

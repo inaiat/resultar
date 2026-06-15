@@ -29,27 +29,42 @@
   ],
   "type": "module",
   "main": "dist/index.js",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "require": "./dist/index.js",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
     },
     "./oxlint": {
       "types": "./dist/oxlint-plugin.d.ts",
-      "require": "./dist/oxlint-plugin.js",
-      "import": "./dist/oxlint-plugin.js"
+      "import": "./dist/oxlint-plugin.js",
+      "require": "./dist/oxlint-plugin.cjs",
+      "default": "./dist/oxlint-plugin.js"
     }
   },
   "scripts": {
-    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').writeFileSync('dist/package.json', JSON.stringify({ type: 'commonjs' }) + '\\n')\"",
+    "build": "vp pack",
     "check": "vp check",
+    "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "lint": "vp lint",
+    "lint:fix": "vp lint --fix",
+    "prepare": "vp config || true",
+    "prepublishOnly": "vp pack",
     "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts",
-    "test": "pnpm run build && node --import tsx --test tests/*.test.ts"
+    "test": "pnpm run build && vp test run",
+    "test:cov": "pnpm run build && vp test run --coverage",
+    "test:ui": "pnpm run build && vp test --ui --watch",
+    "test:watch": "pnpm run build && vp test watch"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/ui": "^4.1.8",
     "tsx": "catalog:",
     "typescript": "^6.0.3",
     "vite-plus": "catalog:"

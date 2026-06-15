@@ -1,13 +1,17 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { deepEqual, equal, notEqual, ok as isTrue } from "node:assert";
-import { afterEach, before, describe, it } from "node:test";
+import { deepEqual, equal, ok as isTrue, notEqual } from "node:assert";
+import { afterEach, beforeAll, describe, it } from "vite-plus/test";
 
 import * as ts from "typescript";
+
+import { getProgramNoDiscardDiagnostics } from "../src/diagnostics.js";
+import { patchTypeScriptPackage, unpatchTypeScriptPackage } from "../src/patch.js";
+import { createLanguageServicePlugin } from "../src/plugin.js";
 
 interface TypeScriptPatchResult {
   readonly modules: readonly TypeScriptPatchModuleStatus[];
@@ -42,42 +46,21 @@ interface LoadedLanguageServiceModules {
 }
 
 const tempDirs: string[] = [];
-let loadedModules: LoadedLanguageServiceModules | undefined = undefined;
 const workspaceDir = fileURLToPath(new URL("../../..", import.meta.url));
-
-const getLoadedModules = (): LoadedLanguageServiceModules => {
-  if (loadedModules === undefined) {
-    throw new Error("Language-service modules were not loaded");
-  }
-
-  return loadedModules;
+const loadedModules: LoadedLanguageServiceModules = {
+  createLanguageServicePlugin,
+  getProgramNoDiscardDiagnostics,
+  patchTypeScriptPackage,
+  unpatchTypeScriptPackage,
 };
 
-before(() => {
+const getLoadedModules = (): LoadedLanguageServiceModules => loadedModules;
+
+beforeAll(() => {
   execFileSync("pnpm", ["--filter", "resultar-lint", "build"], {
     cwd: workspaceDir,
     stdio: "pipe",
   });
-
-  const require = createRequire(import.meta.url);
-  const distDir = join(workspaceDir, "packages/resultar-lint/dist");
-  const diagnostics = require(join(distDir, "diagnostics.js")) as {
-    readonly getProgramNoDiscardDiagnostics: GetProgramNoDiscardDiagnostics;
-  };
-  const patch = require(join(distDir, "patch.js")) as {
-    readonly patchTypeScriptPackage: TypeScriptPatchCommand;
-    readonly unpatchTypeScriptPackage: TypeScriptPatchCommand;
-  };
-  const plugin = require(join(distDir, "plugin.js")) as {
-    readonly createLanguageServicePlugin: CreateLanguageServicePlugin;
-  };
-
-  loadedModules = {
-    createLanguageServicePlugin: plugin.createLanguageServicePlugin,
-    getProgramNoDiscardDiagnostics: diagnostics.getProgramNoDiscardDiagnostics,
-    patchTypeScriptPackage: patch.patchTypeScriptPackage,
-    unpatchTypeScriptPackage: patch.unpatchTypeScriptPackage,
-  };
 });
 
 const createTempDir = async (prefix: string): Promise<string> => {
@@ -155,10 +138,7 @@ const createLanguageService = (
   const { createLanguageServicePlugin } = getLoadedModules();
   const plugin = createLanguageServicePlugin({ typescript: ts });
 
-  return plugin.create({
-    config,
-    languageService,
-  } as ts.server.PluginCreateInfo);
+  return plugin.create({ config, languageService } as ts.server.PluginCreateInfo);
 };
 
 const sourceWithDiscardCases = `
@@ -205,7 +185,7 @@ handled.match((value) => value, (error) => error.message)
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0).map(async (dir) => await rm(dir, { force: true, recursive: true })),
+    tempDirs.splice(0).map(async (dir) => rm(dir, { force: true, recursive: true })),
   );
 });
 
@@ -243,9 +223,7 @@ describe("Resultar language-service no-discard diagnostics", () => {
   it("reports assigned-but-unhandled Result values by default", async () => {
     const program = await createFixtureProgram(sourceWithMustUseCases);
     const { getProgramNoDiscardDiagnostics } = getLoadedModules();
-    const diagnostics = getProgramNoDiscardDiagnostics(ts, program, {
-      noDiscard: "error",
-    });
+    const diagnostics = getProgramNoDiscardDiagnostics(ts, program, { noDiscard: "error" });
 
     equal(diagnostics.length, 1);
     isTrue(String(diagnostics[0]?.messageText).includes("assigned to `unhandled`"));
@@ -262,16 +240,18 @@ describe("Resultar language-service no-discard diagnostics", () => {
     isTrue(String(resultarDiagnostics[0]?.messageText).includes("assigned to `unhandled`"));
   });
 
-  it("patches TypeScript so tsc fails builds on discarded Resultar values", async () => {
+  it("patches TypeScript so tsc fails builds on Resultar diagnostics", async () => {
     const tempDir = await createTempDir("resultar-lint-patch-");
     const { patchTypeScriptPackage, unpatchTypeScriptPackage } = getLoadedModules();
     const require = createRequire(import.meta.url);
     const sourceTypeScriptDir = dirname(require.resolve("typescript/package.json"));
     const typeScriptDir = join(tempDir, "node_modules", "typescript");
+    const lintPackageDir = join(tempDir, "node_modules", "resultar-lint");
     const projectDir = join(tempDir, "project");
 
     await mkdir(dirname(typeScriptDir), { recursive: true });
     await cp(sourceTypeScriptDir, typeScriptDir, { dereference: true, recursive: true });
+    await symlink(join(workspaceDir, "packages/resultar-lint"), lintPackageDir, "dir");
     await unpatchTypeScriptPackage({ dir: typeScriptDir });
     await mkdir(projectDir);
     await writeFile(
@@ -281,7 +261,7 @@ describe("Resultar language-service no-discard diagnostics", () => {
           module: "NodeNext",
           moduleResolution: "NodeNext",
           noEmit: true,
-          plugins: [{ name: "resultar-lint", noDiscard: "error" }],
+          plugins: [{ name: "resultar-lint", noDiscard: "error", preferMapErr: "error" }],
           strict: true,
           target: "ESNext",
         },
@@ -291,12 +271,18 @@ describe("Resultar language-service no-discard diagnostics", () => {
     await writeFile(
       join(projectDir, "fixture.ts"),
       `
-type Result<T, E> = { readonly error?: E; readonly value?: T }
+type Result<T, E> = {
+  readonly error?: E
+  readonly value?: T
+  orElse(callback: (error: E) => Result<T, E>): Result<T, E>
+}
+declare function err<T, E>(error: E): Result<T, E>
 declare function saveUser(input: string): Result<string, Error>
 declare function externalFunction(value: unknown): void
 saveUser('ignored')
 const unhandled = saveUser('unhandled')
 externalFunction(unhandled)
+saveUser('prefer-map-err').orElse((error) => err(new Error(error.message)))
 `,
     );
 
@@ -316,6 +302,7 @@ externalFunction(unhandled)
     const patchedRun = runTsc();
     notEqual(patchedRun.status, 0);
     isTrue(`${patchedRun.stdout}${patchedRun.stderr}`.includes("[resultar/noDiscard]"));
+    isTrue(`${patchedRun.stdout}${patchedRun.stderr}`.includes("[resultar/prefer-map-err]"));
     isTrue(`${patchedRun.stdout}${patchedRun.stderr}`.includes("assigned to `unhandled`"));
 
     await unpatchTypeScriptPackage({ dir: typeScriptDir });

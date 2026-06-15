@@ -11,6 +11,25 @@ export {
   tryResultAsync as tryAsync,
   unitAsync,
 } from './result-async.js'
+export type {
+  ResultAsyncAbortSignal,
+  ResultAsyncConcurrency,
+  ResultAsyncRaceHandle,
+  ResultAsyncRaceTask,
+  ResultAsyncRetryContext,
+  ResultAsyncRetryOptions,
+  ResultAsyncRetryOrElseOptions,
+  ResultAsyncRetryTask,
+  ResultAsyncResourceAcquire,
+  ResultAsyncResourceEffect,
+  ResultAsyncResourceRelease,
+  ResultAsyncResourceReleaseContext,
+  ResultAsyncResourceUse,
+  ResultAsyncTimeoutOptions,
+  ResultAsyncWithResourceOptions,
+  StrictResultAsync,
+  TryResultAsyncOptions,
+} from './result-async.js'
 export {
   DisposableResult,
   err,
@@ -33,16 +52,20 @@ export type {
   StrictResult,
   TryResultOptions,
 } from './result.js'
-export type { StrictResultAsync, TryResultAsyncOptions } from './result-async.js'
+export { AbortError, isAbortError } from './abort-error.js'
+export { isRedacted, redact, revealRedacted } from './redacted.js'
+export type { Redacted } from './redacted.js'
 export {
   createTaggedError,
   findCause,
   isError,
   matchError,
   matchErrorPartial,
+  taggedEnum,
 } from './tagged-error.js'
 export type {
   TaggedEnum,
+  TaggedEnumFactory,
   TaggedErrorClass,
   TaggedErrorInstance,
   TaggedErrorOptions,

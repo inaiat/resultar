@@ -18,14 +18,22 @@
   },
   "files": [
     "dist",
+    "LICENSE",
     "README.md"
   ],
   "type": "module",
   "scripts": {
-    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "build": "vp pack",
     "check": "vp check",
+    "check:full": "pnpm run build && pnpm run check",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "lint": "vp lint",
+    "lint:fix": "vp lint --fix",
+    "prepare": "vp config || true",
+    "prepublishOnly": "vp pack",
     "smoke": "pnpm run smoke:package",
-    "smoke:package": "pnpm run build && node scripts/smoke-package.mjs"
+    "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts"
   },
   "dependencies": {
     "resultar-lint": "workspace:*"
@@ -33,6 +41,7 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@typescript/native-preview": "catalog:",
+    "tsx": "catalog:",
     "typescript": "^6.0.3",
     "vite-plus": "catalog:"
   },

@@ -1,0 +1,23 @@
+{
+  "name": "resultar-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "vp check",
+    "check-ts": "tsc -p tsconfig.json --noEmit --pretty false",
+    "lint": "pnpm run check",
+    "prepare": "pnpm --filter resultar build && pnpm --filter resultar-lint build",
+    "smoke": "pnpm run prepare && pnpm run check && tsx scripts/smoke.ts",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "resultar": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "resultar-lint": "workspace:*",
+    "tsx": "catalog:",
+    "typescript": "^6.0.3",
+    "vite-plus": "catalog:"
+  }
+}

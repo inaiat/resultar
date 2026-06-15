@@ -31,7 +31,7 @@ const getProjectArg = (args: readonly string[]): string | undefined => {
       return args[index + 1];
     }
 
-    if (arg?.startsWith("--project=")) {
+    if (arg !== undefined && arg.startsWith("--project=")) {
       return arg.slice("--project=".length);
     }
   }

@@ -54,7 +54,7 @@ should be handled in follow-up implementation tasks with focused tests.
   - Enabled `isolatedDeclarations`.
   - Enabled `noImplicitOverride`.
   - Enabled `noPropertyAccessFromIndexSignature`.
-  - Enabled `noUncheckedSideEffectImports`.
+  - Enabled the TypeScript check for unchecked side-effect imports.
   - Added a public API guard test for exported runtime names and removed methods.
 - [x] Tighten broad lint exceptions where practical.
   - Start with unsafe assertions, deprecated APIs, and explicit `any`.

@@ -1,28 +1,66 @@
-import { normalizeNoDiscardMode, type NoDiscardMode } from "./no-discard-core";
+import { normalizeNoDiscardMode } from "./result-usage-core.js";
+import {
+  type ResultarRulesOptions,
+  defaultResultarRulesOptions,
+  normalizeRuleSeverity,
+} from "./rules-core.js";
 
-export type NoDiscardSeverity = "error" | "off";
-
-export interface ResultarLanguageServiceOptions {
-  readonly noDiscard: NoDiscardSeverity;
-  readonly noDiscardMode: NoDiscardMode;
-}
+export type ResultarLanguageServiceOptions = ResultarRulesOptions;
 
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
   typeof value === "object" && value !== null;
 
-const isResultarPluginName = (value: unknown): boolean =>
-  value === "resultar-lint" || value === "resultar-ls" || value === "resultar-language-service";
+const isResultarPluginName = (value: unknown): boolean => value === "resultar-lint";
 
 export const parsePluginOptions = (config: unknown): ResultarLanguageServiceOptions => {
-  const noDiscardMode = isRecord(config)
-    ? normalizeNoDiscardMode(config.noDiscardMode)
-    : "must-use";
-
-  if (isRecord(config) && config.noDiscard === "off") {
-    return { noDiscard: "off", noDiscardMode };
+  if (!isRecord(config)) {
+    return defaultResultarRulesOptions;
   }
 
-  return { noDiscard: "error", noDiscardMode };
+  return {
+    noDiscard: normalizeRuleSeverity(config.noDiscard, defaultResultarRulesOptions.noDiscard),
+    noDiscardMode: normalizeNoDiscardMode(config.noDiscardMode),
+    noTaggedErrorConstructorOverride: normalizeRuleSeverity(
+      config.noTaggedErrorConstructorOverride,
+      defaultResultarRulesOptions.noTaggedErrorConstructorOverride,
+    ),
+    noTryCatchInSafeTry: normalizeRuleSeverity(
+      config.noTryCatchInSafeTry,
+      defaultResultarRulesOptions.noTryCatchInSafeTry,
+    ),
+    noUselessRecovery: normalizeRuleSeverity(
+      config.noUselessRecovery,
+      defaultResultarRulesOptions.noUselessRecovery,
+    ),
+    preferAndThen: normalizeRuleSeverity(
+      config.preferAndThen,
+      defaultResultarRulesOptions.preferAndThen,
+    ),
+    preferMapErr: normalizeRuleSeverity(
+      config.preferMapErr,
+      defaultResultarRulesOptions.preferMapErr,
+    ),
+    preferTaggedError: normalizeRuleSeverity(
+      config.preferTaggedError,
+      defaultResultarRulesOptions.preferTaggedError,
+    ),
+    taggedErrorNameMatch: normalizeRuleSeverity(
+      config.taggedErrorNameMatch,
+      defaultResultarRulesOptions.taggedErrorNameMatch,
+    ),
+    typedCatchMapper: normalizeRuleSeverity(
+      config.typedCatchMapper,
+      defaultResultarRulesOptions.typedCatchMapper,
+    ),
+    unsafeResultTypeAssertion: normalizeRuleSeverity(
+      config.unsafeResultTypeAssertion,
+      defaultResultarRulesOptions.unsafeResultTypeAssertion,
+    ),
+    yieldStarInSafeTry: normalizeRuleSeverity(
+      config.yieldStarInSafeTry,
+      defaultResultarRulesOptions.yieldStarInSafeTry,
+    ),
+  };
 };
 
 export const findResultarPluginConfig = (

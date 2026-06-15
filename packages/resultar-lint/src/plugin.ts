@@ -1,7 +1,7 @@
-import type * as ts from "typescript/lib/tsserverlibrary";
+import type * as ts from "typescript";
 
-import { getNoDiscardDiagnostics } from "./diagnostics";
-import { parsePluginOptions } from "./plugin-options";
+import { getResultarDiagnostics } from "./diagnostics.js";
+import { parsePluginOptions } from "./plugin-options.js";
 
 const pluginMarker = "__resultarLanguageServicePlugin";
 
@@ -33,10 +33,6 @@ export const createLanguageServicePlugin = (modules: {
     proxy.getSemanticDiagnostics = (fileName, ...args) => {
       const diagnostics = info.languageService.getSemanticDiagnostics(fileName, ...args);
 
-      if (options.noDiscard === "off") {
-        return diagnostics;
-      }
-
       const program = info.languageService.getProgram();
       const sourceFile = program?.getSourceFile(fileName);
 
@@ -44,7 +40,7 @@ export const createLanguageServicePlugin = (modules: {
         return diagnostics;
       }
 
-      return [...diagnostics, ...getNoDiscardDiagnostics({ options, program, sourceFile, tsApi })];
+      return [...diagnostics, ...getResultarDiagnostics({ options, program, sourceFile, tsApi })];
     };
 
     return proxy;

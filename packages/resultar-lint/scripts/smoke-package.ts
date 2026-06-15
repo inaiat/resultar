@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 type PackFile = Readonly<{ path: string }>;
 type PackManifest = Readonly<{ files: readonly PackFile[] }>;
@@ -14,25 +16,15 @@ const packageJson = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8
 const requiredFiles = [
   "LICENSE",
   "README.md",
+  "dist/cli.cjs",
   "dist/cli.d.ts",
   "dist/cli.js",
-  "dist/diagnostics.d.ts",
-  "dist/diagnostics.js",
+  "dist/index.cjs",
   "dist/index.d.ts",
   "dist/index.js",
-  "dist/no-discard-core.d.ts",
-  "dist/no-discard-core.js",
-  "dist/no-discard.d.ts",
-  "dist/no-discard.js",
+  "dist/oxlint-plugin.cjs",
   "dist/oxlint-plugin.d.ts",
   "dist/oxlint-plugin.js",
-  "dist/package.json",
-  "dist/patch.d.ts",
-  "dist/patch.js",
-  "dist/plugin.d.ts",
-  "dist/plugin.js",
-  "dist/plugin-options.d.ts",
-  "dist/plugin-options.js",
   "package.json",
 ] as const;
 
@@ -71,7 +63,7 @@ const parsePackedFiles = (packOutput: string): readonly string[] => {
 };
 
 const sortStrings = (items: readonly string[]): readonly string[] =>
-  [...items].sort((left, right) => left.localeCompare(right));
+  [...items].toSorted((left, right) => left.localeCompare(right));
 
 for (const file of requiredFiles) {
   if (!existsSync(join(rootDir, file))) {
@@ -91,14 +83,32 @@ if (!help.includes("Usage: resultar-lint")) {
 const checkHelp = execFileSync(
   process.execPath,
   [join(rootDir, "dist/cli.js"), "check", "--help"],
-  {
-    cwd: rootDir,
-    encoding: "utf8",
-  },
+  { cwd: rootDir, encoding: "utf8" },
 );
 
 if (!checkHelp.includes("Usage: resultar-lint check")) {
   throw new Error("Lint check help output is missing expected usage text");
+}
+
+const packageRequire = createRequire(join(rootDir, "package.json"));
+const cjsEntrypoint = packageRequire("resultar-lint") as Record<PropertyKey, unknown>;
+const esmEntrypoint = (await import(pathToFileURL(join(rootDir, "dist/index.js")).href)) as {
+  readonly default?: Record<PropertyKey, unknown>;
+};
+const oxlintPlugin = (await import(pathToFileURL(join(rootDir, "dist/oxlint-plugin.js")).href)) as {
+  readonly default?: { readonly meta?: { readonly name?: string } };
+};
+
+if (typeof cjsEntrypoint.getProgramResultarDiagnostics !== "function") {
+  throw new TypeError("CJS Resultar lint entrypoint is missing getProgramResultarDiagnostics");
+}
+
+if (typeof esmEntrypoint.default?.getProgramResultarDiagnostics !== "function") {
+  throw new TypeError("ESM Resultar lint entrypoint is missing getProgramResultarDiagnostics");
+}
+
+if (oxlintPlugin.default?.meta?.name !== "resultar") {
+  throw new Error("ESM Oxlint plugin entrypoint is missing the Resultar plugin default export");
 }
 
 if (packageJson.bin?.["resultar-no-discard"] !== undefined) {
@@ -122,7 +132,7 @@ for (const file of requiredFiles) {
 }
 
 const allowedPackedFile =
-  /^(?:LICENSE|README\.md|package\.json|dist\/package\.json|dist\/[^/]+\.(?:js|d\.ts))$/;
+  /^(?:LICENSE|README\.md|package\.json|dist\/[^/]+\.(?:cjs|js|d\.ts|map))$/;
 const unexpectedFiles = packedFiles.filter((file: string) => !allowedPackedFile.test(file));
 
 if (unexpectedFiles.length > 0) {

@@ -1,14 +1,10 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { deepEqual, equal, ok as isTrue } from "node:assert";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, describe, it } from "vite-plus/test";
 
-type NoDiscardModule = typeof import("../src/no-discard.js");
-
-const require = createRequire(import.meta.url);
-const { findDiscardedResults } = require("../dist/no-discard.js") as NoDiscardModule;
+import { findDiscardedResults } from "../src/lint.js";
 
 const tempDirs: string[] = [];
 
@@ -39,7 +35,7 @@ const createFixtureProject = async (
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0).map(async (dir) => await rm(dir, { force: true, recursive: true })),
+    tempDirs.splice(0).map(async (dir) => rm(dir, { force: true, recursive: true })),
   );
 });
 
@@ -63,7 +59,7 @@ describe("no-discard Result check", () => {
       throw result.error;
     }
 
-    const findings = result.findings;
+    const { findings } = result;
     deepEqual(
       findings.map((finding) => finding.line),
       [9, 10],
@@ -108,6 +104,36 @@ describe("no-discard Result check", () => {
     }
 
     deepEqual(result.findings, []);
+  });
+
+  it("flags direct Resultar discards inside await, conditional, and logical expressions", async () => {
+    const rootDir = await createFixtureProject(`
+      type Result<T, E> = { readonly error?: E; readonly value?: T }
+      declare function saveUser(input: string): Result<string, Error>
+
+      async function run(flag: boolean, fallback: boolean | null) {
+        await saveUser('awaited')
+        flag ? saveUser('true') : saveUser('false')
+        flag && saveUser('and')
+        flag || saveUser('or')
+        fallback ?? saveUser('nullish')
+      }
+    `);
+
+    const result = findDiscardedResults({ mode: "direct", rootDir });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    deepEqual(
+      result.findings.map((finding) => finding.line),
+      [6, 7, 8, 9, 10],
+    );
+    equal(
+      result.findings.every((finding) => finding.message.startsWith("Ignored ")),
+      true,
+    );
   });
 
   it("flags assigned Result values that are not handled by default", async () => {
@@ -187,6 +213,70 @@ describe("no-discard Result check", () => {
     }
 
     deepEqual(result.findings, []);
+  });
+
+  it("allows assigned Result values returned through spreads, conditionals, and arrows", async () => {
+    const rootDir = await createFixtureProject(`
+      type Result<T, E> = { readonly error?: E; readonly value?: T }
+      declare function saveUser(input: string): Result<string, Error>
+
+      function objectSpreadReturn(): { readonly objectResult: Result<string, Error> } {
+        const objectResult = saveUser('object')
+        return { ...objectResult, objectResult }
+      }
+
+      function arraySpreadReturn(): readonly Result<string, Error>[] {
+        const arrayResult = saveUser('array')
+        return [...arrayResult, arrayResult]
+      }
+
+      const conditionalResult = saveUser('conditional')
+      function conditionalReturn(flag: boolean): Result<string, Error> {
+        return flag ? conditionalResult : saveUser('other')
+      }
+
+      const arrowResult = saveUser('arrow')
+      const arrowReturn = (): Result<string, Error> => arrowResult
+    `);
+
+    const result = findDiscardedResults({ rootDir });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    deepEqual(result.findings, []);
+  });
+
+  it("handles wrapped references, awaited consumers, and discarded tracked-result use", async () => {
+    const rootDir = await createFixtureProject(`
+      type Result<T, E> = {
+        readonly error?: E
+        readonly value: T
+        match<A, B>(ok: (value: T) => A, error: (error: E) => B): A | B
+      }
+      declare function saveUser(input: string): Result<string, Error>
+
+      const source = saveUser('source')
+      ;(saveUser((source as Result<string, Error>).value) satisfies Result<string, Error>)
+
+      const returned = saveUser('returned')
+      const passThrough = (): Result<string, Error> => ((returned as Result<string, Error>)!)
+
+      async function run() {
+        const consumed = saveUser('consumed')
+        await consumed.match((value) => value, (error) => error.message)
+      }
+    `);
+
+    const result = findDiscardedResults({ rootDir });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    equal(result.findings.length, 1);
+    equal(result.findings[0]?.message.startsWith("Ignored "), true);
   });
 
   it("does not track functions or objects only because their rendered type mentions Result", async () => {

@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "plugins": [
+      {
+        "name": "resultar-lint",
+        "noDiscard": "error",
+        "noTaggedErrorConstructorOverride": "error",
+        "noTryCatchInSafeTry": "error",
+        "noUselessRecovery": "error",
+        "preferAndThen": "error",
+        "preferMapErr": "error",
+        "preferTaggedError": "error",
+        "taggedErrorNameMatch": "error",
+        "typedCatchMapper": "error",
+        "unsafeResultTypeAssertion": "error",
+        "yieldStarInSafeTry": "error"
+      }
+    ],
+    "strict": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"]
+}

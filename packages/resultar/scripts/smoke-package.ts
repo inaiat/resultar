@@ -60,6 +60,7 @@ const entrypoint = (await import(
   pathToFileURL(path.join(rootDir, 'dist/index.js')).href
 )) as Record<string, unknown>
 const expectedExports = [
+  'AbortError',
   'DisposableResult',
   'DisposableResultAsync',
   'Result',
@@ -73,12 +74,17 @@ const expectedExports = [
   'fromSafePromise',
   'fromThrowable',
   'fromThrowableAsync',
+  'isAbortError',
   'isError',
+  'isRedacted',
   'matchError',
   'matchErrorPartial',
   'ok',
   'okAsync',
+  'redact',
+  'revealRedacted',
   'safeTry',
+  'taggedEnum',
   'try',
   'tryAsync',
   'tryCatch',

@@ -2,13 +2,24 @@ import { deepEqual, equal } from 'node:assert'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import type { DisposableResult, DisposableResultAsync, Result, ResultAsync } from '../src/index.js'
+import type {
+  DisposableResult,
+  DisposableResultAsync,
+  Result,
+  ResultAsync,
+  ResultAsyncConcurrency,
+  ResultAsyncRetryContext,
+  ResultAsyncRetryOptions,
+  ResultAsyncRetryOrElseOptions,
+  ResultAsyncRetryTask,
+} from '../src/index.js'
 
 import * as resultar from '../src/index.js'
 
 describe('public API', () => {
   it('exports the intended runtime entrypoint surface', () => {
     deepEqual(Object.keys(resultar).toSorted(), [
+      'AbortError',
       'DisposableResult',
       'DisposableResultAsync',
       'Result',
@@ -22,12 +33,17 @@ describe('public API', () => {
       'fromSafePromise',
       'fromThrowable',
       'fromThrowableAsync',
+      'isAbortError',
       'isError',
+      'isRedacted',
       'matchError',
       'matchErrorPartial',
       'ok',
       'okAsync',
+      'redact',
+      'revealRedacted',
       'safeTry',
+      'taggedEnum',
       'try',
       'tryAsync',
       'tryCatch',
@@ -71,5 +87,31 @@ describe('public API', () => {
       // @ts-expect-error safeTryAsync is not part of the current API.
       void resultar.safeTryAsync
     }
+  })
+
+  it('exports ResultAsync concurrency option types', () => {
+    const concurrencyValues: readonly ResultAsyncConcurrency[] = [2, 'unbounded']
+
+    deepEqual(concurrencyValues, [2, 'unbounded'])
+
+    if (false) {
+      // @ts-expect-error inherited Effect-style concurrency is not part of Resultar.
+      const invalid: ResultAsyncConcurrency = 'inherit'
+
+      equal(invalid, undefined)
+    }
+  })
+
+  it('exports ResultAsync retry option types', () => {
+    const task: ResultAsyncRetryTask<number, 'retry-error'> = () => resultar.errAsync('retry-error')
+    const context: ResultAsyncRetryContext = { attempt: 0, nextAttempt: 1, retriesRemaining: 1 }
+    const options: ResultAsyncRetryOptions<'retry-error'> = { times: 1 }
+    const fallbackOptions: ResultAsyncRetryOrElseOptions<'retry-error', 'fallback-error', string> =
+      { orElse: () => resultar.err('fallback-error'), times: 1 }
+
+    equal(typeof task, 'function')
+    deepEqual(context, { attempt: 0, nextAttempt: 1, retriesRemaining: 1 })
+    deepEqual(options, { times: 1 })
+    equal(typeof fallbackOptions.orElse, 'function')
   })
 })

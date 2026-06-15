@@ -1,5 +1,11 @@
 # resultar
 
+## 3.1.0
+
+### Minor Changes
+
+- Add ResultAsync concurrency, retry, race, timeout, and resource helpers, plus abort and redaction utilities for richer tagged errors.
+
 ## 3.0.0
 
 ### Major Changes

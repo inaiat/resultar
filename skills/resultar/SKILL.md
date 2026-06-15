@@ -167,7 +167,7 @@ const saveUser = (email: string) =>
 
 Prefer `yield* result` and `yield* resultAsync`. `Result.safeUnwrap()` exists for compatibility but is not usually needed.
 
-## Side Effects
+## Observation And Cleanup
 
 Use side-effect methods only for observation and cleanup:
 

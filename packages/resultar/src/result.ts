@@ -6,19 +6,43 @@ import type { ExtractErrTypes, ExtractOkTypes, InferErrTypes, InferOkTypes } fro
 import { callTaggedHandler, hasTag, matchTaggedOr } from './tagged-match.js'
 import type {
   CatchTagHandlerResult,
+  CatchReasonHandlerResult,
   ErrorForTag,
+  ExcludeReasonTag,
   ExcludeTag,
   MatchTagHandlerResult,
   MatchTagHandlers,
   PartialMatchTagHandlers,
+  ReasonForTag,
+  ReasonTagsOf,
+  ReasonsOf,
+  ResultCatchReasonHandlers as CatchReasonHandlers,
   ResultCatchTagHandlers as CatchTagHandlers,
   TagsOf,
+  TagsWithReasonOf,
 } from './tagged-types.js'
 
 type ResultFinalizer<T, E> = (value: T | undefined, error: E | undefined) => void
 type MatchOkHandler<T, A> = (value: T) => A
 type MatchErrorHandler<E, B> = (error: E) => B
 type ResultCandidate = () => Result<unknown, unknown>
+type ResultRecord = Readonly<Record<string, Result<unknown, unknown>>>
+type CombineResultsRecord<T extends ResultRecord> = Result<
+  { readonly [Key in keyof T]: InferOkTypes<T[Key]> },
+  InferErrTypes<T[keyof T]>
+>
+type CombineResultsRecordWithAllErrors<T extends ResultRecord> = Result<
+  { readonly [Key in keyof T]: InferOkTypes<T[Key]> },
+  InferErrTypes<T[keyof T]>[]
+>
+type CombineResultsIterable<R extends Result<unknown, unknown>> = Result<
+  readonly InferOkTypes<R>[],
+  InferErrTypes<R>
+>
+type CombineResultsIterableWithAllErrors<R extends Result<unknown, unknown>> = Result<
+  readonly InferOkTypes<R>[],
+  InferErrTypes<R>[]
+>
 type ResultLoopCollected<R extends Result<unknown, unknown>> = Result<
   readonly InferOkTypes<R>[],
   InferErrTypes<R>
@@ -237,6 +261,26 @@ export interface ResultOperations<T, E> {
     T | InferOkTypes<CatchTagHandlerResult<Handlers>>,
     ExcludeTag<E, keyof Handlers & string> | InferErrTypes<CatchTagHandlerResult<Handlers>>
   >
+  catchReason<
+    const ErrorTag extends TagsWithReasonOf<E>,
+    const ReasonTag extends ReasonTagsOf<E, ErrorTag>,
+    R extends Result<unknown, unknown>,
+  >(
+    errorTag: ErrorTag,
+    reasonTag: ReasonTag,
+    f: (reason: ReasonForTag<E, ErrorTag, ReasonTag>, error: ErrorForTag<E, ErrorTag>) => R,
+  ): Result<T | InferOkTypes<R>, ExcludeReasonTag<E, ErrorTag, ReasonTag> | InferErrTypes<R>>
+  catchReasons<const ErrorTag extends TagsWithReasonOf<E>, const Handlers extends object>(
+    errorTag: ErrorTag,
+    handlers: Handlers & CatchReasonHandlers<E, ErrorTag, Handlers>,
+  ): Result<
+    T | InferOkTypes<CatchReasonHandlerResult<Handlers>>,
+    | ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>
+    | InferErrTypes<CatchReasonHandlerResult<Handlers>>
+  >
+  unwrapReason<const ErrorTag extends TagsWithReasonOf<E>>(
+    errorTag: ErrorTag,
+  ): Result<T, ExcludeTag<E, ErrorTag> | ReasonsOf<E, ErrorTag>>
   asyncAndThen<X, Y>(f: (t: T) => ResultAsync<X, Y>): ResultAsync<X, E | Y>
   asyncMap<X>(f: (t: T) => Promise<X>): ResultAsync<X, E>
   match<A, B = A>(handlers: MatchHandlers<T, E, A, B>): A | B
@@ -310,6 +354,20 @@ const combineResultList = <T, E>(resultList: readonly Result<T, E>[]): Result<re
   return ok(values)
 }
 
+const combineResultRecord = <T extends ResultRecord>(resultRecord: T): CombineResultsRecord<T> => {
+  const values: Record<string, unknown> = {}
+
+  for (const [key, result] of Object.entries(resultRecord)) {
+    if (result.isErr()) {
+      return err(result.error) as CombineResultsRecord<T>
+    }
+
+    values[key] = result.value
+  }
+
+  return ok(values) as CombineResultsRecord<T>
+}
+
 const combineResultListWithAllErrors = <T, E>(
   resultList: readonly Result<T, E>[],
 ): Result<readonly T[], E[]> => {
@@ -327,6 +385,30 @@ const combineResultListWithAllErrors = <T, E>(
 
   return acc
 }
+
+const combineResultRecordWithAllErrors = <T extends ResultRecord>(
+  resultRecord: T,
+): CombineResultsRecordWithAllErrors<T> => {
+  const errors: unknown[] = []
+  const values: Record<string, unknown> = {}
+
+  for (const [key, result] of Object.entries(resultRecord)) {
+    if (result.isErr()) {
+      errors.push(result.error)
+    } else {
+      values[key] = result.value
+    }
+  }
+
+  if (errors.length > 0) {
+    return err(errors) as CombineResultsRecordWithAllErrors<T>
+  }
+
+  return ok(values) as CombineResultsRecordWithAllErrors<T>
+}
+
+const isIterable = (value: unknown): value is Iterable<unknown> =>
+  typeof value === 'object' && value !== null && Symbol.iterator in value
 
 const validateAllResultItems = <Item, R extends Result<unknown, unknown>>(
   items: Iterable<Item>,
@@ -368,6 +450,11 @@ const firstSuccessOfResultCandidates = <Candidates extends Iterable<ResultCandid
 
   return latestError as FirstSuccessOf<Candidates>
 }
+
+const getReason = (value: unknown): unknown =>
+  typeof value === 'object' && value !== null && 'reason' in value
+    ? (value as { readonly reason?: unknown }).reason
+    : undefined
 
 const loopResult = <State, R extends Result<unknown, unknown>>(
   initial: State,
@@ -585,6 +672,11 @@ interface ResultStatic {
     this: void,
     resultList: T,
   ): CombineResults<T>
+  combine<T extends ResultRecord>(this: void, resultRecord: T): CombineResultsRecord<T>
+  combine<R extends Result<unknown, unknown>>(
+    this: void,
+    results: Iterable<R>,
+  ): CombineResultsIterable<R>
   combineWithAllErrors<
     T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
   >(
@@ -595,6 +687,14 @@ interface ResultStatic {
     this: void,
     resultList: T,
   ): CombineResultsWithAllErrorsArray<T>
+  combineWithAllErrors<T extends ResultRecord>(
+    this: void,
+    resultRecord: T,
+  ): CombineResultsRecordWithAllErrors<T>
+  combineWithAllErrors<R extends Result<unknown, unknown>>(
+    this: void,
+    results: Iterable<R>,
+  ): CombineResultsIterableWithAllErrors<R>
   validateAll<T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
     this: void,
     resultList: T,
@@ -796,10 +896,38 @@ class ResultNamespace {
     this: void,
     resultList: T,
   ): CombineResults<T>
+  public static combine<T extends ResultRecord>(
+    this: void,
+    resultRecord: T,
+  ): CombineResultsRecord<T>
+  public static combine<R extends Result<unknown, unknown>>(
+    this: void,
+    results: Iterable<R>,
+  ): CombineResultsIterable<R>
   public static combine<
-    T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
-  >(this: void, resultList: T): CombineResults<T> {
-    return combineResultList(resultList) as CombineResults<T>
+    T extends
+      | readonly Result<unknown, unknown>[]
+      | ResultRecord
+      | Iterable<Result<unknown, unknown>>,
+  >(
+    this: void,
+    input: T,
+  ):
+    | CombineResults<T & readonly Result<unknown, unknown>[]>
+    | CombineResultsRecord<ResultRecord>
+    | CombineResultsIterable<Result<unknown, unknown>> {
+    if (Array.isArray(input)) {
+      return combineResultList(input) as CombineResults<T & readonly Result<unknown, unknown>[]>
+    }
+
+    if (isIterable(input)) {
+      return combineResultList([...input] as readonly Result<
+        unknown,
+        unknown
+      >[]) as CombineResultsIterable<Result<unknown, unknown>>
+    }
+
+    return combineResultRecord(input)
   }
 
   public static combineWithAllErrors<
@@ -809,11 +937,40 @@ class ResultNamespace {
     this: void,
     resultList: T,
   ): CombineResultsWithAllErrorsArray<T>
-  public static combineWithAllErrors<T extends readonly Result<unknown, unknown>[]>(
+  public static combineWithAllErrors<T extends ResultRecord>(
     this: void,
-    resultList: T,
-  ): CombineResultsWithAllErrorsArray<T> {
-    return combineResultListWithAllErrors(resultList) as CombineResultsWithAllErrorsArray<T>
+    resultRecord: T,
+  ): CombineResultsRecordWithAllErrors<T>
+  public static combineWithAllErrors<R extends Result<unknown, unknown>>(
+    this: void,
+    results: Iterable<R>,
+  ): CombineResultsIterableWithAllErrors<R>
+  public static combineWithAllErrors<
+    T extends
+      | readonly Result<unknown, unknown>[]
+      | ResultRecord
+      | Iterable<Result<unknown, unknown>>,
+  >(
+    this: void,
+    input: T,
+  ):
+    | CombineResultsWithAllErrorsArray<T & readonly Result<unknown, unknown>[]>
+    | CombineResultsRecordWithAllErrors<ResultRecord>
+    | CombineResultsIterableWithAllErrors<Result<unknown, unknown>> {
+    if (Array.isArray(input)) {
+      return combineResultListWithAllErrors(input) as CombineResultsWithAllErrorsArray<
+        T & readonly Result<unknown, unknown>[]
+      >
+    }
+
+    if (isIterable(input)) {
+      return combineResultListWithAllErrors([...input] as readonly Result<
+        unknown,
+        unknown
+      >[]) as CombineResultsIterableWithAllErrors<Result<unknown, unknown>>
+    }
+
+    return combineResultRecordWithAllErrors(input)
   }
 
   public static validateAll<
@@ -1124,6 +1281,35 @@ class Ok<T, E> extends ResultVariant<T, E> {
     return ok(this.value)
   }
 
+  public catchReason<
+    const ErrorTag extends TagsWithReasonOf<E>,
+    const ReasonTag extends ReasonTagsOf<E, ErrorTag>,
+    R extends Result<unknown, unknown>,
+  >(
+    _errorTag: ErrorTag,
+    _reasonTag: ReasonTag,
+    _f: (reason: ReasonForTag<E, ErrorTag, ReasonTag>, error: ErrorForTag<E, ErrorTag>) => R,
+  ): Result<T | InferOkTypes<R>, ExcludeReasonTag<E, ErrorTag, ReasonTag> | InferErrTypes<R>> {
+    return ok(this.value)
+  }
+
+  public catchReasons<const ErrorTag extends TagsWithReasonOf<E>, const Handlers extends object>(
+    _errorTag: ErrorTag,
+    _handlers: Handlers & CatchReasonHandlers<E, ErrorTag, Handlers>,
+  ): Result<
+    T | InferOkTypes<CatchReasonHandlerResult<Handlers>>,
+    | ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>
+    | InferErrTypes<CatchReasonHandlerResult<Handlers>>
+  > {
+    return ok(this.value)
+  }
+
+  public unwrapReason<const ErrorTag extends TagsWithReasonOf<E>>(
+    _errorTag: ErrorTag,
+  ): Result<T, ExcludeTag<E, ErrorTag> | ReasonsOf<E, ErrorTag>> {
+    return ok(this.value)
+  }
+
   protected branchResult<X1, Y1, X2, Y2>(
     fCondition: (t: T) => boolean,
     fTrue: (t: T) => Result<X1, Y1>,
@@ -1307,6 +1493,74 @@ class Err<T, E> extends ResultVariant<T, E> {
     return err(error as ExcludeTag<E, keyof Handlers & string>)
   }
 
+  public catchReason<
+    const ErrorTag extends TagsWithReasonOf<E>,
+    const ReasonTag extends ReasonTagsOf<E, ErrorTag>,
+    R extends Result<unknown, unknown>,
+  >(
+    errorTag: ErrorTag,
+    reasonTag: ReasonTag,
+    f: (reason: ReasonForTag<E, ErrorTag, ReasonTag>, error: ErrorForTag<E, ErrorTag>) => R,
+  ): Result<T | InferOkTypes<R>, ExcludeReasonTag<E, ErrorTag, ReasonTag> | InferErrTypes<R>> {
+    if (hasTag(this.error, errorTag)) {
+      const reason = getReason(this.error)
+
+      if (hasTag(reason, reasonTag)) {
+        return f(
+          reason as ReasonForTag<E, ErrorTag, ReasonTag>,
+          this.error as ErrorForTag<E, ErrorTag>,
+        ) as Result<
+          T | InferOkTypes<R>,
+          ExcludeReasonTag<E, ErrorTag, ReasonTag> | InferErrTypes<R>
+        >
+      }
+    }
+
+    return err(this.error as ExcludeReasonTag<E, ErrorTag, ReasonTag>)
+  }
+
+  public catchReasons<const ErrorTag extends TagsWithReasonOf<E>, const Handlers extends object>(
+    errorTag: ErrorTag,
+    handlers: Handlers & CatchReasonHandlers<E, ErrorTag, Handlers>,
+  ): Result<
+    T | InferOkTypes<CatchReasonHandlerResult<Handlers>>,
+    | ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>
+    | InferErrTypes<CatchReasonHandlerResult<Handlers>>
+  > {
+    if (hasTag(this.error, errorTag)) {
+      const reason = getReason(this.error)
+
+      if (typeof reason === 'object' && reason !== null && '_tag' in reason) {
+        const handler = (handlers as Record<string, unknown>)[
+          (reason as { readonly _tag: string })._tag
+        ]
+
+        if (handler !== undefined) {
+          return (handler as (reason: unknown, error: unknown) => Result<unknown, unknown>)(
+            reason,
+            this.error,
+          ) as Result<
+            T | InferOkTypes<CatchReasonHandlerResult<Handlers>>,
+            | ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>
+            | InferErrTypes<CatchReasonHandlerResult<Handlers>>
+          >
+        }
+      }
+    }
+
+    return err(this.error as ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>)
+  }
+
+  public unwrapReason<const ErrorTag extends TagsWithReasonOf<E>>(
+    errorTag: ErrorTag,
+  ): Result<T, ExcludeTag<E, ErrorTag> | ReasonsOf<E, ErrorTag>> {
+    if (hasTag(this.error, errorTag)) {
+      return err(getReason(this.error) as ReasonsOf<E, ErrorTag>)
+    }
+
+    return err(this.error as ExcludeTag<E, ErrorTag>)
+  }
+
   public asyncAndThen<X, Y>(_f: (t: T) => ResultAsync<X, Y>): ResultAsync<X, E | Y>
   public asyncAndThen<X, Y>(_f: (t: T) => ResultAsync<X, E>): ResultAsync<X, E | Y> {
     return createResultAsync<ResultAsync<X, E | Y>>(Promise.resolve(err<X, E | Y>(this.error)))
@@ -1378,7 +1632,7 @@ class Err<T, E> extends ResultVariant<T, E> {
 
   public unwrapOrThrow(): T {
     // eslint-disable-next-line @typescript-eslint/only-throw-error
-    throw this.error
+    throw this.error as Error
   }
 
   public _unsafeUnwrap(config?: ErrorConfig): T {

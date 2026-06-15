@@ -1,5 +1,6 @@
 import type { ErrResult } from './result.js'
 
+import { isRedacted, stringifyRedacted } from './redacted.js'
 import { err as resultErr } from './result.js'
 
 type Alpha =
@@ -157,9 +158,29 @@ export type TaggedErrorClass<
   is(value: unknown): value is TaggedErrorInstance<Tag, MessageTemplate, Base>
 }
 
-export type TaggedEnum<Members extends Record<string, Record<PropertyKey, unknown>>> = {
+export type TaggedEnum<Members extends Record<string, object>> = {
   readonly [Tag in keyof Members]: Readonly<Members[Tag]> & { readonly _tag: Tag }
 }[keyof Members]
+type TaggedEnumMember<Members extends Record<string, object>, Tag extends keyof Members> = Readonly<
+  Members[Tag]
+> & { readonly _tag: Tag }
+type TaggedEnumConstructor<
+  Members extends Record<string, object>,
+  Tag extends keyof Members,
+> = keyof Members[Tag] extends never
+  ? (props?: Readonly<Members[Tag]>) => TaggedEnumMember<Members, Tag>
+  : (props: Readonly<Members[Tag]>) => TaggedEnumMember<Members, Tag>
+export type TaggedEnumFactory<Members extends Record<string, object>> = {
+  readonly [Tag in keyof Members]: TaggedEnumConstructor<Members, Tag>
+} & {
+  $is<Tag extends keyof Members>(tag: Tag, value: unknown): value is TaggedEnumMember<Members, Tag>
+  $match<ReturnType>(
+    value: TaggedEnum<Members>,
+    handlers: {
+      readonly [Tag in keyof Members]: (value: TaggedEnumMember<Members, Tag>) => ReturnType
+    },
+  ): ReturnType
+}
 
 type TaggedErrorLike = Error & { readonly _tag: string }
 type TaggedErrorTags<ErrorType extends Error> = Extract<ErrorType, TaggedErrorLike>['_tag']
@@ -230,7 +251,9 @@ const templateValueStringifiers: Partial<Record<string, TemplateValueStringifier
 }
 
 const stringifyTemplateValue = (value: unknown): string =>
-  templateValueStringifiers[typeof value]?.(value) ?? ''
+  isRedacted(value)
+    ? stringifyRedacted(value)
+    : (templateValueStringifiers[typeof value]?.(value) ?? '')
 
 const compileMessageInterpolator =
   (template: string): ((values?: Record<string, unknown>) => string) =>
@@ -274,12 +297,31 @@ const assignReadonly = (target: object, key: PropertyKey, value: unknown): void 
   })
 }
 
-const serializeCause = (cause: unknown): unknown => {
+const serializeTaggedValue = (value: unknown): unknown =>
+  isRedacted(value) ? stringifyRedacted(value) : value
+
+const serializeCause = (cause: unknown, seen = new Set<Error>()): unknown => {
   if (!isError(cause)) {
-    return cause
+    return serializeTaggedValue(cause)
   }
 
-  return { message: cause.message, name: cause.name, stack: cause.stack }
+  if (seen.has(cause)) {
+    return { cause: '[Circular]', message: cause.message, name: cause.name, stack: cause.stack }
+  }
+
+  seen.add(cause)
+
+  const json: Record<string, unknown> = {
+    message: cause.message,
+    name: cause.name,
+    stack: cause.stack,
+  }
+
+  if (cause.cause !== undefined) {
+    json['cause'] = serializeCause(cause.cause, seen)
+  }
+
+  return json
 }
 
 export const findCause = <T extends Error>(
@@ -374,7 +416,7 @@ export function createTaggedError<
 
       for (const [key, value] of Object.entries(this)) {
         if (!(key in json) && key !== 'cause' && key !== 'stack') {
-          json[key] = value
+          json[key] = serializeTaggedValue(value)
         }
       }
 
@@ -383,6 +425,66 @@ export function createTaggedError<
   }
 
   return GeneratedTaggedError as TaggedErrorClass<Tag, MessageTemplate, Base>
+}
+
+export const taggedEnum = <
+  Members extends Record<string, object>,
+>(): TaggedEnumFactory<Members> => {
+  const target = {
+    $is<Tag extends keyof Members>(
+      tag: Tag,
+      value: unknown,
+    ): value is TaggedEnumMember<Members, Tag> {
+      return (
+        typeof value === 'object' &&
+        value !== null &&
+        '_tag' in value &&
+        (value as { readonly _tag?: unknown })._tag === tag
+      )
+    },
+    $match<ReturnType>(
+      value: TaggedEnum<Members>,
+      handlers: {
+        readonly [Tag in keyof Members]: (value: TaggedEnumMember<Members, Tag>) => ReturnType
+      },
+    ): ReturnType {
+      const handler = handlers[value._tag] as
+        | ((value: TaggedEnum<Members>) => ReturnType)
+        | undefined
+
+      if (handler === undefined) {
+        throw new Error(`No tagged enum handler for ${String(value._tag)}`)
+      }
+
+      return handler(value)
+    },
+  }
+
+  return new Proxy(target, {
+    get(base, property, receiver) {
+      if (property in base) {
+        return Reflect.get(base, property, receiver) as unknown
+      }
+
+      if (typeof property !== 'string') {
+        return undefined
+      }
+
+      return (props?: object): object => {
+        const value: Record<string, unknown> = { _tag: property }
+
+        if (props !== undefined) {
+          for (const [key, propValue] of Object.entries(props)) {
+            if (key !== '_tag') {
+              value[key] = propValue
+            }
+          }
+        }
+
+        return Object.freeze(value)
+      }
+    },
+  }) as TaggedEnumFactory<Members>
 }
 
 export const matchError = <ErrorType extends Error, ReturnType>(
