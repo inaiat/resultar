@@ -1,0 +1,12 @@
+{
+  "mode": "pre",
+  "tag": "beta",
+  "initialVersions": {
+    "resultar": "3.0.0",
+    "resultar-lint": "3.0.0",
+    "resultar-tsgo": "3.0.0"
+  },
+  "changesets": [
+    "resultar-310-beta"
+  ]
+}

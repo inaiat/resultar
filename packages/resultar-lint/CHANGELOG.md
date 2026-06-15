@@ -1,5 +1,11 @@
 # resultar-lint
 
+## 3.1.0-beta.1
+
+### Minor Changes
+
+- Prepare the Resultar 3.1 beta release candidate.
+
 ## 3.0.0
 
 ### Major Changes

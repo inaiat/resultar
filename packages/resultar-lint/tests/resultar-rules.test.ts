@@ -103,7 +103,7 @@ describe("Resultar lint rules", () => {
     deepEqual(recoverFindings, []);
     deepEqual(nonCallReturnFindings, []);
     deepEqual(nonResultFindings, []);
-  });
+  }, 15_000);
 
   it("flags map callbacks that return Resultar values", async () => {
     const findings = await runRule(

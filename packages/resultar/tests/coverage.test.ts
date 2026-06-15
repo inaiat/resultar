@@ -524,16 +524,16 @@ describe('coverage-focused public behavior', () => {
 
   it('covers late racing settlements and race handles', async () => {
     const first = await resultar.ResultAsync.raceFirst(
-      delayedOkTask<string, string>('fast', 1),
-      delayedOkTask<string, string>('slow', 5),
+      delayedOkTask<string, string>('fast', 0),
+      delayedOkTask<string, string>('slow', 50),
     )
     const success = await resultar.ResultAsync.race(
-      delayedOkTask<string, string>('fast', 1),
-      delayedOkTask<string, string>('slow', 5),
+      delayedOkTask<string, string>('fast', 0),
+      delayedOkTask<string, string>('slow', 50),
     )
     const withHandle = await resultar.ResultAsync.raceWith(
-      delayedOkTask<string, string>('left', 1),
-      delayedOkTask<string, string>('right', 5),
+      delayedOkTask<string, string>('left', 0),
+      delayedOkTask<string, string>('right', 50),
       {
         onLeftDone: (result, right) => {
           isTrue(right.signal instanceof AbortSignal)
@@ -551,7 +551,7 @@ describe('coverage-focused public behavior', () => {
     equal(success._unsafeUnwrap(), 'fast')
     equal(withHandle._unsafeUnwrap(), 'left')
 
-    await sleep(10)
+    await sleep(60)
   })
 
   it('covers redaction and tagged enum defensive branches', () => {

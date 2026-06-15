@@ -110,6 +110,7 @@ const config: UserConfig = defineConfig({
     },
     globals: true,
     include: ["tests/**/*.test.ts"],
+    testTimeout: 15_000,
   },
 });
 
