@@ -1,5 +1,11 @@
 # resultar-lint
 
+## 3.1.0
+
+### Minor Changes
+
+- 71acacb: Release the Resultar 3.1 lint package with stable npm and JSR metadata.
+
 ## 3.1.0-beta.1
 
 ### Minor Changes

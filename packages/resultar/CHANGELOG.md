@@ -1,5 +1,12 @@
 # resultar
 
+## 3.1.0
+
+### Minor Changes
+
+- 71acacb: Release Resultar 3.1 with ResultAsync concurrency, retry, race, timeout,
+  and resource helpers, plus abort and redaction utilities for richer tagged errors.
+
 ## 3.1.0-beta.1
 
 ### Minor Changes

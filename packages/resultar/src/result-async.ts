@@ -19,7 +19,13 @@ import type {
 import { AbortError } from './abort-error.js'
 import { Pipeable } from './pipe.js'
 import { registerResultAsyncFactory } from './result-async-adapter.js'
-import { Result, createEmptyResultsCollectionError, err, getMatchErrorHandler } from './result.js'
+import {
+  Result,
+  createEmptyResultsCollectionError,
+  err,
+  getMatchErrorHandler,
+  ok as resultOk,
+} from './result.js'
 import { callTaggedHandler, hasTag, matchTaggedOr } from './tagged-match.js'
 import type {
   CatchTagHandlerResult,
@@ -1375,7 +1381,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   public static okAsync<T, E = never>(this: void, value: T): ResultAsync<T, E>
   public static okAsync<E = never>(this: void, value: void): ResultAsync<void, E>
   public static okAsync<T, E = never>(this: void, value: T): ResultAsync<T, E> {
-    return new ResultAsync<T, E>(Promise.resolve(Result.ok(value)))
+    return new ResultAsync<T, E>(Promise.resolve(resultOk<T, E>(value)))
   }
 
   /**
@@ -1396,7 +1402,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   public static errAsync<T = never, E = unknown>(this: void, err: E): ResultAsync<T, E>
   public static errAsync<T = never>(this: void, err: void): ResultAsync<T, void>
   public static errAsync<T = never, E = unknown>(this: void, error: E): ResultAsync<T, E> {
-    return new ResultAsync<T, E>(Promise.resolve(Result.err(error)))
+    return new ResultAsync<T, E>(Promise.resolve(err<T, E>(error)))
   }
 
   /**
@@ -1428,12 +1434,12 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   ): ResultAsync<T, unknown> {
     const promiseToProcess = typeof fn === 'function' ? Promise.try(fn) : fn
     const newPromise = promiseToProcess
-      .then((value: T) => Result.ok(value))
+      .then((value: T) => resultOk<T, unknown>(value))
       .catch((error: unknown) => {
         if (errorFn) {
-          return Result.err(errorFn(error))
+          return err<T, unknown>(errorFn(error))
         }
-        return Result.err(error)
+        return err<T, unknown>(error)
       })
     return new ResultAsync<T, unknown>(newPromise)
   }
@@ -1450,7 +1456,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     promise: PromiseLike<T>,
   ): ResultAsync<T, E>
   public static fromSafePromise<T, E = never>(this: void, promise: Promise<T>): ResultAsync<T, E> {
-    const newPromise = promise.then((value: T) => Result.ok(value))
+    const newPromise = promise.then((value: T) => resultOk<T, E>(value))
 
     return new ResultAsync<T, E>(newPromise)
   }
@@ -1474,8 +1480,8 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     errorFn: (e: unknown) => E,
   ): ResultAsync<T, E> {
     const newPromise = promise
-      .then((value: T) => Result.ok(value))
-      .catch((error: unknown) => Result.err(errorFn(error)))
+      .then((value: T) => resultOk<T, E>(value))
+      .catch((error: unknown) => err<T, E>(errorFn(error)))
 
     return new ResultAsync<T, E>(newPromise)
   }
@@ -1966,10 +1972,10 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
         (async () => {
           try {
             const v = await fn(...args)
-            return Result.ok(v)
+            return resultOk<T, E>(v)
           } catch (error) {
             const e = errorFn ? errorFn(error) : error
-            return Result.err(e as E)
+            return err<T, E>(e as E)
           }
         })(),
       )
@@ -1993,10 +1999,10 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return new ResultAsync<T, U>(
       this.innerPromise.then(async (res) => {
         if (res.isOk()) {
-          return Result.ok<T, U>(res.value)
+          return resultOk<T, U>(res.value)
         }
 
-        return Result.err<T, U>(await f(res.error))
+        return err<T, U>(await f(res.error))
       }),
     )
   }
@@ -2005,10 +2011,10 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return new ResultAsync<X, E>(
       this.innerPromise.then(async (res: Result<T, E>) => {
         if (res.isErr()) {
-          return Result.err<X, E>(res.error)
+          return err<X, E>(res.error)
         }
 
-        return Result.ok<X, E>(await f(res.value))
+        return resultOk<X, E>(await f(res.value))
       }),
     )
   }
@@ -2017,10 +2023,10 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return new ResultAsync<X, E>(
       this.innerPromise.then((res: Result<T, E>) => {
         if (res.isErr()) {
-          return Result.err<X, E>(res.error)
+          return err<X, E>(res.error)
         }
 
-        return Result.ok<X, E>(value)
+        return resultOk<X, E>(value)
       }),
     )
   }
@@ -2040,14 +2046,14 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return new ResultAsync<T, E | F>(
       this.innerPromise.then(async (res) => {
         if (res.isErr()) {
-          return Result.err(res.error)
+          return err<T, E | F>(res.error)
         }
 
         if (await predicate(res.value)) {
-          return Result.ok(res.value)
+          return resultOk<T, E | F>(res.value)
         }
 
-        return Result.err(await onFalse(res.value))
+        return err<T, E | F>(await onFalse(res.value))
       }),
     )
   }
@@ -2063,7 +2069,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return new ResultAsync<U, E | F>(
       this.innerPromise.then((res) => {
         if (res.isErr()) {
-          return Result.err<U, E | F>(res.error)
+          return err<U, E | F>(res.error)
         }
 
         const next = f(res.value)
@@ -2111,7 +2117,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
           return next instanceof ResultAsync ? next.innerPromise : next
         }
 
-        return Result.ok<U | T, A>(res.value)
+        return resultOk<U | T, A>(res.value)
       }),
     )
   }
