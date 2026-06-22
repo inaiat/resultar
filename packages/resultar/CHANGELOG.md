@@ -1,5 +1,11 @@
 # resultar
 
+## 3.2.1
+
+### Patch Changes
+
+- Refresh the release after updating the publish install toolchain.
+
 ## 3.2.0
 
 ### Minor Changes
