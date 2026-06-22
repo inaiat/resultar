@@ -8,7 +8,7 @@ catalog:
   "@types/node": 25.9.3
   "@vitest/coverage-v8": 4.1.9
   "@vitest/ui": 4.1.9
-  fallow: 2.100.0
+  fallow: 2.89.0
   typescript-7: npm:typescript@rc
   tsx: 4.22.4
   vite-plus: 0.1.24
@@ -52,12 +52,3 @@ minimumReleaseAgeExclude:
   - "@typescript/typescript-win32-x64@7.0.1-rc"
   - typescript@7.0.1-rc
   - fallow@2.89.0
-  - '@fallow-cli/darwin-arm64@2.100.0'
-  - '@fallow-cli/darwin-x64@2.100.0'
-  - '@fallow-cli/linux-arm64-gnu@2.100.0'
-  - '@fallow-cli/linux-arm64-musl@2.100.0'
-  - '@fallow-cli/linux-x64-gnu@2.100.0'
-  - '@fallow-cli/linux-x64-musl@2.100.0'
-  - '@fallow-cli/win32-arm64-msvc@2.100.0'
-  - '@fallow-cli/win32-x64-msvc@2.100.0'
-  - fallow@2.100.0
