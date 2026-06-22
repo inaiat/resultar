@@ -105,13 +105,13 @@ describe('public API', () => {
   it('exports ResultAsync retry option types', () => {
     const task: ResultAsyncRetryTask<number, 'retry-error'> = () => resultar.errAsync('retry-error')
     const context: ResultAsyncRetryContext = { attempt: 0, nextAttempt: 1, retriesRemaining: 1 }
-    const options: ResultAsyncRetryOptions<'retry-error'> = { times: 1 }
+    const options: ResultAsyncRetryOptions<'retry-error'> = { jittered: 0.2, times: 1 }
     const fallbackOptions: ResultAsyncRetryOrElseOptions<'retry-error', 'fallback-error', string> =
       { orElse: () => resultar.err('fallback-error'), times: 1 }
 
     equal(typeof task, 'function')
     deepEqual(context, { attempt: 0, nextAttempt: 1, retriesRemaining: 1 })
-    deepEqual(options, { times: 1 })
+    deepEqual(options, { jittered: 0.2, times: 1 })
     equal(typeof fallbackOptions.orElse, 'function')
   })
 })

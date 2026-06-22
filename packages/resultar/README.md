@@ -170,11 +170,16 @@ const user = ResultAsync.retryOrElse(
   {
     times: 2,
     delayMs: ({ nextAttempt }) => nextAttempt * 100,
+    jittered: 0.5,
     while: (error) => error._tag === 'RateLimitError' || error._tag === 'ServiceUnavailableError',
     orElse: () => readCachedUser(id),
   },
 )
 ```
+
+`jittered` randomizes the computed retry delay by a percentage factor to avoid synchronized retries.
+For example, `delayMs: 100` with `jittered: 0.5` waits between `50ms` and `150ms`; omit it or use
+`0` to keep the exact delay.
 
 Race a primary and replica with cooperative loser abort:
 
@@ -640,6 +645,7 @@ const user = ResultAsync.retry(
   {
     times: 2,
     delayMs: ({ nextAttempt }) => nextAttempt * 100,
+    jittered: 0.2,
     while: (error) => error._tag === 'RateLimitError',
   },
 )
@@ -652,6 +658,9 @@ const withFallback = ResultAsync.retryOrElse(
   },
 )
 ```
+
+Use `jittered` when many callers may retry at the same time. The value is a delay spread factor:
+`jittered: 0.2` applies a random delay from `80%` to `120%` of the computed `delayMs`.
 
 For resourceful async work, use `ResultAsync.withResource` when acquisition and cleanup must stay
 paired. Cleanup is best-effort and always runs after successful acquisition, including when the use
@@ -932,8 +941,8 @@ pnpm exec resultar-lint doctor
 pnpm exec resultar-lint unpatch
 ```
 
-For TypeScript 7 native-preview projects, `resultar-tsgo` exposes a `tsgo` wrapper that runs native
-TypeScript and then Resultar lint validation.
+For TypeScript 7 projects using `typescript@rc`, `resultar-tsgo` exposes a `tsgo` wrapper that runs
+native TypeScript and then Resultar lint validation.
 
 ## API Decision Guide
 
@@ -1021,12 +1030,11 @@ This repository is a pnpm workspace:
 
 - `packages/resultar`: Resultar runtime package.
 - `packages/resultar-lint`: TypeScript language-service diagnostics and no-discard CLI.
-- `packages/resultar-tsgo`: TypeScript 7 native-preview `tsgo` wrapper plus Resultar lint
-  validation.
+- `packages/resultar-tsgo`: TypeScript 7 `typescript@rc` wrapper plus Resultar lint validation.
 - `benchmarks`: benchmark package.
 - `examples/resultar`: runnable core Resultar cookbook.
 - `examples/lint`: TypeScript 6 Resultar lint, patched `tsc`, and Vite+ / Oxlint smoke example.
-- `examples/tsgo-lint`: TypeScript 7 native-preview Resultar lint smoke example.
+- `examples/tsgo-lint`: TypeScript 7 `typescript@rc` Resultar lint smoke example.
 
 Common commands:
 

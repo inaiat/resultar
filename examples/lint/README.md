@@ -14,7 +14,7 @@ This package covers both supported TypeScript 6 linting surfaces:
 | `pnpm --filter resultar-lint-example check-ts`      | Plain TypeScript with the `resultar-lint` plugin       |
 | `pnpm --filter resultar-lint-example lint:resultar` | Resultar CLI diagnostics                               |
 
-The TypeScript 7 native preview wrapper remains in [`../tsgo-lint`](../tsgo-lint).
+The TypeScript 7 `typescript@rc` wrapper remains in [`../tsgo-lint`](../tsgo-lint).
 
 Run every lint example surface from the repository root with `pnpm test:language-service`.
 

@@ -14,8 +14,8 @@
     "resultar-tsgo": "workspace:*"
   },
   "devDependencies": {
-    "@typescript/native-preview": "catalog:",
     "resultar-lint": "workspace:*",
-    "tsx": "catalog:"
+    "tsx": "catalog:",
+    "typescript-7": "catalog:"
   }
 }

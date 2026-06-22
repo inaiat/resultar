@@ -155,7 +155,7 @@ tooling surfaces:
 | Example                                                  | Tooling surface                                                              | What it proves                                                                             |
 | -------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | [`examples/lint`](../../examples/lint)           | TypeScript plugin, CLI, patched `tsc`, and Vite+ / Oxlint `jsPlugins`        | The full rule set runs through CLI, build-time TypeScript, and Vite+ diagnostics.          |
-| [`examples/tsgo-lint`](../../examples/tsgo-lint) | TypeScript 7 native preview through `resultar-tsgo`                          | Native `tsgo` type-checks first, then Resultar lint validation runs over the same project. |
+| [`examples/tsgo-lint`](../../examples/tsgo-lint) | TypeScript 7 `typescript@rc` through `resultar-tsgo`                         | Native `tsgo` type-checks first, then Resultar lint validation runs over the same project. |
 
 Run every lint integration smoke from the repository root:
 
@@ -200,5 +200,5 @@ pnpm exec resultar-lint unpatch
 The patch command supports TypeScript 6.x and delegates to the installed `resultar-lint` runtime, so
 patched `tsc` reports the same enabled rules from `compilerOptions.plugins[]`.
 
-For TypeScript 7 native preview projects, the workspace `resultar-tsgo` wrapper runs `tsgo` first and
-then runs the same Resultar lint check. See `examples/tsgo-lint`.
+For TypeScript 7 projects using `typescript@rc`, the workspace `resultar-tsgo` wrapper runs `tsgo`
+first and then runs the same Resultar lint check. See `examples/tsgo-lint`.

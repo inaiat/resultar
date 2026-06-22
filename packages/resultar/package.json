@@ -1,6 +1,6 @@
 {
   "name": "resultar",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Result pattern for TypeScript",
   "keywords": [
     "error-handling",
@@ -62,8 +62,8 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "@vitest/coverage-v8": "^4.1.8",
-    "@vitest/ui": "^4.1.8",
+    "@vitest/coverage-v8": "catalog:",
+    "@vitest/ui": "catalog:",
     "fallow": "catalog:",
     "tsx": "catalog:",
     "typescript": "^6.0.3",

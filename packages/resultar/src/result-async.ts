@@ -113,6 +113,7 @@ type ResultAsyncRetryTaskErr<Task> = Task extends ResultAsyncRetryTask<unknown, 
 type ResultAsyncRetryDelay = number | ((context: ResultAsyncRetryContext) => number)
 export interface ResultAsyncRetryOptions<E> {
   readonly delayMs?: ResultAsyncRetryDelay
+  readonly jittered?: number
   readonly onRetry?: (error: E, context: ResultAsyncRetryContext) => void | Promise<void>
   readonly signal?: ResultAsyncAbortSignal
   readonly times: number
@@ -558,21 +559,65 @@ const validateResultAsyncRetryDelayValue = (delayMs: number): void => {
   }
 }
 
+const validateResultAsyncRetryJittered = (jittered: number): void => {
+  if (!Number.isFinite(jittered) || jittered < 0) {
+    throw createIllegalArgumentException(
+      'ResultAsync retry jittered must be a non-negative finite number',
+    )
+  }
+}
+
+const validateResultAsyncRetryJitterRandomValue = (value: number): void => {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw createIllegalArgumentException(
+      'ResultAsync retry jitter random value must be a finite number between 0 and 1',
+    )
+  }
+}
+
+const validateResultAsyncRetryStaticJittered = (jittered: number | undefined): void => {
+  if (jittered !== undefined) {
+    validateResultAsyncRetryJittered(jittered)
+  }
+}
+
 const validateResultAsyncRetryStaticDelay = (delay: ResultAsyncRetryDelay | undefined): void => {
   if (typeof delay === 'number') {
     validateResultAsyncRetryDelayValue(delay)
   }
 }
 
+const getResultAsyncRetryJitterRandom = (): number => {
+  const value = Math.random()
+
+  validateResultAsyncRetryJitterRandomValue(value)
+
+  return value
+}
+
+const applyResultAsyncRetryJitter = (delayMs: number, jittered: number | undefined): number => {
+  if (jittered === undefined || jittered === 0 || delayMs === 0) {
+    return delayMs
+  }
+
+  const random = getResultAsyncRetryJitterRandom()
+  const range = delayMs * jittered
+  const min = Math.max(0, delayMs - range)
+  const max = delayMs + range
+
+  return min + (max - min) * random
+}
+
 const normalizeResultAsyncRetryDelay = (
   delay: ResultAsyncRetryDelay | undefined,
+  jittered: number | undefined,
   context: ResultAsyncRetryContext,
 ): number => {
   const delayMs = typeof delay === 'function' ? delay(context) : (delay ?? 0)
 
   validateResultAsyncRetryDelayValue(delayMs)
 
-  return delayMs
+  return applyResultAsyncRetryJitter(delayMs, jittered)
 }
 
 const waitResultAsyncRetryDelay = async (
@@ -630,6 +675,7 @@ const runResultAsyncRetryAttempts = async <T, E, U, F>(
 ): Promise<Result<T | U, F | AbortError>> => {
   validateResultAsyncRetryTimes(options.times)
   validateResultAsyncRetryStaticDelay(options.delayMs)
+  validateResultAsyncRetryStaticJittered(options.jittered)
 
   const signal: ResultAsyncAbortSignal = options.signal ?? new AbortController().signal
   let attempt = 0
@@ -659,7 +705,7 @@ const runResultAsyncRetryAttempts = async <T, E, U, F>(
     // eslint-disable-next-line no-await-in-loop
     await callResultAsyncRetryOnRetry(options, result.error, context)
 
-    const delayMs = normalizeResultAsyncRetryDelay(options.delayMs, context)
+    const delayMs = normalizeResultAsyncRetryDelay(options.delayMs, options.jittered, context)
     // eslint-disable-next-line no-await-in-loop
     const delayResult = await waitResultAsyncRetryDelay(delayMs, signal)
 

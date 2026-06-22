@@ -63,8 +63,8 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "@vitest/coverage-v8": "^4.1.8",
-    "@vitest/ui": "^4.1.8",
+    "@vitest/coverage-v8": "catalog:",
+    "@vitest/ui": "catalog:",
     "tsx": "catalog:",
     "typescript": "^6.0.3",
     "vite-plus": "catalog:"

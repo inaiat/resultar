@@ -32,8 +32,8 @@ run(['run', 'prepare'])
 
 const version = run(['exec', 'tsgo', '--version'])
 
-if (!version.output.includes('7.0.0')) {
-  throw new Error(`Expected tsgo to use the TypeScript 7 native preview\n${version.output}`)
+if (!/Version 7\.0\./.test(version.output)) {
+  throw new Error(`Expected tsgo to use the TypeScript 7 compiler\n${version.output}`)
 }
 
 const lint = run(['run', 'lint:resultar'], true)

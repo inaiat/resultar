@@ -14,8 +14,8 @@ const resolvePackage = (specifier: string): string => {
   }
 };
 
-const nativePackageJson = resolvePackage("@typescript/native-preview/package.json");
-const nativeTsgoBin = join(dirname(nativePackageJson), "bin/tsgo.js");
+const typeScript7PackageJson = resolvePackage("typescript-7/package.json");
+const typeScript7TscBin = join(dirname(typeScript7PackageJson), "bin/tsc");
 const resultarLintBin = join(dirname(resolvePackage("resultar-lint")), "cli.js");
 
 const passthroughArgs = new Set(["--help", "-h", "--version", "-v"]);
@@ -50,7 +50,7 @@ const runNode = (script: string, args: readonly string[]): number => {
 };
 
 const args = process.argv.slice(2);
-const tsgoStatus = runNode(nativeTsgoBin, args);
+const tsgoStatus = runNode(typeScript7TscBin, args);
 
 if (tsgoStatus !== 0 || shouldSkipNoDiscard(args)) {
   process.exitCode = tsgoStatus;

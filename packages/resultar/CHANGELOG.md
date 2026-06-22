@@ -1,5 +1,11 @@
 # resultar
 
+## 3.2.0
+
+### Minor Changes
+
+- Add opt-in numeric `jittered` retry support to `ResultAsync.retry` and `ResultAsync.retryOrElse`.
+
 ## 3.1.0
 
 ### Minor Changes

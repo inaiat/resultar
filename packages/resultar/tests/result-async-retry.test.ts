@@ -1,6 +1,6 @@
 import { deepEqual, equal, ok as isTrue, rejects } from 'node:assert'
 
-import { describe, expectTypeOf, it } from 'vite-plus/test'
+import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
 
 import type { ResultAsyncRetryContext, ResultAsyncRetryTask, AbortError } from '../src/index.js'
 
@@ -146,6 +146,71 @@ describe('ResultAsync retry helpers', () => {
     isTrue(Date.now() - startedAt >= 2)
   })
 
+  it('applies jittered retry delays', async () => {
+    vi.useFakeTimers()
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.75)
+    let calls = 0
+
+    try {
+      const resultPromise = ResultAsync.retry(
+        () => {
+          calls += 1
+
+          return calls === 1
+            ? ResultAsync.errAsync<string, 'transient'>('transient')
+            : ResultAsync.okAsync<string, 'transient'>('ok')
+        },
+        { delayMs: 100, jittered: 0.5, times: 1 },
+      )
+
+      await vi.advanceTimersByTimeAsync(124)
+      equal(calls, 1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      const result = await resultPromise
+
+      isTrue(result.isOk())
+      equal(result.value, 'ok')
+      equal(calls, 2)
+    } finally {
+      randomSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not apply jitter when jittered is zero', async () => {
+    vi.useFakeTimers()
+    const randomSpy = vi.spyOn(Math, 'random')
+    let calls = 0
+
+    try {
+      const resultPromise = ResultAsync.retry(
+        () => {
+          calls += 1
+
+          return calls === 1
+            ? ResultAsync.errAsync<string, 'transient'>('transient')
+            : ResultAsync.okAsync<string, 'transient'>('ok')
+        },
+        { delayMs: 100, jittered: 0, times: 1 },
+      )
+
+      await vi.advanceTimersByTimeAsync(99)
+      equal(calls, 1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      const result = await resultPromise
+
+      isTrue(result.isOk())
+      equal(result.value, 'ok')
+      equal(calls, 2)
+      equal(randomSpy.mock.calls.length, 0)
+    } finally {
+      randomSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('ignores onRetry callback failures', async () => {
     const result = await ResultAsync.retry(
       (attempt) =>
@@ -182,6 +247,29 @@ describe('ResultAsync retry helpers', () => {
         }),
       (error) => error instanceof Error && error.name === 'IllegalArgumentException',
     )
+    await rejects(
+      async () => await ResultAsync.retry(okTask('ok'), { jittered: Number.NaN, times: 1 }),
+      (error) => error instanceof Error && error.name === 'IllegalArgumentException',
+    )
+    await rejects(
+      async () => await ResultAsync.retry(okTask('ok'), { jittered: -1, times: 1 }),
+      (error) => error instanceof Error && error.name === 'IllegalArgumentException',
+    )
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(2)
+
+    try {
+      await rejects(
+        async () =>
+          await ResultAsync.retry(() => ResultAsync.errAsync<string, 'transient'>('transient'), {
+            delayMs: 1,
+            jittered: 0.5,
+            times: 1,
+          }),
+        (error) => error instanceof Error && error.name === 'IllegalArgumentException',
+      )
+    } finally {
+      randomSpy.mockRestore()
+    }
   })
 
   it('returns AbortError when aborted before the first attempt', async () => {

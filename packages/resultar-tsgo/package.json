@@ -1,7 +1,7 @@
 {
   "name": "resultar-tsgo",
   "version": "3.1.0",
-  "description": "Resultar no-discard wrapper for the TypeScript 7 native preview tsgo binary",
+  "description": "Resultar no-discard wrapper for the TypeScript 7 native compiler",
   "homepage": "https://github.com/inaiat/resultar",
   "bugs": {
     "url": "https://github.com/inaiat/resultar/issues"
@@ -40,13 +40,13 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "@typescript/native-preview": "catalog:",
     "tsx": "catalog:",
     "typescript": "^6.0.3",
+    "typescript-7": "catalog:",
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "@typescript/native-preview": ">=7"
+    "typescript-7": ">=7.0.0-rc"
   },
   "engines": {
     "node": ">=24"
