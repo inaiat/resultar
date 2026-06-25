@@ -60,6 +60,18 @@ describe('tagged errors', async () => {
     equal(error.source, 'users')
     deepEqual(error.fingerprint, ['UserNotFoundError', 'User $id not found in $source'])
     equal(error.messageTemplate, 'User $id not found in $source')
+
+    const idDescriptor = Object.getOwnPropertyDescriptor(error, 'id')
+
+    isTrue(idDescriptor)
+    deepEqual(
+      {
+        configurable: idDescriptor.configurable,
+        enumerable: idDescriptor.enumerable,
+        writable: idDescriptor.writable,
+      },
+      { configurable: true, enumerable: true, writable: false },
+    )
   })
 
   it('keeps causes and finds nested causes by class', () => {
@@ -119,10 +131,14 @@ describe('tagged errors', async () => {
   it('supports dynamic messages when the message template is omitted', () => {
     const error = new DynamicMessageError({ message: 'Dynamic failure' })
     const result = DynamicMessageError.err({ message: 'Result failure' })
+    const RuntimeDynamicError = createTaggedError({ name: 'RuntimeDynamicError' })
+    const runtimeError = new RuntimeDynamicError({ message: 'Runtime failure' })
 
     equal(error.message, 'Dynamic failure')
+    equal('cause' in error, false)
     equal(error.messageTemplate, '$message')
     deepEqual(error.fingerprint, ['DynamicMessageError', '$message'])
+    equal(runtimeError.message, 'Runtime failure')
     isTrue(result.isErr())
     equal(result.error.message, 'Result failure')
   })
@@ -177,12 +193,57 @@ describe('tagged errors', async () => {
     equal(message, 'fallback: Database operation write failed')
   })
 
+  it('does not treat untagged errors with spoofed tag shapes as tagged matches', () => {
+    const missingTag = new Error('missing tag')
+    const numericTag = new Error('numeric tag')
+
+    Object.defineProperty(numericTag, '_tag', { configurable: true, value: 123 })
+
+    equal(
+      matchError(missingTag, {
+        Error: (error: Error) => `error: ${error.message}`,
+        undefined: () => 'bad undefined tag',
+      } as never),
+      'error: missing tag',
+    )
+    equal(
+      matchError(numericTag, {
+        123: () => 'bad numeric tag',
+        Error: (error: Error) => `error: ${error.message}`,
+      } as never),
+      'error: numeric tag',
+    )
+    equal(
+      matchErrorPartial(
+        missingTag,
+        { undefined: () => 'bad undefined tag' } as never,
+        (error) => `fallback: ${error.message}`,
+      ),
+      'fallback: missing tag',
+    )
+    equal(
+      matchErrorPartial(
+        numericTag,
+        { 123: () => 'bad numeric tag' } as never,
+        (error) => `fallback: ${error.message}`,
+      ),
+      'fallback: numeric tag',
+    )
+  })
+
   it('uses static guards and serializes predictable metadata', () => {
     const cause = new Error('root')
     const error = new UserNotFoundError({ cause, id: '123', source: 'users' })
+    const causeLikeProp = new UserNotFoundError({ id: '456', source: 'users' })
     const spoofed = new Error('spoofed')
 
     Object.defineProperty(spoofed, '_tag', { configurable: true, value: 'UserNotFoundError' })
+    Object.defineProperty(error, 'cause', { configurable: true, enumerable: true, value: cause })
+    Object.defineProperty(error, 'stack', {
+      configurable: true,
+      enumerable: true,
+      value: 'spoofed stack',
+    })
 
     isTrue(UserNotFoundError.is(error))
     equal(UserNotFoundError.is(spoofed), false)
@@ -197,6 +258,16 @@ describe('tagged errors', async () => {
       name: 'UserNotFoundError',
       source: 'users',
     })
+
+    Object.defineProperty(causeLikeProp, 'cause', {
+      configurable: true,
+      enumerable: true,
+      value: undefined,
+    })
+
+    const json = causeLikeProp.toJSON() as Record<string, unknown>
+
+    equal('cause' in json, false)
   })
 
   it('rejects reserved template variables and ignores reserved runtime props', () => {

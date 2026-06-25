@@ -43,8 +43,8 @@ Use it when expected failures should be impossible to miss:
 - Ignored `Result` values can be reported by a type-aware no-discard check.
 
 Resultar began as an initial fork of `neverthrow`. The v3 line keeps the explicit wrapper model,
-then leans into Resultar-specific tagged errors, strict service-boundary types, TypeScript 6
-support, and ESM-only packaging.
+then leans into Resultar-specific tagged errors, strict service-boundary types, TypeScript 7-first
+diagnostics, and ESM-only packaging.
 
 ## Install
 
@@ -59,7 +59,7 @@ npm install resultar
 ## Requirements
 
 - Node.js 24+
-- TypeScript 6+
+- TypeScript 7 for the canonical Resultar diagnostics workflow
 - ESM only
 
 ```ts
@@ -68,6 +68,21 @@ import type { StrictResult } from 'resultar'
 ```
 
 CommonJS `require('resultar')` is not exported.
+
+## Mutation Testing
+
+The core runtime package has a scoped Stryker setup for mutation testing:
+
+```sh
+pnpm --filter resultar test:mutation
+```
+
+The setup lives in [`stryker.conf.json`](./stryker.conf.json) and is intentionally separate from
+`check:full`. It mutates the central runtime files under `src/`, uses the Vitest runner with
+per-test coverage, stores incremental state under `reports/`, and keeps baseline thresholds
+report-only while the mutation score is established. The dedicated
+[`vitest-stryker.config.ts`](./vitest-stryker.config.ts) maps `vite-plus/test` to `vitest` so
+Stryker can run the same tests without the `vp test` bootstrap.
 
 ## Why Teams Use It
 
@@ -120,7 +135,7 @@ in normal TypeScript.
 | Batch work needs backpressure without a framework | `ResultAsync.forEach` and mapped `validateAll` with `{ concurrency }` |
 | Resourceful work needs cleanup on every path | `ResultAsync.withResource` and native `AsyncIterable<Result<T, E>>` recipes |
 | Boundary handlers miss cases | `matchTags` for exhaustive tagged-error handling |
-| Results are easy to ignore | `resultar-lint check` and the `resultar-lint` TypeScript plugin |
+| Results are easy to ignore | `resultar-check` and the `resultar-check` TypeScript plugin |
 | You do not want another application runtime | A small ESM library around explicit values |
 
 Nested `try/catch` often masks the error the caller actually needs:
@@ -886,19 +901,19 @@ const config = safeTry({
 
 ## No-Discard Validation
 
-Resultar values should not be ignored. Install `resultar-lint` to report discarded `Result` and
-`ResultAsync` values.
+Resultar values should not be ignored. Use `resultar-check` to run TypeScript 7 and Resultar
+diagnostics through one command.
 
 ```sh
-pnpm add -D resultar-lint typescript
+pnpm add -D resultar-check typescript-7@npm:typescript@rc
 ```
 
-Add a lint-like script:
+Add a check script:
 
 ```json
 {
   "scripts": {
-    "lint:resultar": "resultar-lint check --project tsconfig.json"
+    "check": "resultar-check -p tsconfig.json --noEmit"
   }
 }
 ```
@@ -922,27 +937,18 @@ The default mode is neverthrow-style `must-use`: it also reports assigned `Resul
 only passed around and never consumed with `match`, `unwrapOr`, `_unsafeUnwrap`, `isOk`, `isErr`,
 returned, or explicitly discarded. Use `--mode direct` for the lower-noise expression-only check.
 
-For editor diagnostics, enable the TypeScript language-service plugin:
+Configure Resultar rules in `tsconfig.json`:
 
 ```json
 {
   "compilerOptions": {
-    "plugins": [{ "name": "resultar-lint", "noDiscard": "error" }]
+    "plugins": [{ "name": "resultar-check", "noDiscard": "error" }]
   }
 }
 ```
 
-TypeScript language-service plugins are editor-only by default. To make `tsc` report Resultar
-diagnostics during builds, patch the local TypeScript installation:
-
-```sh
-pnpm exec resultar-lint patch
-pnpm exec resultar-lint doctor
-pnpm exec resultar-lint unpatch
-```
-
-For TypeScript 7 projects using `typescript@rc`, `resultar-tsgo` exposes a `tsgo` wrapper that runs
-native TypeScript and then Resultar lint validation.
+Oxlint is intentionally not part of the Resultar rules path; use it only for general linting if your
+project wants it.
 
 ## API Decision Guide
 
@@ -1021,20 +1027,19 @@ More focused material:
 - [Full guide](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md)
 - [Type-safe error handling article, English](https://github.com/inaiat/resultar/blob/main/articles/en/type-safe.md)
 - [Artigo sobre tratamento de erros type-safe, Portuguese](https://github.com/inaiat/resultar/blob/main/articles/pt/type-safe.md)
-- [resultar-lint package guide](https://github.com/inaiat/resultar/blob/main/packages/resultar-lint/README.md)
-- [resultar-tsgo package guide](https://github.com/inaiat/resultar/blob/main/packages/resultar-tsgo/README.md)
+- [resultar-check package guide](https://github.com/inaiat/resultar/blob/main/packages/resultar-check/README.md)
 
 ## Repository
 
 This repository is a pnpm workspace:
 
 - `packages/resultar`: Resultar runtime package.
-- `packages/resultar-lint`: TypeScript language-service diagnostics and no-discard CLI.
-- `packages/resultar-tsgo`: TypeScript 7 `typescript@rc` wrapper plus Resultar lint validation.
+- `packages/resultar-check`: TypeScript 7 plus Resultar validation.
+- `packages/resultar-lint`: deprecated compatibility wrapper.
+- `packages/resultar-tsgo`: deprecated compatibility wrapper for older installs.
 - `benchmarks`: benchmark package.
 - `examples/resultar`: runnable core Resultar cookbook.
-- `examples/lint`: TypeScript 6 Resultar lint, patched `tsc`, and Vite+ / Oxlint smoke example.
-- `examples/tsgo-lint`: TypeScript 7 `typescript@rc` Resultar lint smoke example.
+- `examples/lint`: TypeScript 7 `resultar-check` smoke example.
 
 Common commands:
 

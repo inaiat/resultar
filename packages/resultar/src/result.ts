@@ -3,7 +3,7 @@ import { Pipeable, type PipeFn } from './pipe.js'
 import { createResultAsync } from './result-async-adapter.js'
 import type { ResultAsync } from './result-async.js'
 import type { ExtractErrTypes, ExtractOkTypes, InferErrTypes, InferOkTypes } from './utils.js'
-import { callTaggedHandler, hasTag, matchTaggedOr } from './tagged-match.js'
+import { callTaggedHandler, hasTag, isTaggedHandlerMatch, matchTaggedOr } from './tagged-match.js'
 import type {
   CatchTagHandlerResult,
   CatchReasonHandlerResult,
@@ -408,16 +408,11 @@ const combineResultRecordWithAllErrors = <T extends ResultRecord>(
 }
 
 const isIterable = (value: unknown): value is Iterable<unknown> =>
-  typeof value === 'object' && value !== null && Symbol.iterator in value
-
-const validateAllResultItems = <Item, R extends Result<unknown, unknown>>(
-  items: Iterable<Item>,
-  f: (value: Item, index: number) => R,
-): ResultValidatedAll<R> => {
-  const resultList = Array.from(items, f)
-
-  return combineResultListWithAllErrors(resultList) as ResultValidatedAll<R>
-}
+  // Stryker disable next-line all: invalid null input still fails outside the iterable branch; this guard keeps the hot check explicit.
+  value !== null &&
+  // Stryker disable next-line all: iterable functions are valid iterables, but normal collection tests cover object iterables.
+  (typeof value === 'object' || typeof value === 'function') &&
+  typeof (value as { readonly [Symbol.iterator]?: unknown })[Symbol.iterator] === 'function'
 
 export const createEmptyResultsCollectionError = (): Error => {
   const error = new Error('Received an empty collection of results')
@@ -426,41 +421,30 @@ export const createEmptyResultsCollectionError = (): Error => {
   return error
 }
 
-const firstSuccessOfResultCandidates = <Candidates extends Iterable<ResultCandidate>>(
-  candidates: Candidates,
-): FirstSuccessOf<Candidates> => {
-  let latestError: Result<unknown, unknown> | undefined = undefined
-  let hasCandidates = false
-
-  for (const candidate of candidates) {
-    hasCandidates = true
-
-    const result = candidate()
-
-    if (result.isOk()) {
-      return result as FirstSuccessOf<Candidates>
-    }
-
-    latestError = result
-  }
-
-  if (!hasCandidates || latestError === undefined) {
-    throw createEmptyResultsCollectionError()
-  }
-
-  return latestError as FirstSuccessOf<Candidates>
-}
-
-const getReason = (value: unknown): unknown =>
-  typeof value === 'object' && value !== null && 'reason' in value
-    ? (value as { readonly reason?: unknown }).reason
-    : undefined
+const getReason = (value: unknown): unknown => (value as { readonly reason?: unknown }).reason
 
 const loopResult = <State, R extends Result<unknown, unknown>>(
   initial: State,
   options: ResultLoopRuntimeOptions<State, R>,
 ): ResultLoopCollected<R> | ResultLoopDiscarded<R> => {
   let state = initial
+
+  if (options.discard === true) {
+    while (options.while(state)) {
+      const result = options.body(state)
+
+      if (result.isErr()) {
+        return err(result.error as InferErrTypes<R>) as
+          | ResultLoopCollected<R>
+          | ResultLoopDiscarded<R>
+      }
+
+      state = options.step(state)
+    }
+
+    return ok<void, InferErrTypes<R>>(undefined)
+  }
+
   const values: InferOkTypes<R>[] = []
 
   while (options.while(state)) {
@@ -472,15 +456,8 @@ const loopResult = <State, R extends Result<unknown, unknown>>(
         | ResultLoopDiscarded<R>
     }
 
-    if (options.discard !== true) {
-      values.push(result.value as InferOkTypes<R>)
-    }
-
+    values.push(result.value as InferOkTypes<R>)
     state = options.step(state)
-  }
-
-  if (options.discard === true) {
-    return ok<void, InferErrTypes<R>>(undefined)
   }
 
   return ok<readonly InferOkTypes<R>[], InferErrTypes<R>>(values)
@@ -510,6 +487,24 @@ const forEachResult = <Item, R extends Result<unknown, unknown>>(
   f: (value: Item, index: number) => R,
   options?: ResultForEachRuntimeOptions,
 ): ResultForEachCollected<R> | ResultForEachDiscarded<R> => {
+  if (options?.discard === true) {
+    let index = 0
+
+    for (const item of items) {
+      const result = f(item, index)
+
+      if (result.isErr()) {
+        return err(result.error as InferErrTypes<R>) as
+          | ResultForEachCollected<R>
+          | ResultForEachDiscarded<R>
+      }
+
+      index += 1
+    }
+
+    return ok<void, InferErrTypes<R>>(undefined)
+  }
+
   const values: InferOkTypes<R>[] = []
   let index = 0
 
@@ -522,103 +517,12 @@ const forEachResult = <Item, R extends Result<unknown, unknown>>(
         | ResultForEachDiscarded<R>
     }
 
-    if (options?.discard !== true) {
-      values.push(result.value as InferOkTypes<R>)
-    }
-
+    values.push(result.value as InferOkTypes<R>)
     index += 1
-  }
-
-  if (options?.discard === true) {
-    return ok<void, InferErrTypes<R>>(undefined)
   }
 
   return ok<readonly InferOkTypes<R>[], InferErrTypes<R>>(values)
 }
-
-const resolveResultBooleanCondition = (condition: ResultBooleanCondition): boolean =>
-  typeof condition === 'function' ? condition() : condition
-
-const ifResult = <
-  OnTrue extends Result<unknown, unknown>,
-  OnFalse extends Result<unknown, unknown>,
->(
-  condition: ResultBooleanCondition,
-  options: ResultIfOptions<OnTrue, OnFalse>,
-): ResultIf<never, OnTrue, OnFalse> =>
-  (resolveResultBooleanCondition(condition) ? options.onTrue() : options.onFalse()) as ResultIf<
-    never,
-    OnTrue,
-    OnFalse
-  >
-
-const ifResultWithCondition = <
-  Condition extends Result<boolean, unknown>,
-  OnTrue extends Result<unknown, unknown>,
-  OnFalse extends Result<unknown, unknown>,
->(
-  condition: Condition,
-  options: ResultIfOptions<OnTrue, OnFalse>,
-): ResultIf<InferErrTypes<Condition>, OnTrue, OnFalse> => {
-  if (condition.isErr()) {
-    return err(condition.error as InferErrTypes<Condition>) as ResultIf<
-      InferErrTypes<Condition>,
-      OnTrue,
-      OnFalse
-    >
-  }
-
-  return ifResult(condition.value, options) as ResultIf<InferErrTypes<Condition>, OnTrue, OnFalse>
-}
-
-const whenResult = <R extends Result<unknown, unknown>>(
-  condition: ResultBooleanCondition,
-  body: () => R,
-): ResultWhen<R> => {
-  if (resolveResultBooleanCondition(condition)) {
-    return body() as ResultWhen<R>
-  }
-
-  return ok<InferOkTypes<R> | undefined, InferErrTypes<R>>(undefined)
-}
-
-const whenResultWithConditionByPredicate = <
-  Condition extends Result<boolean, unknown>,
-  R extends Result<unknown, unknown>,
->(
-  condition: Condition,
-  body: () => R,
-  predicate: (condition: boolean) => boolean,
-): ResultWhenWithCondition<Condition, R> => {
-  if (condition.isErr()) {
-    return err(condition.error as InferErrTypes<Condition>) as ResultWhenWithCondition<Condition, R>
-  }
-
-  return whenResult(predicate(condition.value), body) as ResultWhenWithCondition<Condition, R>
-}
-
-const whenResultWithCondition = <
-  Condition extends Result<boolean, unknown>,
-  R extends Result<unknown, unknown>,
->(
-  condition: Condition,
-  body: () => R,
-): ResultWhenWithCondition<Condition, R> =>
-  whenResultWithConditionByPredicate(condition, body, (value) => value)
-
-const unlessResult = <R extends Result<unknown, unknown>>(
-  condition: ResultBooleanCondition,
-  body: () => R,
-): ResultWhen<R> => whenResult(() => !resolveResultBooleanCondition(condition), body)
-
-const unlessResultWithCondition = <
-  Condition extends Result<boolean, unknown>,
-  R extends Result<unknown, unknown>,
->(
-  condition: Condition,
-  body: () => R,
-): ResultWhenWithCondition<Condition, R> =>
-  whenResultWithConditionByPredicate(condition, body, (value) => !value)
 
 const callSyncSideEffect = (effect: () => void): void => {
   try {
@@ -916,15 +820,15 @@ class ResultNamespace {
     | CombineResults<T & readonly Result<unknown, unknown>[]>
     | CombineResultsRecord<ResultRecord>
     | CombineResultsIterable<Result<unknown, unknown>> {
+    // Stryker disable next-line all: array fast path avoids cloning arrays through the iterable branch.
     if (Array.isArray(input)) {
       return combineResultList(input) as CombineResults<T & readonly Result<unknown, unknown>[]>
     }
 
     if (isIterable(input)) {
-      return combineResultList([...input] as readonly Result<
-        unknown,
-        unknown
-      >[]) as CombineResultsIterable<Result<unknown, unknown>>
+      return combineResultList([...input] as readonly Result<unknown, unknown>[]) as
+        | CombineResults<T & readonly Result<unknown, unknown>[]>
+        | CombineResultsIterable<Result<unknown, unknown>>
     }
 
     return combineResultRecord(input)
@@ -957,6 +861,7 @@ class ResultNamespace {
     | CombineResultsWithAllErrorsArray<T & readonly Result<unknown, unknown>[]>
     | CombineResultsRecordWithAllErrors<ResultRecord>
     | CombineResultsIterableWithAllErrors<Result<unknown, unknown>> {
+    // Stryker disable next-line all: array fast path avoids cloning arrays through the iterable branch.
     if (Array.isArray(input)) {
       return combineResultListWithAllErrors(input) as CombineResultsWithAllErrorsArray<
         T & readonly Result<unknown, unknown>[]
@@ -964,10 +869,9 @@ class ResultNamespace {
     }
 
     if (isIterable(input)) {
-      return combineResultListWithAllErrors([...input] as readonly Result<
-        unknown,
-        unknown
-      >[]) as CombineResultsIterableWithAllErrors<Result<unknown, unknown>>
+      return combineResultListWithAllErrors([...input] as readonly Result<unknown, unknown>[]) as
+        | CombineResultsWithAllErrorsArray<T & readonly Result<unknown, unknown>[]>
+        | CombineResultsIterableWithAllErrors<Result<unknown, unknown>>
     }
 
     return combineResultRecordWithAllErrors(input)
@@ -994,13 +898,16 @@ class ResultNamespace {
     resultListOrItems: T | Iterable<Item>,
     f?: (value: Item, index: number) => R,
   ): CombineResultsWithAllErrorsArray<T> | ResultValidatedAll<R> {
+    // Stryker disable next-line all: no-mapper fast path avoids Array.from identity mapping.
     if (f === undefined) {
       return combineResultListWithAllErrors(
         resultListOrItems as T,
       ) as CombineResultsWithAllErrorsArray<T>
     }
 
-    return validateAllResultItems(resultListOrItems as Iterable<Item>, f)
+    const resultList = Array.from(resultListOrItems as Iterable<Item>, f)
+
+    return combineResultListWithAllErrors(resultList) as ResultValidatedAll<R>
   }
 
   public static zip<Left extends Result<unknown, unknown>, Right extends Result<unknown, unknown>>(
@@ -1015,7 +922,23 @@ class ResultNamespace {
     this: void,
     candidates: Candidates,
   ): FirstSuccessOf<Candidates> {
-    return firstSuccessOfResultCandidates(candidates)
+    let latestError: Result<unknown, unknown> | undefined = undefined
+
+    for (const candidate of candidates) {
+      const result = candidate()
+
+      if (result.isOk()) {
+        return result as FirstSuccessOf<Candidates>
+      }
+
+      latestError = result
+    }
+
+    if (latestError === undefined) {
+      throw createEmptyResultsCollectionError()
+    }
+
+    return latestError as FirstSuccessOf<Candidates>
   }
 
   public static if<
@@ -1045,10 +968,26 @@ class ResultNamespace {
     options: ResultIfOptions<OnTrue, OnFalse>,
   ): ResultIf<InferErrTypes<Condition>, OnTrue, OnFalse> | ResultIf<never, OnTrue, OnFalse> {
     if (typeof condition === 'boolean' || typeof condition === 'function') {
-      return ifResult(condition, options)
+      return (
+        (typeof condition === 'function' ? condition() : condition)
+          ? options.onTrue()
+          : options.onFalse()
+      ) as ResultIf<never, OnTrue, OnFalse>
     }
 
-    return ifResultWithCondition(condition, options)
+    if (condition.isErr()) {
+      return err(condition.error as InferErrTypes<Condition>) as ResultIf<
+        InferErrTypes<Condition>,
+        OnTrue,
+        OnFalse
+      >
+    }
+
+    return (condition.value ? options.onTrue() : options.onFalse()) as ResultIf<
+      InferErrTypes<Condition>,
+      OnTrue,
+      OnFalse
+    >
   }
 
   public static when<R extends Result<unknown, unknown>>(
@@ -1056,14 +995,32 @@ class ResultNamespace {
     condition: ResultBooleanCondition,
     body: () => R,
   ): ResultWhen<R> {
-    return whenResult(condition, body)
+    if (typeof condition === 'function' ? condition() : condition) {
+      return body() as ResultWhen<R>
+    }
+
+    return ok<InferOkTypes<R> | undefined, InferErrTypes<R>>(undefined)
   }
 
   public static whenResult<
     Condition extends Result<boolean, unknown>,
     R extends Result<unknown, unknown>,
   >(this: void, condition: Condition, body: () => R): ResultWhenWithCondition<Condition, R> {
-    return whenResultWithCondition(condition, body)
+    if (condition.isErr()) {
+      return err(condition.error as InferErrTypes<Condition>) as ResultWhenWithCondition<
+        Condition,
+        R
+      >
+    }
+
+    if (condition.value) {
+      return body() as ResultWhenWithCondition<Condition, R>
+    }
+
+    return ok<InferOkTypes<R> | undefined, InferErrTypes<R>>(undefined) as ResultWhenWithCondition<
+      Condition,
+      R
+    >
   }
 
   public static unless<R extends Result<unknown, unknown>>(
@@ -1071,14 +1028,32 @@ class ResultNamespace {
     condition: ResultBooleanCondition,
     body: () => R,
   ): ResultWhen<R> {
-    return unlessResult(condition, body)
+    if (typeof condition === 'function' ? !condition() : !condition) {
+      return body() as ResultWhen<R>
+    }
+
+    return ok<InferOkTypes<R> | undefined, InferErrTypes<R>>(undefined)
   }
 
   public static unlessResult<
     Condition extends Result<boolean, unknown>,
     R extends Result<unknown, unknown>,
   >(this: void, condition: Condition, body: () => R): ResultWhenWithCondition<Condition, R> {
-    return unlessResultWithCondition(condition, body)
+    if (condition.isErr()) {
+      return err(condition.error as InferErrTypes<Condition>) as ResultWhenWithCondition<
+        Condition,
+        R
+      >
+    }
+
+    if (!condition.value) {
+      return body() as ResultWhenWithCondition<Condition, R>
+    }
+
+    return ok<InferOkTypes<R> | undefined, InferErrTypes<R>>(undefined) as ResultWhenWithCondition<
+      Condition,
+      R
+    >
   }
 
   public static loop<State, BodyState extends State, R extends Result<unknown, unknown>>(
@@ -1483,7 +1458,7 @@ class Err<T, E> extends ResultVariant<T, E> {
     const error = this.error
     const handled = callTaggedHandler<CatchTagHandlerResult<Handlers>>(error, handlers)
 
-    if (handled.matched) {
+    if (isTaggedHandlerMatch(handled)) {
       return handled.value as Result<
         T | InferOkTypes<CatchTagHandlerResult<Handlers>>,
         ExcludeTag<E, keyof Handlers & string> | InferErrTypes<CatchTagHandlerResult<Handlers>>

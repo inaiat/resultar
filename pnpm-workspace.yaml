@@ -5,12 +5,15 @@ packages:
   - packages/*
 
 catalog:
+  "@stryker-mutator/core": 9.6.1
+  "@stryker-mutator/vitest-runner": 9.6.1
   "@types/node": 25.9.3
   "@vitest/coverage-v8": 4.1.9
   "@vitest/ui": 4.1.9
   fallow: 2.100.0
   typescript-7: npm:typescript@rc
   tsx: 4.22.4
+  vitest: 4.1.9
   vite-plus: 0.1.24
 
 allowBuilds:
@@ -18,6 +21,8 @@ allowBuilds:
 
 strictDepBuilds: true
 trustPolicy: no-downgrade
+trustPolicyExclude:
+  - semver@6.3.1
 blockExoticSubdeps: true
 minimumReleaseAge: 10080 # 1 week
 minimumReleaseAgeExclude:

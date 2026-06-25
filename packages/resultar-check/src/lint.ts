@@ -1,5 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 import type * as ts from "typescript";
 
@@ -41,15 +43,18 @@ interface CliOptions extends NoDiscardOptions {
   readonly help: boolean;
 }
 
-const usage = `Usage: resultar-lint check [--project tsconfig.json]
+interface ResultarCheckCliOptions extends CliOptions {
+  readonly tscArgs: readonly string[];
+}
+
+const usage = `Usage: resultar-check -p tsconfig.json --noEmit
 
 Flags:
   --mode <direct|must-use>  Check mode. Defaults to tsconfig plugin noDiscardMode or must-use.
   -p, --project <path>  TypeScript project file to inspect. Defaults to tsconfig.json.
   -h, --help            Show this help message.
 
-Runs all enabled Resultar rules from tsconfig plugin options. New rules default to warning diagnostics
-in editors and still make the CLI exit non-zero when reported.
+Runs TypeScript 7 first, then all enabled Resultar rules from tsconfig plugin options.
 `;
 
 const failure = (error: Error): NoDiscardFailure => ({ error, ok: false });
@@ -59,6 +64,56 @@ const success = <Finding extends ResultarLintFinding>(
 
 const cliError = (message: string): NoDiscardFailure => failure(new Error(message));
 const requireFromPackage = createRequire(import.meta.url);
+
+const isTypeScript7Version = (version: string): boolean => version.startsWith("7.");
+
+const resolvePackageFromRoot = (rootDir: string, specifier: string): string => {
+  const requireFromRoot = createRequire(resolve(rootDir, "package.json"));
+
+  try {
+    return requireFromRoot.resolve(specifier);
+  } catch {
+    return requireFromPackage.resolve(specifier);
+  }
+};
+
+const readPackageVersion = (packageJson: string): string => {
+  const parsed = JSON.parse(readFileSync(packageJson, "utf8")) as unknown;
+
+  if (!isRecord(parsed) || typeof parsed.version !== "string") {
+    throw new TypeError(`Unable to read package version from ${packageJson}`);
+  }
+
+  return parsed.version;
+};
+
+const resolveOptionalPackage = (rootDir: string, specifier: string): string | undefined => {
+  try {
+    return resolvePackageFromRoot(rootDir, specifier);
+  } catch {
+    return undefined;
+  }
+};
+
+const resolveTypeScript7PackageJson = (
+  rootDir: string,
+): NoDiscardFailure | { readonly ok: true; readonly packageJson: string } => {
+  const candidates = ["typescript/package.json", "typescript-7/package.json"];
+
+  for (const candidate of candidates) {
+    const packageJson = resolveOptionalPackage(rootDir, candidate);
+
+    if (packageJson !== undefined && isTypeScript7Version(readPackageVersion(packageJson))) {
+      return { ok: true, packageJson };
+    }
+  }
+
+  return failure(
+    new Error(
+      "Unable to resolve TypeScript 7. Install typescript@rc or typescript-7@npm:typescript@rc in this project.",
+    ),
+  );
+};
 
 const parseArgs = (
   args: readonly string[],
@@ -116,6 +171,87 @@ const parseArgs = (
   return project === undefined
     ? { ok: true, options: mode === undefined ? { help } : { help, mode } }
     : { ok: true, options: mode === undefined ? { help, project } : { help, mode, project } };
+};
+
+const parseCheckArgs = (
+  args: readonly string[],
+): NoDiscardFailure | { readonly ok: true; readonly options: ResultarCheckCliOptions } => {
+  let mode: NoDiscardMode | undefined = undefined;
+  let project: string | undefined = undefined;
+  let help = false;
+  const tscArgs: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === undefined || arg === "") {
+      continue;
+    }
+
+    if (arg === "--help" || arg === "-h") {
+      help = true;
+      continue;
+    }
+
+    if (arg === "--mode") {
+      const nextArg = args[index + 1];
+
+      if (nextArg === undefined || nextArg === "") {
+        return cliError("--mode requires direct or must-use");
+      }
+
+      if (nextArg !== "direct" && nextArg !== "must-use") {
+        return cliError(`Unknown --mode value: ${nextArg}`);
+      }
+
+      mode = nextArg;
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--mode=")) {
+      const nextMode = arg.slice("--mode=".length);
+
+      if (nextMode !== "direct" && nextMode !== "must-use") {
+        return cliError(`Unknown --mode value: ${nextMode}`);
+      }
+
+      mode = nextMode;
+      continue;
+    }
+
+    if (arg === "--project" || arg === "-p") {
+      const nextArg = args[index + 1];
+
+      if (nextArg === undefined || nextArg === "") {
+        return cliError(`${arg} requires a path`);
+      }
+
+      project = nextArg;
+      tscArgs.push(arg, nextArg);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--project=")) {
+      project = arg.slice("--project=".length);
+    }
+
+    tscArgs.push(arg);
+  }
+
+  if (project === "") {
+    return cliError("--project requires a path");
+  }
+
+  if (project === undefined) {
+    return { ok: true, options: mode === undefined ? { help, tscArgs } : { help, mode, tscArgs } };
+  }
+
+  return {
+    ok: true,
+    options: mode === undefined ? { help, project, tscArgs } : { help, mode, project, tscArgs },
+  };
 };
 
 const readProject = (
@@ -186,22 +322,16 @@ const getProjectRuleOptions = (config: unknown): Partial<ResultarRulesOptions> |
 };
 
 const resolveTypeScriptApi = (
-  rootDir: string,
+  _rootDir: string,
 ): NoDiscardFailure | { readonly ok: true; readonly tsApi: TypeScriptApi } => {
-  const requireFromRoot = createRequire(resolve(rootDir, "package.json"));
-
   try {
-    return { ok: true, tsApi: requireFromRoot("typescript") as TypeScriptApi };
+    return { ok: true, tsApi: requireFromPackage("typescript") as TypeScriptApi };
   } catch {
-    try {
-      return { ok: true, tsApi: requireFromPackage("typescript") as TypeScriptApi };
-    } catch {
-      return failure(
-        new Error(
-          "Unable to resolve TypeScript. Install typescript in this project or run resultar-lint check from a project with local TypeScript.",
-        ),
-      );
-    }
+    return failure(
+      new Error(
+        "Unable to resolve the internal TypeScript diagnostics API bundled with resultar-check.",
+      ),
+    );
   }
 };
 
@@ -279,6 +409,75 @@ export const runResultarLintCli = (args: readonly string[] = process.argv.slice(
   if (parsedArgs.options.help) {
     process.stdout.write(usage);
     return 0;
+  }
+
+  const result =
+    parsedArgs.options.project === undefined
+      ? findResultarLintFindings({ mode: parsedArgs.options.mode, rootDir })
+      : findResultarLintFindings({
+          mode: parsedArgs.options.mode,
+          project: parsedArgs.options.project,
+          rootDir,
+        });
+
+  if (!result.ok) {
+    process.stderr.write(`${result.error.message}\n`);
+    return 1;
+  }
+
+  if (result.findings.length === 0) {
+    return 0;
+  }
+
+  process.stderr.write(
+    `${result.findings.map((finding) => formatFinding(finding, rootDir)).join("\n")}\n`,
+  );
+
+  return 1;
+};
+
+const passthroughArgs = new Set(["--version", "-v"]);
+
+const shouldSkipResultarDiagnostics = (args: readonly string[]): boolean =>
+  args.some((arg) => passthroughArgs.has(arg));
+
+const runNode = (script: string, args: readonly string[]): number => {
+  const result = spawnSync(process.execPath, [script, ...args], { stdio: "inherit" });
+
+  if (result.error !== undefined) {
+    throw result.error;
+  }
+
+  return result.status ?? 1;
+};
+
+export const runResultarCheckCli = (args: readonly string[] = process.argv.slice(2)): number => {
+  const rootDir = process.cwd();
+  const parsedArgs = parseCheckArgs(args);
+
+  if (!parsedArgs.ok) {
+    process.stderr.write(`${parsedArgs.error.message}\n`);
+    return 1;
+  }
+
+  if (parsedArgs.options.help) {
+    process.stdout.write(usage);
+    return 0;
+  }
+
+  const resolvedTypeScript = resolveTypeScript7PackageJson(rootDir);
+
+  if (!resolvedTypeScript.ok) {
+    process.stderr.write(`${resolvedTypeScript.error.message}\n`);
+    return 1;
+  }
+
+  const tscStatus = runNode(join(dirname(resolvedTypeScript.packageJson), "bin/tsc"), [
+    ...parsedArgs.options.tscArgs,
+  ]);
+
+  if (tscStatus !== 0 || shouldSkipResultarDiagnostics(args)) {
+    return tscStatus;
   }
 
   const result =

@@ -54,6 +54,7 @@
     "test:watch": "vp test watch",
     "test:ui": "vp test --ui --watch",
     "test:cov": "vp test run --coverage",
+    "test:mutation": "stryker run",
     "prepare": "vp config || true",
     "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts",
     "sync:jsr-version": "node scripts/sync-jsr-version.mjs && vp fmt jsr.json",
@@ -61,13 +62,16 @@
     "bench:neverthrow": "pnpm --filter resultar-benchmarks bench:neverthrow"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "catalog:",
+    "@stryker-mutator/vitest-runner": "catalog:",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "@vitest/ui": "catalog:",
     "fallow": "catalog:",
     "tsx": "catalog:",
     "typescript": "^6.0.3",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
     "typescript": ">=6.0.0"

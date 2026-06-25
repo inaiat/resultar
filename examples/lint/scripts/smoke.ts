@@ -42,18 +42,6 @@ const pnpm = (
   options: { readonly cwd: string; readonly expectFailure?: boolean },
 ) => run("pnpm", args, options);
 
-const runTsc = (expectFailure = false): CommandResult =>
-  pnpm(["run", "check-ts"], {
-    cwd: exampleDir,
-    expectFailure,
-  });
-
-const runResultarLint = (expectFailure = false): CommandResult =>
-  pnpm(["run", "lint:resultar"], {
-    cwd: exampleDir,
-    expectFailure,
-  });
-
 const assertIncludes = (output: string, expected: string, message: string): void => {
   if (!output.includes(expected)) {
     throw new Error(`${message}\n${output}`);
@@ -71,6 +59,7 @@ const expectedRules = [
   "resultar/prefer-map-err",
   "resultar/prefer-and-then",
   "resultar/typed-catch-mapper",
+  "resultar/no-unsafe-await",
   "resultar/no-try-catch-in-safe-try",
   "resultar/yield-star-in-safe-try",
   "resultar/unsafe-result-type-assertion",
@@ -81,81 +70,35 @@ const expectedRules = [
 ] as const;
 
 pnpm(["--filter", "resultar", "build"], { cwd: workspaceDir });
-pnpm(["--filter", "resultar-lint", "build"], { cwd: workspaceDir });
+pnpm(["--filter", "resultar-check", "build"], { cwd: workspaceDir });
 
-const tscVersion = pnpm(["exec", "tsc", "--version"], { cwd: exampleDir });
+const version = pnpm(["exec", "resultar-check", "--version"], { cwd: exampleDir });
 
-if (!tscVersion.output.trim().startsWith("Version 6.")) {
-  throw new Error(`Expected TypeScript 6.x in the language-service example\n${tscVersion.output}`);
+if (!/Version 7\.0\./.test(version.output)) {
+  throw new Error(`Expected resultar-check to use TypeScript 7\n${version.output}`);
 }
 
-try {
-  pnpm(["exec", "resultar-lint", "unpatch"], {
-    cwd: exampleDir,
-  });
+const lint = pnpm(["run", "check"], { cwd: exampleDir, expectFailure: true });
 
-  runTsc();
+assertIncludes(
+  lint.output,
+  "resultar/no-discard",
+  "Expected check command to report discarded Resultar values",
+);
+assertIncludes(
+  lint.output,
+  "assigned to `unhandled`",
+  "Expected check command to report must-use assignment diagnostics",
+);
 
-  const lint = runResultarLint(true);
-  assertIncludes(
-    lint.output,
-    "resultar/no-discard",
-    "Expected lint-like command to report discarded Resultar values",
-  );
-  assertIncludes(
-    lint.output,
-    "assigned to `unhandled`",
-    "Expected lint-like command to report must-use assignment diagnostics",
-  );
-
-  for (const rule of expectedRules) {
-    assertIncludes(lint.output, rule, `Expected lint-like command to report ${rule}`);
-  }
-  assertExcludes(
-    lint.output,
-    "resultar-clean.ts",
-    "Expected clean Resultar example file to have no lint diagnostics",
-  );
-
-  pnpm(["exec", "resultar-lint", "patch"], {
-    cwd: exampleDir,
-  });
-
-  const secondPatch = pnpm(["exec", "resultar-lint", "patch"], { cwd: exampleDir });
-
-  if (!secondPatch.output.includes("already patched")) {
-    throw new Error(`Expected second patch to be a no-op\n${secondPatch.output}`);
-  }
-
-  const patchedTsc = runTsc(true);
-  assertIncludes(
-    patchedTsc.output,
-    "[resultar/noDiscard]",
-    "Patched TypeScript 6 tsc did not emit Resultar no-discard diagnostics",
-  );
-  for (const rule of expectedRules.filter((rule) => rule !== "resultar/no-discard")) {
-    assertIncludes(
-      patchedTsc.output,
-      `[${rule}]`,
-      `Patched TypeScript 6 tsc did not emit ${rule} diagnostics`,
-    );
-  }
-  assertIncludes(
-    patchedTsc.output,
-    "assigned to `unhandled`",
-    "Patched TypeScript 6 tsc did not emit Resultar must-use diagnostics",
-  );
-  assertExcludes(
-    patchedTsc.output,
-    "resultar-clean.ts",
-    "Expected clean Resultar example file to have no patched tsc diagnostics",
-  );
-} finally {
-  pnpm(["exec", "resultar-lint", "unpatch"], {
-    cwd: exampleDir,
-  });
+for (const rule of expectedRules) {
+  assertIncludes(lint.output, rule, `Expected check command to report ${rule}`);
 }
 
-runTsc();
+assertExcludes(
+  lint.output,
+  "resultar-clean.ts",
+  "Expected clean Resultar example file to have no diagnostics",
+);
 
-process.stdout.write("Resultar language-service example smoke passed.\n");
+process.stdout.write("Resultar lint TS7 example smoke passed.\n");

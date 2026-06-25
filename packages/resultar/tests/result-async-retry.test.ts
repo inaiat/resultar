@@ -2,7 +2,12 @@ import { deepEqual, equal, ok as isTrue, rejects } from 'node:assert'
 
 import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
 
-import type { ResultAsyncRetryContext, ResultAsyncRetryTask, AbortError } from '../src/index.js'
+import type {
+  ResultAsyncAbortSignal,
+  ResultAsyncRetryContext,
+  ResultAsyncRetryTask,
+  AbortError,
+} from '../src/index.js'
 
 import { Result, ResultAsync, isAbortError } from '../src/index.js'
 
@@ -15,6 +20,9 @@ const okTask =
   <T, E = never>(value: T): ResultAsyncRetryTask<T, E> =>
   () =>
     ResultAsync.okAsync<T, E>(value)
+
+const illegalArgument = (message: string) => (error: unknown) =>
+  error instanceof Error && error.name === 'IllegalArgumentException' && error.message === message
 
 describe('ResultAsync retry helpers', () => {
   it('succeeds on the first attempt without retrying', async () => {
@@ -75,6 +83,21 @@ describe('ResultAsync retry helpers', () => {
 
     isTrue(result.isErr())
     equal(result.error, 'error-2')
+  })
+
+  it('does not retry when times is zero', async () => {
+    const attempts: number[] = []
+    const result = await ResultAsync.retry(
+      (attempt) => {
+        attempts.push(attempt)
+        return ResultAsync.errAsync<number, `error-${number}`>(`error-${attempt}`)
+      },
+      { times: 0 },
+    )
+
+    isTrue(result.isErr())
+    equal(result.error, 'error-0')
+    deepEqual(attempts, [0])
   })
 
   it('does not retry when the error predicate rejects the error', async () => {
@@ -211,6 +234,138 @@ describe('ResultAsync retry helpers', () => {
     }
   })
 
+  it('does not apply jitter when delay is zero', async () => {
+    const randomSpy = vi.spyOn(Math, 'random')
+    let calls = 0
+
+    try {
+      const result = await ResultAsync.retry(
+        () => {
+          calls += 1
+
+          return calls === 1
+            ? ResultAsync.errAsync<string, 'transient'>('transient')
+            : ResultAsync.okAsync<string, 'transient'>('ok')
+        },
+        { delayMs: 0, jittered: 0.5, times: 1 },
+      )
+
+      isTrue(result.isOk())
+      equal(result.value, 'ok')
+      equal(randomSpy.mock.calls.length, 0)
+    } finally {
+      randomSpy.mockRestore()
+    }
+
+    const negativeRandomSpy = vi.spyOn(Math, 'random').mockReturnValue(-0.1)
+
+    try {
+      await rejects(
+        async () =>
+          await ResultAsync.retry(() => ResultAsync.errAsync<string, 'transient'>('transient'), {
+            delayMs: 1,
+            jittered: 0.5,
+            times: 1,
+          }),
+        illegalArgument(
+          'ResultAsync retry jitter random value must be a finite number between 0 and 1',
+        ),
+      )
+    } finally {
+      negativeRandomSpy.mockRestore()
+    }
+  })
+
+  it('does not subscribe to abort when retry delay is zero', async () => {
+    let calls = 0
+    const signal: ResultAsyncAbortSignal = {
+      aborted: false,
+      addEventListener: () => {
+        throw new Error('Zero retry delay should not subscribe to abort')
+      },
+      removeEventListener: () => undefined,
+    }
+
+    const result = await ResultAsync.retry(
+      () => {
+        calls += 1
+
+        return calls === 1
+          ? ResultAsync.errAsync<string, 'transient'>('transient')
+          : ResultAsync.okAsync<string, 'transient'>('ok')
+      },
+      { delayMs: 0, signal, times: 1 },
+    )
+
+    isTrue(result.isOk())
+    equal(result.value, 'ok')
+    equal(calls, 2)
+  })
+
+  it('accepts the upper random jitter boundary', async () => {
+    vi.useFakeTimers()
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(1)
+    let calls = 0
+
+    try {
+      const resultPromise = ResultAsync.retry(
+        () => {
+          calls += 1
+
+          return calls === 1
+            ? ResultAsync.errAsync<string, 'transient'>('transient')
+            : ResultAsync.okAsync<string, 'transient'>('ok')
+        },
+        { delayMs: 100, jittered: 0.5, times: 1 },
+      )
+
+      await vi.advanceTimersByTimeAsync(149)
+      equal(calls, 1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      const result = await resultPromise
+
+      isTrue(result.isOk())
+      equal(result.value, 'ok')
+      equal(calls, 2)
+    } finally {
+      randomSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('accepts the lower random jitter boundary', async () => {
+    vi.useFakeTimers()
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+    let calls = 0
+
+    try {
+      const resultPromise = ResultAsync.retry(
+        () => {
+          calls += 1
+
+          return calls === 1
+            ? ResultAsync.errAsync<string, 'transient'>('transient')
+            : ResultAsync.okAsync<string, 'transient'>('ok')
+        },
+        { delayMs: 100, jittered: 0.5, times: 1 },
+      )
+
+      await vi.advanceTimersByTimeAsync(49)
+      equal(calls, 1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      const result = await resultPromise
+
+      isTrue(result.isOk())
+      equal(result.value, 'ok')
+      equal(calls, 2)
+    } finally {
+      randomSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('ignores onRetry callback failures', async () => {
     const result = await ResultAsync.retry(
       (attempt) =>
@@ -232,12 +387,12 @@ describe('ResultAsync retry helpers', () => {
   it('rejects invalid retry options with IllegalArgumentException', async () => {
     await rejects(
       async () => await ResultAsync.retry(okTask('ok'), { times: -1 }),
-      (error) => error instanceof Error && error.name === 'IllegalArgumentException',
+      illegalArgument('ResultAsync retry times must be a non-negative integer'),
     )
     await rejects(
       async () =>
         await ResultAsync.retry(okTask('ok'), { delayMs: Number.POSITIVE_INFINITY, times: 1 }),
-      (error) => error instanceof Error && error.name === 'IllegalArgumentException',
+      illegalArgument('ResultAsync retry delayMs must be a non-negative finite number'),
     )
     await rejects(
       async () =>
@@ -245,15 +400,15 @@ describe('ResultAsync retry helpers', () => {
           delayMs: () => -1,
           times: 1,
         }),
-      (error) => error instanceof Error && error.name === 'IllegalArgumentException',
+      illegalArgument('ResultAsync retry delayMs must be a non-negative finite number'),
     )
     await rejects(
       async () => await ResultAsync.retry(okTask('ok'), { jittered: Number.NaN, times: 1 }),
-      (error) => error instanceof Error && error.name === 'IllegalArgumentException',
+      illegalArgument('ResultAsync retry jittered must be a non-negative finite number'),
     )
     await rejects(
       async () => await ResultAsync.retry(okTask('ok'), { jittered: -1, times: 1 }),
-      (error) => error instanceof Error && error.name === 'IllegalArgumentException',
+      illegalArgument('ResultAsync retry jittered must be a non-negative finite number'),
     )
     const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(2)
 
@@ -265,7 +420,9 @@ describe('ResultAsync retry helpers', () => {
             jittered: 0.5,
             times: 1,
           }),
-        (error) => error instanceof Error && error.name === 'IllegalArgumentException',
+        illegalArgument(
+          'ResultAsync retry jitter random value must be a finite number between 0 and 1',
+        ),
       )
     } finally {
       randomSpy.mockRestore()
@@ -283,6 +440,26 @@ describe('ResultAsync retry helpers', () => {
 
     isTrue(result.isErr())
     isTrue(isAbortError(result.error))
+    equal(result.error.message, 'ResultAsync retry aborted')
+    equal(result.error.cause, controller.signal.reason)
+  })
+
+  it('returns AbortError without cause when a custom signal has no reason', async () => {
+    const signal = {
+      aborted: true,
+      addEventListener: () => undefined,
+      reason: undefined,
+      removeEventListener: () => undefined,
+    } as unknown as AbortSignal
+    const result = await ResultAsync.retry(() => ResultAsync.okAsync<string, 'transient'>('ok'), {
+      signal,
+      times: 1,
+    })
+
+    isTrue(result.isErr())
+    isTrue(isAbortError(result.error))
+    equal(result.error.message, 'ResultAsync retry aborted')
+    equal('cause' in result.error, false)
   })
 
   it('returns AbortError when aborted before retry delay completes', async () => {
@@ -299,5 +476,149 @@ describe('ResultAsync retry helpers', () => {
 
     isTrue(result.isErr())
     isTrue(isAbortError(result.error))
+    equal(result.error.message, 'ResultAsync retry aborted')
+    equal(result.error.cause, controller.signal.reason)
+  })
+
+  it('does not start a retry delay when onRetry aborts the signal', async () => {
+    let aborted = false
+    const reason = new Error('stop before wait')
+    const signal: ResultAsyncAbortSignal = {
+      get aborted() {
+        return aborted
+      },
+      get reason() {
+        return reason
+      },
+      addEventListener: () => {
+        throw new Error('Aborted retry delay should not subscribe to abort')
+      },
+      removeEventListener: () => undefined,
+    }
+
+    const result = await ResultAsync.retry(
+      () => ResultAsync.errAsync<string, 'transient'>('transient'),
+      {
+        delayMs: 50,
+        onRetry: () => {
+          aborted = true
+        },
+        signal,
+        times: 1,
+      },
+    )
+
+    isTrue(result.isErr())
+    isTrue(isAbortError(result.error))
+    equal(result.error.message, 'ResultAsync retry aborted')
+    equal(result.error.cause, reason)
+  })
+
+  it('removes the retry abort listener after a completed delay', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    let abortListener = (): void => {
+      throw new Error('Abort listener was not registered')
+    }
+    const addEventListener = vi.fn<ResultAsyncAbortSignal['addEventListener']>(
+      (eventName, listener, options) => {
+        abortListener = listener
+        equal(eventName, 'abort')
+        deepEqual(options, { once: true })
+      },
+    )
+    const removeEventListener = vi.fn<ResultAsyncAbortSignal['removeEventListener']>(
+      (eventName, listener) => {
+        equal(eventName, 'abort')
+        equal(listener, abortListener)
+      },
+    )
+    const signal: ResultAsyncAbortSignal = { aborted: false, addEventListener, removeEventListener }
+
+    try {
+      const resultPromise = ResultAsync.retry(
+        () => {
+          calls += 1
+
+          return calls === 1
+            ? ResultAsync.errAsync<string, 'transient'>('transient')
+            : ResultAsync.okAsync<string, 'transient'>('ok')
+        },
+        { delayMs: 20, signal, times: 1 },
+      )
+
+      await vi.advanceTimersByTimeAsync(19)
+      equal(calls, 1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      const result = await resultPromise
+
+      isTrue(result.isOk())
+      equal(result.value, 'ok')
+      equal(calls, 2)
+      equal(addEventListener.mock.calls.length, 1)
+      equal(removeEventListener.mock.calls.length, 1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses the retry abort listener to stop a pending delay', async () => {
+    vi.useFakeTimers()
+    const reason = new Error('stop retrying now')
+    let abortListener = (): void => {
+      throw new Error('Abort listener was not registered')
+    }
+    const signal: ResultAsyncAbortSignal = {
+      aborted: false,
+      get reason() {
+        return reason
+      },
+      addEventListener: vi.fn<ResultAsyncAbortSignal['addEventListener']>(
+        (_eventName, listener) => {
+          abortListener = listener
+        },
+      ),
+      removeEventListener: vi.fn<ResultAsyncAbortSignal['removeEventListener']>(),
+    }
+
+    try {
+      const resultPromise = ResultAsync.retry(
+        () => ResultAsync.errAsync<string, 'transient'>('transient'),
+        { delayMs: 50, signal, times: 1 },
+      )
+
+      await vi.advanceTimersByTimeAsync(0)
+      abortListener()
+      const result = await resultPromise
+
+      isTrue(result.isErr())
+      isTrue(isAbortError(result.error))
+      equal(result.error.message, 'ResultAsync retry aborted')
+      equal(result.error.cause, reason)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('returns AbortError when aborted before waiting for retry delay', async () => {
+    const controller = new AbortController()
+    const reason = new Error('stop before wait')
+    const result = await ResultAsync.retry(
+      () => ResultAsync.errAsync<string, 'transient'>('transient'),
+      {
+        delayMs: 50,
+        onRetry: () => {
+          controller.abort(reason)
+        },
+        signal: controller.signal,
+        times: 2,
+      },
+    )
+
+    isTrue(result.isErr())
+    isTrue(isAbortError(result.error))
+    equal(result.error.message, 'ResultAsync retry aborted')
+    equal(result.error.cause, reason)
   })
 })

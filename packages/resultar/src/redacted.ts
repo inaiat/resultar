@@ -33,6 +33,7 @@ export const redact = <T>(value: T, label?: string): Redacted<T> =>
   new RedactedValue(value, label) as unknown as Redacted<T>
 
 export const isRedacted = (value: unknown): value is Redacted<unknown> =>
+  // Stryker disable next-line all: the object/null guard documents the WeakMap-key contract; WeakMap.has returns false for non-objects.
   typeof value === 'object' && value !== null && redactedValues.has(value)
 
 export const revealRedacted = <T>(value: Redacted<T>): T =>

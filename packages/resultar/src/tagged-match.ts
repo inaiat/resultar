@@ -1,8 +1,12 @@
 type TaggedValue = { readonly _tag: string }
 
-export type TaggedHandlerCall<R> =
-  | { readonly matched: false }
-  | { readonly matched: true; readonly value: R }
+const noTaggedHandlerMatch = Symbol('noTaggedHandlerMatch')
+
+export type TaggedHandlerCall<R> = typeof noTaggedHandlerMatch | { readonly value: R }
+
+export const isTaggedHandlerMatch = <R>(
+  call: TaggedHandlerCall<R>,
+): call is { readonly value: R } => call !== noTaggedHandlerMatch
 
 const isTaggedValue = (value: unknown): value is TaggedValue =>
   typeof value === 'object' && value !== null && '_tag' in value
@@ -14,16 +18,16 @@ export const hasTag = <Tag extends string>(
 
 export const callTaggedHandler = <R>(value: unknown, handlers: object): TaggedHandlerCall<R> => {
   if (!isTaggedValue(value)) {
-    return { matched: false }
+    return noTaggedHandlerMatch
   }
 
   const handler = (handlers as Record<string, unknown>)[value._tag]
 
   if (handler === undefined) {
-    return { matched: false }
+    return noTaggedHandlerMatch
   }
 
-  return { matched: true, value: (handler as (error: unknown) => R)(value) }
+  return { value: (handler as (error: unknown) => R)(value) }
 }
 
 const callErrorHandler = <E, R>(
@@ -31,16 +35,16 @@ const callErrorHandler = <E, R>(
   handlers: { readonly Error?: (error: E) => R },
 ): TaggedHandlerCall<R> => {
   if (handlers.Error === undefined) {
-    return { matched: false }
+    return noTaggedHandlerMatch
   }
 
-  return { matched: true, value: handlers.Error(error) }
+  return { value: handlers.Error(error) }
 }
 
 const callTaggedOrErrorHandler = <E, R>(error: E, handlers: object): TaggedHandlerCall<R> => {
   const tagged = callTaggedHandler<R>(error, handlers)
 
-  if (tagged.matched) {
+  if (isTaggedHandlerMatch(tagged)) {
     return tagged
   }
 
@@ -54,5 +58,5 @@ export const matchTaggedOr = <E, R, F>(
 ): R | F => {
   const handled = callTaggedOrErrorHandler<E, R>(error, handlers)
 
-  return handled.matched ? handled.value : fallback(error)
+  return isTaggedHandlerMatch(handled) ? handled.value : fallback(error)
 }

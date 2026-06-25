@@ -1,4 +1,4 @@
-# resultar-lint
+# resultar-check
 
 ## 3.1.0
 

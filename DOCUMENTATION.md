@@ -131,7 +131,7 @@ If you already know Result-style error handling, jump to:
 | Add logging or cleanup | [Observation And Cleanup](#observation-and-cleanup) | `tap`, `tapError`, `log`, `toDisposable`, `toAsyncDisposable` |
 | Understand callback exceptions | [Callback Failure Semantics](#callback-failure-semantics) | transform callbacks vs observation callbacks |
 | Unwrap at tests or final edges | [Unwrapping Results](#unwrapping-results) | `unwrapOr`, `unwrapOrThrow`, `_unsafeUnwrap`, `_unsafeUnwrapErr` |
-| Prevent ignored results | [No-Discard Validation](#no-discard-validation) | `resultar-lint check`, `resultar-lint` |
+| Prevent ignored results | [No-Discard Validation](#no-discard-validation) | `resultar-check` |
 | Check package exports and aliases | [Public Entry Point](#public-entry-point) | `try`, `tryAsync`, `default`, runtime exports |
 
 ## The Model
@@ -2173,19 +2173,19 @@ result.isOk()
 
 ## No-Discard Validation
 
-Resultar values should not be ignored. Install `resultar-lint` for a type-aware check that reports
-discarded `Result` and `ResultAsync` values.
+Resultar values should not be ignored. Use `resultar-check` to run TypeScript 7 and Resultar
+diagnostics through one command.
 
 ```sh
-pnpm add -D resultar-lint typescript
+pnpm add -D resultar-check typescript@rc
 ```
 
-Add a lint-like script:
+Add a check script:
 
 ```json
 {
   "scripts": {
-    "lint:resultar": "resultar-lint check --project tsconfig.json"
+    "check": "resultar-check -p tsconfig.json --noEmit"
   }
 }
 ```
@@ -2209,27 +2209,28 @@ The default mode is neverthrow-style `must-use`: it also reports assigned `Resul
 only passed around and never consumed with `match`, `unwrapOr`, `_unsafeUnwrap`, `isOk`, `isErr`,
 returned, or explicitly discarded. Use `--mode direct` for the lower-noise expression-only check.
 
-For editor diagnostics, enable the TypeScript language-service plugin from `resultar-lint`:
-
-Enable it in `tsconfig.json`:
+Configure Resultar rules in `tsconfig.json`:
 
 ```json
 {
   "compilerOptions": {
-    "plugins": [{ "name": "resultar-lint", "noDiscard": "error" }]
+    "plugins": [{ "name": "resultar-check", "noDiscard": "error" }]
   }
 }
 ```
 
-TypeScript language-service plugins are editor-only by default. To make `tsc` report Resultar
-diagnostics during builds, patch the local TypeScript installation:
+Oxlint is intentionally not part of the Resultar rules path; use it only for general linting if your
+project wants it. Until TypeScript 7 exposes the stable programmatic checker API Resultar needs,
+`resultar-check` keeps a TypeScript 6 diagnostics API as an internal bridge.
 
-```sh
-pnpm exec resultar-lint patch
-```
-
-Use `resultar-lint doctor` to verify patch status and `resultar-lint unpatch` to remove only Resultar
-patch blocks.
+For editor diagnostics, use the same `compilerOptions.plugins` entry. Zed uses `vtsls`; enable
+workspace TypeScript with `vtsls.autoUseWorkspaceTsdk` and, for pnpm monorepos, set
+`typescript.tsserver.pluginPaths` to `["./node_modules"]`. If you use
+`typescript-language-server` in Zed instead, configure its plugin `location` as the project root so it
+can resolve `resultar-check` from that project's `node_modules`. In VS Code, set `typescript.tsdk` to
+`"node_modules/typescript/lib"` and select the workspace TypeScript version. If a project cannot
+replace its `typescript` package yet and only needs CLI diagnostics, install
+`typescript-7@npm:typescript@rc` as a compatibility alias.
 
 ## Testing Resultar Code
 
@@ -2908,16 +2909,12 @@ entry point and API map above list the exported runtime helpers and type-only na
 This repository is a pnpm workspace:
 
 - `packages/resultar`: the Resultar runtime package.
-- `packages/resultar-lint`: TypeScript language-service diagnostics, the full lint CLI, and
-  TypeScript 6 build-time patching.
-- `packages/resultar-tsgo`: a TypeScript 7 native-preview wrapper for `tsgo` plus Resultar lint
-  validation.
+- `packages/resultar-check`: TypeScript 7 plus Resultar validation.
+- `packages/resultar-lint`: deprecated compatibility wrapper.
+- `packages/resultar-tsgo`: deprecated compatibility wrapper for older installs.
 - `benchmarks`: benchmark workspace package.
 - `examples/resultar`: runnable core Resultar cookbook.
-- `examples/lint`: smoke example for the full Resultar lint rule set, patched TypeScript, and
-  Vite+ / Oxlint diagnostics.
-- `examples/tsgo-lint`: TypeScript 7 native-preview smoke example for the full Resultar lint rule
-  set.
+- `examples/lint`: TypeScript 7 `resultar-check` smoke example.
 
 Common commands:
 

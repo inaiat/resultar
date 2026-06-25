@@ -10,10 +10,11 @@
     "types": ["node"],
     "plugins": [
       {
-        "name": "resultar-lint",
+        "name": "resultar-check",
         "noDiscard": "error",
         "noTaggedErrorConstructorOverride": "error",
         "noTryCatchInSafeTry": "error",
+        "noUnsafeAwait": "error",
         "noUselessRecovery": "error",
         "preferAndThen": "error",
         "preferMapErr": "error",

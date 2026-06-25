@@ -14,6 +14,7 @@ export const RESULTAR_RULE_DIAGNOSTIC_CODES: Record<ResultarRuleName, number> = 
   "no-discard": RESULTAR_NO_DISCARD_DIAGNOSTIC_CODE,
   "no-tagged-error-constructor-override": 91_010,
   "no-try-catch-in-safe-try": 91_006,
+  "no-unsafe-await": 91_012,
   "no-useless-recovery": 91_011,
   "prefer-and-then": 91_003,
   "prefer-map-err": 91_002,

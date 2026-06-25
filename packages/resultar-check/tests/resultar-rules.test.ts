@@ -6,7 +6,7 @@ import { afterEach, describe, it } from "vite-plus/test";
 
 import type { ResultarRuleName } from "../src/finding.js";
 import { findResultarLintFindings } from "../src/lint.js";
-import { onlyResultarRule } from "../src/rules-core.js";
+import { type ResultarRulesOptions, onlyResultarRule } from "../src/rules-core.js";
 const tempDirs: string[] = [];
 
 const createFixtureProject = async (source: string): Promise<string> => {
@@ -30,9 +30,16 @@ const createFixtureProject = async (source: string): Promise<string> => {
   return rootDir;
 };
 
-const runRule = async (rule: ResultarRuleName, source: string) => {
+const runRule = async (
+  rule: ResultarRuleName,
+  source: string,
+  options: Partial<ResultarRulesOptions> = {},
+) => {
   const rootDir = await createFixtureProject(source);
-  const result = findResultarLintFindings({ rootDir, rules: onlyResultarRule(rule, "error") });
+  const result = findResultarLintFindings({
+    rootDir,
+    rules: { ...onlyResultarRule(rule, "error"), ...options },
+  });
 
   if (!result.ok) {
     throw result.error;
@@ -224,6 +231,176 @@ describe("Resultar lint rules", () => {
     deepEqual(typedReturnFindings, []);
     deepEqual(objectMapperFindings, []);
     equal(spreadPropertyFindings.length, 1);
+  });
+
+  it("flags unsafe awaits outside Resultar async boundaries in all mode", async () => {
+    const findings = await runRule(
+      "no-unsafe-await",
+      `
+        declare function fetch(input: string): Promise<string>
+        declare const repo: { save(): Promise<number> }
+
+        async function run() {
+          const response = await fetch("/users")
+          const saved = await repo.save()
+          const values = await Promise.all([fetch("/users/1")])
+          return [response, saved, values]
+        }
+      `,
+      { noUnsafeAwaitMode: "all" },
+    );
+
+    equal(findings.length, 3);
+    deepEqual(
+      findings.map((finding) => finding.rule),
+      ["no-unsafe-await", "no-unsafe-await", "no-unsafe-await"],
+    );
+  });
+
+  it("ignores framework Promise awaits outside Resultar contexts by default", async () => {
+    const findings = await runRule(
+      "no-unsafe-await",
+      `
+        type FastifyPluginAsync = (fastify: {
+          register(plugin: unknown): Promise<void>
+          after(): Promise<void>
+        }) => Promise<void>
+
+        declare const plugin: unknown
+
+        const routes: FastifyPluginAsync = async (fastify) => {
+          await fastify.register(plugin)
+          await fastify.after()
+        }
+      `,
+    );
+
+    deepEqual(findings, []);
+  });
+
+  it("flags unsafe awaits in async functions that return Resultar channels", async () => {
+    const findings = await runRule(
+      "no-unsafe-await",
+      `
+        type Result<T, E> = { readonly value?: T; readonly error?: E }
+        declare function fetch(input: string): Promise<string>
+        declare function ok<T, E = never>(value: T): Result<T, E>
+
+        async function loadUser(): Promise<Result<string, Error>> {
+          const user = await fetch("/users")
+          return ok(user)
+        }
+
+        const loadInferred = async () => {
+          const user = await fetch("/inferred")
+          return ok(user)
+        }
+      `,
+    );
+
+    equal(findings.length, 2);
+    deepEqual(
+      findings.map((finding) => finding.rule),
+      ["no-unsafe-await", "no-unsafe-await"],
+    );
+  });
+
+  it("allows awaits inside Resultar async catch boundaries", async () => {
+    const findings = await runRule(
+      "no-unsafe-await",
+      `
+        declare function fetch(input: string): Promise<string>
+        declare function tryAsync(value: unknown): unknown
+        declare function tryResultAsync(value: unknown): unknown
+        declare function fromThrowableAsync(value: unknown): unknown
+
+        tryAsync(async () => {
+          return await fetch("/try-async")
+        })
+
+        tryResultAsync({
+          try: async () => await fetch("/try-result-async"),
+          catch: () => new Error("failed")
+        })
+
+        fromThrowableAsync(async () => {
+          return await fetch("/from-throwable-async")
+        })
+      `,
+    );
+
+    deepEqual(findings, []);
+  });
+
+  it("flags unsafe awaits inside safeTry generators", async () => {
+    const findings = await runRule(
+      "no-unsafe-await",
+      `
+        declare function fetch(input: string): Promise<string>
+        declare function safeTry(value: unknown): unknown
+
+        safeTry(async function* () {
+          const value = await fetch("/safe-try")
+          return value
+        })
+      `,
+    );
+
+    equal(findings.length, 1);
+    equal(findings[0]?.rule, "no-unsafe-await");
+  });
+
+  it("allows awaits for Resultar-safe values", async () => {
+    const findings = await runRule(
+      "no-unsafe-await",
+      `
+        type Result<T, E> = { readonly value?: T; readonly error?: E }
+
+        class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
+          then<TResult1 = Result<T, E>, TResult2 = never>(
+            onfulfilled?: ((value: Result<T, E>) => TResult1 | PromiseLike<TResult1>) | null,
+            onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+          ): PromiseLike<TResult1 | TResult2> {
+            throw new Error("test fixture")
+          }
+        }
+
+        declare const resultAsync: ResultAsync<string, Error>
+        declare function promiseReturningResult(): Promise<Result<string, Error>>
+
+        async function run() {
+          const first = await resultAsync
+          const second = await promiseReturningResult()
+          const value = await 1
+          return [first, second, value]
+        }
+      `,
+      { noUnsafeAwaitMode: "all" },
+    );
+
+    deepEqual(findings, []);
+  });
+
+  it("does not extend Resultar await boundaries into nested functions", async () => {
+    const findings = await runRule(
+      "no-unsafe-await",
+      `
+        declare function fetch(input: string): Promise<string>
+        declare function tryAsync(value: unknown): unknown
+
+        tryAsync(async () => {
+          async function nested() {
+            return await fetch("/nested")
+          }
+
+          return nested()
+        })
+      `,
+      { noUnsafeAwaitMode: "all" },
+    );
+
+    equal(findings.length, 1);
+    equal(findings[0]?.rule, "no-unsafe-await");
   });
 
   it("flags try/catch inside safeTry generators", async () => {

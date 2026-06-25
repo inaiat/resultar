@@ -127,6 +127,31 @@ describe('ResultAsync concurrency options', () => {
     equal(result.value, undefined)
   })
 
+  it('waits for active discard ResultAsync.forEach tasks before resolving', async () => {
+    const completed: number[] = []
+
+    const result = await resultAsyncForEach(
+      [1, 2],
+      (value) =>
+        new ResultAsync<number, string>(
+          Promise.try(async () => {
+            await sleep(value === 1 ? 10 : 1)
+            completed.push(value)
+
+            return Result.ok<number, string>(value)
+          }),
+        ),
+      { concurrency: 2, discard: true },
+    )
+
+    isTrue(result.isOk())
+    equal(result.value, undefined)
+    deepEqual(
+      [...completed].toSorted((left, right) => left - right),
+      [1, 2],
+    )
+  })
+
   it('stops scheduling ResultAsync.forEach after error and returns the first started input error', async () => {
     const started: number[] = []
 
@@ -234,7 +259,10 @@ describe('ResultAsync concurrency options', () => {
         await resultAsyncForEach([1], (value) => okAsync<number, string>(value), {
           concurrency: 0 as ResultAsyncConcurrency,
         }),
-      (error: unknown) => error instanceof Error && error.name === 'IllegalArgumentException',
+      (error: unknown) =>
+        error instanceof Error &&
+        error.name === 'IllegalArgumentException' &&
+        error.message === 'ResultAsync concurrency must be a positive integer or "unbounded"',
     )
   })
 

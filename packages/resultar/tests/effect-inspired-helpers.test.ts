@@ -188,12 +188,45 @@ describe('record and iterable aggregation', () => {
 })
 
 describe('abort, causes, and redaction', () => {
+  it('creates AbortError instances with default message, name, and cause', () => {
+    const defaultAbort = new AbortError()
+    const cause = new Error('network closed')
+    const causedAbort = new AbortError('stopped', { cause })
+
+    equal(defaultAbort.name, 'AbortError')
+    equal(defaultAbort.message, 'Operation aborted')
+    isTrue(defaultAbort instanceof Error)
+    isTrue(defaultAbort instanceof AbortError)
+    equal(causedAbort.name, 'AbortError')
+    equal(causedAbort.message, 'stopped')
+    equal(causedAbort.cause, cause)
+  })
+
   it('detects abort-shaped errors', () => {
     const abort = new AbortError('stop')
 
     isTrue(isAbortError(abort))
     isTrue(isAbortError({ name: 'AbortError' }))
     isTrue(isAbortError({ code: 'ABORT_ERR' }))
+  })
+
+  it('rejects non-abort-shaped values', () => {
+    const nonAbortValues: readonly unknown[] = [
+      undefined,
+      null,
+      false,
+      0,
+      'AbortError',
+      {},
+      { code: 'OTHER' },
+      { code: undefined },
+      { name: 'OtherError' },
+      { name: undefined },
+    ]
+
+    for (const value of nonAbortValues) {
+      equal(isAbortError(value), false)
+    }
   })
 
   it('redacts tagged error props in messages and JSON', () => {
@@ -205,6 +238,30 @@ describe('abort, causes, and redaction', () => {
     isTrue(isRedacted(error.token))
     equal(revealRedacted(error.token), 'super-secret')
     equal(json.token, '<redacted:api-token>')
+  })
+
+  it('tracks redacted values without treating ordinary values as redacted', () => {
+    const secret = { token: 'super-secret' }
+    const redacted = redact(secret)
+
+    equal((redacted as { readonly __resultarRedacted: unknown }).__resultarRedacted, true)
+    equal(redacted.label, undefined)
+    equal(redacted.toString(), '<redacted>')
+    equal(redacted.toJSON(), '<redacted>')
+    isTrue(isRedacted(redacted))
+    equal(revealRedacted(redacted), secret)
+
+    const nonRedactedValues: readonly unknown[] = [
+      null,
+      {},
+      { __resultarRedacted: true },
+      { label: undefined },
+      'plain',
+    ]
+
+    for (const value of nonRedactedValues) {
+      equal(isRedacted(value), false)
+    }
   })
 
   it('serializes nested circular causes safely', () => {

@@ -77,7 +77,9 @@ describe('coverage-focused public behavior', () => {
     deepEqual(okError.data, { type: 'Ok', value: 'value' })
     equal(typeof okError.stack, 'string')
     deepEqual(errError.data, { type: 'Err', value: 'failure' })
+    equal('stack' in errError, false)
     equal(errError.stack, undefined)
+    equal({} instanceof resultar.Result, false)
   })
 
   it('covers Result error paths, iterators, and disposable delegation', () => {
@@ -102,16 +104,22 @@ describe('coverage-focused public behavior', () => {
       .false(() => resultar.ok('no'))
 
     equal(ifResult._unsafeUnwrapErr(), 'failure')
-    void resultar.ok('value').tapError(() => {
+    const okTapError = resultar.ok('value').tapError(() => {
       throw new Error('should not run')
     })
 
+    equal(okTapError._unsafeUnwrap(), 'value')
     throws(
       () => resultar.ok('value')._unsafeUnwrapErr({ withStackTrace: true }),
       (error) => {
         isTrue(error instanceof Error || typeof error === 'object')
         isTrue(error !== null)
-        return 'stack' in error && typeof error.stack === 'string'
+        return (
+          'message' in error &&
+          error.message === 'Called `_unsafeUnwrapErr` on an Ok' &&
+          'stack' in error &&
+          typeof error.stack === 'string'
+        )
       },
     )
 
@@ -290,6 +298,11 @@ describe('coverage-focused public behavior', () => {
     const iterableAllErrors = resultar.Result.combineWithAllErrors(
       new Set([resultar.ok<number, string>(1), resultar.err<number, string>('bad')]),
     )
+    const primitiveStringRecord = (
+      resultar.Result.combineWithAllErrors as (
+        input: unknown,
+      ) => Result<Record<string, unknown>, unknown>
+    )('')
     const asyncRecordAllOk = await resultar.ResultAsync.combineWithAllErrors({
       first: resultar.okAsync<number, 'first-error'>(1),
       second: resultar.okAsync<number, 'second-error'>(2),
@@ -308,6 +321,7 @@ describe('coverage-focused public behavior', () => {
     equal(recordFirstError._unsafeUnwrapErr(), 'second-error')
     deepEqual(recordAllOk._unsafeUnwrap(), { first: 1, second: 2 })
     deepEqual(iterableAllErrors._unsafeUnwrapErr(), ['bad'])
+    deepEqual(primitiveStringRecord._unsafeUnwrap(), {})
     deepEqual(asyncRecordAllOk._unsafeUnwrap(), { first: 1, second: 2 })
     deepEqual(asyncRecordAllErrors._unsafeUnwrapErr(), ['first-error'])
     deepEqual(asyncIterableCombined._unsafeUnwrap(), [1, 2])
@@ -350,6 +364,18 @@ describe('coverage-focused public behavior', () => {
     const wrongParent = resultar
       .err<number, CoverageParentError | CoverageOtherError>(new CoverageOtherError())
       .catchReason('CoverageParentError', 'Primary', () => resultar.ok('unused'))
+    const wrongParentWithReason = new CoverageOtherError() as CoverageOtherError & {
+      readonly reason: CoverageReason
+    }
+
+    Object.defineProperty(wrongParentWithReason, 'reason', {
+      configurable: true,
+      value: CoverageReason.Primary({ code: 'spoofed-parent' }),
+    })
+
+    const wrongParentWithMatchingReason = resultar
+      .err<number, CoverageParentError | CoverageOtherError>(wrongParentWithReason)
+      .catchReason('CoverageParentError', 'Primary', () => resultar.ok('bad parent'))
     const wrongReason = resultar
       .err<number, CoverageParentError | CoverageOtherError>(
         new CoverageParentError(CoverageReason.Secondary({ code: 's' })),
@@ -360,9 +386,17 @@ describe('coverage-focused public behavior', () => {
         new CoverageParentError(CoverageReason.Secondary({ code: 's' })),
       )
       .catchReasons('CoverageParentError', { Primary: () => resultar.ok('unused') })
+    const wrongParentWithMatchingReasonHandler = resultar
+      .err<number, CoverageParentError | CoverageOtherError>(wrongParentWithReason)
+      .catchReasons('CoverageParentError', { Primary: () => resultar.ok('bad parent') })
     const primitiveReason = resultar
       .err<number, CoverageParentError | CoverageOtherError>(
         new CoverageParentError('primitive' as unknown as CoverageReason),
+      )
+      .catchReasons('CoverageParentError', { Primary: () => resultar.ok('unused') })
+    const nullReason = resultar
+      .err<number, CoverageParentError | CoverageOtherError>(
+        new CoverageParentError(null as unknown as CoverageReason),
       )
       .catchReasons('CoverageParentError', { Primary: () => resultar.ok('unused') })
     const wrongUnwrap = resultar
@@ -373,9 +407,12 @@ describe('coverage-focused public behavior', () => {
     equal(okReasons._unsafeUnwrap(), 1)
     equal(okUnwrap._unsafeUnwrap(), 1)
     isTrue(wrongParent._unsafeUnwrapErr() instanceof CoverageOtherError)
+    isTrue(wrongParentWithMatchingReason._unsafeUnwrapErr() instanceof CoverageOtherError)
     isTrue(wrongReason._unsafeUnwrapErr() instanceof CoverageParentError)
     isTrue(missingReasonHandler._unsafeUnwrapErr() instanceof CoverageParentError)
+    isTrue(wrongParentWithMatchingReasonHandler._unsafeUnwrapErr() instanceof CoverageOtherError)
     isTrue(primitiveReason._unsafeUnwrapErr() instanceof CoverageParentError)
+    isTrue(nullReason._unsafeUnwrapErr() instanceof CoverageParentError)
     isTrue(wrongUnwrap._unsafeUnwrapErr() instanceof CoverageOtherError)
   })
 
@@ -562,6 +599,11 @@ describe('coverage-focused public behavior', () => {
     equal(redacted.toString(), '<redacted>')
     equal(resultar.isRedacted('plain'), false)
     deepEqual(Enum.A({ _tag: 'Ignored' } as never), { _tag: 'A' })
+    equal(CoverageReason.$is('Primary', CoverageReason.Primary({ code: 'primary' })), true)
+    equal(CoverageReason.$is('Primary', null), false)
+    equal(CoverageReason.$is('Primary', 'Primary'), false)
+    equal(CoverageReason.$is('Primary', { _tag: 'Secondary', code: 'secondary' }), false)
+    equal(CoverageReason.$is('Primary', { _tag: 123 }), false)
     equal((Enum as unknown as Record<symbol, unknown>)[Symbol.toStringTag], undefined)
     throws(
       () => Enum.$match({ _tag: 'Missing' } as never, { A: () => 'a' }),

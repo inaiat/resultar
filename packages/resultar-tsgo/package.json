@@ -1,7 +1,7 @@
 {
   "name": "resultar-tsgo",
   "version": "3.1.0",
-  "description": "Resultar no-discard wrapper for the TypeScript 7 native compiler",
+  "description": "Deprecated compatibility wrapper for resultar-check",
   "homepage": "https://github.com/inaiat/resultar",
   "bugs": {
     "url": "https://github.com/inaiat/resultar/issues"
@@ -14,7 +14,7 @@
     "directory": "packages/resultar-tsgo"
   },
   "bin": {
-    "tsgo": "./dist/cli.js"
+    "resultar-check": "./dist/cli.js"
   },
   "files": [
     "dist",
@@ -33,22 +33,18 @@
     "prepare": "vp config || true",
     "prepublishOnly": "vp pack",
     "smoke": "pnpm run smoke:package",
-    "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts"
+    "smoke:package": "pnpm --filter resultar-check build && pnpm run build && tsx scripts/smoke-package.ts"
   },
   "dependencies": {
-    "resultar-lint": "workspace:*"
+    "resultar-check": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "tsx": "catalog:",
-    "typescript": "^6.0.3",
-    "typescript-7": "catalog:",
     "vite-plus": "catalog:"
-  },
-  "peerDependencies": {
-    "typescript-7": ">=7.0.0-rc"
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "deprecated": "Use resultar-check. This package is a compatibility wrapper."
 }

@@ -1,25 +1,22 @@
 {
-  "name": "resultar-lint-example",
+  "name": "resultar-check-compat-example",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "vp check",
-    "check-ts": "tsc -p tsconfig.json --noEmit --pretty false",
-    "check:vite-rules": "vp check src/index.ts",
-    "lint": "pnpm run lint:resultar",
-    "lint:resultar": "resultar-lint check --project tsconfig.json",
-    "prepare": "pnpm --filter resultar build && pnpm --filter resultar-lint build && node ../../packages/resultar-lint/dist/cli.js patch",
+    "check": "resultar-check -p tsconfig.json --noEmit",
+    "lint": "pnpm run check",
+    "prepare": "pnpm --filter resultar build && pnpm --filter resultar-check build",
     "smoke": "tsx scripts/smoke.ts",
-    "smoke:vite": "tsx scripts/smoke-vite.ts"
+    "smoke:vite": "pnpm run smoke"
   },
   "dependencies": {
     "resultar": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "resultar-lint": "workspace:*",
+    "resultar-check": "workspace:*",
     "tsx": "catalog:",
-    "typescript": "^6.0.3",
+    "typescript-7": "catalog:",
     "vite-plus": "catalog:"
   }
 }

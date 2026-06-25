@@ -1,7 +1,7 @@
 # Resultar Cookbook Example
 
-This package is a runnable cookbook for the core `resultar` package. The lint examples show how to
-enforce Resultar rules; this package shows the application patterns those rules protect.
+This package is a runnable cookbook for the core `resultar` package. It uses `resultar-check` so the
+same command type-checks with TypeScript 7 and enforces Resultar rules.
 
 Run it from the repository root:
 
@@ -17,8 +17,8 @@ pnpm --filter resultar-example smoke
 pnpm --filter resultar-example start
 ```
 
-The `check` script runs Vite+ with every Resultar lint rule configured as an error through
-`resultar-lint/oxlint`. The same rule set is also enabled in `tsconfig.json` for editor diagnostics.
+The `check` script runs `resultar-check -p tsconfig.json --noEmit`. The Resultar rule set is
+configured in `tsconfig.json`.
 
 ## Samples
 

@@ -2,6 +2,7 @@ import { normalizeNoDiscardMode } from "./result-usage-core.js";
 import {
   type ResultarRulesOptions,
   defaultResultarRulesOptions,
+  normalizeNoUnsafeAwaitMode,
   normalizeRuleSeverity,
 } from "./rules-core.js";
 
@@ -10,7 +11,8 @@ export type ResultarLanguageServiceOptions = ResultarRulesOptions;
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
   typeof value === "object" && value !== null;
 
-const isResultarPluginName = (value: unknown): boolean => value === "resultar-lint";
+const isResultarPluginName = (value: unknown): boolean =>
+  value === "resultar-check" || value === "resultar-lint";
 
 export const parsePluginOptions = (config: unknown): ResultarLanguageServiceOptions => {
   if (!isRecord(config)) {
@@ -28,6 +30,11 @@ export const parsePluginOptions = (config: unknown): ResultarLanguageServiceOpti
       config.noTryCatchInSafeTry,
       defaultResultarRulesOptions.noTryCatchInSafeTry,
     ),
+    noUnsafeAwait: normalizeRuleSeverity(
+      config.noUnsafeAwait,
+      defaultResultarRulesOptions.noUnsafeAwait,
+    ),
+    noUnsafeAwaitMode: normalizeNoUnsafeAwaitMode(config.noUnsafeAwaitMode),
     noUselessRecovery: normalizeRuleSeverity(
       config.noUselessRecovery,
       defaultResultarRulesOptions.noUselessRecovery,

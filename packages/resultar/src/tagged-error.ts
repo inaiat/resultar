@@ -232,28 +232,33 @@ const stringifySymbolTemplateValue = (value: unknown): string => {
 const stringifyFunctionTemplateValue = (value: unknown): string =>
   (value as { readonly name: string }).name
 
-const stringifyObjectTemplateValue = (value: unknown): string => {
-  if (value === null) {
-    return 'null'
+const stringifyObjectTemplateValue = (value: unknown): string =>
+  JSON.stringify(value) ?? Object.prototype.toString.call(value)
+
+type StringifiableTemplateValueType =
+  | 'bigint'
+  | 'boolean'
+  | 'function'
+  | 'number'
+  | 'object'
+  | 'string'
+  | 'symbol'
+
+const templateValueStringifiers: Record<StringifiableTemplateValueType, TemplateValueStringifier> =
+  {
+    bigint: stringifyDirectTemplateValue,
+    boolean: stringifyDirectTemplateValue,
+    function: stringifyFunctionTemplateValue,
+    number: stringifyDirectTemplateValue,
+    object: stringifyObjectTemplateValue,
+    string: stringifyDirectTemplateValue,
+    symbol: stringifySymbolTemplateValue,
   }
-
-  return JSON.stringify(value) ?? Object.prototype.toString.call(value)
-}
-
-const templateValueStringifiers: Partial<Record<string, TemplateValueStringifier>> = {
-  bigint: stringifyDirectTemplateValue,
-  boolean: stringifyDirectTemplateValue,
-  function: stringifyFunctionTemplateValue,
-  number: stringifyDirectTemplateValue,
-  object: stringifyObjectTemplateValue,
-  string: stringifyDirectTemplateValue,
-  symbol: stringifySymbolTemplateValue,
-}
 
 const stringifyTemplateValue = (value: unknown): string =>
   isRedacted(value)
     ? stringifyRedacted(value)
-    : (templateValueStringifiers[typeof value]?.(value) ?? '')
+    : templateValueStringifiers[typeof value as StringifiableTemplateValueType](value)
 
 const compileMessageInterpolator =
   (template: string): ((values?: Record<string, unknown>) => string) =>

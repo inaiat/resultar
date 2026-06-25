@@ -54,14 +54,14 @@ const sortStrings = (items: readonly string[]): readonly string[] =>
 
 for (const file of requiredFiles) {
   if (!existsSync(join(rootDir, file))) {
-    throw new Error(`Missing tsgo package smoke file: ${file}`);
+    throw new Error(`Missing Resultar check package smoke file: ${file}`);
   }
 }
 
 const cliSource = readFileSync(join(rootDir, "dist/cli.js"), "utf8");
 
 if (!cliSource.startsWith("#!/usr/bin/env node")) {
-  throw new Error("TSGo wrapper binary is missing the node shebang");
+  throw new Error("Resultar check binary is missing the node shebang");
 }
 
 const versionOutput = execFileSync(process.execPath, [join(rootDir, "dist/cli.js"), "--version"], {
@@ -70,7 +70,7 @@ const versionOutput = execFileSync(process.execPath, [join(rootDir, "dist/cli.js
 });
 
 if (!versionOutput.includes("Version ")) {
-  throw new Error("TSGo wrapper version output is missing expected TypeScript version text");
+  throw new Error("Resultar check version output is missing expected TypeScript version text");
 }
 
 const packOutput = execFileSync("npm", ["pack", "--dry-run", "--json"], {
@@ -81,7 +81,7 @@ const packedFiles = sortStrings(parsePackedFiles(packOutput));
 
 for (const file of requiredFiles) {
   if (!packedFiles.includes(file)) {
-    throw new Error(`Packed tsgo package is missing required file: ${file}`);
+    throw new Error(`Packed Resultar check package is missing required file: ${file}`);
   }
 }
 
@@ -89,7 +89,11 @@ const allowedPackedFile = /^(?:LICENSE|README\.md|package\.json|dist\/[^/]+\.(?:
 const unexpectedFiles = packedFiles.filter((file: string) => !allowedPackedFile.test(file));
 
 if (unexpectedFiles.length > 0) {
-  throw new Error(`Packed tsgo package contains unexpected files:\n${unexpectedFiles.join("\n")}`);
+  throw new Error(
+    `Packed Resultar check package contains unexpected files:\n${unexpectedFiles.join("\n")}`,
+  );
 }
 
-process.stdout.write(`TSGo package smoke passed with ${packedFiles.length} packed files.\n`);
+process.stdout.write(
+  `Resultar check package smoke passed with ${packedFiles.length} packed files.\n`,
+);

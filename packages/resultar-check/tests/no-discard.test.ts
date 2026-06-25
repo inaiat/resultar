@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { deepEqual, equal, ok as isTrue } from "node:assert";
@@ -12,7 +12,7 @@ const createFixtureProject = async (
   source: string,
   compilerOptions: Record<string, unknown> = {},
 ): Promise<string> => {
-  const rootDir = await mkdtemp(join(tmpdir(), "resultar-lint-"));
+  const rootDir = await mkdtemp(join(tmpdir(), "resultar-check-"));
   tempDirs.push(rootDir);
 
   await writeFile(
@@ -390,7 +390,7 @@ describe("no-discard Result check", () => {
         const unhandled = saveUser('unhandled')
         externalFunction(unhandled)
       `,
-      { plugins: [{ name: "resultar-lint", noDiscard: "error", noDiscardMode: "direct" }] },
+      { plugins: [{ name: "resultar-check", noDiscard: "error", noDiscardMode: "direct" }] },
     );
 
     const result = findDiscardedResults({ rootDir });
@@ -403,7 +403,7 @@ describe("no-discard Result check", () => {
   });
 
   it("returns an Err when the project cannot be parsed", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "resultar-lint-invalid-"));
+    const rootDir = await mkdtemp(join(tmpdir(), "resultar-check-invalid-"));
     tempDirs.push(rootDir);
     await writeFile(join(rootDir, "tsconfig.json"), "{");
 
@@ -411,30 +411,5 @@ describe("no-discard Result check", () => {
 
     isTrue(!result.ok);
     isTrue(result.error instanceof Error);
-  });
-
-  it("resolves TypeScript from the checked project before falling back to the package copy", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "resultar-lint-local-ts-"));
-    tempDirs.push(rootDir);
-    const typeScriptDir = join(rootDir, "node_modules", "typescript");
-
-    await mkdir(typeScriptDir, { recursive: true });
-    await writeFile(join(rootDir, "tsconfig.json"), "{}");
-    await writeFile(join(typeScriptDir, "package.json"), JSON.stringify({ main: "index.js" }));
-    await writeFile(
-      join(typeScriptDir, "index.js"),
-      `
-module.exports = {
-  sys: { readFile: () => '' },
-  readConfigFile: () => ({ error: {} }),
-  formatDiagnosticsWithColorAndContext: () => 'project-local-typescript-used'
-}
-`,
-    );
-
-    const result = findDiscardedResults({ rootDir });
-
-    isTrue(!result.ok);
-    isTrue(result.error.message.includes("project-local-typescript-used"));
   });
 });

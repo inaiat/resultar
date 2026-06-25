@@ -1,6 +1,6 @@
 import { deepEqual, equal, ok as isTrue } from 'node:assert'
 
-import { describe, expectTypeOf, it } from 'vite-plus/test'
+import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
 
 import type { ResultAsyncRaceTask } from '../src/index.js'
 
@@ -59,6 +59,20 @@ const delayedErr =
       }),
     )
 
+const immediateOk =
+  <T, E = never>(value: T, onAbort?: (reason: unknown) => void): ResultAsyncRaceTask<T, E> =>
+  (signal) => {
+    signal.addEventListener(
+      'abort',
+      () => {
+        onAbort?.(signal.reason)
+      },
+      { once: true },
+    )
+
+    return ResultAsync.okAsync<T, E>(value)
+  }
+
 describe('ResultAsync racing helpers', () => {
   it('race returns the first success and ignores earlier errors', async () => {
     let completedErrorAborted = false
@@ -76,10 +90,13 @@ describe('ResultAsync racing helpers', () => {
   })
 
   it('race aborts losers after a success', async () => {
+    let winnerAbortReason: unknown = undefined
     let loserAbortReason: unknown = undefined
 
     const result = await ResultAsync.race(
-      delayedOk('winner', 5),
+      delayedOk('winner', 5, (reason) => {
+        winnerAbortReason = reason
+      }),
       delayedOk('loser', 50, (reason) => {
         loserAbortReason = reason
       }),
@@ -87,8 +104,32 @@ describe('ResultAsync racing helpers', () => {
 
     isTrue(result.isOk())
     equal(result.value, 'winner')
+    equal(winnerAbortReason, undefined)
     isTrue(loserAbortReason instanceof Error)
     equal(loserAbortReason.name, 'AbortError')
+    equal(loserAbortReason.message, 'ResultAsync race loser interrupted')
+  })
+
+  it('race keeps an already settled success from aborting the winner', async () => {
+    let winnerAbortReason: unknown = undefined
+    let loserAbortReason: unknown = undefined
+
+    const result = await ResultAsync.race(
+      immediateOk('winner', (reason) => {
+        winnerAbortReason = reason
+      }),
+      immediateOk('loser', (reason) => {
+        loserAbortReason = reason
+      }),
+    )
+
+    await Promise.resolve()
+
+    isTrue(result.isOk())
+    equal(result.value, 'winner')
+    equal(winnerAbortReason, undefined)
+    isTrue(loserAbortReason instanceof Error)
+    equal(loserAbortReason.message, 'ResultAsync race loser interrupted')
   })
 
   it('race returns the last completed error when every task fails', async () => {
@@ -124,6 +165,20 @@ describe('ResultAsync racing helpers', () => {
     equal(resolved.value, 'b')
   })
 
+  it('raceAll returns an error for an empty runtime task list', async () => {
+    const tasks = [] as unknown as readonly [
+      ResultAsyncRaceTask<never, never>,
+      ...ResultAsyncRaceTask<never, never>[],
+    ]
+    const result = await ResultAsync.raceAll(tasks)
+
+    isTrue(result.isErr())
+    const error = result.error as unknown as Error
+    isTrue(error instanceof Error)
+    equal(error.name, 'IllegalArgumentException')
+    equal(error.message, 'Received an empty collection of results')
+  })
+
   it('raceFirst returns the first completed error', async () => {
     let loserAborted = false
 
@@ -137,6 +192,28 @@ describe('ResultAsync racing helpers', () => {
     isTrue(result.isErr())
     equal(result.error, 'first-error')
     equal(loserAborted, true)
+  })
+
+  it('raceFirst keeps a completed loser from aborting the winner', async () => {
+    let winnerAbortReason: unknown = undefined
+    let loserAbortReason: unknown = undefined
+
+    const result = await ResultAsync.raceFirst(
+      immediateOk('winner', (reason) => {
+        winnerAbortReason = reason
+      }),
+      immediateOk('loser', (reason) => {
+        loserAbortReason = reason
+      }),
+    )
+
+    await Promise.resolve()
+
+    isTrue(result.isOk())
+    equal(result.value, 'winner')
+    equal(winnerAbortReason, undefined)
+    isTrue(loserAbortReason instanceof Error)
+    equal(loserAbortReason.message, 'ResultAsync race loser interrupted')
   })
 
   it('raceWith lets the finisher wait for the loser', async () => {
@@ -154,6 +231,60 @@ describe('ResultAsync racing helpers', () => {
 
     isTrue(result.isOk())
     equal(result.value, 'right-success')
+  })
+
+  it('raceWith only runs the left handler when left finishes first', async () => {
+    const calls: string[] = []
+
+    const result = await ResultAsync.raceWith(
+      delayedOk('left-success', 0),
+      delayedOk('right', 10),
+      {
+        onLeftDone: (left) => {
+          calls.push('left')
+          return left
+        },
+        onRightDone: (right) => {
+          calls.push('right')
+          return right
+        },
+      },
+    )
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 20)
+    })
+
+    isTrue(result.isOk())
+    equal(result.value, 'left-success')
+    deepEqual(calls, ['left'])
+  })
+
+  it('raceWith only runs the right handler when right finishes first', async () => {
+    const calls: string[] = []
+
+    const result = await ResultAsync.raceWith(
+      delayedOk('left', 10),
+      delayedOk('right-success', 0),
+      {
+        onLeftDone: (left) => {
+          calls.push('left')
+          return left
+        },
+        onRightDone: (right) => {
+          calls.push('right')
+          return right
+        },
+      },
+    )
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 20)
+    })
+
+    isTrue(result.isOk())
+    equal(result.value, 'right-success')
+    deepEqual(calls, ['right'])
   })
 
   it('timeout returns timeout errors and aborts the task signal', async () => {
@@ -180,5 +311,30 @@ describe('ResultAsync racing helpers', () => {
 
     isTrue(result.isErr())
     equal(result.error, 'task-error')
+  })
+
+  it('timeout clears its timer when the task wins', async () => {
+    vi.useFakeTimers()
+    let timeoutCalls = 0
+
+    try {
+      const resultPromise = ResultAsync.timeout(immediateOk('fast-success'), {
+        onTimeout: () => {
+          timeoutCalls += 1
+
+          return new TimeoutError({ operation: 'load user', timeoutMs: 10 })
+        },
+        timeoutMs: 10,
+      })
+
+      const result = await resultPromise
+      await vi.advanceTimersByTimeAsync(10)
+
+      isTrue(result.isOk())
+      equal(result.value, 'fast-success')
+      equal(timeoutCalls, 0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

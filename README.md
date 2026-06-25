@@ -7,16 +7,16 @@ If you are evaluating or using the main library, start here:
 - [API map](DOCUMENTATION.md#api-map)
 
 Resultar is a small TypeScript toolkit for explicit error handling. The workspace contains the core
-library, compiler-backed diagnostics, and a TypeScript native-preview wrapper for projects that want
-Resultar values to be difficult to ignore.
+library and TypeScript 7 compiler-backed diagnostics for projects that want Resultar values to be
+difficult to ignore.
 
 ## Packages
 
-| Package | Purpose | Documentation |
-| --- | --- | --- |
-| `resultar` | Core `Result<T, E>` and `ResultAsync<T, E>` library with tagged errors, typed async helpers, redaction, and strict result aliases. | [package README](packages/resultar/README.md), [full guide](DOCUMENTATION.md) |
-| `resultar-lint` | TypeScript compiler-backed diagnostics for discarded `Result` / `ResultAsync` values and Resultar-specific code patterns. | [lint README](packages/resultar-lint/README.md) |
-| `resultar-tsgo` | Wrapper around `@typescript/native-preview` that runs native `tsgo` and then Resultar lint validation. | [tsgo README](packages/resultar-tsgo/README.md) |
+| Package         | Purpose                                                                                                                            | Documentation                                                                 |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `resultar`      | Core `Result<T, E>` and `ResultAsync<T, E>` library with tagged errors, typed async helpers, redaction, and strict result aliases. | [package README](packages/resultar/README.md), [full guide](DOCUMENTATION.md) |
+| `resultar-check` | TypeScript 7 `tsc` plus Resultar diagnostics.                                                                                      | [check README](packages/resultar-check/README.md)                              |
+| `resultar-tsgo` | Deprecated compatibility wrapper for older `resultar-check` installs.                                                              | [deprecated README](packages/resultar-tsgo/README.md)                         |
 
 ## Main Library
 
@@ -44,67 +44,68 @@ selling points and quick-start examples for:
 
 Use the full guide when you need a specific recipe:
 
-| Topic | Link |
-| --- | --- |
-| Core model | [The Model](DOCUMENTATION.md#the-model) |
-| Tagged errors | [Tagged Errors](DOCUMENTATION.md#tagged-errors) |
-| Redacted error props | [Redacted Error Props](DOCUMENTATION.md#redacted-error-props) |
-| Catching and recovering errors | [Catching And Recovering Errors](DOCUMENTATION.md#catching-and-recovering-errors) |
-| Async wrapping | [Wrapping Throwing Or Rejecting Code](DOCUMENTATION.md#wrapping-throwing-or-rejecting-code) |
-| Local recovery | [Recovering Tagged Errors Locally](DOCUMENTATION.md#recovering-tagged-errors-locally) |
-| Async racing and timeouts | [Concurrent Racing And Timeouts](DOCUMENTATION.md#concurrent-racing-and-timeouts) |
-| Async retry policies | [Retrying Async Work](DOCUMENTATION.md#retrying-async-work) |
-| Bounded async mapping | [Async Concurrency Mapping](DOCUMENTATION.md#async-concurrency-mapping) |
-| Resource cleanup | [Resourceful Async Iterables](DOCUMENTATION.md#resourceful-async-iterables) |
-| Safe linear result code | [Safe Try](DOCUMENTATION.md#safe-try) |
-| Validation error recipes | [Validation Error Recipes](DOCUMENTATION.md#validation-error-recipes) |
-| No-discard diagnostics | [No-Discard Validation](DOCUMENTATION.md#no-discard-validation) |
-| Public exports | [Public Entry Point](DOCUMENTATION.md#public-entry-point) |
+| Topic                          | Link                                                                                        |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| Core model                     | [The Model](DOCUMENTATION.md#the-model)                                                     |
+| Tagged errors                  | [Tagged Errors](DOCUMENTATION.md#tagged-errors)                                             |
+| Redacted error props           | [Redacted Error Props](DOCUMENTATION.md#redacted-error-props)                               |
+| Catching and recovering errors | [Catching And Recovering Errors](DOCUMENTATION.md#catching-and-recovering-errors)           |
+| Async wrapping                 | [Wrapping Throwing Or Rejecting Code](DOCUMENTATION.md#wrapping-throwing-or-rejecting-code) |
+| Local recovery                 | [Recovering Tagged Errors Locally](DOCUMENTATION.md#recovering-tagged-errors-locally)       |
+| Async racing and timeouts      | [Concurrent Racing And Timeouts](DOCUMENTATION.md#concurrent-racing-and-timeouts)           |
+| Async retry policies           | [Retrying Async Work](DOCUMENTATION.md#retrying-async-work)                                 |
+| Bounded async mapping          | [Async Concurrency Mapping](DOCUMENTATION.md#async-concurrency-mapping)                     |
+| Resource cleanup               | [Resourceful Async Iterables](DOCUMENTATION.md#resourceful-async-iterables)                 |
+| Safe linear result code        | [Safe Try](DOCUMENTATION.md#safe-try)                                                       |
+| Validation error recipes       | [Validation Error Recipes](DOCUMENTATION.md#validation-error-recipes)                       |
+| No-discard diagnostics         | [No-Discard Validation](DOCUMENTATION.md#no-discard-validation)                             |
+| Public exports                 | [Public Entry Point](DOCUMENTATION.md#public-entry-point)                                   |
 
-## Diagnostics Packages
+## Resultar Check
 
-Install `resultar-lint` when ignored results should fail editor, lint, or build checks.
+Use `resultar-check` as the canonical Resultar diagnostics command. It runs the TypeScript 7 native
+compiler first, then runs Resultar diagnostics over the same `tsconfig.json`.
 
 ```sh
-pnpm add -D resultar-lint typescript
+pnpm add -D resultar-check typescript@rc
 ```
-
-```json
-{
-  "compilerOptions": {
-    "plugins": [{ "name": "resultar-lint", "noDiscard": "error" }]
-  }
-}
-```
-
-For CI-style checks:
 
 ```json
 {
   "scripts": {
-    "lint:resultar": "resultar-lint check --project tsconfig.json"
+    "check": "resultar-check -p tsconfig.json --noEmit"
   }
 }
 ```
 
-See [packages/resultar-lint/README.md](packages/resultar-lint/README.md) for all rules, Oxlint
-integration, TypeScript patching, and CLI options.
+Configure the Resultar rules in `tsconfig.json`:
 
-Install `resultar-tsgo` only for TypeScript 7 native-preview projects that use `tsgo`:
-
-```sh
-pnpm add -D resultar-lint resultar-tsgo @typescript/native-preview
+```json
+{
+  "compilerOptions": {
+    "plugins": [{ "name": "resultar-check", "noDiscard": "error" }]
+  }
+}
 ```
 
-See [packages/resultar-tsgo/README.md](packages/resultar-tsgo/README.md) for wrapper behavior.
+See [packages/resultar-check/README.md](packages/resultar-check/README.md) for rule configuration.
+Oxlint is intentionally not part of the Resultar rules path.
+
+For editor diagnostics, use the same `compilerOptions.plugins` entry. Zed works through `vtsls` with
+workspace TypeScript enabled; if you use `typescript-language-server`, configure its plugin
+`location` as the project root. VS Code should be set to
+`typescript.tsdk: "node_modules/typescript/lib"`.
+If a project cannot replace its `typescript` package yet and only needs the CLI path, install
+`typescript-7@npm:typescript@rc` instead.
 
 ## Examples
 
-| Example | Surface | What it validates |
-| --- | --- | --- |
-| [examples/resultar](examples/resultar) | Core Resultar cookbook | Sync validation, `safeTry`, tagged errors, async resilience, and resource cleanup |
-| [examples/lint](examples/lint) | TypeScript plugin, `resultar-lint check`, patched `tsc`, Vite+ / Oxlint `jsPlugins` | Full Resultar rule set across CLI, build-time, and Vite+ diagnostics |
-| [examples/tsgo-lint](examples/tsgo-lint) | TypeScript 7 native preview | `resultar-tsgo` wrapper plus full Resultar lint validation |
+| Example                                  | Surface                     | What it validates                                                                 |
+| ---------------------------------------- | --------------------------- | --------------------------------------------------------------------------------- |
+| [examples/resultar](examples/resultar)   | Core Resultar cookbook      | Sync validation, `safeTry`, tagged errors, async resilience, and resource cleanup |
+| [examples/lint](examples/lint)           | TypeScript 7 Resultar check | `resultar-check` plus the full Resultar rule set                                  |
+
+The deprecated `resultar-tsgo` package remains only as a compatibility wrapper.
 
 Run all example smokes with:
 
@@ -140,7 +141,7 @@ pnpm run release:jsr -- --dry-run
 ## Requirements
 
 - Node.js 24+
-- TypeScript 6+ for the current packages
+- TypeScript 7 RC for the canonical `resultar-check` workflow
 - ESM-only core package
 
 The root package is private. Published package metadata and README content live in each package

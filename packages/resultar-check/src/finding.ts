@@ -2,6 +2,7 @@ export type ResultarRuleName =
   | "no-discard"
   | "no-tagged-error-constructor-override"
   | "no-try-catch-in-safe-try"
+  | "no-unsafe-await"
   | "no-useless-recovery"
   | "prefer-and-then"
   | "prefer-map-err"

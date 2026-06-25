@@ -10,7 +10,7 @@
     "types": ["node"],
     "plugins": [
       {
-        "name": "resultar-lint",
+        "name": "resultar-check",
         "noDiscard": "error",
         "noTaggedErrorConstructorOverride": "error",
         "noTryCatchInSafeTry": "error",
@@ -25,5 +25,5 @@
       }
     ]
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "vite.config.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts"]
 }

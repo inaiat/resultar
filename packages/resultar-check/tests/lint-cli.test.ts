@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rejects, equal, match, ok } from "node:assert";
+import { equal, match, ok } from "node:assert";
 
 import { afterEach, describe, it } from "vite-plus/test";
 import * as ts from "typescript";
@@ -12,14 +12,10 @@ import {
   getResultarDiagnostics,
 } from "../src/diagnostics.js";
 import { findResultarPluginConfig, parsePluginOptions } from "../src/plugin-options.js";
-import {
-  getTypeScriptPatchStatus,
-  patchTypeScriptPackage,
-  unpatchTypeScriptPackage,
-} from "../src/patch.js";
 import { findDiscardedResults, findResultarLintFindings, runResultarLintCli } from "../src/lint.js";
 import {
   defaultResultarRulesOptions,
+  normalizeNoUnsafeAwaitMode,
   normalizeResultarRulesOptions,
   normalizeRuleSeverity,
 } from "../src/rules-core.js";
@@ -33,7 +29,7 @@ afterEach(async () => {
 });
 
 const createTempDir = async () => {
-  const dir = await mkdtemp(join(tmpdir(), "resultar-lint-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "resultar-check-test-"));
   tempDirs.push(dir);
   return dir;
 };
@@ -126,24 +122,6 @@ const runCli = (args: readonly string[], cwd: string) => {
   }
 };
 
-const createFakeTypeScriptPackage = async (version?: string, moduleSource?: string) => {
-  const dir = await createTempDir();
-  await mkdir(join(dir, "lib"), { recursive: true });
-  await writeFile(
-    join(dir, "package.json"),
-    JSON.stringify(version === undefined ? {} : { version }),
-  );
-
-  if (moduleSource !== undefined) {
-    await Promise.all([
-      writeFile(join(dir, "lib/_tsc.js"), moduleSource),
-      writeFile(join(dir, "lib/typescript.js"), moduleSource),
-    ]);
-  }
-
-  return dir;
-};
-
 describe("lint CLI and integration edges", () => {
   it("normalizes plugin options and rule severities", () => {
     equal(normalizeRuleSeverity("warning", "error"), "warning");
@@ -151,16 +129,21 @@ describe("lint CLI and integration edges", () => {
     equal(normalizeRuleSeverity("message", "error"), "message");
     equal(normalizeRuleSeverity("off", "error"), "off");
     equal(normalizeRuleSeverity(false, "warning"), "warning");
+    equal(normalizeNoUnsafeAwaitMode("all"), "all");
+    equal(normalizeNoUnsafeAwaitMode("resultar-context"), "resultar-context");
+    equal(normalizeNoUnsafeAwaitMode(false), defaultResultarRulesOptions.noUnsafeAwaitMode);
 
     const parsed = parsePluginOptions({
       noDiscard: "off",
       noDiscardMode: "direct",
+      noUnsafeAwaitMode: "all",
       preferTaggedError: "suggestion",
       typedCatchMapper: "message",
     });
 
     equal(parsed.noDiscard, "off");
     equal(parsed.noDiscardMode, "direct");
+    equal(parsed.noUnsafeAwaitMode, "all");
     equal(parsed.preferTaggedError, "suggestion");
     equal(parsed.typedCatchMapper, "message");
 
@@ -169,16 +152,23 @@ describe("lint CLI and integration edges", () => {
 
     const normalized = normalizeResultarRulesOptions({
       noDiscard: "off",
+      noUnsafeAwaitMode: "all",
       preferMapErr: "suggestion",
     });
     equal(normalized.noDiscard, "off");
+    equal(normalized.noUnsafeAwaitMode, "all");
     equal(normalized.preferMapErr, "suggestion");
 
     const config = findResultarPluginConfig([
       { name: "other-plugin", noDiscard: false },
-      { name: "resultar-lint", noDiscardMode: "direct" },
+      { name: "resultar-check", noDiscardMode: "direct" },
     ]);
     equal(config?.noDiscardMode, "direct");
+
+    const legacyConfig = findResultarPluginConfig([
+      { name: "resultar-lint", noDiscardMode: "direct" },
+    ]);
+    equal(legacyConfig?.noDiscardMode, "direct");
   });
 
   it("maps diagnostics severities and skips external source files", async () => {
@@ -236,7 +226,11 @@ saveUser()
 
     const help = runCli(["--help"], cleanRoot);
     equal(help.status, 0);
-    match(help.stdout, /resultar-lint check/);
+    match(help.stdout, /resultar-check -p tsconfig\.json --noEmit/);
+
+    const removedCheckSubcommand = runCli(["check"], cleanRoot);
+    equal(removedCheckSubcommand.status, 1);
+    match(removedCheckSubcommand.stderr, /Unknown argument: check/);
 
     const unknown = runCli(["--unknown"], cleanRoot);
     equal(unknown.status, 1);
@@ -338,66 +332,5 @@ saveUser()
     const result = runCli([], rootDir);
     equal(result.status, 1);
     match(result.stderr, /TS1005/);
-  });
-
-  it("rejects unsupported and malformed TypeScript patch targets", async () => {
-    const localStatus = await getTypeScriptPatchStatus();
-
-    ok(localStatus.typescriptVersion.startsWith("6."));
-    equal(localStatus.modules.length, 2);
-
-    const unsupported = await createFakeTypeScriptPackage("5.9.0");
-    await rejects(patchTypeScriptPackage({ dir: unsupported }), /supports TypeScript 6/);
-
-    const missingVersion = await createFakeTypeScriptPackage();
-    await rejects(
-      getTypeScriptPatchStatus({ dir: missingVersion }),
-      /Unable to read TypeScript version/,
-    );
-
-    const missingModules = await createFakeTypeScriptPackage("6.0.0");
-    await rejects(getTypeScriptPatchStatus({ dir: missingModules }), /lib\/_tsc\.js|ENOENT/);
-
-    const missingNeedle = await createFakeTypeScriptPackage("6.0.0", "const ts = {}\n");
-    await rejects(
-      patchTypeScriptPackage({ dir: missingNeedle }),
-      /Unable to find TypeScript diagnostics insertion point/,
-    );
-
-    const malformedPatch = await createFakeTypeScriptPackage(
-      "6.0.0",
-      [
-        "/* resultar-lint-patch:start call */",
-        "  const diagnostics = sortAndDeduplicateDiagnostics(allDiagnostics);",
-        "",
-      ].join("\n"),
-    );
-    await rejects(
-      patchTypeScriptPackage({ dir: malformedPatch }),
-      /without \/\* resultar-lint-patch:end call \*\//,
-    );
-  });
-
-  it("unpatches CRLF patch blocks from TypeScript module files", async () => {
-    const patchedSource = [
-      "/* resultar-lint-patch:start call */",
-      "  addRange(allDiagnostics, resultarLanguageServiceDiagnostics(program));",
-      "/* resultar-lint-patch:end call */",
-      "  const diagnostics = sortAndDeduplicateDiagnostics(allDiagnostics);",
-      "/* resultar-lint-patch:start helper */",
-      "/* resultar-lint-patch:version 3 */",
-      "function resultarLanguageServiceDiagnostics() { return []; }",
-      "/* resultar-lint-patch:end helper */",
-      "",
-    ].join("\r\n");
-    const dir = await createFakeTypeScriptPackage("6.0.0", patchedSource);
-    const result = await unpatchTypeScriptPackage({ dir });
-
-    equal(result.typescriptVersion, "6.0.0");
-    equal(result.modules.length, 2);
-    equal(
-      result.modules.every((moduleStatus) => moduleStatus.changed),
-      true,
-    );
   });
 });

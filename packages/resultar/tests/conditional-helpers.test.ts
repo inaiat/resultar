@@ -100,6 +100,59 @@ describe('Result conditional helpers', () => {
     equal(calls, 1)
   })
 
+  it('evaluates lazy Result.when and Result.unless conditions', () => {
+    let conditionCalls = 0
+    let bodyCalls = 0
+
+    const whenExecuted = Result.when(
+      () => {
+        conditionCalls += 1
+        return true
+      },
+      () => {
+        bodyCalls += 1
+        return ok<number, string>(1)
+      },
+    )
+    const whenSkipped = Result.when(
+      () => {
+        conditionCalls += 1
+        return false
+      },
+      () => {
+        bodyCalls += 1
+        return ok<number, string>(2)
+      },
+    )
+    const unlessExecuted = Result.unless(
+      () => {
+        conditionCalls += 1
+        return false
+      },
+      () => {
+        bodyCalls += 1
+        return ok<number, string>(3)
+      },
+    )
+    const unlessSkipped = Result.unless(
+      () => {
+        conditionCalls += 1
+        return true
+      },
+      () => {
+        bodyCalls += 1
+        return ok<number, string>(4)
+      },
+    )
+
+    equal(whenExecuted._unsafeUnwrap(), 1)
+    equal(whenSkipped._unsafeUnwrap(), undefined)
+    equal(unlessExecuted._unsafeUnwrap(), 3)
+    equal(unlessSkipped._unsafeUnwrap(), undefined)
+    equal(conditionCalls, 4)
+    equal(bodyCalls, 2)
+  })
+
   it('short-circuits Result.whenResult and Result.unlessResult on condition Err', () => {
     let calls = 0
     const body = (): Result<number, string> => {

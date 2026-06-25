@@ -1,7 +1,13 @@
 {
-  "name": "resultar-lint",
+  "name": "resultar-check",
   "version": "3.1.0",
-  "description": "Deprecated compatibility wrapper for resultar-check",
+  "description": "TypeScript 7 diagnostics for Resultar",
+  "keywords": [
+    "lint",
+    "no-discard",
+    "resultar",
+    "typescript"
+  ],
   "homepage": "https://github.com/inaiat/resultar",
   "bugs": {
     "url": "https://github.com/inaiat/resultar/issues"
@@ -11,10 +17,10 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/inaiat/resultar.git",
-    "directory": "packages/resultar-lint"
+    "directory": "packages/resultar-check"
   },
   "bin": {
-    "resultar-lint": "./dist/cli.js"
+    "resultar-check": "./dist/cli.js"
   },
   "files": [
     "dist",
@@ -22,7 +28,7 @@
     "README.md"
   ],
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/index.cjs",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -36,28 +42,31 @@
   "scripts": {
     "build": "vp pack",
     "check": "vp check",
-    "check:full": "pnpm run build && pnpm run check",
+    "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
     "lint": "vp lint",
     "lint:fix": "vp lint --fix",
     "prepare": "vp config || true",
     "prepublishOnly": "vp pack",
-    "smoke:package": "pnpm --filter resultar-check build && pnpm run build && tsx scripts/smoke-package.ts",
-    "test": "pnpm run build",
-    "test:watch": "pnpm run build",
-    "test:ui": "pnpm run build"
+    "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts",
+    "test": "pnpm run build && vp test run",
+    "test:cov": "pnpm run build && vp test run --coverage",
+    "test:ui": "pnpm run build && vp test --ui --watch",
+    "test:watch": "pnpm run build && vp test watch"
   },
   "dependencies": {
-    "resultar-check": "workspace:*"
+    "typescript": "^6.0.3"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "@vitest/ui": "catalog:",
     "tsx": "catalog:",
+    "typescript-7": "catalog:",
     "vite-plus": "catalog:"
   },
   "engines": {
     "node": ">=24"
-  },
-  "deprecated": "Use resultar-check. This package is a compatibility wrapper."
+  }
 }

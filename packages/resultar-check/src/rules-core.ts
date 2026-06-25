@@ -12,7 +12,11 @@ import {
 type TypeScriptApi = typeof ts;
 
 type EnabledRuleSeverity = Exclude<ResultarRuleSeverity, "off">;
-type ResultarRuleOptionName = Exclude<keyof ResultarRulesOptions, "noDiscardMode">;
+export type NoUnsafeAwaitMode = "all" | "resultar-context";
+type ResultarRuleOptionName = Exclude<
+  keyof ResultarRulesOptions,
+  "noDiscardMode" | "noUnsafeAwaitMode"
+>;
 type MutableResultarRulesOptions = {
   -readonly [Key in keyof ResultarRulesOptions]?: ResultarRulesOptions[Key];
 };
@@ -44,6 +48,8 @@ export interface ResultarRulesOptions {
   readonly noDiscardMode: NoDiscardMode;
   readonly noTaggedErrorConstructorOverride: ResultarRuleSeverity;
   readonly noTryCatchInSafeTry: ResultarRuleSeverity;
+  readonly noUnsafeAwait: ResultarRuleSeverity;
+  readonly noUnsafeAwaitMode: NoUnsafeAwaitMode;
   readonly noUselessRecovery: ResultarRuleSeverity;
   readonly preferAndThen: ResultarRuleSeverity;
   readonly preferMapErr: ResultarRuleSeverity;
@@ -59,6 +65,7 @@ export const resultarRuleNames: readonly ResultarRuleName[] = [
   "prefer-map-err",
   "prefer-and-then",
   "typed-catch-mapper",
+  "no-unsafe-await",
   "no-try-catch-in-safe-try",
   "yield-star-in-safe-try",
   "unsafe-result-type-assertion",
@@ -72,6 +79,7 @@ export const ruleOptionNameByRule: Record<ResultarRuleName, ResultarRuleOptionNa
   "no-discard": "noDiscard",
   "no-tagged-error-constructor-override": "noTaggedErrorConstructorOverride",
   "no-try-catch-in-safe-try": "noTryCatchInSafeTry",
+  "no-unsafe-await": "noUnsafeAwait",
   "no-useless-recovery": "noUselessRecovery",
   "prefer-and-then": "preferAndThen",
   "prefer-map-err": "preferMapErr",
@@ -87,6 +95,8 @@ export const defaultResultarRulesOptions: ResultarRulesOptions = {
   noDiscardMode: "must-use",
   noTaggedErrorConstructorOverride: "warning",
   noTryCatchInSafeTry: "warning",
+  noUnsafeAwait: "off",
+  noUnsafeAwaitMode: "resultar-context",
   noUselessRecovery: "warning",
   preferAndThen: "warning",
   preferMapErr: "warning",
@@ -121,6 +131,13 @@ const tryMapperCallNames = new Set([
   "tryAsync",
 ]);
 
+const asyncAwaitBoundaryCallNames = new Set([
+  "fromThrowableAsync",
+  "tryCatchAsync",
+  "tryResultAsync",
+  "tryAsync",
+]);
+
 export const normalizeRuleSeverity = (
   value: unknown,
   fallback: ResultarRuleSeverity,
@@ -132,6 +149,11 @@ export const normalizeRuleSeverity = (
   value === "warning"
     ? value
     : fallback;
+
+export const normalizeNoUnsafeAwaitMode = (
+  value: unknown,
+  fallback: NoUnsafeAwaitMode = defaultResultarRulesOptions.noUnsafeAwaitMode,
+): NoUnsafeAwaitMode => (value === "all" || value === "resultar-context" ? value : fallback);
 
 export const normalizeResultarRulesOptions = (
   options: Partial<ResultarRulesOptions> = {},
@@ -146,6 +168,11 @@ export const normalizeResultarRulesOptions = (
     options.noTryCatchInSafeTry,
     defaultResultarRulesOptions.noTryCatchInSafeTry,
   ),
+  noUnsafeAwait: normalizeRuleSeverity(
+    options.noUnsafeAwait,
+    defaultResultarRulesOptions.noUnsafeAwait,
+  ),
+  noUnsafeAwaitMode: normalizeNoUnsafeAwaitMode(options.noUnsafeAwaitMode),
   noUselessRecovery: normalizeRuleSeverity(
     options.noUselessRecovery,
     defaultResultarRulesOptions.noUselessRecovery,
@@ -392,6 +419,111 @@ const isResultLikeExpression = (context: RuleContext, expression: ts.Expression)
   return isResultLikeType(context.tsApi, context.checker, expression, type);
 };
 
+const getUnionTypes = (context: RuleContext, type: ts.Type): readonly ts.Type[] | undefined =>
+  (type.flags & context.tsApi.TypeFlags.Union) === 0
+    ? undefined
+    : ((type as ts.UnionType).types ?? []);
+
+const everyUnionPart = (
+  context: RuleContext,
+  type: ts.Type,
+  predicate: (type: ts.Type) => boolean,
+): boolean => {
+  const unionTypes = getUnionTypes(context, type);
+
+  return unionTypes === undefined
+    ? predicate(type)
+    : unionTypes.every((innerType) => predicate(innerType));
+};
+
+const isResultAsyncLikeAwaitType = (context: RuleContext, node: ts.Node, type: ts.Type): boolean =>
+  everyUnionPart(context, type, (innerType) => isResultAsyncLikeType(context, node, innerType));
+
+const isResultLikeAwaitedType = (context: RuleContext, node: ts.Node, type: ts.Type): boolean =>
+  everyUnionPart(context, type, (innerType) =>
+    isResultLikeType(context.tsApi, context.checker, node, innerType),
+  );
+
+const getPromisedTypeOfPromise = (
+  context: RuleContext,
+  node: ts.Node,
+  type: ts.Type,
+): ts.Type | undefined => {
+  const checker = context.checker as ts.TypeChecker & {
+    readonly getPromisedTypeOfPromise?: (type: ts.Type, errorNode?: ts.Node) => ts.Type | undefined;
+  };
+
+  return checker.getPromisedTypeOfPromise?.(type, node);
+};
+
+const isSafeAwaitExpression = (context: RuleContext, expression: ts.Expression): boolean => {
+  const expressionType = context.checker.getTypeAtLocation(expression);
+
+  if (isResultAsyncLikeAwaitType(context, expression, expressionType)) {
+    return true;
+  }
+
+  const promisedType = getPromisedTypeOfPromise(context, expression, expressionType);
+
+  if (promisedType === undefined) {
+    return true;
+  }
+
+  const awaitedType = context.checker.getAwaitedType(expressionType) ?? promisedType;
+
+  return isResultLikeAwaitedType(context, expression, awaitedType);
+};
+
+const isPromiseOfResultLikeType = (context: RuleContext, node: ts.Node, type: ts.Type): boolean => {
+  const unionOrIntersectionTypes = getUnionOrIntersectionTypes(context, type);
+
+  if (unionOrIntersectionTypes !== undefined) {
+    return unionOrIntersectionTypes.some((innerType) =>
+      isPromiseOfResultLikeType(context, node, innerType),
+    );
+  }
+
+  const promisedType = getPromisedTypeOfPromise(context, node, type);
+
+  if (promisedType === undefined) {
+    return false;
+  }
+
+  const awaitedType = context.checker.getAwaitedType(type) ?? promisedType;
+
+  return isResultLikeAwaitedType(context, node, awaitedType);
+};
+
+const isResultarAsyncContextReturnType = (
+  context: RuleContext,
+  node: ts.Node,
+  type: ts.Type,
+): boolean =>
+  isResultAsyncLikeType(context, node, type) || isPromiseOfResultLikeType(context, node, type);
+
+const getFunctionLikeReturnType = (context: RuleContext, node: ts.Node): ts.Type | undefined => {
+  const signature = context.checker.getSignatureFromDeclaration(node as ts.SignatureDeclaration);
+
+  if (signature !== undefined) {
+    return signature.getReturnType();
+  }
+
+  const functionType = context.checker.getTypeAtLocation(node);
+  const [callSignature] = functionType.getCallSignatures();
+
+  return callSignature?.getReturnType();
+};
+
+const isResultarAsyncFunctionContext = (context: RuleContext, node: ts.Node): boolean => {
+  if (!isFunctionLike(context.tsApi, node)) {
+    return false;
+  }
+
+  const returnType = getFunctionLikeReturnType(context, node);
+
+  return returnType !== undefined && isResultarAsyncContextReturnType(context, node, returnType);
+};
+
 const isUnknownOrAnyType = (tsApi: TypeScriptApi, type: ts.Type | undefined): boolean =>
   type !== undefined &&
   (Boolean(type.flags & tsApi.TypeFlags.Unknown) || Boolean(type.flags & tsApi.TypeFlags.Any));
@@ -473,6 +605,31 @@ const hasMapperArgument = (tsApi: TypeScriptApi, call: ts.CallExpression): boole
   );
 };
 
+const getObjectTryBody = (
+  tsApi: TypeScriptApi,
+  objectLiteral: ts.ObjectLiteralExpression,
+): SafeTryBody | undefined => {
+  for (const property of objectLiteral.properties) {
+    if (
+      tsApi.isMethodDeclaration(property) &&
+      getPropertyNameText(tsApi, property.name) === "try"
+    ) {
+      return property;
+    }
+
+    if (
+      tsApi.isPropertyAssignment(property) &&
+      getPropertyNameText(tsApi, property.name) === "try" &&
+      (tsApi.isArrowFunction(property.initializer) ||
+        tsApi.isFunctionExpression(property.initializer))
+    ) {
+      return property.initializer;
+    }
+  }
+
+  return undefined;
+};
+
 const getSafeTryBody = (tsApi: TypeScriptApi, call: ts.CallExpression): SafeTryBody | undefined => {
   if (getExpressionName(tsApi, call.expression) !== "safeTry") {
     return undefined;
@@ -494,26 +651,43 @@ const getSafeTryBody = (tsApi: TypeScriptApi, call: ts.CallExpression): SafeTryB
     return undefined;
   }
 
-  for (const property of unwrapped.properties) {
-    if (
-      tsApi.isMethodDeclaration(property) &&
-      getPropertyNameText(tsApi, property.name) === "try"
-    ) {
-      return property;
-    }
+  return getObjectTryBody(tsApi, unwrapped);
+};
 
-    if (
-      tsApi.isPropertyAssignment(property) &&
-      getPropertyNameText(tsApi, property.name) === "try" &&
-      (tsApi.isArrowFunction(property.initializer) ||
-        tsApi.isFunctionExpression(property.initializer))
-    ) {
-      return property.initializer;
-    }
+const getResultarAwaitBoundaryBody = (
+  tsApi: TypeScriptApi,
+  call: ts.CallExpression,
+): SafeTryBody | undefined => {
+  const callName = getExpressionName(tsApi, call.expression);
+
+  if (callName === undefined || !asyncAwaitBoundaryCallNames.has(callName)) {
+    return undefined;
+  }
+
+  const [firstArgument] = call.arguments;
+
+  if (firstArgument === undefined) {
+    return undefined;
+  }
+
+  const unwrapped = unwrapExpression(tsApi, firstArgument);
+
+  if (tsApi.isArrowFunction(unwrapped) || tsApi.isFunctionExpression(unwrapped)) {
+    return unwrapped;
+  }
+
+  if (tsApi.isObjectLiteralExpression(unwrapped)) {
+    return getObjectTryBody(tsApi, unwrapped);
   }
 
   return undefined;
 };
+
+const getResultarAwaitContextBody = (
+  tsApi: TypeScriptApi,
+  call: ts.CallExpression,
+): SafeTryBody | undefined =>
+  getSafeTryBody(tsApi, call) ?? getResultarAwaitBoundaryBody(tsApi, call);
 
 const visitSafeTryBody = (
   tsApi: TypeScriptApi,
@@ -748,6 +922,97 @@ const getTypedCatchMapperFindings = (
       ),
     );
   });
+
+  return findings;
+};
+
+const collectResultarAwaitBoundaryBodies = (context: RuleContext): ReadonlySet<ts.Node> => {
+  const bodies = new Set<ts.Node>();
+
+  visitSourceFile(context, (node) => {
+    if (!context.tsApi.isCallExpression(node)) {
+      return;
+    }
+
+    const body = getResultarAwaitBoundaryBody(context.tsApi, node);
+
+    if (body !== undefined) {
+      bodies.add(body);
+    }
+  });
+
+  return bodies;
+};
+
+const collectResultarAwaitContextBodies = (context: RuleContext): ReadonlySet<ts.Node> => {
+  const bodies = new Set<ts.Node>();
+
+  visitSourceFile(context, (node) => {
+    if (!context.tsApi.isCallExpression(node)) {
+      return;
+    }
+
+    const body = getResultarAwaitContextBody(context.tsApi, node);
+
+    if (body !== undefined) {
+      bodies.add(body);
+    }
+  });
+
+  return bodies;
+};
+
+const getNoUnsafeAwaitFindings = (
+  context: RuleContext,
+  severity: EnabledRuleSeverity,
+  mode: NoUnsafeAwaitMode,
+): readonly ResultarLintFinding[] => {
+  const findings: ResultarLintFinding[] = [];
+  const boundaryBodies = collectResultarAwaitBoundaryBodies(context);
+  const contextBodies = collectResultarAwaitContextBodies(context);
+
+  const visit = (
+    node: ts.Node,
+    insideResultarBoundary: boolean,
+    insideResultarContext: boolean,
+  ): void => {
+    const startsResultarBoundary = boundaryBodies.has(node);
+    const currentInsideBoundary = insideResultarBoundary || startsResultarBoundary;
+    const startsResultarContext =
+      contextBodies.has(node) || isResultarAsyncFunctionContext(context, node);
+    const currentInsideContext = insideResultarContext || startsResultarContext;
+    const shouldCheckAwait = mode === "all" || currentInsideContext;
+
+    if (
+      shouldCheckAwait &&
+      context.tsApi.isAwaitExpression(node) &&
+      !currentInsideBoundary &&
+      !isSafeAwaitExpression(context, node.expression)
+    ) {
+      findings.push(
+        createFinding(
+          context,
+          node,
+          "no-unsafe-await",
+          severity,
+          "Wrap this awaited Promise in tryAsync, tryResultAsync, tryCatchAsync, or fromThrowableAsync so rejections stay in the Resultar error channel.",
+        ),
+      );
+    }
+
+    if (node !== context.sourceFile && isFunctionLike(context.tsApi, node)) {
+      context.tsApi.forEachChild(node, (child) =>
+        visit(child, startsResultarBoundary, startsResultarContext),
+      );
+      return;
+    }
+
+    context.tsApi.forEachChild(node, (child) =>
+      visit(child, currentInsideBoundary, currentInsideContext),
+    );
+  };
+
+  visit(context.sourceFile, false, false);
 
   return findings;
 };
@@ -1061,8 +1326,20 @@ export const getSourceFileResultarFindings = (
     );
   }
 
+  const noUnsafeAwaitSeverity = getRuleSeverity(normalizedOptions, "no-unsafe-await");
+
+  if (noUnsafeAwaitSeverity !== undefined) {
+    findings.push(
+      ...getNoUnsafeAwaitFindings(
+        context,
+        noUnsafeAwaitSeverity,
+        normalizedOptions.noUnsafeAwaitMode,
+      ),
+    );
+  }
+
   const ruleFns: readonly (readonly [
-    Exclude<ResultarRuleName, "no-discard">,
+    Exclude<ResultarRuleName, "no-discard" | "no-unsafe-await">,
     (context: RuleContext, severity: EnabledRuleSeverity) => readonly ResultarLintFinding[],
   ])[] = [
     ["prefer-map-err", getPreferMapErrFindings],

@@ -3,21 +3,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "vp check",
-    "check-ts": "tsc -p tsconfig.json --noEmit --pretty false",
+    "check": "resultar-check -p tsconfig.json --noEmit",
     "lint": "pnpm run check",
-    "prepare": "pnpm --filter resultar build && pnpm --filter resultar-lint build",
+    "prepare": "pnpm --filter resultar build && pnpm --filter resultar-check build",
     "smoke": "pnpm run prepare && pnpm run check && tsx scripts/smoke.ts",
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "resultar": "workspace:*"
+    "resultar": "workspace:*",
+    "resultar-check": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "resultar-lint": "workspace:*",
     "tsx": "catalog:",
-    "typescript": "^6.0.3",
-    "vite-plus": "catalog:"
+    "typescript-7": "catalog:"
   }
 }

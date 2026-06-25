@@ -1,4 +1,4 @@
-import { equal, ok as assertOk, strictEqual } from 'node:assert'
+import { equal, ok as assertOk, strictEqual, throws } from 'node:assert'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
@@ -14,6 +14,28 @@ class ParseConfigError extends Error {
 }
 
 describe('safeTry object form', () => {
+  it('ignores catch properties on function generator form', () => {
+    const thrown = new Error('function failure')
+    const shouldThrow = (): boolean => true
+
+    function* generator() {
+      if (shouldThrow()) {
+        throw thrown
+      }
+
+      yield* ok<number, string>(1)
+
+      return ok<number, string>(1)
+    }
+
+    Object.defineProperty(generator, 'catch', { configurable: true, value: () => 'mapped failure' })
+
+    throws(
+      () => safeTry(generator),
+      (error) => error === thrown,
+    )
+  })
+
   it('returns the final Ok for a sync generator', () => {
     const actual = safeTry({
       *try() {

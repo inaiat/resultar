@@ -1,7 +1,7 @@
 {
-  "name": "@inaiat/resultar-lint",
+  "name": "@inaiat/resultar-check",
   "version": "3.1.0",
   "license": "MIT",
-  "exports": "./src/index.ts",
+  "exports": "./src/diagnostics.ts",
   "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }
 }

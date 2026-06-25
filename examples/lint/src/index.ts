@@ -81,6 +81,9 @@ export const preferAndThenExample = () =>
 
 export const typedCatchMapperExample = () => tryResult(() => JSON.parse('{"id":"parsed"}') as User);
 
+export const noUnsafeAwaitExample = async (): Promise<Result<User, SaveUserError>> =>
+  ok(await Promise.resolve({ id: "unsafe-await" }));
+
 export const noTryCatchInSafeTryExample = (): Result<User, SaveUserError> =>
   safeTry(function* () {
     try {

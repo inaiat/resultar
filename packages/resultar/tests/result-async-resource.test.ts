@@ -90,7 +90,29 @@ describe('ResultAsync resource helpers', () => {
 
     isTrue(result.isErr())
     isTrue(isAbortError(result.error))
+    equal(result.error.message, 'ResultAsync resource scope aborted')
+    equal(result.error.cause, controller.signal.reason)
     equal(acquired, false)
+  })
+
+  it('returns AbortError without cause when a custom resource signal has no reason', async () => {
+    const signal = {
+      aborted: true,
+      addEventListener: () => undefined,
+      reason: undefined,
+      removeEventListener: () => undefined,
+    } as unknown as AbortSignal
+    const result = await ResultAsync.withResource({
+      acquire: () => ResultAsync.okAsync<{ readonly id: string }, 'acquire'>({ id: 'resource-1' }),
+      release: () => undefined,
+      signal,
+      use: () => ResultAsync.okAsync<string, 'use'>('done'),
+    })
+
+    isTrue(result.isErr())
+    isTrue(isAbortError(result.error))
+    equal(result.error.message, 'ResultAsync resource scope aborted')
+    equal('cause' in result.error, false)
   })
 
   it('releases after acquisition if the signal is aborted before use starts', async () => {
@@ -119,6 +141,8 @@ describe('ResultAsync resource helpers', () => {
 
     isTrue(result.isErr())
     isTrue(isAbortError(result.error))
+    equal(result.error.message, 'ResultAsync resource scope aborted')
+    equal(result.error.cause, controller.signal.reason)
     deepEqual(events, ['acquire', 'release:abort'])
   })
 

@@ -263,6 +263,36 @@ describe('Result.Ok', async () => {
       equal(unhandled.error, validationError)
     })
 
+    it('does not treat primitive or untagged errors as tagged handler matches', () => {
+      const undefinedHandler = vi.fn(() => ok<number | string, never>('matched undefined tag'))
+      const primitiveResult = err<number, string>('plain failure').catchTags({
+        undefined: undefinedHandler,
+      } as never)
+
+      isTrue(primitiveResult.isErr())
+      equal(primitiveResult.error, 'plain failure')
+      equal(undefinedHandler.mock.calls.length, 0)
+
+      const untaggedError = { message: 'plain object failure' }
+      const objectUndefinedHandler = vi.fn(() => ok<number | string, never>('matched object'))
+      const objectResult = err<number, typeof untaggedError>(untaggedError).catchTags({
+        undefined: objectUndefinedHandler,
+      } as never)
+
+      isTrue(objectResult.isErr())
+      strictEqual(objectResult.error, untaggedError)
+      equal(objectUndefinedHandler.mock.calls.length, 0)
+
+      const nullUndefinedHandler = vi.fn(() => ok<number | string, never>('matched null'))
+      const nullResult = err<number, null>(null).catchTags({
+        undefined: nullUndefinedHandler,
+      } as never)
+
+      isTrue(nullResult.isErr())
+      equal(nullResult.error, null)
+      equal(nullUndefinedHandler.mock.calls.length, 0)
+    })
+
     it('rejects unknown tags at type level', () => {
       const result = err<number, ValidationError>(new ValidationError({ field: 'email' }))
 
@@ -287,7 +317,7 @@ describe('Result.Ok', async () => {
     )
 
     isTrue(result.isOk())
-    equal(result.value, '3')
+    strictEqual(result.value, '3')
     expectTypeOf(result).toExtend<Result<string, ValidationError>>()
 
     const unchanged = (ok(1) as unknown as { pipe: () => Result<number, never> }).pipe()
@@ -439,6 +469,49 @@ describe('Result.Ok', async () => {
     )
 
     equal(message, 'plain:plain failure')
+  })
+
+  it('falls back for primitive and untagged values during partial tag matching', () => {
+    const primitiveUndefinedHandler = vi.fn(() => 'matched undefined tag')
+    const primitive = err<number, string>('plain failure').matchTagsPartial(
+      String,
+      { undefined: primitiveUndefinedHandler } as never,
+      (error) => `fallback:${error}`,
+    )
+
+    equal(primitive, 'fallback:plain failure')
+    equal(primitiveUndefinedHandler.mock.calls.length, 0)
+
+    const untaggedError = { message: 'plain object failure' }
+    const objectUndefinedHandler = vi.fn(() => 'matched object')
+    const objectValue = err<number, typeof untaggedError>(untaggedError).matchTagsPartial(
+      String,
+      { undefined: objectUndefinedHandler } as never,
+      (error) => `fallback:${error.message}`,
+    )
+
+    equal(objectValue, 'fallback:plain object failure')
+    equal(objectUndefinedHandler.mock.calls.length, 0)
+
+    const nullUndefinedHandler = vi.fn(() => 'matched null')
+    const nullValue = err<number, null>(null).matchTagsPartial(
+      String,
+      { undefined: nullUndefinedHandler } as never,
+      () => 'fallback:null',
+    )
+
+    equal(nullValue, 'fallback:null')
+    equal(nullUndefinedHandler.mock.calls.length, 0)
+
+    const missingHandler = err<number, ValidationError | PermissionError>(
+      new PermissionError({ permission: 'admin:delete' }),
+    ).matchTagsPartial(
+      String,
+      { ValidationError: (error) => `validation:${error.field}` },
+      (error) => `fallback:${error.message}`,
+    )
+
+    equal(missingHandler, 'fallback:Missing permission admin:delete')
   })
 
   it('Unwraps without issue', () => {
