@@ -1046,7 +1046,7 @@ Common commands:
 ```sh
 pnpm install
 pnpm run fmt:check
-pnpm run lint
+pnpm run check
 pnpm test
 pnpm run test:cov
 pnpm run build

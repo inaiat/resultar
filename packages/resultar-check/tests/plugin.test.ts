@@ -5,6 +5,8 @@ import * as ts from "typescript";
 
 import { createLanguageServicePlugin } from "../src/plugin.js";
 
+type CustomLanguageService = ts.LanguageService & { readonly customMethod: () => string };
+
 describe("Resultar TypeScript language-service plugin", () => {
   it("returns an already wrapped language service unchanged", () => {
     const plugin = createLanguageServicePlugin({ typescript: ts });
@@ -37,12 +39,12 @@ describe("Resultar TypeScript language-service plugin", () => {
       getSemanticDiagnostics() {
         return baseDiagnostics;
       },
-    } as unknown as ts.LanguageService & { customMethod(): string };
+    } as unknown as CustomLanguageService;
 
     const proxy = plugin.create({
       config: "not an object",
       languageService,
-    } as unknown as ts.server.PluginCreateInfo) as ts.LanguageService & { customMethod(): string };
+    } as unknown as ts.server.PluginCreateInfo) as CustomLanguageService;
 
     equal(proxy.customMethod(), "bound");
     deepEqual(proxy.getSemanticDiagnostics("missing.ts"), baseDiagnostics);

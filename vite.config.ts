@@ -1,3 +1,3 @@
 export default {
-  staged: { "*": "vp check --fix" },
+  staged: { "*": () => "pnpm -w run check" },
 };

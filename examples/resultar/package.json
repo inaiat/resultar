@@ -4,7 +4,6 @@
   "type": "module",
   "scripts": {
     "check": "resultar-check -p tsconfig.json --noEmit",
-    "lint": "pnpm run check",
     "prepare": "pnpm --filter resultar build && pnpm --filter resultar-check build",
     "smoke": "pnpm run prepare && pnpm run check && tsx scripts/smoke.ts",
     "start": "tsx src/index.ts"

@@ -45,8 +45,6 @@
     "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
-    "lint": "vp lint",
-    "lint:fix": "vp lint --fix",
     "prepare": "vp config || true",
     "prepublishOnly": "vp pack",
     "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts",

@@ -7,21 +7,21 @@ import type * as ts from "typescript";
 
 import type { ResultarLintFinding } from "./finding.js";
 import {
-  type NoDiscardFinding,
-  type NoDiscardMode,
   getProgramNoDiscardFindings,
+  type NoDiscardFinding as ResultarNoDiscardFinding,
+  type NoDiscardMode as ResultarNoDiscardMode,
   normalizeNoDiscardMode,
 } from "./result-usage-core.js";
 import { type ResultarRulesOptions, getProgramResultarFindings } from "./rules-core.js";
 import { findResultarPluginConfig } from "./plugin-options.js";
 
 export interface NoDiscardOptions {
-  readonly mode?: NoDiscardMode;
+  readonly mode?: ResultarNoDiscardMode;
   readonly project?: string;
   readonly rootDir?: string;
 }
 
-export type { NoDiscardFinding, NoDiscardMode };
+export type { NoDiscardFinding, NoDiscardMode } from "./result-usage-core.js";
 
 type TypeScriptApi = typeof ts;
 
@@ -29,7 +29,7 @@ type NoDiscardFailure = { readonly error: Error; readonly ok: false };
 
 export type NoDiscardResult =
   | NoDiscardFailure
-  | { readonly findings: readonly NoDiscardFinding[]; readonly ok: true };
+  | { readonly findings: readonly ResultarNoDiscardFinding[]; readonly ok: true };
 
 export interface ResultarLintOptions extends NoDiscardOptions {
   readonly rules?: Partial<ResultarRulesOptions>;
@@ -118,7 +118,7 @@ const resolveTypeScript7PackageJson = (
 const parseArgs = (
   args: readonly string[],
 ): NoDiscardFailure | { readonly ok: true; readonly options: CliOptions } => {
-  let mode: NoDiscardMode | undefined = undefined;
+  let mode: ResultarNoDiscardMode | undefined = undefined;
   let project: string | undefined = undefined;
   let help = false;
 
@@ -176,7 +176,7 @@ const parseArgs = (
 const parseCheckArgs = (
   args: readonly string[],
 ): NoDiscardFailure | { readonly ok: true; readonly options: ResultarCheckCliOptions } => {
-  let mode: NoDiscardMode | undefined = undefined;
+  let mode: ResultarNoDiscardMode | undefined = undefined;
   let project: string | undefined = undefined;
   let help = false;
   const tscArgs: string[] = [];
@@ -293,7 +293,7 @@ const readProject = (
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
   typeof value === "object" && value !== null;
 
-const getProjectNoDiscardMode = (config: unknown): NoDiscardMode | undefined => {
+const getProjectNoDiscardMode = (config: unknown): ResultarNoDiscardMode | undefined => {
   if (!isRecord(config) || !isRecord(config.compilerOptions)) {
     return undefined;
   }
