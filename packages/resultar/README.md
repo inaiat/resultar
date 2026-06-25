@@ -17,6 +17,8 @@ hidden timers, or helper code that throws.
   `{ concurrency }`, and explicit unbounded execution for batch processing and validation.
 - `AbortError` / `isAbortError` and redacted tagged-error props with `redact`, `isRedacted`, and
   `revealRedacted` make cancellation and sensitive error metadata visible at the type boundary.
+- `pipe` lets teams package reusable result combinators without hiding the underlying `Result` /
+  `ResultAsync` type.
 
 ## Main Functionalities
 
@@ -131,6 +133,7 @@ in normal TypeScript.
 | Expected failures are hidden behind `throw` | `Result<T, E>` and `ResultAsync<T, E>` in function signatures |
 | Production errors need stable names and metadata | `createTaggedError` classes with `_tag`, template props, `cause`, and `.toJSON()` |
 | Async flows turn into nested `try/catch` | `tryResultAsync`, `andThen`, `asyncAndThen`, `map`, `orElse`, `safeTry` |
+| Repeated result transforms become noisy | `pipe` with small reusable combinators |
 | Network calls need timeouts, retries, and fallback policy | `ResultAsync.timeout`, `retry`, `retryOrElse`, `race`, and `raceAll` |
 | Batch work needs backpressure without a framework | `ResultAsync.forEach` and mapped `validateAll` with `{ concurrency }` |
 | Resourceful work needs cleanup on every path | `ResultAsync.withResource` and native `AsyncIterable<Result<T, E>>` recipes |
@@ -490,6 +493,42 @@ const validateCompanyEmail = (
     (validEmail) => validEmail.endsWith('@company.com'),
     (validEmail) => new InvalidDomainError({ domain: validEmail.split('@')[1] ?? 'unknown' }),
   )
+```
+
+Use `pipe` when a transform should be named and reused. A pipe step receives the current
+`Result`/`ResultAsync` and returns the next value in the chain:
+
+```ts
+import type { Result, StrictResult } from 'resultar'
+
+const normalizeEmail = <E>(result: Result<string, E>): Result<string, E> =>
+  result.map((email) => email.trim().toLowerCase())
+
+const requireCompanyDomain = (
+  result: Result<string, InvalidEmailError>,
+): StrictResult<string, InvalidEmailError | InvalidDomainError> =>
+  result.filterOrElse(
+    (email) => email.endsWith('@company.com'),
+    (email) => new InvalidDomainError({ domain: email.split('@')[1] ?? 'unknown' }),
+  )
+
+const email = validateEmail(input).pipe(normalizeEmail, requireCompanyDomain)
+```
+
+The same pattern works for async results. `pipe` is just composition; it does not catch thrown
+errors from the pipe callbacks:
+
+```ts
+import type { ResultAsync } from 'resultar'
+
+const auditUser =
+  <E>(result: ResultAsync<User, E>): ResultAsync<User, E> =>
+    result.tap((user) => logger.info({ userId: user.id }, 'user created'))
+
+const createdEmail = validateEmail(input)
+  .asyncAndThen(ensureUserDoesNotExistAsync)
+  .andThen(insertUserAsync)
+  .pipe(auditUser, (result) => result.map((user) => user.email))
 ```
 
 Use `catchTag` or `catchTags` for local recovery from tagged errors:

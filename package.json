@@ -16,7 +16,7 @@
     "release:jsr": "node scripts/publish-jsr.mjs",
     "release:npm": "node scripts/publish-npm.mjs",
     "smoke:package": "pnpm -r --filter './packages/*' run smoke:package",
-    "sync:jsr-version": "node scripts/sync-jsr-versions.mjs && vp fmt packages/resultar/jsr.json packages/resultar-check/jsr.json packages/resultar-lint/jsr.json packages/resultar-tsgo/jsr.json",
+    "sync:jsr-version": "node scripts/sync-jsr-versions.mjs && vp fmt packages/resultar/jsr.json packages/resultar-check/jsr.json",
     "test:examples": "pnpm run example:resultar && pnpm run example:resultar-check",
     "test:language-service": "pnpm run example:resultar-check",
     "test": "pnpm -r --filter './packages/*' run test",

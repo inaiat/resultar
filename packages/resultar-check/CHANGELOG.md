@@ -1,5 +1,11 @@
 # resultar-check
 
+## 1.0.0
+
+### Minor Changes
+
+- Standardize the public Resultar check path around `resultar-check`, add the opt-in unsafe await diagnostic, and include the runtime performance and mutation-testing updates.
+
 ## 3.1.0
 
 ### Minor Changes

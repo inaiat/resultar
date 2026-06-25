@@ -37,6 +37,7 @@ selling points and quick-start examples for:
 - `Result<T, E>` and `ResultAsync<T, E>`
 - `StrictResult<T, E extends Error>` and `StrictResultAsync<T, E extends Error>`
 - `createTaggedError`, `taggedEnum`, and redacted error props
+- reusable `pipe` combinators for `Result` and `ResultAsync`
 - `ResultAsync.timeout`, `retry`, `retryOrElse`, `race`, `raceAll`, and `withResource`
 - `safeTry`, `matchTags`, local recovery, and boundary response mapping
 
