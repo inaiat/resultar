@@ -617,6 +617,8 @@ const waitResultAsyncRetryDelay = async (
   })
 }
 
+// Retry keeps branches inline to avoid helper calls in the retry loop.
+// fallow-ignore-next-line complexity
 const runResultAsyncRetryAttempts = async <T, E, U, F>(
   task: ResultAsyncRetryTask<T, E>,
   options: ResultAsyncRetryOptions<E>,
