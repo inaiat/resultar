@@ -1,5 +1,11 @@
 # resultar
 
+## 3.3.1
+
+### Patch Changes
+
+- Refresh the README docs for the runtime package.
+
 ## 3.3.0
 
 ### Minor Changes

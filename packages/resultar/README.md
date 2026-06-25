@@ -71,21 +71,6 @@ import type { StrictResult } from 'resultar'
 
 CommonJS `require('resultar')` is not exported.
 
-## Mutation Testing
-
-The core runtime package has a scoped Stryker setup for mutation testing:
-
-```sh
-pnpm --filter resultar test:mutation
-```
-
-The setup lives in [`stryker.conf.json`](./stryker.conf.json) and is intentionally separate from
-`check:full`. It mutates the central runtime files under `src/`, uses the Vitest runner with
-per-test coverage, stores incremental state under `reports/`, and keeps baseline thresholds
-report-only while the mutation score is established. The dedicated
-[`vitest-stryker.config.ts`](./vitest-stryker.config.ts) maps `vite-plus/test` to `vitest` so
-Stryker can run the same tests without the `vp test` bootstrap.
-
 ## Why Teams Use It
 
 This signature hides an expected failure:
@@ -172,6 +157,31 @@ const getPosts = (
     .andThen((response) =>
       tryResultAsync(response.json() as Promise<Post[]>, (cause) => new ParsePostsError({ cause })),
     )
+```
+
+The same flow can be written linearly with `safeTry` when the chain gets harder to scan:
+
+```ts
+const getPostsLinear = (
+  url: string,
+): StrictResultAsync<Post[], FetchPostsError | HttpClientError | ParsePostsError> =>
+  safeTry(async function* () {
+    const response = yield* tryResultAsync(
+      fetch(url),
+      (cause) => new FetchPostsError({ cause }),
+    )
+
+    if (response.status >= 400) {
+      return HttpClientError.err({ status: response.status })
+    }
+
+    const posts = yield* tryResultAsync(
+      response.json() as Promise<Post[]>,
+      (cause) => new ParsePostsError({ cause }),
+    )
+
+    return ok(posts)
+  })
 ```
 
 ## Async Control Without A Runtime
