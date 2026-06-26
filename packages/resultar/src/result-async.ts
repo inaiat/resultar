@@ -16,19 +16,33 @@ import type {
   InferOkTypes,
 } from './utils.js'
 
+import { AbortError } from './abort-error.js'
 import { Pipeable } from './pipe.js'
 import { registerResultAsyncFactory } from './result-async-adapter.js'
-import { Result, createEmptyResultsCollectionError, err, getMatchErrorHandler } from './result.js'
-import { callTaggedHandler, hasTag, matchTaggedOr } from './tagged-match.js'
+import {
+  Result,
+  createEmptyResultsCollectionError,
+  err,
+  getMatchErrorHandler,
+  ok as resultOk,
+} from './result.js'
+import { callTaggedHandler, hasTag, isTaggedHandlerMatch, matchTaggedOr } from './tagged-match.js'
 import type {
   CatchTagHandlerResult,
+  CatchReasonHandlerResult,
   ErrorForTag,
+  ExcludeReasonTag,
   ExcludeTag,
   MatchTagHandlerResult,
   MatchTagHandlers,
   PartialMatchTagHandlers,
+  ReasonForTag,
+  ReasonTagsOf,
+  ReasonsOf,
+  ResultAsyncCatchReasonHandlers as CatchReasonHandlers,
   ResultAsyncCatchTagHandlers as CatchTagHandlers,
   TagsOf,
+  TagsWithReasonOf,
 } from './tagged-types.js'
 
 type ResultAsyncFinalizer<T, E> = (
@@ -41,10 +55,95 @@ export interface TryResultAsyncOptions<T, E = unknown> {
   readonly catch?: (e: unknown) => E
 }
 
+export interface ResultAsyncAbortSignal {
+  readonly aborted: boolean
+  readonly reason?: unknown
+  addEventListener(type: 'abort', listener: () => void, options?: { readonly once?: boolean }): void
+  removeEventListener(type: 'abort', listener: () => void): void
+}
+
+export type ResultAsyncConcurrency = number | 'unbounded'
+
 type HandlerOk<R> = InferOkTypes<R> | InferAsyncOkTypes<R>
 type HandlerErr<R> = InferErrTypes<R> | InferAsyncErrTypes<R>
 type IterableElement<T> = T extends Iterable<infer Element> ? Element : never
 export type ResultAsyncCandidate = () => ResultAsync<unknown, unknown>
+type ResultAsyncRecord = Readonly<Record<string, ResultAsync<unknown, unknown>>>
+type CombineResultAsyncsRecord<T extends ResultAsyncRecord> = ResultAsync<
+  { readonly [Key in keyof T]: InferAsyncOkTypes<T[Key]> },
+  InferAsyncErrTypes<T[keyof T]>
+>
+type CombineResultAsyncsRecordWithAllErrors<T extends ResultAsyncRecord> = ResultAsync<
+  { readonly [Key in keyof T]: InferAsyncOkTypes<T[Key]> },
+  InferAsyncErrTypes<T[keyof T]>[]
+>
+type CombineResultAsyncsIterable<R extends ResultAsync<unknown, unknown>> = ResultAsync<
+  readonly InferAsyncOkTypes<R>[],
+  InferAsyncErrTypes<R>
+>
+type CombineResultAsyncsIterableWithAllErrors<R extends ResultAsync<unknown, unknown>> =
+  ResultAsync<readonly InferAsyncOkTypes<R>[], InferAsyncErrTypes<R>[]>
+export type ResultAsyncRaceTask<T, E> = (signal: ResultAsyncAbortSignal) => ResultAsync<T, E>
+type ResultAsyncRaceTaskOk<Task> = Task extends ResultAsyncRaceTask<infer T, unknown> ? T : never
+type ResultAsyncRaceTaskErr<Task> = Task extends ResultAsyncRaceTask<unknown, infer E> ? E : never
+type ResultAsyncRaceTasksOk<Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[]> =
+  ResultAsyncRaceTaskOk<Tasks[number]>
+type ResultAsyncRaceTasksErr<Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[]> =
+  ResultAsyncRaceTaskErr<Tasks[number]>
+export interface ResultAsyncRaceHandle<T, E> {
+  readonly signal: ResultAsyncAbortSignal
+  abort(reason?: unknown): void
+  wait(): ResultAsync<T, E>
+}
+export interface ResultAsyncTimeoutOptions<E> {
+  readonly onTimeout: () => E
+  readonly timeoutMs: number
+}
+export interface ResultAsyncRetryContext {
+  readonly attempt: number
+  readonly nextAttempt: number
+  readonly retriesRemaining: number
+}
+export type ResultAsyncRetryTask<T, E> = (
+  attempt: number,
+  signal: ResultAsyncAbortSignal,
+) => ResultAsync<T, E>
+type ResultAsyncRetryTaskOk<Task> = Task extends ResultAsyncRetryTask<infer T, unknown> ? T : never
+type ResultAsyncRetryTaskErr<Task> = Task extends ResultAsyncRetryTask<unknown, infer E> ? E : never
+type ResultAsyncRetryDelay = number | ((context: ResultAsyncRetryContext) => number)
+export interface ResultAsyncRetryOptions<E> {
+  readonly delayMs?: ResultAsyncRetryDelay
+  readonly jittered?: number
+  readonly onRetry?: (error: E, context: ResultAsyncRetryContext) => void | Promise<void>
+  readonly signal?: ResultAsyncAbortSignal
+  readonly times: number
+  readonly while?: (error: E, context: ResultAsyncRetryContext) => boolean | Promise<boolean>
+}
+export interface ResultAsyncRetryOrElseOptions<E, F, U> extends ResultAsyncRetryOptions<E> {
+  readonly orElse: (error: E, context: ResultAsyncRetryContext) => Result<U, F> | ResultAsync<U, F>
+}
+export type ResultAsyncResourceAcquire<Resource, E> = (
+  signal: ResultAsyncAbortSignal,
+) => ResultAsync<Resource, E>
+export type ResultAsyncResourceEffect<T, E> = Result<T, E> | ResultAsync<T, E>
+export type ResultAsyncResourceUse<Resource, T, E> = (
+  resource: Resource,
+  signal: ResultAsyncAbortSignal,
+) => ResultAsyncResourceEffect<T, E>
+export interface ResultAsyncResourceReleaseContext {
+  readonly result: Result<unknown, unknown> | undefined
+  readonly signal: ResultAsyncAbortSignal
+}
+export type ResultAsyncResourceRelease<Resource> = (
+  resource: Resource,
+  context: ResultAsyncResourceReleaseContext,
+) => ResultAsyncResourceEffect<unknown, unknown> | Promise<void> | void
+export interface ResultAsyncWithResourceOptions<Resource, AcquireError, T, UseError> {
+  readonly acquire: ResultAsyncResourceAcquire<Resource, AcquireError>
+  readonly release: ResultAsyncResourceRelease<Resource>
+  readonly signal?: ResultAsyncAbortSignal
+  readonly use: ResultAsyncResourceUse<Resource, T, UseError>
+}
 export type FirstSuccessOfAsync<Candidates extends Iterable<ResultAsyncCandidate>> = ResultAsync<
   InferAsyncOkTypes<ReturnType<IterableElement<Candidates>>>,
   InferAsyncErrTypes<ReturnType<IterableElement<Candidates>>>
@@ -172,15 +271,22 @@ interface ResultAsyncIterateRuntimeOptions<State, R extends ResultAsync<State, u
 }
 
 interface ResultAsyncForEachOptions {
+  readonly concurrency?: ResultAsyncConcurrency
   readonly discard?: false
 }
 
 interface ResultAsyncForEachDiscardOptions {
+  readonly concurrency?: ResultAsyncConcurrency
   readonly discard: true
 }
 
 interface ResultAsyncForEachRuntimeOptions {
+  readonly concurrency?: ResultAsyncConcurrency
   readonly discard?: boolean
+}
+
+interface ResultAsyncValidateAllOptions {
+  readonly concurrency?: ResultAsyncConcurrency
 }
 
 interface ResultAsyncIfOptions<
@@ -194,6 +300,7 @@ interface ResultAsyncIfOptions<
 function isTryResultAsyncOptions<T, E>(
   input: Promise<T> | (() => Promise<T>) | TryResultAsyncOptions<T, E>,
 ): input is TryResultAsyncOptions<T, E> {
+  // Stryker disable next-line all: guards prevent applying `in` to null/non-objects in invalid runtime calls.
   return typeof input === 'object' && input !== null && 'try' in input
 }
 
@@ -204,6 +311,34 @@ const combineResultAsyncList = <T, E>(
     Result.combine(resultList),
   )
 
+const collectResultAsyncRecord = async (
+  asyncResultRecord: ResultAsyncRecord,
+): Promise<Record<string, Result<unknown, unknown>>> => {
+  const entries = Object.entries(asyncResultRecord)
+  const resultList = await Promise.all(entries.map((entry) => entry[1]))
+  const resultRecord: Record<string, Result<unknown, unknown>> = {}
+
+  for (const [index, [key]] of entries.entries()) {
+    const result = resultList[index]
+
+    // Stryker disable next-line all: Promise.all preserves one result for each Object.entries item.
+    if (result !== undefined) {
+      resultRecord[key] = result
+    }
+  }
+
+  return resultRecord
+}
+
+const combineResultAsyncRecord = <T extends ResultAsyncRecord>(
+  asyncResultRecord: T,
+): CombineResultAsyncsRecord<T> => {
+  const promise = collectResultAsyncRecord(asyncResultRecord).then((resultRecord) =>
+    Result.combine(resultRecord),
+  )
+  return new ResultAsync(promise) as CombineResultAsyncsRecord<T>
+}
+
 const combineResultAsyncListWithAllErrors = <T, E>(
   asyncResultList: readonly ResultAsync<T, E>[],
 ): ResultAsync<readonly T[], E[]> =>
@@ -211,13 +346,463 @@ const combineResultAsyncListWithAllErrors = <T, E>(
     Result.combineWithAllErrors(resultList),
   ) as ResultAsync<T[], E[]>
 
+const combineResultAsyncRecordWithAllErrors = <T extends ResultAsyncRecord>(
+  asyncResultRecord: T,
+): CombineResultAsyncsRecordWithAllErrors<T> => {
+  const promise = collectResultAsyncRecord(asyncResultRecord).then((resultRecord) =>
+    Result.combineWithAllErrors(resultRecord),
+  )
+  return new ResultAsync(promise) as CombineResultAsyncsRecordWithAllErrors<T>
+}
+
+const isIterable = (value: unknown): value is Iterable<unknown> =>
+  // Stryker disable next-line all: invalid null input still fails outside the iterable branch; this guard keeps the hot check explicit.
+  value !== null &&
+  // Stryker disable next-line all: iterable functions are valid iterables, but normal collection tests cover object iterables.
+  (typeof value === 'object' || typeof value === 'function') &&
+  typeof (value as { readonly [Symbol.iterator]?: unknown })[Symbol.iterator] === 'function'
+
+interface IndexedResultAsyncError<E> {
+  readonly error: E
+  readonly index: number
+}
+
+const createIllegalArgumentException = (message: string): Error => {
+  const error = new Error(message)
+  error.name = 'IllegalArgumentException'
+
+  return error
+}
+
+const createInvalidResultAsyncConcurrencyError = (): Error =>
+  createIllegalArgumentException(
+    'ResultAsync concurrency must be a positive integer or "unbounded"',
+  )
+
+const normalizeResultAsyncConcurrency = (concurrency?: ResultAsyncConcurrency): number => {
+  if (concurrency === undefined) {
+    return 1
+  }
+
+  if (concurrency === 'unbounded') {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (Number.isInteger(concurrency) && concurrency > 0) {
+    return concurrency
+  }
+
+  throw createInvalidResultAsyncConcurrencyError()
+}
+
+const toResultAsyncRejectionError = (error: unknown): Error =>
+  error instanceof Error ? error : new Error(String(error))
+
+const sortIndexedResultAsyncErrors = <E>(
+  errors: readonly IndexedResultAsyncError<E>[],
+): IndexedResultAsyncError<E>[] => [...errors].toSorted((left, right) => left.index - right.index)
+
+interface ResultAsyncTraversalState<T, E> {
+  activeCount: number
+  readonly errors: IndexedResultAsyncError<E>[]
+  iteratorDone: boolean
+  nextIndex: number
+  stopScheduling: boolean
+  readonly values: T[]
+}
+
+interface RunConcurrentResultAsyncItemsOptions<Item, T, E, Output, Failure> {
+  readonly concurrency: ResultAsyncConcurrency | undefined
+  readonly finish: (state: ResultAsyncTraversalState<T, E>) => Result<Output, Failure> | undefined
+  readonly items: Iterable<Item>
+  readonly onResult: (
+    result: Result<T, E>,
+    index: number,
+    state: ResultAsyncTraversalState<T, E>,
+  ) => void
+  readonly run: (value: Item, index: number) => ResultAsync<T, E>
+}
+
+const createResultAsyncTraversalState = <T, E>(): ResultAsyncTraversalState<T, E> => ({
+  activeCount: 0,
+  errors: [],
+  iteratorDone: false,
+  nextIndex: 0,
+  stopScheduling: false,
+  values: [],
+})
+
+const runConcurrentResultAsyncItems = <Item, T, E, Output, Failure>(
+  options: RunConcurrentResultAsyncItemsOptions<Item, T, E, Output, Failure>,
+): Promise<Result<Output, Failure>> =>
+  Promise.try(async () => {
+    const concurrency = normalizeResultAsyncConcurrency(options.concurrency)
+    const iterator = options.items[Symbol.iterator]()
+    const state = createResultAsyncTraversalState<T, E>()
+
+    return new Promise<Result<Output, Failure>>((resolve, reject) => {
+      let settled = false
+
+      const rejectOnce = (error: unknown): void => {
+        // Stryker disable next-line all: idempotent Promise rejection guard; repeated reject calls are ignored.
+        if (!settled) {
+          // Stryker disable next-line all: setting the guard prevents later state updates after rejection.
+          settled = true
+          reject(toResultAsyncRejectionError(error))
+        }
+      }
+
+      const resolveOnce = (result: Result<Output, Failure>): void => {
+        // Stryker disable next-line all: idempotent Promise resolution guard; repeated resolve calls are ignored.
+        if (!settled) {
+          // Stryker disable next-line all: setting the guard prevents later state updates after resolution.
+          settled = true
+          resolve(result)
+        }
+      }
+
+      const finishIfDone = (): void => {
+        const result = options.finish(state)
+
+        if (result !== undefined) {
+          resolveOnce(result)
+        }
+      }
+
+      const readNext = (): IteratorResult<Item> | undefined => {
+        try {
+          return iterator.next()
+        } catch (error) {
+          rejectOnce(error)
+          return undefined
+        }
+      }
+
+      const schedule = (): void => {
+        // Stryker disable next-line all: avoid rescheduling after rejectOnce/resolveOnce settled the traversal.
+        if (settled) {
+          return
+        }
+
+        if (state.stopScheduling) {
+          finishIfDone()
+          return
+        }
+
+        while (!state.iteratorDone && state.activeCount < concurrency) {
+          const next = readNext()
+
+          // Stryker disable next-line all: undefined means iterator.next threw and rejectOnce already settled.
+          if (next === undefined) {
+            return
+          }
+
+          if (next.done === true) {
+            state.iteratorDone = true
+            break
+          }
+
+          const currentIndex = state.nextIndex
+          state.nextIndex += 1
+          startItem(next.value, currentIndex)
+        }
+
+        finishIfDone()
+      }
+
+      const startItem = (item: Item, currentIndex: number): void => {
+        state.activeCount += 1
+
+        try {
+          const resultAsync = options.run(item, currentIndex)
+
+          void Promise.resolve(resultAsync)
+            .then((result) => {
+              options.onResult(result, currentIndex, state)
+            }, rejectOnce)
+            .finally(() => {
+              // Stryker disable next-line all: skip bookkeeping after rejectOnce/resolveOnce settled the promise.
+              if (settled) {
+                return
+              }
+
+              state.activeCount -= 1
+              schedule()
+              finishIfDone()
+            })
+        } catch (error) {
+          rejectOnce(error)
+        }
+      }
+
+      schedule()
+    })
+  })
+
+const createResultAsyncRetryAbortError = (signal: ResultAsyncAbortSignal): AbortError =>
+  signal.reason === undefined
+    ? new AbortError('ResultAsync retry aborted')
+    : new AbortError('ResultAsync retry aborted', { cause: signal.reason })
+
+const createResultAsyncResourceAbortError = (signal: ResultAsyncAbortSignal): AbortError =>
+  signal.reason === undefined
+    ? new AbortError('ResultAsync resource scope aborted')
+    : new AbortError('ResultAsync resource scope aborted', { cause: signal.reason })
+
+const validateResultAsyncRetryTimes = (times: number): void => {
+  if (!Number.isInteger(times) || times < 0) {
+    throw createIllegalArgumentException('ResultAsync retry times must be a non-negative integer')
+  }
+}
+
+const validateResultAsyncRetryDelayValue = (delayMs: number): void => {
+  if (!Number.isFinite(delayMs) || delayMs < 0) {
+    throw createIllegalArgumentException(
+      'ResultAsync retry delayMs must be a non-negative finite number',
+    )
+  }
+}
+
+const validateResultAsyncRetryJittered = (jittered: number): void => {
+  if (!Number.isFinite(jittered) || jittered < 0) {
+    throw createIllegalArgumentException(
+      'ResultAsync retry jittered must be a non-negative finite number',
+    )
+  }
+}
+
+const validateResultAsyncRetryJitterRandomValue = (value: number): void => {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw createIllegalArgumentException(
+      'ResultAsync retry jitter random value must be a finite number between 0 and 1',
+    )
+  }
+}
+
+const validateResultAsyncRetryStaticJittered = (jittered: number | undefined): void => {
+  if (jittered !== undefined) {
+    validateResultAsyncRetryJittered(jittered)
+  }
+}
+
+const validateResultAsyncRetryStaticDelay = (delay: ResultAsyncRetryDelay | undefined): void => {
+  if (typeof delay === 'number') {
+    validateResultAsyncRetryDelayValue(delay)
+  }
+}
+
+const waitResultAsyncRetryDelay = async (
+  delayMs: number,
+  signal: ResultAsyncAbortSignal,
+): Promise<Result<void, AbortError>> => {
+  if (signal.aborted) {
+    return Result.err(createResultAsyncRetryAbortError(signal))
+  }
+
+  if (delayMs === 0) {
+    return Result.ok(undefined)
+  }
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      signal.removeEventListener('abort', abort)
+      resolve(Result.ok(undefined))
+    }, delayMs)
+    const abort = (): void => {
+      clearTimeout(timeout)
+      resolve(Result.err(createResultAsyncRetryAbortError(signal)))
+    }
+
+    signal.addEventListener('abort', abort, { once: true })
+  })
+}
+
+// Retry keeps branches inline to avoid helper calls in the retry loop.
+// fallow-ignore-next-line complexity
+const runResultAsyncRetryAttempts = async <T, E, U, F>(
+  task: ResultAsyncRetryTask<T, E>,
+  options: ResultAsyncRetryOptions<E>,
+  recover: (error: E, context: ResultAsyncRetryContext) => Result<U, F> | ResultAsync<U, F>,
+): Promise<Result<T | U, F | AbortError>> => {
+  validateResultAsyncRetryTimes(options.times)
+  validateResultAsyncRetryStaticDelay(options.delayMs)
+  validateResultAsyncRetryStaticJittered(options.jittered)
+
+  const signal: ResultAsyncAbortSignal = options.signal ?? new AbortController().signal
+  let attempt = 0
+
+  while (true) {
+    if (signal.aborted) {
+      return Result.err(createResultAsyncRetryAbortError(signal))
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    const result = await task(attempt, signal)
+
+    if (result.isOk()) {
+      return Result.ok(result.value)
+    }
+
+    const context: ResultAsyncRetryContext = {
+      attempt,
+      nextAttempt: attempt + 1,
+      retriesRemaining: Math.max(0, options.times - attempt),
+    }
+
+    const shouldRetry = options.while
+    const canRetryError =
+      shouldRetry === undefined
+        ? true
+        : // eslint-disable-next-line no-await-in-loop
+          await shouldRetry(result.error, context)
+
+    if (!canRetryError || attempt >= options.times) {
+      const recovered = recover(result.error, context)
+      return recovered instanceof ResultAsync ? recovered : recovered
+    }
+
+    const onRetry = options.onRetry
+
+    // Stryker disable next-line all: skip a needless function call and await when no retry hook exists.
+    if (onRetry !== undefined) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await onRetry(result.error, context)
+      } catch {
+        /* empty */
+      }
+    }
+
+    let delayMs =
+      typeof options.delayMs === 'function' ? options.delayMs(context) : (options.delayMs ?? 0)
+    validateResultAsyncRetryDelayValue(delayMs)
+
+    const jittered = options.jittered
+
+    if (jittered !== undefined && jittered !== 0 && delayMs !== 0) {
+      const random = Math.random()
+      validateResultAsyncRetryJitterRandomValue(random)
+
+      const range = delayMs * jittered
+      const min = Math.max(0, delayMs - range)
+      const max = delayMs + range
+      delayMs = min + (max - min) * random
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    const delayResult = await waitResultAsyncRetryDelay(delayMs, signal)
+
+    if (delayResult.isErr()) {
+      return Result.err(delayResult.error)
+    }
+
+    attempt += 1
+  }
+}
+
+const retryResultAsyncTask = <T, E>(
+  task: ResultAsyncRetryTask<T, E>,
+  options: ResultAsyncRetryOptions<E>,
+): ResultAsync<T, E | AbortError> =>
+  new ResultAsync(
+    runResultAsyncRetryAttempts<T, E, never, E>(task, options, (error) => Result.err(error)),
+  )
+
+const retryOrElseResultAsyncTask = <T, E, U, F>(
+  task: ResultAsyncRetryTask<T, E>,
+  options: ResultAsyncRetryOrElseOptions<E, F, U>,
+): ResultAsync<T | U, F | AbortError> =>
+  new ResultAsync(
+    runResultAsyncRetryAttempts<T, E, U, F>(task, options, (error, context) =>
+      options.orElse(error, context),
+    ),
+  )
+
+const callResultAsyncResourceRelease = async <Resource>(
+  release: ResultAsyncResourceRelease<Resource>,
+  resource: Resource,
+  context: ResultAsyncResourceReleaseContext,
+): Promise<void> => {
+  try {
+    await release(resource, context)
+  } catch {
+    /* empty */
+  }
+}
+
+const runResultAsyncWithResource = async <Resource, AcquireError, T, UseError>(
+  options: ResultAsyncWithResourceOptions<Resource, AcquireError, T, UseError>,
+): Promise<Result<T, AcquireError | UseError | AbortError>> => {
+  const signal: ResultAsyncAbortSignal = options.signal ?? new AbortController().signal
+
+  if (signal.aborted) {
+    return Result.err(createResultAsyncResourceAbortError(signal))
+  }
+
+  const acquired = await options.acquire(signal)
+
+  if (acquired.isErr()) {
+    return Result.err(acquired.error)
+  }
+
+  let result: Result<T, UseError | AbortError> | undefined = undefined
+
+  try {
+    if (signal.aborted) {
+      result = Result.err(createResultAsyncResourceAbortError(signal))
+      return result
+    }
+
+    result = await toResultAsync(options.use(acquired.value, signal))
+
+    return result
+  } finally {
+    await callResultAsyncResourceRelease(options.release, acquired.value, { result, signal })
+  }
+}
+
+const withResultAsyncResource = <Resource, AcquireError, T, UseError>(
+  options: ResultAsyncWithResourceOptions<Resource, AcquireError, T, UseError>,
+): ResultAsync<T, AcquireError | UseError | AbortError> =>
+  new ResultAsync(runResultAsyncWithResource(options))
+
 const validateAllResultAsyncItems = <Item, R extends ResultAsync<unknown, unknown>>(
   items: Iterable<Item>,
   f: (value: Item, index: number) => R,
+  options?: ResultAsyncValidateAllOptions,
 ): ResultAsyncValidatedAll<R> => {
-  const resultList = Array.from(items, f)
+  const promise: Promise<Result<readonly InferAsyncOkTypes<R>[], InferAsyncErrTypes<R>[]>> =
+    runConcurrentResultAsyncItems({
+      concurrency: options?.concurrency,
+      finish: (state) => {
+        if (!state.iteratorDone || state.activeCount > 0) {
+          return undefined
+        }
 
-  return combineResultAsyncListWithAllErrors(resultList) as ResultAsyncValidatedAll<R>
+        if (state.errors.length > 0) {
+          return Result.err<readonly InferAsyncOkTypes<R>[], InferAsyncErrTypes<R>[]>(
+            sortIndexedResultAsyncErrors(state.errors).map((entry) => entry.error),
+          )
+        }
+
+        return Result.ok<readonly InferAsyncOkTypes<R>[], InferAsyncErrTypes<R>[]>(state.values)
+      },
+      items,
+      onResult: (result, currentIndex, state) => {
+        if (result.isErr()) {
+          state.errors.push({ error: result.error, index: currentIndex })
+          return
+        }
+
+        state.values[currentIndex] = result.value
+      },
+      run: f as (
+        value: Item,
+        index: number,
+      ) => ResultAsync<InferAsyncOkTypes<R>, InferAsyncErrTypes<R>>,
+    })
+
+  return new ResultAsync(promise) as ResultAsyncValidatedAll<R>
 }
 
 const firstSuccessOfAsyncCandidates = <Candidates extends Iterable<ResultAsyncCandidate>>(
@@ -225,11 +810,8 @@ const firstSuccessOfAsyncCandidates = <Candidates extends Iterable<ResultAsyncCa
 ): FirstSuccessOfAsync<Candidates> => {
   const promise = Promise.try(async () => {
     let latestError: Result<unknown, unknown> | undefined = undefined
-    let hasCandidates = false
 
     for (const candidate of candidates) {
-      hasCandidates = true
-
       // eslint-disable-next-line no-await-in-loop
       const result = await candidate()
 
@@ -240,7 +822,7 @@ const firstSuccessOfAsyncCandidates = <Candidates extends Iterable<ResultAsyncCa
       latestError = result
     }
 
-    if (!hasCandidates || latestError === undefined) {
+    if (latestError === undefined) {
       throw createEmptyResultsCollectionError()
     }
 
@@ -250,6 +832,202 @@ const firstSuccessOfAsyncCandidates = <Candidates extends Iterable<ResultAsyncCa
   return new ResultAsync(promise) as FirstSuccessOfAsync<Candidates>
 }
 
+const getReason = (value: unknown): unknown => (value as { readonly reason?: unknown }).reason
+
+interface StartedRaceTask<T, E> {
+  readonly controller: AbortController
+  readonly result: ResultAsync<T, E>
+  readonly settled: Promise<{ readonly index: number; readonly result: Result<T, E> }>
+}
+
+const createRaceAbortReason = (): AbortError => new AbortError('ResultAsync race loser interrupted')
+
+const startRaceTask = <T, E>(
+  task: ResultAsyncRaceTask<T, E>,
+  index: number,
+): StartedRaceTask<T, E> => {
+  const controller = new AbortController()
+  const result = task(controller.signal)
+  const settled = Promise.resolve(result).then((taskResult) => ({ index, result: taskResult }))
+
+  return { controller, result, settled }
+}
+
+const createRaceHandle = <T, E>(task: StartedRaceTask<T, E>): ResultAsyncRaceHandle<T, E> => ({
+  get signal() {
+    return task.controller.signal
+  },
+  abort(reason = createRaceAbortReason()) {
+    task.controller.abort(reason)
+  },
+  wait() {
+    return task.result
+  },
+})
+
+interface RaceSettlementState {
+  settled: boolean
+}
+
+interface RaceSuccessState extends RaceSettlementState {
+  completedCount: number
+  completedIndexes: Set<number>
+  latestError: Result<unknown, unknown> | undefined
+}
+
+interface RaceFirstObserverContext<Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[]> {
+  readonly resolve: (
+    result: Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>,
+  ) => void
+  readonly startedTasks: readonly StartedRaceTask<unknown, unknown>[]
+  readonly state: RaceSettlementState
+}
+
+interface RaceSuccessObserverContext<
+  Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[],
+> {
+  readonly resolve: (
+    result: Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>,
+  ) => void
+  readonly startedTasks: readonly StartedRaceTask<unknown, unknown>[]
+  readonly state: RaceSuccessState
+}
+
+type RaceTaskResolve<Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[]> = (
+  result: Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>,
+) => void
+
+const observeRaceFirstTask = <Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[]>(
+  task: StartedRaceTask<unknown, unknown>,
+  context: RaceFirstObserverContext<Tasks>,
+): void => {
+  void task.settled.then(({ index, result }) => {
+    if (context.state.settled) {
+      return
+    }
+
+    context.state.settled = true
+    const startedTasks = context.startedTasks
+
+    // Stryker disable next-line all: `<= length` only adds one guarded undefined iteration for noUncheckedIndexedAccess.
+    for (let loserIndex = 0; loserIndex < startedTasks.length; loserIndex += 1) {
+      const loser = startedTasks[loserIndex]
+
+      // Stryker disable next-line all: loop bounds guarantee the task; guard satisfies noUncheckedIndexedAccess without tuple allocation.
+      if (loser === undefined) {
+        /* empty */
+      } else if (loserIndex !== index) {
+        loser.controller.abort(createRaceAbortReason())
+      }
+    }
+
+    context.resolve(result as Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>)
+  })
+}
+
+const observeRaceSuccessTask = <Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[]>(
+  task: StartedRaceTask<unknown, unknown>,
+  context: RaceSuccessObserverContext<Tasks>,
+): void => {
+  void task.settled.then(({ index, result }) => {
+    // Stryker disable next-line all: ignore late settlements after the race already resolved.
+    if (context.state.settled) {
+      return
+    }
+
+    context.state.completedIndexes.add(index)
+
+    if (result.isOk()) {
+      // Stryker disable next-line all: marks the race as resolved before aborting pending losers.
+      context.state.settled = true
+      const startedTasks = context.startedTasks
+
+      // Stryker disable next-line all: `<= length` only adds one guarded undefined iteration for noUncheckedIndexedAccess.
+      for (let loserIndex = 0; loserIndex < startedTasks.length; loserIndex += 1) {
+        const loser = startedTasks[loserIndex]
+
+        // Stryker disable next-line all: loop bounds guarantee the task; guard satisfies noUncheckedIndexedAccess without tuple allocation.
+        if (loser === undefined) {
+          /* empty */
+        } else if (!context.state.completedIndexes.has(loserIndex)) {
+          loser.controller.abort(createRaceAbortReason())
+        }
+      }
+
+      context.resolve(
+        result as Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>,
+      )
+      return
+    }
+
+    context.state.completedCount += 1
+    context.state.latestError = result
+
+    if (context.state.completedCount === context.startedTasks.length) {
+      // Stryker disable next-line all: all tasks failed, so future late settlements must be ignored.
+      context.state.settled = true
+      context.resolve(
+        context.state.latestError as Result<
+          ResultAsyncRaceTasksOk<Tasks>,
+          ResultAsyncRaceTasksErr<Tasks>
+        >,
+      )
+    }
+  })
+}
+
+const observeRaceResultAsyncTasks = <
+  Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[],
+  Context,
+>(
+  tasks: Tasks,
+  createContext: (
+    resolve: RaceTaskResolve<Tasks>,
+    startedTasks: readonly StartedRaceTask<unknown, unknown>[],
+  ) => Context,
+  observeTask: (task: StartedRaceTask<unknown, unknown>, context: Context) => void,
+): ResultAsync<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>> => {
+  const taskList = [...tasks]
+
+  if (taskList.length === 0) {
+    return new ResultAsync(
+      Promise.resolve(Result.err(createEmptyResultsCollectionError())),
+    ) as ResultAsync<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>
+  }
+
+  const promise = new Promise<
+    Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>
+  >((resolve) => {
+    const startedTasks = taskList.map((task, index) => startRaceTask(task, index))
+    const context = createContext(resolve, startedTasks)
+
+    for (const task of startedTasks) {
+      observeTask(task, context)
+    }
+  })
+
+  return new ResultAsync(promise)
+}
+
+const raceResultAsyncTasks = <Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[]>(
+  tasks: Tasks,
+): ResultAsync<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>> =>
+  observeRaceResultAsyncTasks<Tasks, RaceSuccessObserverContext<Tasks>>(
+    tasks,
+    (resolve, startedTasks) => ({
+      resolve,
+      startedTasks,
+      state: {
+        completedCount: 0,
+        completedIndexes: new Set<number>(),
+        latestError: undefined,
+        // Stryker disable next-line all: explicit false and missing value are equivalent before first settlement.
+        settled: false,
+      },
+    }),
+    observeRaceSuccessTask,
+  )
+
 const loopResultAsync = <State, R extends ResultAsync<unknown, unknown>>(
   initial: State,
   options: ResultAsyncLoopRuntimeOptions<State, R>,
@@ -257,6 +1035,22 @@ const loopResultAsync = <State, R extends ResultAsync<unknown, unknown>>(
   const promise: Promise<Result<readonly InferAsyncOkTypes<R>[] | void, InferAsyncErrTypes<R>>> =
     Promise.try(async () => {
       let state = initial
+
+      if (options.discard === true) {
+        while (options.while(state)) {
+          // eslint-disable-next-line no-await-in-loop
+          const result = await options.body(state)
+
+          if (result.isErr()) {
+            return Result.err(result.error as InferAsyncErrTypes<R>)
+          }
+
+          state = options.step(state)
+        }
+
+        return Result.ok<void, InferAsyncErrTypes<R>>(undefined)
+      }
+
       const values: InferAsyncOkTypes<R>[] = []
 
       while (options.while(state)) {
@@ -267,15 +1061,8 @@ const loopResultAsync = <State, R extends ResultAsync<unknown, unknown>>(
           return Result.err(result.error as InferAsyncErrTypes<R>)
         }
 
-        if (options.discard !== true) {
-          values.push(result.value as InferAsyncOkTypes<R>)
-        }
-
+        values.push(result.value as InferAsyncOkTypes<R>)
         state = options.step(state)
-      }
-
-      if (options.discard === true) {
-        return Result.ok<void, InferAsyncErrTypes<R>>(undefined)
       }
 
       return Result.ok<readonly InferAsyncOkTypes<R>[], InferAsyncErrTypes<R>>(values)
@@ -313,31 +1100,70 @@ const forEachResultAsync = <Item, R extends ResultAsync<unknown, unknown>>(
   f: (value: Item, index: number) => R,
   options?: ResultAsyncForEachRuntimeOptions,
 ): ResultAsyncForEachCollected<R> | ResultAsyncForEachDiscarded<R> => {
-  const promise: Promise<Result<readonly InferAsyncOkTypes<R>[] | void, InferAsyncErrTypes<R>>> =
-    Promise.try(async () => {
-      const values: InferAsyncOkTypes<R>[] = []
-      let index = 0
-
-      for (const item of items) {
-        // eslint-disable-next-line no-await-in-loop
-        const result = await f(item, index)
-
-        if (result.isErr()) {
-          return Result.err(result.error as InferAsyncErrTypes<R>)
+  if (options?.discard === true) {
+    const promise: Promise<Result<void, InferAsyncErrTypes<R>>> = runConcurrentResultAsyncItems({
+      concurrency: options.concurrency,
+      finish: (state) => {
+        if (state.activeCount > 0) {
+          return undefined
         }
 
-        if (options?.discard !== true) {
-          values.push(result.value as InferAsyncOkTypes<R>)
+        const firstError = sortIndexedResultAsyncErrors(state.errors)[0]
+
+        if (firstError !== undefined) {
+          return Result.err<void, InferAsyncErrTypes<R>>(firstError.error)
         }
 
-        index += 1
-      }
-
-      if (options?.discard === true) {
         return Result.ok<void, InferAsyncErrTypes<R>>(undefined)
-      }
+      },
+      items,
+      onResult: (result, currentIndex, state) => {
+        if (result.isErr()) {
+          state.errors.push({ error: result.error, index: currentIndex })
+          state.stopScheduling = true
+        }
+      },
+      run: f as (
+        value: Item,
+        index: number,
+      ) => ResultAsync<InferAsyncOkTypes<R>, InferAsyncErrTypes<R>>,
+    })
 
-      return Result.ok<readonly InferAsyncOkTypes<R>[], InferAsyncErrTypes<R>>(values)
+    return new ResultAsync(promise) as ResultAsyncForEachDiscarded<R>
+  }
+
+  const promise: Promise<Result<readonly InferAsyncOkTypes<R>[] | void, InferAsyncErrTypes<R>>> =
+    runConcurrentResultAsyncItems({
+      concurrency: options?.concurrency,
+      finish: (state) => {
+        if (state.activeCount > 0) {
+          return undefined
+        }
+
+        const firstError = sortIndexedResultAsyncErrors(state.errors)[0]
+
+        if (firstError !== undefined) {
+          return Result.err<readonly InferAsyncOkTypes<R>[] | void, InferAsyncErrTypes<R>>(
+            firstError.error,
+          )
+        }
+
+        return Result.ok<readonly InferAsyncOkTypes<R>[], InferAsyncErrTypes<R>>(state.values)
+      },
+      items,
+      onResult: (result, currentIndex, state) => {
+        if (result.isErr()) {
+          state.errors.push({ error: result.error, index: currentIndex })
+          state.stopScheduling = true
+          return
+        }
+
+        state.values[currentIndex] = result.value
+      },
+      run: f as (
+        value: Item,
+        index: number,
+      ) => ResultAsync<InferAsyncOkTypes<R>, InferAsyncErrTypes<R>>,
     })
 
   return new ResultAsync(promise) as ResultAsyncForEachCollected<R> | ResultAsyncForEachDiscarded<R>
@@ -349,6 +1175,7 @@ const resolveResultAsyncBooleanCondition = (condition: ResultAsyncBooleanConditi
 const toResultAsync = <R extends ResultAsyncConditional>(
   result: R,
 ): ResultAsync<HandlerOk<R>, HandlerErr<R>> => {
+  // Stryker disable next-line all: preserve existing ResultAsync instead of wrapping it in another thenable.
   if (result instanceof ResultAsync) {
     return result as ResultAsync<HandlerOk<R>, HandlerErr<R>>
   }
@@ -591,7 +1418,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   public static okAsync<T, E = never>(this: void, value: T): ResultAsync<T, E>
   public static okAsync<E = never>(this: void, value: void): ResultAsync<void, E>
   public static okAsync<T, E = never>(this: void, value: T): ResultAsync<T, E> {
-    return new ResultAsync<T, E>(Promise.resolve(Result.ok(value)))
+    return new ResultAsync<T, E>(Promise.resolve(resultOk<T, E>(value)))
   }
 
   /**
@@ -612,7 +1439,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   public static errAsync<T = never, E = unknown>(this: void, err: E): ResultAsync<T, E>
   public static errAsync<T = never>(this: void, err: void): ResultAsync<T, void>
   public static errAsync<T = never, E = unknown>(this: void, error: E): ResultAsync<T, E> {
-    return new ResultAsync<T, E>(Promise.resolve(Result.err(error)))
+    return new ResultAsync<T, E>(Promise.resolve(err<T, E>(error)))
   }
 
   /**
@@ -644,12 +1471,12 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   ): ResultAsync<T, unknown> {
     const promiseToProcess = typeof fn === 'function' ? Promise.try(fn) : fn
     const newPromise = promiseToProcess
-      .then((value: T) => Result.ok(value))
+      .then((value: T) => resultOk<T, unknown>(value))
       .catch((error: unknown) => {
         if (errorFn) {
-          return Result.err(errorFn(error))
+          return err<T, unknown>(errorFn(error))
         }
-        return Result.err(error)
+        return err<T, unknown>(error)
       })
     return new ResultAsync<T, unknown>(newPromise)
   }
@@ -666,7 +1493,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     promise: PromiseLike<T>,
   ): ResultAsync<T, E>
   public static fromSafePromise<T, E = never>(this: void, promise: Promise<T>): ResultAsync<T, E> {
-    const newPromise = promise.then((value: T) => Result.ok(value))
+    const newPromise = promise.then((value: T) => resultOk<T, E>(value))
 
     return new ResultAsync<T, E>(newPromise)
   }
@@ -690,8 +1517,8 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     errorFn: (e: unknown) => E,
   ): ResultAsync<T, E> {
     const newPromise = promise
-      .then((value: T) => Result.ok(value))
-      .catch((error: unknown) => Result.err(errorFn(error)))
+      .then((value: T) => resultOk<T, E>(value))
+      .catch((error: unknown) => err<T, E>(errorFn(error)))
 
     return new ResultAsync<T, E>(newPromise)
   }
@@ -703,11 +1530,40 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     this: void,
     asyncResultList: T,
   ): CombineResultAsyncs<T>
-  public static combine<T extends readonly ResultAsync<unknown, unknown>[]>(
+  public static combine<T extends ResultAsyncRecord>(
     this: void,
-    asyncResultList: T,
-  ): CombineResultAsyncs<T> {
-    return combineResultAsyncList(asyncResultList) as CombineResultAsyncs<T>
+    asyncResultRecord: T,
+  ): CombineResultAsyncsRecord<T>
+  public static combine<R extends ResultAsync<unknown, unknown>>(
+    this: void,
+    asyncResults: Iterable<R>,
+  ): CombineResultAsyncsIterable<R>
+  public static combine<
+    T extends
+      | readonly ResultAsync<unknown, unknown>[]
+      | ResultAsyncRecord
+      | Iterable<ResultAsync<unknown, unknown>>,
+  >(
+    this: void,
+    input: T,
+  ):
+    | CombineResultAsyncs<T & readonly ResultAsync<unknown, unknown>[]>
+    | CombineResultAsyncsRecord<ResultAsyncRecord>
+    | CombineResultAsyncsIterable<ResultAsync<unknown, unknown>> {
+    // Stryker disable next-line all: array fast path avoids cloning arrays through the iterable branch.
+    if (Array.isArray(input)) {
+      return combineResultAsyncList(input) as CombineResultAsyncs<
+        T & readonly ResultAsync<unknown, unknown>[]
+      >
+    }
+
+    if (isIterable(input)) {
+      return combineResultAsyncList([...input] as readonly ResultAsync<unknown, unknown>[]) as
+        | CombineResultAsyncs<T & readonly ResultAsync<unknown, unknown>[]>
+        | CombineResultAsyncsIterable<ResultAsync<unknown, unknown>>
+    }
+
+    return combineResultAsyncRecord(input)
   }
 
   public static combineWithAllErrors<
@@ -717,13 +1573,43 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     this: void,
     asyncResultList: T,
   ): CombineResultsWithAllErrorsArrayAsync<T>
-  public static combineWithAllErrors<T extends readonly ResultAsync<unknown, unknown>[]>(
+  public static combineWithAllErrors<T extends ResultAsyncRecord>(
     this: void,
-    asyncResultList: T,
-  ): CombineResultsWithAllErrorsArrayAsync<T> {
-    return combineResultAsyncListWithAllErrors(
-      asyncResultList,
-    ) as CombineResultsWithAllErrorsArrayAsync<T>
+    asyncResultRecord: T,
+  ): CombineResultAsyncsRecordWithAllErrors<T>
+  public static combineWithAllErrors<R extends ResultAsync<unknown, unknown>>(
+    this: void,
+    asyncResults: Iterable<R>,
+  ): CombineResultAsyncsIterableWithAllErrors<R>
+  public static combineWithAllErrors<
+    T extends
+      | readonly ResultAsync<unknown, unknown>[]
+      | ResultAsyncRecord
+      | Iterable<ResultAsync<unknown, unknown>>,
+  >(
+    this: void,
+    input: T,
+  ):
+    | CombineResultsWithAllErrorsArrayAsync<T & readonly ResultAsync<unknown, unknown>[]>
+    | CombineResultAsyncsRecordWithAllErrors<ResultAsyncRecord>
+    | CombineResultAsyncsIterableWithAllErrors<ResultAsync<unknown, unknown>> {
+    // Stryker disable next-line all: array fast path avoids cloning arrays through the iterable branch.
+    if (Array.isArray(input)) {
+      return combineResultAsyncListWithAllErrors(input) as CombineResultsWithAllErrorsArrayAsync<
+        T & readonly ResultAsync<unknown, unknown>[]
+      >
+    }
+
+    if (isIterable(input)) {
+      return combineResultAsyncListWithAllErrors([...input] as readonly ResultAsync<
+        unknown,
+        unknown
+      >[]) as
+        | CombineResultsWithAllErrorsArrayAsync<T & readonly ResultAsync<unknown, unknown>[]>
+        | CombineResultAsyncsIterableWithAllErrors<ResultAsync<unknown, unknown>>
+    }
+
+    return combineResultAsyncRecordWithAllErrors(input)
   }
 
   public static validateAll<
@@ -737,6 +1623,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     this: void,
     items: Iterable<Item>,
     f: (value: Item, index: number) => R,
+    options?: ResultAsyncValidateAllOptions,
   ): ResultAsyncValidatedAll<R>
   public static validateAll<
     T extends readonly ResultAsync<unknown, unknown>[],
@@ -746,6 +1633,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     this: void,
     asyncResultListOrItems: T | Iterable<Item>,
     f?: (value: Item, index: number) => R,
+    options?: ResultAsyncValidateAllOptions,
   ): CombineResultsWithAllErrorsArrayAsync<T> | ResultAsyncValidatedAll<R> {
     if (f === undefined) {
       return combineResultAsyncListWithAllErrors(
@@ -753,7 +1641,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
       ) as CombineResultsWithAllErrorsArrayAsync<T>
     }
 
-    return validateAllResultAsyncItems(asyncResultListOrItems as Iterable<Item>, f)
+    return validateAllResultAsyncItems(asyncResultListOrItems as Iterable<Item>, f, options)
   }
 
   public static zip<
@@ -761,6 +1649,205 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     Right extends ResultAsync<unknown, unknown>,
   >(this: void, left: Left, right: Right): ResultAsyncZipped<Left, Right> {
     return combineResultAsyncList([left, right]) as ResultAsyncZipped<Left, Right>
+  }
+
+  public static retry<Task extends ResultAsyncRetryTask<unknown, unknown>>(
+    this: void,
+    task: Task,
+    options: ResultAsyncRetryOptions<ResultAsyncRetryTaskErr<Task>>,
+  ): ResultAsync<ResultAsyncRetryTaskOk<Task>, ResultAsyncRetryTaskErr<Task> | AbortError> {
+    return retryResultAsyncTask(
+      task as ResultAsyncRetryTask<ResultAsyncRetryTaskOk<Task>, ResultAsyncRetryTaskErr<Task>>,
+      options,
+    )
+  }
+
+  public static retryOrElse<Task extends ResultAsyncRetryTask<unknown, unknown>, U, F>(
+    this: void,
+    task: Task,
+    options: ResultAsyncRetryOrElseOptions<ResultAsyncRetryTaskErr<Task>, F, U>,
+  ): ResultAsync<ResultAsyncRetryTaskOk<Task> | U, F | AbortError> {
+    return retryOrElseResultAsyncTask(
+      task as ResultAsyncRetryTask<ResultAsyncRetryTaskOk<Task>, ResultAsyncRetryTaskErr<Task>>,
+      options,
+    )
+  }
+
+  public static withResource<Resource, AcquireError, T, UseError>(
+    this: void,
+    options: ResultAsyncWithResourceOptions<Resource, AcquireError, T, UseError>,
+  ): ResultAsync<T, AcquireError | UseError | AbortError> {
+    return withResultAsyncResource(options)
+  }
+
+  public static race<
+    Left extends ResultAsyncRaceTask<unknown, unknown>,
+    Right extends ResultAsyncRaceTask<unknown, unknown>,
+  >(
+    this: void,
+    left: Left,
+    right: Right,
+  ): ResultAsync<
+    ResultAsyncRaceTaskOk<Left> | ResultAsyncRaceTaskOk<Right>,
+    ResultAsyncRaceTaskErr<Left> | ResultAsyncRaceTaskErr<Right>
+  > {
+    return raceResultAsyncTasks([left, right] as const)
+  }
+
+  public static raceAll<
+    Tasks extends readonly [
+      ResultAsyncRaceTask<unknown, unknown>,
+      ...ResultAsyncRaceTask<unknown, unknown>[],
+    ],
+  >(
+    this: void,
+    tasks: Tasks,
+  ): ResultAsync<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>> {
+    return raceResultAsyncTasks(tasks)
+  }
+
+  public static raceFirst<
+    Left extends ResultAsyncRaceTask<unknown, unknown>,
+    Right extends ResultAsyncRaceTask<unknown, unknown>,
+  >(
+    this: void,
+    left: Left,
+    right: Right,
+  ): ResultAsync<
+    ResultAsyncRaceTaskOk<Left> | ResultAsyncRaceTaskOk<Right>,
+    ResultAsyncRaceTaskErr<Left> | ResultAsyncRaceTaskErr<Right>
+  > {
+    return observeRaceResultAsyncTasks<
+      readonly [Left, Right],
+      RaceFirstObserverContext<readonly [Left, Right]>
+    >(
+      [left, right] as const,
+      // Stryker disable next-line all: explicit false and missing value are equivalent before first settlement.
+      (resolve, startedTasks) => ({ resolve, startedTasks, state: { settled: false } }),
+      observeRaceFirstTask,
+    )
+  }
+
+  public static raceWith<
+    Left extends ResultAsyncRaceTask<unknown, unknown>,
+    Right extends ResultAsyncRaceTask<unknown, unknown>,
+    OnLeftDone extends ResultAsyncConditional,
+    OnRightDone extends ResultAsyncConditional,
+  >(
+    this: void,
+    left: Left,
+    right: Right,
+    handlers: {
+      readonly onLeftDone: (
+        result: Result<ResultAsyncRaceTaskOk<Left>, ResultAsyncRaceTaskErr<Left>>,
+        right: ResultAsyncRaceHandle<ResultAsyncRaceTaskOk<Right>, ResultAsyncRaceTaskErr<Right>>,
+      ) => OnLeftDone
+      readonly onRightDone: (
+        result: Result<ResultAsyncRaceTaskOk<Right>, ResultAsyncRaceTaskErr<Right>>,
+        left: ResultAsyncRaceHandle<ResultAsyncRaceTaskOk<Left>, ResultAsyncRaceTaskErr<Left>>,
+      ) => OnRightDone
+    },
+  ): ResultAsync<
+    HandlerOk<OnLeftDone> | HandlerOk<OnRightDone>,
+    HandlerErr<OnLeftDone> | HandlerErr<OnRightDone>
+  > {
+    const promise = new Promise<
+      Result<
+        HandlerOk<OnLeftDone> | HandlerOk<OnRightDone>,
+        HandlerErr<OnLeftDone> | HandlerErr<OnRightDone>
+      >
+    >((resolve) => {
+      const leftTask = startRaceTask(left, 0)
+      const rightTask = startRaceTask(right, 1)
+      const leftHandle = createRaceHandle(leftTask) as ResultAsyncRaceHandle<
+        ResultAsyncRaceTaskOk<Left>,
+        ResultAsyncRaceTaskErr<Left>
+      >
+      const rightHandle = createRaceHandle(rightTask) as ResultAsyncRaceHandle<
+        ResultAsyncRaceTaskOk<Right>,
+        ResultAsyncRaceTaskErr<Right>
+      >
+      let settled = false
+
+      void leftTask.settled.then(({ result }) => {
+        if (settled) {
+          return
+        }
+
+        settled = true
+        const handled = handlers.onLeftDone(
+          result as Result<ResultAsyncRaceTaskOk<Left>, ResultAsyncRaceTaskErr<Left>>,
+          rightHandle,
+        )
+
+        void Promise.resolve(toResultAsync(handled)).then((handledResult) => {
+          resolve(
+            handledResult as Result<
+              HandlerOk<OnLeftDone> | HandlerOk<OnRightDone>,
+              HandlerErr<OnLeftDone> | HandlerErr<OnRightDone>
+            >,
+          )
+        })
+      })
+
+      void rightTask.settled.then(({ result }) => {
+        if (settled) {
+          return
+        }
+
+        settled = true
+        const handled = handlers.onRightDone(
+          result as Result<ResultAsyncRaceTaskOk<Right>, ResultAsyncRaceTaskErr<Right>>,
+          leftHandle,
+        )
+
+        void Promise.resolve(toResultAsync(handled)).then((handledResult) => {
+          resolve(
+            handledResult as Result<
+              HandlerOk<OnLeftDone> | HandlerOk<OnRightDone>,
+              HandlerErr<OnLeftDone> | HandlerErr<OnRightDone>
+            >,
+          )
+        })
+      })
+    })
+
+    return new ResultAsync(promise)
+  }
+
+  public static timeout<Task extends ResultAsyncRaceTask<unknown, unknown>, TimeoutError>(
+    this: void,
+    task: Task,
+    options: ResultAsyncTimeoutOptions<TimeoutError>,
+  ): ResultAsync<ResultAsyncRaceTaskOk<Task>, ResultAsyncRaceTaskErr<Task> | TimeoutError> {
+    const timeoutTask = (signal: ResultAsyncAbortSignal): ResultAsync<never, TimeoutError> => {
+      const promise = new Promise<Result<never, TimeoutError>>((resolve) => {
+        const timeout = setTimeout(() => {
+          resolve(Result.err(options.onTimeout()))
+        }, options.timeoutMs)
+
+        signal.addEventListener('abort', () => {
+          clearTimeout(timeout)
+        })
+      })
+
+      return new ResultAsync(promise)
+    }
+
+    return ResultAsync.raceWith(task, timeoutTask, {
+      onLeftDone: (result, timeoutHandle) => {
+        timeoutHandle.abort(createRaceAbortReason())
+        return result
+      },
+      onRightDone: (result, taskHandle) => {
+        // Stryker disable next-line all: timeoutTask has Ok type never and only resolves Err.
+        if (result.isErr()) {
+          taskHandle.abort(result.error)
+        }
+
+        return result
+      },
+    })
   }
 
   public static firstSuccessOf<Candidates extends Iterable<ResultAsyncCandidate>>(
@@ -928,10 +2015,10 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
         (async () => {
           try {
             const v = await fn(...args)
-            return Result.ok(v)
+            return resultOk<T, E>(v)
           } catch (error) {
             const e = errorFn ? errorFn(error) : error
-            return Result.err(e as E)
+            return err<T, E>(e as E)
           }
         })(),
       )
@@ -955,10 +2042,10 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return new ResultAsync<T, U>(
       this.innerPromise.then(async (res) => {
         if (res.isOk()) {
-          return Result.ok<T, U>(res.value)
+          return resultOk<T, U>(res.value)
         }
 
-        return Result.err<T, U>(await f(res.error))
+        return err<T, U>(await f(res.error))
       }),
     )
   }
@@ -967,10 +2054,10 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return new ResultAsync<X, E>(
       this.innerPromise.then(async (res: Result<T, E>) => {
         if (res.isErr()) {
-          return Result.err<X, E>(res.error)
+          return err<X, E>(res.error)
         }
 
-        return Result.ok<X, E>(await f(res.value))
+        return resultOk<X, E>(await f(res.value))
       }),
     )
   }
@@ -979,10 +2066,10 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return new ResultAsync<X, E>(
       this.innerPromise.then((res: Result<T, E>) => {
         if (res.isErr()) {
-          return Result.err<X, E>(res.error)
+          return err<X, E>(res.error)
         }
 
-        return Result.ok<X, E>(value)
+        return resultOk<X, E>(value)
       }),
     )
   }
@@ -1002,14 +2089,14 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return new ResultAsync<T, E | F>(
       this.innerPromise.then(async (res) => {
         if (res.isErr()) {
-          return Result.err(res.error)
+          return err<T, E | F>(res.error)
         }
 
         if (await predicate(res.value)) {
-          return Result.ok(res.value)
+          return resultOk<T, E | F>(res.value)
         }
 
-        return Result.err(await onFalse(res.value))
+        return err<T, E | F>(await onFalse(res.value))
       }),
     )
   }
@@ -1025,7 +2112,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return new ResultAsync<U, E | F>(
       this.innerPromise.then((res) => {
         if (res.isErr()) {
-          return Result.err<U, E | F>(res.error)
+          return err<U, E | F>(res.error)
         }
 
         const next = f(res.value)
@@ -1073,7 +2160,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
           return next instanceof ResultAsync ? next.innerPromise : next
         }
 
-        return Result.ok<U | T, A>(res.value)
+        return resultOk<U | T, A>(res.value)
       }),
     )
   }
@@ -1128,7 +2215,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
         const error = res.error
         const handled = callTaggedHandler<CatchTagHandlerResult<Handlers>>(error, handlers)
 
-        if (handled.matched) {
+        if (isTaggedHandlerMatch(handled)) {
           const next = handled.value as Result<unknown, unknown> | ResultAsync<unknown, unknown>
           return next instanceof ResultAsync ? next.innerPromise : next
         }
@@ -1143,6 +2230,144 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  public catchReason<
+    const ErrorTag extends TagsWithReasonOf<E>,
+    const ReasonTag extends ReasonTagsOf<E, ErrorTag>,
+    R extends Result<unknown, unknown>,
+  >(
+    errorTag: ErrorTag,
+    reasonTag: ReasonTag,
+    f: (reason: ReasonForTag<E, ErrorTag, ReasonTag>, error: ErrorForTag<E, ErrorTag>) => R,
+  ): ResultAsync<T | InferOkTypes<R>, ExcludeReasonTag<E, ErrorTag, ReasonTag> | InferErrTypes<R>>
+  public catchReason<
+    const ErrorTag extends TagsWithReasonOf<E>,
+    const ReasonTag extends ReasonTagsOf<E, ErrorTag>,
+    R extends ResultAsync<unknown, unknown>,
+  >(
+    errorTag: ErrorTag,
+    reasonTag: ReasonTag,
+    f: (reason: ReasonForTag<E, ErrorTag, ReasonTag>, error: ErrorForTag<E, ErrorTag>) => R,
+  ): ResultAsync<
+    T | InferAsyncOkTypes<R>,
+    ExcludeReasonTag<E, ErrorTag, ReasonTag> | InferAsyncErrTypes<R>
+  >
+  public catchReason<
+    U,
+    F,
+    const ErrorTag extends TagsWithReasonOf<E>,
+    const ReasonTag extends ReasonTagsOf<E, ErrorTag>,
+  >(
+    errorTag: ErrorTag,
+    reasonTag: ReasonTag,
+    f: (
+      reason: ReasonForTag<E, ErrorTag, ReasonTag>,
+      error: ErrorForTag<E, ErrorTag>,
+    ) => Result<U, F> | ResultAsync<U, F>,
+  ): ResultAsync<T | U, ExcludeReasonTag<E, ErrorTag, ReasonTag> | F>
+  public catchReason<
+    const ErrorTag extends TagsWithReasonOf<E>,
+    const ReasonTag extends ReasonTagsOf<E, ErrorTag>,
+    R extends Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+  >(
+    errorTag: ErrorTag,
+    reasonTag: ReasonTag,
+    f: (reason: ReasonForTag<E, ErrorTag, ReasonTag>, error: ErrorForTag<E, ErrorTag>) => R,
+  ): ResultAsync<T | HandlerOk<R>, ExcludeReasonTag<E, ErrorTag, ReasonTag> | HandlerErr<R>> {
+    return new ResultAsync<
+      T | HandlerOk<R>,
+      ExcludeReasonTag<E, ErrorTag, ReasonTag> | HandlerErr<R>
+    >(
+      this.innerPromise.then((res) => {
+        if (res.isOk()) {
+          return Result.ok(res.value)
+        }
+
+        if (hasTag(res.error, errorTag)) {
+          const reason = getReason(res.error)
+
+          if (hasTag(reason, reasonTag)) {
+            const next = f(
+              reason as ReasonForTag<E, ErrorTag, ReasonTag>,
+              res.error as ErrorForTag<E, ErrorTag>,
+            )
+            return next instanceof ResultAsync ? next.innerPromise : next
+          }
+        }
+
+        return Result.err(res.error as ExcludeReasonTag<E, ErrorTag, ReasonTag>)
+      }) as Promise<
+        Result<T | HandlerOk<R>, ExcludeReasonTag<E, ErrorTag, ReasonTag> | HandlerErr<R>>
+      >,
+    )
+  }
+
+  public catchReasons<const ErrorTag extends TagsWithReasonOf<E>, const Handlers extends object>(
+    errorTag: ErrorTag,
+    handlers: Handlers & CatchReasonHandlers<E, ErrorTag, Handlers>,
+  ): ResultAsync<
+    T | HandlerOk<CatchReasonHandlerResult<Handlers>>,
+    | ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>
+    | HandlerErr<CatchReasonHandlerResult<Handlers>>
+  > {
+    return new ResultAsync<
+      T | HandlerOk<CatchReasonHandlerResult<Handlers>>,
+      | ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>
+      | HandlerErr<CatchReasonHandlerResult<Handlers>>
+    >(
+      this.innerPromise.then((res) => {
+        if (res.isOk()) {
+          return Result.ok(res.value)
+        }
+
+        if (hasTag(res.error, errorTag)) {
+          const reason = getReason(res.error)
+
+          if (typeof reason === 'object' && reason !== null && '_tag' in reason) {
+            const handler = (handlers as Record<string, unknown>)[
+              (reason as { readonly _tag: string })._tag
+            ]
+
+            if (handler !== undefined) {
+              const next = (
+                handler as (
+                  reason: unknown,
+                  error: unknown,
+                ) => Result<unknown, unknown> | ResultAsync<unknown, unknown>
+              )(reason, res.error)
+              return next instanceof ResultAsync ? next.innerPromise : next
+            }
+          }
+        }
+
+        return Result.err(res.error as ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>)
+      }) as Promise<
+        Result<
+          T | HandlerOk<CatchReasonHandlerResult<Handlers>>,
+          | ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>
+          | HandlerErr<CatchReasonHandlerResult<Handlers>>
+        >
+      >,
+    )
+  }
+
+  public unwrapReason<const ErrorTag extends TagsWithReasonOf<E>>(
+    errorTag: ErrorTag,
+  ): ResultAsync<T, ExcludeTag<E, ErrorTag> | ReasonsOf<E, ErrorTag>> {
+    return new ResultAsync(
+      this.innerPromise.then((res) => {
+        if (res.isOk()) {
+          return Result.ok(res.value)
+        }
+
+        if (hasTag(res.error, errorTag)) {
+          return Result.err(getReason(res.error) as ReasonsOf<E, ErrorTag>)
+        }
+
+        return Result.err(res.error as ExcludeTag<E, ErrorTag>)
+      }),
+    )
+  }
+
   public async match<A, B = A>(handlers: MatchHandlers<T, E, A, B>): Promise<A | B>
   public async match<A, B = A>(ok: (t: T) => A, fnErr: (e: E) => B): Promise<A | B>
   public async match<A, B = A>(
@@ -1150,6 +2375,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     fnErr?: (e: E) => B,
   ): Promise<A | B> {
     return this.innerPromise.then((res) =>
+      // Stryker disable next-line all: positional match avoids allocating a handlers object.
       typeof input === 'function'
         ? res.match(input, getMatchErrorHandler(input, fnErr))
         : res.match(input),

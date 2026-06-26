@@ -2,20 +2,26 @@
   "compilerOptions": {
     "target": "ESNext",
     "lib": ["ESNext"],
+    "ignoreDeprecations": "6.0",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "types": ["node"],
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
     "declaration": true,
+    "esModuleInterop": true,
     "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
     "isolatedDeclarations": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
     "noEmitOnError": true,
     "noUncheckedIndexedAccess": true,
-    "outDir": "dist",
-    "rootDir": "src",
-    "skipLibCheck": true
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "types": ["node"],
+    "verbatimModuleSyntax": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["scripts/**/*.ts", "src/**/*.ts", "vite.config.ts"],
+  "exclude": ["coverage", "dist", "node_modules", "report"]
 }

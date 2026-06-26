@@ -2,9 +2,29 @@
 
 Production-facing error handling for TypeScript, without a runtime.
 
-Resultar gives you typed `Result` primitives, real `Error`-based tagged failures, sync/async
-composition, and optional no-discard diagnostics. It is small enough to adopt in one module and
-strict enough to use at service, HTTP, job, queue, CLI, and integration boundaries.
+Full documentation, long-form recipes, and the complete API map live in
+[DOCUMENTATION.md](../../DOCUMENTATION.md).
+
+## New In 3.1
+
+Resultar 3.1 turns common production async policies into typed values instead of rejected promises,
+hidden timers, or helper code that throws.
+
+- `ResultAsync.timeout`, `retry`, `retryOrElse`, `race`, `raceAll`, and `withResource` cover
+  timeouts, retry policy, fallback, replica reads, and cleanup while preserving the expected error
+  type.
+- `ResultAsync.forEach` and `ResultAsync.validateAll` support sequential work, bounded
+  `{ concurrency }`, and explicit unbounded execution for batch processing and validation.
+- `AbortError` / `isAbortError` and redacted tagged-error props with `redact`, `isRedacted`, and
+  `revealRedacted` make cancellation and sensitive error metadata visible at the type boundary.
+- `pipe` lets teams package reusable result combinators without hiding the underlying `Result` /
+  `ResultAsync` type.
+
+## Main Functionalities
+
+Resultar gives you typed `Result` primitives, real `Error`-based tagged failures, async control
+helpers, sync/async composition, and optional no-discard diagnostics. It is small enough to adopt in
+one module and strict enough to use at service, HTTP, job, queue, CLI, and integration boundaries.
 
 ```ts
 Result<T, E>
@@ -18,13 +38,15 @@ Use it when expected failures should be impossible to miss:
 - Function signatures show both the success type and the expected error type.
 - Domain errors are real `Error` instances with stable tags, messages, `cause`, stack traces, and
   JSON output.
+- `ResultAsync` can bound concurrent work, race replicas, apply typed timeouts, retry transient
+  failures, and pair acquisition with cleanup without adding a runtime scheduler.
 - Sync and async fallible work compose without `try/catch` blocks scattered through application
   code.
 - Ignored `Result` values can be reported by a type-aware no-discard check.
 
 Resultar began as an initial fork of `neverthrow`. The v3 line keeps the explicit wrapper model,
-then leans into Resultar-specific tagged errors, strict service-boundary types, TypeScript 6
-support, and ESM-only packaging.
+then leans into Resultar-specific tagged errors, strict service-boundary types, TypeScript 7-first
+diagnostics, and ESM-only packaging.
 
 ## Install
 
@@ -39,7 +61,7 @@ npm install resultar
 ## Requirements
 
 - Node.js 24+
-- TypeScript 6+
+- TypeScript 7 for the canonical Resultar diagnostics workflow
 - ESM only
 
 ```ts
@@ -96,8 +118,12 @@ in normal TypeScript.
 | Expected failures are hidden behind `throw` | `Result<T, E>` and `ResultAsync<T, E>` in function signatures |
 | Production errors need stable names and metadata | `createTaggedError` classes with `_tag`, template props, `cause`, and `.toJSON()` |
 | Async flows turn into nested `try/catch` | `tryResultAsync`, `andThen`, `asyncAndThen`, `map`, `orElse`, `safeTry` |
+| Repeated result transforms become noisy | `pipe` with small reusable combinators |
+| Network calls need timeouts, retries, and fallback policy | `ResultAsync.timeout`, `retry`, `retryOrElse`, `race`, and `raceAll` |
+| Batch work needs backpressure without a framework | `ResultAsync.forEach` and mapped `validateAll` with `{ concurrency }` |
+| Resourceful work needs cleanup on every path | `ResultAsync.withResource` and native `AsyncIterable<Result<T, E>>` recipes |
 | Boundary handlers miss cases | `matchTags` for exhaustive tagged-error handling |
-| Results are easy to ignore | `resultar-lint check` and the `resultar-lint` TypeScript plugin |
+| Results are easy to ignore | `resultar-check` and the `resultar-check` TypeScript plugin |
 | You do not want another application runtime | A small ESM library around explicit values |
 
 Nested `try/catch` often masks the error the caller actually needs:
@@ -131,6 +157,92 @@ const getPosts = (
     .andThen((response) =>
       tryResultAsync(response.json() as Promise<Post[]>, (cause) => new ParsePostsError({ cause })),
     )
+```
+
+The same flow can be written linearly with `safeTry` when the chain gets harder to scan:
+
+```ts
+const getPostsLinear = (
+  url: string,
+): StrictResultAsync<Post[], FetchPostsError | HttpClientError | ParsePostsError> =>
+  safeTry(async function* () {
+    const response = yield* tryResultAsync(
+      fetch(url),
+      (cause) => new FetchPostsError({ cause }),
+    )
+
+    if (response.status >= 400) {
+      return HttpClientError.err({ status: response.status })
+    }
+
+    const posts = yield* tryResultAsync(
+      response.json() as Promise<Post[]>,
+      (cause) => new ParsePostsError({ cause }),
+    )
+
+    return ok(posts)
+  })
+```
+
+## Async Control Without A Runtime
+
+The 3.1 async helpers cover common production workflows while keeping plain `Promise` and
+`AbortSignal`-compatible APIs underneath. You choose the policy in the type signature instead of
+hiding it in a helper that throws.
+
+Retry transient work and fall back to cache only after the retry policy is exhausted:
+
+```ts
+const user = ResultAsync.retryOrElse(
+  (attempt, signal) => fetchUser(id, { attempt, signal }),
+  {
+    times: 2,
+    delayMs: ({ nextAttempt }) => nextAttempt * 100,
+    jittered: 0.5,
+    while: (error) => error._tag === 'RateLimitError' || error._tag === 'ServiceUnavailableError',
+    orElse: () => readCachedUser(id),
+  },
+)
+```
+
+`jittered` randomizes the computed retry delay by a percentage factor to avoid synchronized retries.
+For example, `delayMs: 100` with `jittered: 0.5` waits between `50ms` and `150ms`; omit it or use
+`0` to keep the exact delay.
+
+Race a primary and replica with cooperative loser abort:
+
+```ts
+const user = ResultAsync.race(
+  (signal) => readUserFromPrimary(id, { signal }),
+  (signal) => readUserFromReplica(id, { signal }),
+)
+```
+
+Keep timeout as a typed `Err`, not a rejected promise:
+
+```ts
+const user = ResultAsync.timeout(
+  (signal) => readUserFromPrimary(id, { signal }),
+  {
+    timeoutMs: 1_500,
+    onTimeout: () => new FetchUserTimeoutError({ id, timeoutMs: 1_500 }),
+  },
+)
+```
+
+Process batches with bounded concurrency and explicit cleanup:
+
+```ts
+const imported = ResultAsync.withResource({
+  acquire: (signal) => openImportSession({ signal }),
+  use: (session, signal) =>
+    ResultAsync.forEach(
+      rows,
+      (row) => importRow(session, row, { signal }),
+      { concurrency: 8, discard: true },
+    ),
+  release: (session) => session.close(),
+})
 ```
 
 ## Quick Start
@@ -325,13 +437,30 @@ new UserNotFoundError({ id: 'usr_123' })
 Use `TaggedEnum` only for lightweight tagged unions that do not need to be real errors.
 
 ```ts
+import { taggedEnum } from 'resultar'
 import type { TaggedEnum } from 'resultar'
 
 type PaymentError = TaggedEnum<{
   CardDeclined: { readonly code: string }
   InsufficientFunds: { readonly balance: number }
 }>
+
+const PaymentError = taggedEnum<{
+  CardDeclined: { readonly code: string }
+  InsufficientFunds: { readonly balance: number }
+}>()
+
+const declined = PaymentError.CardDeclined({ code: 'card_declined' })
+
+PaymentError.$is('CardDeclined', declined) // true
+PaymentError.$match(declined, {
+  CardDeclined: (error) => error.code,
+  InsufficientFunds: (error) => String(error.balance),
+})
 ```
+
+Use `redact(value, label?)` for tagged error props that must not leak through messages or JSON.
+Use `revealRedacted(value)` only at the exact boundary that is allowed to see the secret.
 
 ## Composing Results
 
@@ -376,6 +505,42 @@ const validateCompanyEmail = (
   )
 ```
 
+Use `pipe` when a transform should be named and reused. A pipe step receives the current
+`Result`/`ResultAsync` and returns the next value in the chain:
+
+```ts
+import type { Result, StrictResult } from 'resultar'
+
+const normalizeEmail = <E>(result: Result<string, E>): Result<string, E> =>
+  result.map((email) => email.trim().toLowerCase())
+
+const requireCompanyDomain = (
+  result: Result<string, InvalidEmailError>,
+): StrictResult<string, InvalidEmailError | InvalidDomainError> =>
+  result.filterOrElse(
+    (email) => email.endsWith('@company.com'),
+    (email) => new InvalidDomainError({ domain: email.split('@')[1] ?? 'unknown' }),
+  )
+
+const email = validateEmail(input).pipe(normalizeEmail, requireCompanyDomain)
+```
+
+The same pattern works for async results. `pipe` is just composition; it does not catch thrown
+errors from the pipe callbacks:
+
+```ts
+import type { ResultAsync } from 'resultar'
+
+const auditUser =
+  <E>(result: ResultAsync<User, E>): ResultAsync<User, E> =>
+    result.tap((user) => logger.info({ userId: user.id }, 'user created'))
+
+const createdEmail = validateEmail(input)
+  .asyncAndThen(ensureUserDoesNotExistAsync)
+  .andThen(insertUserAsync)
+  .pipe(auditUser, (result) => result.map((user) => user.email))
+```
+
 Use `catchTag` or `catchTags` for local recovery from tagged errors:
 
 ```ts
@@ -386,6 +551,53 @@ const draftUser = createUser('bad-email').catchTag('InvalidEmailError', (error) 
   }),
 )
 ```
+
+## Reasoned Tagged Errors
+
+Use `catchReason`, `catchReasons`, and `unwrapReason` when a stable parent error has a nested tagged
+reason. This keeps the outer error useful for logs and boundaries while allowing local recovery by
+the precise reason.
+
+```ts
+import { createTaggedError, err, ok, taggedEnum } from 'resultar'
+import type { StrictResult, TaggedEnum } from 'resultar'
+
+const AiReason = taggedEnum<{
+  QuotaExceededError: { readonly limit: number }
+  RateLimitError: { readonly retryAfterMs: number }
+}>()
+
+type AiReason = TaggedEnum<{
+  QuotaExceededError: { readonly limit: number }
+  RateLimitError: { readonly retryAfterMs: number }
+}>
+
+class AiError extends createTaggedError({
+  name: 'AiError',
+  message: 'AI request failed',
+}) {
+  public readonly reason: AiReason
+
+  public constructor(props: { readonly cause?: unknown; readonly reason: AiReason }) {
+    super({ cause: props.cause })
+    this.reason = props.reason
+  }
+}
+
+const askAi = (): StrictResult<string, AiError> =>
+  err(new AiError({ reason: AiReason.RateLimitError({ retryAfterMs: 1_000 }) }))
+```
+
+```ts
+const recovered = askAi().catchReason('AiError', 'RateLimitError', (reason) =>
+  ok(`retry after ${reason.retryAfterMs}ms`),
+)
+
+const unwrapped = askAi().unwrapReason('AiError')
+```
+
+`catchReason` removes only the handled reason from the remaining error type. `unwrapReason` moves the
+reason union into the error channel when the parent tag matches.
 
 Use `match`, `matchTags`, or `matchTagsPartial` at boundaries where a result becomes a response,
 log entry, queue acknowledgement, CLI exit code, or UI state.
@@ -410,9 +622,9 @@ const response = createUser(input.email).matchTagsPartial(
 
 Use fallback APIs when an expected failure has a useful recovery path.
 
-| Effect fallback idea | Resultar equivalent |
+| Fallback idea | Resultar API |
 | --- | --- |
-| try another effect | `result.orElse(() => fallbackResult)` |
+| try another branch | `result.orElse(() => fallbackResult)` |
 | replace the failure | `mapErr(...)` or `orElse(() => err(newError))` |
 | replace the failure with success | `orElse(() => ok(defaultValue))` inside a pipeline |
 | default at the edge | `unwrapOr(defaultValue)` |
@@ -453,9 +665,150 @@ const user = ResultAsync.firstSuccessOf([
 ])
 ```
 
+Use `combine` with records when independent results should keep names:
+
+```ts
+const context = Result.combine({
+  org: readOrg(orgId),
+  user: readUser(userId),
+})
+
+const validated = Result.combineWithAllErrors({
+  email: validateEmail(input.email),
+  name: validateName(input.name),
+})
+```
+
+For lazy async traversal, `ResultAsync.forEach` and mapped `ResultAsync.validateAll` run
+sequentially by default. Pass `{ concurrency: n }` for bounded concurrency or
+`{ concurrency: "unbounded" }` to start every mapped task immediately. See
+[DOCUMENTATION.md](../../DOCUMENTATION.md#async-concurrency-mapping) for async concurrency details
+and the runtime features Resultar intentionally keeps out of core.
+
+For concurrent async races, use lazy signal-aware tasks. `race` and `raceAll` return the first
+success. `raceFirst` returns the first completed result, success or failure. `timeout` is a
+`raceFirst` convenience.
+
+```ts
+const user = ResultAsync.timeout(
+  (signal) => fetchUser(id, { signal }),
+  {
+    timeoutMs: 2_000,
+    onTimeout: () => new FetchUserTimeoutError({ id }),
+  },
+)
+```
+
+For transient async failures, use lazy retry tasks. The task receives a zero-based attempt number and
+a `ResultAsyncAbortSignal`-compatible signal; `times` is the number of retries after the first
+attempt.
+
+```ts
+const user = ResultAsync.retry(
+  (attempt, signal) => fetchUser(id, { attempt, signal }),
+  {
+    times: 2,
+    delayMs: ({ nextAttempt }) => nextAttempt * 100,
+    jittered: 0.2,
+    while: (error) => error._tag === 'RateLimitError',
+  },
+)
+
+const withFallback = ResultAsync.retryOrElse(
+  (attempt, signal) => fetchUser(id, { attempt, signal }),
+  {
+    times: 2,
+    orElse: () => readCachedUser(id),
+  },
+)
+```
+
+Use `jittered` when many callers may retry at the same time. The value is a delay spread factor:
+`jittered: 0.2` applies a random delay from `80%` to `120%` of the computed `delayMs`.
+
+For resourceful async work, use `ResultAsync.withResource` when acquisition and cleanup must stay
+paired. Cleanup is best-effort and always runs after successful acquisition, including when the use
+step returns `Err` or rejects.
+
+```ts
+const lines = ResultAsync.withResource({
+  acquire: (signal) => openFile(path, { signal }),
+  use: (file, signal) => readLines(file, { signal }),
+  release: (file) => file.close(),
+})
+```
+
+For pull-based streams, keep the runtime native: expose an `AsyncIterable<Result<T, E>>` and close
+resources in `finally`. See
+[DOCUMENTATION.md](../../DOCUMENTATION.md#resourceful-async-iterables) for the full recipe.
+
 Use `catchTag` / `catchTags` when recovery depends on a specific tagged error. Use
 `matchTagsPartial` when only a boundary needs fallback mapping. Use `unwrapOr` only at final edges
 where defaulting is intentional.
+
+## Catching Errors
+
+Resultar has different catch APIs for different error sources. Use the smallest API that matches
+where the failure appears.
+
+| Need | Use |
+| --- | --- |
+| Catch thrown sync code now | `tryResult(fn, toError?)` |
+| Wrap a throwing sync function for later | `fromThrowable(fn, toError?)` |
+| Catch an existing rejecting promise | `fromPromise(promise, toError)` |
+| Catch a promise or async factory | `tryResultAsync(promiseOrFactory, toError?)` |
+| Wrap an async function for later | `fromThrowableAsync(fn, toError?)` |
+| Turn one error into another | `mapErr(fn)` |
+| Recover with another result | `orElse(fn)` |
+| Recover specific tagged errors | `catchTag(tag, fn)` or `catchTags(handlers)` |
+| Recover nested tagged reasons | `catchReason(parentTag, reasonTag, fn)` or `catchReasons(parentTag, handlers)` |
+| Convert a result at a boundary | `match`, `matchTags`, or `matchTagsPartial` |
+| Handle an existing `Error` value | `matchError` or `matchErrorPartial` |
+| Map thrown errors in linear code | `safeTry({ try, catch })` |
+| Recover after retry exhaustion | `ResultAsync.retryOrElse(task, options)` |
+
+Catch uncontrolled code at the edge:
+
+```ts
+const parsed: StrictResult<Config, ParseConfigError> = tryResult(
+  () => JSON.parse(input) as Config,
+  (cause) => new ParseConfigError({ cause }),
+)
+
+const response: StrictResultAsync<Response, FetchPayloadError> = tryResultAsync(
+  () => fetch(url),
+  (cause) => new FetchPayloadError({ cause, url }),
+)
+```
+
+Thrown or rejected values are `unknown` at the boundary. The mapper decides the documented error
+type: `ParseConfigError` for parsing and `FetchPayloadError` for fetching.
+
+Recover inside the pipeline:
+
+```ts
+const user: StrictResultAsync<User, ReadUserError> = readUserFromCache(id)
+  .orElse(() => readUserFromDatabase(id))
+  .mapErr((cause) => new ReadUserError({ cause, id }))
+```
+
+The cache/database error union is normalized into one public `ReadUserError` while preserving the
+original error as `cause`.
+
+Handle tagged errors at the boundary:
+
+```ts
+const response: HttpResponse = createUser(input).matchTagsPartial(
+  (user) => ({ body: user, statusCode: 201 }),
+  {
+    InvalidEmailError: (error) => ({ body: { code: error._tag }, statusCode: 400 }),
+  },
+  (error) => ({ body: { code: error._tag }, statusCode: 500 }),
+)
+```
+
+For the full decision map, see
+[Catching And Recovering Errors](../../DOCUMENTATION.md#catching-and-recovering-errors).
 
 ## Wrapping Throwing Code
 
@@ -485,6 +838,41 @@ const user = fromPromise(loadUserFromRemote(id), (cause) => new FetchUserError({
 
 After that edge conversion, keep your own domain functions returning `Result` values instead of
 throwing expected failures.
+
+## Validation Errors
+
+Keep validation failures as normal tagged errors. Map external validators into a small issue shape
+at the adapter boundary.
+
+```ts
+type ValidationIssue = {
+  readonly message: string
+  readonly path: string
+}
+
+class ValidationError extends createTaggedError({
+  name: 'ValidationError',
+  message: 'Invalid input',
+}) {
+  public readonly issues: readonly ValidationIssue[]
+
+  public constructor(props: {
+    readonly cause?: unknown
+    readonly issues: readonly ValidationIssue[]
+  }) {
+    super({ cause: props.cause })
+    this.issues = props.issues
+  }
+}
+
+const issueFromPath = (path: readonly (number | string)[], message: string): ValidationIssue => ({
+  message,
+  path: path.join('.'),
+})
+```
+
+For Zod, Standard Schema, or any other validator, decode at the edge and map the library-specific
+issue format into `ValidationIssue[]`. Resultar does not depend on any validator package.
 
 ## Unexpected Errors
 
@@ -562,19 +950,19 @@ const config = safeTry({
 
 ## No-Discard Validation
 
-Resultar values should not be ignored. Install `resultar-lint` to report discarded `Result` and
-`ResultAsync` values.
+Resultar values should not be ignored. Use `resultar-check` to run TypeScript 7 and Resultar
+diagnostics through one command.
 
 ```sh
-pnpm add -D resultar-lint typescript
+pnpm add -D resultar-check typescript-7@npm:typescript@rc
 ```
 
-Add a lint-like script:
+Add a check script:
 
 ```json
 {
   "scripts": {
-    "lint:resultar": "resultar-lint check --project tsconfig.json"
+    "check": "resultar-check -p tsconfig.json --noEmit"
   }
 }
 ```
@@ -598,27 +986,18 @@ The default mode is neverthrow-style `must-use`: it also reports assigned `Resul
 only passed around and never consumed with `match`, `unwrapOr`, `_unsafeUnwrap`, `isOk`, `isErr`,
 returned, or explicitly discarded. Use `--mode direct` for the lower-noise expression-only check.
 
-For editor diagnostics, enable the TypeScript language-service plugin:
+Configure Resultar rules in `tsconfig.json`:
 
 ```json
 {
   "compilerOptions": {
-    "plugins": [{ "name": "resultar-lint", "noDiscard": "error" }]
+    "plugins": [{ "name": "resultar-check", "noDiscard": "error" }]
   }
 }
 ```
 
-TypeScript language-service plugins are editor-only by default. To make `tsc` report Resultar
-diagnostics during builds, patch the local TypeScript installation:
-
-```sh
-pnpm exec resultar-lint patch
-pnpm exec resultar-lint doctor
-pnpm exec resultar-lint unpatch
-```
-
-For TypeScript 7 native-preview projects, `resultar-tsgo` exposes a `tsgo` wrapper that runs native
-TypeScript and then Resultar no-discard validation.
+Oxlint is intentionally not part of the Resultar rules path; use it only for general linting if your
+project wants it.
 
 ## API Decision Guide
 
@@ -637,6 +1016,8 @@ TypeScript and then Resultar no-discard validation.
 | Transform error | `mapErr` |
 | Continue with fallible work | `andThen` or `asyncAndThen` |
 | Recover from failure | `orElse`, `catchTag`, or `catchTags` |
+| Recover from a nested tagged reason | `catchReason` or `catchReasons` |
+| Move a parent error reason into the error channel | `unwrapReason` |
 | Replace failure with another failure | `mapErr` or `orElse(() => err(newError))` |
 | Replace failure with success | `orElse(() => ok(defaultValue))` |
 | Handle a boundary | `match`, `matchTags`, or `matchTagsPartial` |
@@ -645,10 +1026,25 @@ TypeScript and then Resultar no-discard validation.
 | Combine many independent results | `Result.combine` or `ResultAsync.combine` |
 | Collect all validation failures | `validateAll` or `combineWithAllErrors` |
 | Try fallback candidates | `firstSuccessOf` |
+| Bound lazy async traversal | `ResultAsync.forEach` or mapped `ResultAsync.validateAll` with `{ concurrency }` |
+| Race concurrent tasks | `ResultAsync.race`, `raceAll`, `raceFirst`, or `raceWith` |
+| Apply a cooperative timeout | `ResultAsync.timeout` |
+| Retry transient async work | `ResultAsync.retry` or `ResultAsync.retryOrElse` |
+| Pair async acquisition with cleanup | `ResultAsync.withResource` |
 | Process collections sequentially | `loop`, `iterate`, or `forEach` |
 | Observe without changing outcome | `tap`, `tapError`, or `log` |
 | Throw intentionally at a final edge | `unwrapOrThrow()` |
 | Default intentionally at a final edge | `unwrapOr(defaultValue)` |
+
+## What Stays Out Of Core
+
+Resultar keeps the scope narrow: explicit error values, typed expected failures, and composable
+recovery.
+
+- No generator-based runtime DSL.
+- No schedule engine in core.
+- No config, cache, request resolver, resource, fiber, or service runtime.
+- No raw `Error | T` conversion API.
 
 ## Version 3 Notes
 
@@ -680,32 +1076,31 @@ More focused material:
 - [Full guide](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md)
 - [Type-safe error handling article, English](https://github.com/inaiat/resultar/blob/main/articles/en/type-safe.md)
 - [Artigo sobre tratamento de erros type-safe, Portuguese](https://github.com/inaiat/resultar/blob/main/articles/pt/type-safe.md)
-- [resultar-lint package guide](https://github.com/inaiat/resultar/blob/main/packages/resultar-lint/README.md)
-- [resultar-tsgo package guide](https://github.com/inaiat/resultar/blob/main/packages/resultar-tsgo/README.md)
+- [resultar-check package guide](https://github.com/inaiat/resultar/blob/main/packages/resultar-check/README.md)
 
 ## Repository
 
 This repository is a pnpm workspace:
 
 - `packages/resultar`: Resultar runtime package.
-- `packages/resultar-lint`: TypeScript language-service diagnostics and no-discard CLI.
-- `packages/resultar-tsgo`: TypeScript 7 native-preview `tsgo` wrapper plus Resultar no-discard
-  validation.
+- `packages/resultar-check`: TypeScript 7 plus Resultar validation.
+- `packages/resultar-lint`: deprecated compatibility wrapper.
+- `packages/resultar-tsgo`: deprecated compatibility wrapper for older installs.
 - `benchmarks`: benchmark package.
-- `examples/resultar-lint`: TypeScript 6 no-discard smoke example.
-- `examples/tsgo`: TypeScript 7 native-preview smoke example.
+- `examples/resultar`: runnable core Resultar cookbook.
+- `examples/lint`: TypeScript 7 `resultar-check` smoke example.
 
 Common commands:
 
 ```sh
 pnpm install
 pnpm run fmt:check
-pnpm run lint
+pnpm run check
 pnpm test
 pnpm run test:cov
 pnpm run build
 pnpm run check:full
-pnpm run test:language-service
+pnpm run test:examples
 pnpm run bench
 ```
 

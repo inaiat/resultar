@@ -1,0 +1,27 @@
+{
+  "$schema": "https://unpkg.com/@stryker-mutator/core@9.6.1/schema/stryker-schema.json",
+  "packageManager": "pnpm",
+  "plugins": ["@stryker-mutator/vitest-runner"],
+  "testRunner": "vitest",
+  "cleanTempDir": "always",
+  "concurrency": "75%",
+  "coverageAnalysis": "perTest",
+  "ignoreStatic": true,
+  "incremental": true,
+  "incrementalFile": "reports/stryker-incremental.json",
+  "reporters": ["html", "clear-text", "progress", "json"],
+  "testFiles": ["tests/**/*.test.ts"],
+  "thresholds": { "high": 80, "low": 60, "break": null },
+  "mutate": [
+    "src/abort-error.ts",
+    "src/error.ts",
+    "src/pipe.ts",
+    "src/redacted.ts",
+    "src/result.ts",
+    "src/result-async.ts",
+    "src/result-async-adapter.ts",
+    "src/tagged-error.ts",
+    "src/tagged-match.ts"
+  ],
+  "vitest": { "configFile": "vitest-stryker.config.ts", "related": false }
+}

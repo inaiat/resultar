@@ -9,8 +9,7 @@ const registry = "https://jsr.io";
 
 const packages = [
   "packages/resultar",
-  "packages/resultar-lint",
-  "packages/resultar-tsgo",
+  "packages/resultar-check",
 ];
 
 function run(command, args, options = {}) {

@@ -243,7 +243,7 @@ Use `matchErrorPartial(error, handlers, fallback)` when only selected errors nee
 Do not add `partialCatchTags`; `catchTags` already has partial recovery semantics. Use
 `matchTagsPartial(okHandler, handlers, fallback)` for partial boundary mapping.
 
-## Side Effects
+## Observation And Cleanup
 
 `tap`, `tapError`, and `log` are best-effort observation helpers, not transform helpers.
 
@@ -283,5 +283,5 @@ try {
   production failure channels.
 - From raw `T | Error`: Resultar keeps `Ok` and `Err` structurally separate, so success values can be
   `Error` objects without being mistaken for failures.
-- From Effect: Resultar does not provide dependency injection, fibers, schedules, streams, scopes, or
-  a runtime. Keep Resultar examples focused on explicit result composition.
+- From application runtimes: Resultar does not provide dependency injection, fibers, schedules,
+  streams, scopes, or a runtime. Keep examples focused on explicit result composition.

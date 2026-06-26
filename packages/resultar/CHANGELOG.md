@@ -1,5 +1,43 @@
 # resultar
 
+## 3.3.1
+
+### Patch Changes
+
+- Refresh the README docs for the runtime package.
+
+## 3.3.0
+
+### Minor Changes
+
+- Standardize the public Resultar check path around `resultar-check`, add the opt-in unsafe await diagnostic, and include the runtime performance and mutation-testing updates.
+
+## 3.2.1
+
+### Patch Changes
+
+- Refresh the release after updating the publish install toolchain.
+
+## 3.2.0
+
+### Minor Changes
+
+- Add opt-in numeric `jittered` retry support to `ResultAsync.retry` and `ResultAsync.retryOrElse`.
+
+## 3.1.0
+
+### Minor Changes
+
+- 71acacb: Release Resultar 3.1 with ResultAsync concurrency, retry, race, timeout,
+  and resource helpers, plus abort and redaction utilities for richer tagged errors.
+
+## 3.1.0-beta.1
+
+### Minor Changes
+
+- Add ResultAsync concurrency, retry, race, timeout, and resource helpers, plus abort and redaction utilities for richer tagged errors.
+- Prepare the Resultar 3.1 beta release candidate.
+
 ## 3.0.0
 
 ### Major Changes

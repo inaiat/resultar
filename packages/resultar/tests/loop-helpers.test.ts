@@ -42,6 +42,23 @@ describe('Result loop helpers', () => {
     deepEqual(visited, [1, 2, 3])
   })
 
+  it('stops discarded Result.loop on first Err', () => {
+    const steps: number[] = []
+
+    const result = Result.loop(1, {
+      while: (state) => state <= 3,
+      step: (state) => {
+        steps.push(state)
+        return state + 1
+      },
+      body: (state) => (state === 2 ? err<number, string>('failed') : ok<number, string>(state)),
+      discard: true,
+    })
+
+    equal(result._unsafeUnwrapErr(), 'failed')
+    deepEqual(steps, [1])
+  })
+
   it('skips Result.loop body when the initial condition is false', () => {
     let calls = 0
 
@@ -130,6 +147,22 @@ describe('Result loop helpers', () => {
     deepEqual(visited, ['0:a', '1:b'])
   })
 
+  it('stops discarded resultForEach before later elements on Err', () => {
+    const calls: number[] = []
+
+    const result = resultForEach(
+      [1, 2, 3],
+      (value) => {
+        calls.push(value)
+        return value === 2 ? err<number, string>('failed') : ok<number, string>(value)
+      },
+      { discard: true },
+    )
+
+    equal(result._unsafeUnwrapErr(), 'failed')
+    deepEqual(calls, [1, 2])
+  })
+
   it('handles empty resultForEach input', () => {
     const collected = resultForEach([], (value: string) => ok<string, string>(value))
     const discarded = resultForEach([], (value: string) => ok<string, string>(value), {
@@ -211,6 +244,24 @@ describe('ResultAsync loop helpers', () => {
 
     equal(result._unsafeUnwrap(), undefined)
     deepEqual(visited, [1, 2, 3])
+  })
+
+  it('stops discarded ResultAsync.loop on first Err', async () => {
+    const steps: number[] = []
+
+    const result = await ResultAsync.loop(1, {
+      while: (state) => state <= 3,
+      step: (state) => {
+        steps.push(state)
+        return state + 1
+      },
+      body: (state) =>
+        state === 2 ? errAsync<number, string>('failed') : okAsync<number, string>(state),
+      discard: true,
+    })
+
+    equal(result._unsafeUnwrapErr(), 'failed')
+    deepEqual(steps, [1])
   })
 
   it('skips ResultAsync.loop body when the initial condition is false', async () => {
@@ -314,6 +365,22 @@ describe('ResultAsync loop helpers', () => {
 
     equal(result._unsafeUnwrap(), undefined)
     deepEqual(visited, ['0:a', '1:b'])
+  })
+
+  it('stops discarded resultAsyncForEach before later elements on Err', async () => {
+    const calls: number[] = []
+
+    const result = await resultAsyncForEach(
+      [1, 2, 3],
+      (value) => {
+        calls.push(value)
+        return value === 2 ? errAsync<number, string>('failed') : okAsync<number, string>(value)
+      },
+      { discard: true },
+    )
+
+    equal(result._unsafeUnwrapErr(), 'failed')
+    deepEqual(calls, [1, 2])
   })
 
   it('handles empty resultAsyncForEach input', async () => {

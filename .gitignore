@@ -5,7 +5,9 @@
 /examples/*/node_modules
 /packages/*/dist
 /packages/*/.vite-hooks
+/packages/*/.stryker-tmp
 /packages/*/node_modules
+/packages/*/reports
 /node_modules
 /report
 .zed

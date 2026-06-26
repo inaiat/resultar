@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "bench": "pnpm --filter resultar build && node --import tsx resultar-vs-neverthrow.ts",
-    "bench:neverthrow": "pnpm run bench"
+    "bench:neverthrow": "pnpm run bench",
+    "bench:stable": "pnpm --filter resultar build && node --import tsx resultar-vs-stable.ts"
   },
   "dependencies": {
     "resultar": "workspace:*"

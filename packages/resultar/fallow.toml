@@ -1,5 +1,20 @@
 entry = ["src/index.ts"]
 publicPackages = ["resultar"]
+ignorePatterns = [
+  "*.config.cjs",
+  "*.config.cts",
+  "*.config.js",
+  "*.config.mjs",
+  "*.config.mts",
+  "*.config.ts",
+  "*.conf.cjs",
+  "*.conf.cts",
+  "*.conf.js",
+  "*.conf.json",
+  "*.conf.mjs",
+  "*.conf.mts",
+  "*.conf.ts",
+]
 
 ignoreUnresolvedImports = [
   # Test fixture computes the workspace directory with new URL("../../..", import.meta.url).
@@ -12,6 +27,8 @@ boundary-violation = "error"
 unused-class-members = "off"
 
 [duplicates]
+# Do not force wrapper extraction for small hot-path blocks; report larger clones.
+minLines = 18
 ignore = ["tests/**"]
 
 [health]

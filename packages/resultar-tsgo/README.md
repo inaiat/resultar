@@ -1,13 +1,12 @@
 # Resultar TSGo
 
-Local wrapper around `@typescript/native-preview` that exposes a `tsgo` binary and runs Resultar
-no-discard validation after the native TypeScript 7 check succeeds.
+Deprecated compatibility wrapper.
 
-Install it next to `@typescript/native-preview` so the project owns the TS7 native preview version:
+Install `resultar-check` directly for new projects:
 
 ```sh
-pnpm add -D resultar-lint resultar-tsgo @typescript/native-preview
+pnpm add -D resultar-check typescript-7@npm:typescript@rc
 ```
 
-The wrapper resolves `@typescript/native-preview` from the project where `tsgo` is run first, then
-falls back to the package-local copy used for development tests.
+`resultar-tsgo` still exposes `resultar-check` for older installs, but the implementation delegates
+to `resultar-check`.

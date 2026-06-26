@@ -8,8 +8,7 @@ const dryRun = process.argv.includes("--dry-run");
 
 const packages = [
   "packages/resultar",
-  "packages/resultar-lint",
-  "packages/resultar-tsgo",
+  "packages/resultar-check",
 ];
 const registry = "https://registry.npmjs.org";
 

@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"],
+    "plugins": [
+      {
+        "name": "resultar-check",
+        "noDiscard": "error",
+        "noTaggedErrorConstructorOverride": "error",
+        "noTryCatchInSafeTry": "error",
+        "noUselessRecovery": "error",
+        "preferAndThen": "error",
+        "preferMapErr": "error",
+        "preferTaggedError": "error",
+        "taggedErrorNameMatch": "error",
+        "typedCatchMapper": "error",
+        "unsafeResultTypeAssertion": "error",
+        "yieldStarInSafeTry": "error"
+      }
+    ]
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts"]
+}

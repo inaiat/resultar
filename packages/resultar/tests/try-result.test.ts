@@ -1,4 +1,4 @@
-import { equal, strictEqual } from 'node:assert'
+import { equal, strictEqual, throws } from 'node:assert'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
@@ -95,6 +95,22 @@ describe('tryResultAsync', async () => {
 
     expectTypeOf(pending).toExtend<ResultAsync<number, unknown>>()
     equal(actual._unsafeUnwrap(), 2)
+  })
+
+  it('treats async functions with try properties as factories', async () => {
+    const factory = async (): Promise<number> => 4
+
+    Object.defineProperty(factory, 'try', { configurable: true, value: async () => 99 })
+
+    const actual = await tryResultAsync(factory)
+
+    equal(actual._unsafeUnwrap(), 4)
+  })
+
+  it('does not treat primitive runtime inputs as option objects', () => {
+    throws(() => {
+      void tryResultAsync('not-a-promise' as unknown as Promise<never>)
+    }, /then/u)
   })
 
   it('supports the async positional error mapping signature', async () => {

@@ -1,7 +1,7 @@
 {
   "name": "resultar-tsgo",
-  "version": "3.0.0",
-  "description": "Resultar no-discard wrapper for the TypeScript 7 native preview tsgo binary",
+  "version": "3.1.0",
+  "description": "Deprecated compatibility wrapper for resultar-check",
   "homepage": "https://github.com/inaiat/resultar",
   "bugs": {
     "url": "https://github.com/inaiat/resultar/issues"
@@ -14,32 +14,35 @@
     "directory": "packages/resultar-tsgo"
   },
   "bin": {
-    "tsgo": "./dist/cli.js"
+    "resultar-check": "./dist/cli.js"
   },
   "files": [
     "dist",
+    "LICENSE",
     "README.md"
   ],
   "type": "module",
   "scripts": {
-    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "build": "vp pack",
     "check": "vp check",
+    "check:full": "pnpm run build && pnpm run check",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "prepare": "vp config || true",
+    "prepublishOnly": "vp pack",
     "smoke": "pnpm run smoke:package",
-    "smoke:package": "pnpm run build && node scripts/smoke-package.mjs"
+    "smoke:package": "pnpm --filter resultar-check build && pnpm run build && tsx scripts/smoke-package.ts"
   },
   "dependencies": {
-    "resultar-lint": "workspace:*"
+    "resultar-check": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "@typescript/native-preview": "catalog:",
-    "typescript": "^6.0.3",
+    "tsx": "catalog:",
     "vite-plus": "catalog:"
-  },
-  "peerDependencies": {
-    "@typescript/native-preview": ">=7"
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "deprecated": "Use resultar-check. This package is a compatibility wrapper."
 }
