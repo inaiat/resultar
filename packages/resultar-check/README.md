@@ -185,8 +185,8 @@ allowed in async catch helpers such as `tryAsync`, `tryResultAsync`, `tryCatchAs
 registration.
 
 Use `noUnsafeAwaitIgnoreCalls` for framework lifecycle awaits that a project intentionally allows
-without wrapping in Resultar. Entries are exact dot-separated call paths; wildcards and type-aware
-matching are not supported:
+without wrapping in Resultar. Entries are exact source call paths; bare function identifiers and
+dotted property paths are supported, while wildcards and type-aware matching are not:
 
 ```json
 {
@@ -196,7 +196,7 @@ matching are not supported:
         "name": "resultar-check",
         "noUnsafeAwait": "error",
         "noUnsafeAwaitMode": "all",
-        "noUnsafeAwaitIgnoreCalls": ["fastify.after"]
+        "noUnsafeAwaitIgnoreCalls": ["startServer", "fastify.after"]
       }
     ]
   }

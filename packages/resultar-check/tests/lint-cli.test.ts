@@ -133,15 +133,16 @@ describe("lint CLI and integration edges", () => {
     equal(normalizeNoUnsafeAwaitMode("all"), "all");
     equal(normalizeNoUnsafeAwaitMode("resultar-context"), "resultar-context");
     equal(normalizeNoUnsafeAwaitMode(false), defaultResultarRulesOptions.noUnsafeAwaitMode);
-    deepEqual(normalizeNoUnsafeAwaitIgnoreCalls(["fastify.after", "invalid path", 1]), [
-      "fastify.after",
-    ]);
+    deepEqual(
+      normalizeNoUnsafeAwaitIgnoreCalls(["startServer", "fastify.after", "invalid path", 1]),
+      ["startServer", "fastify.after"],
+    );
     deepEqual(normalizeNoUnsafeAwaitIgnoreCalls("fastify.after"), []);
 
     const parsed = parsePluginOptions({
       noDiscard: "off",
       noDiscardMode: "direct",
-      noUnsafeAwaitIgnoreCalls: ["fastify.after"],
+      noUnsafeAwaitIgnoreCalls: ["startServer", "fastify.after"],
       noUnsafeAwaitMode: "all",
       preferTaggedError: "suggestion",
       typedCatchMapper: "message",
@@ -149,7 +150,7 @@ describe("lint CLI and integration edges", () => {
 
     equal(parsed.noDiscard, "off");
     equal(parsed.noDiscardMode, "direct");
-    deepEqual(parsed.noUnsafeAwaitIgnoreCalls, ["fastify.after"]);
+    deepEqual(parsed.noUnsafeAwaitIgnoreCalls, ["startServer", "fastify.after"]);
     equal(parsed.noUnsafeAwaitMode, "all");
     equal(parsed.preferTaggedError, "suggestion");
     equal(parsed.typedCatchMapper, "message");
@@ -159,12 +160,12 @@ describe("lint CLI and integration edges", () => {
 
     const normalized = normalizeResultarRulesOptions({
       noDiscard: "off",
-      noUnsafeAwaitIgnoreCalls: ["fastify.after"],
+      noUnsafeAwaitIgnoreCalls: ["startServer", "fastify.after"],
       noUnsafeAwaitMode: "all",
       preferMapErr: "suggestion",
     });
     equal(normalized.noDiscard, "off");
-    deepEqual(normalized.noUnsafeAwaitIgnoreCalls, ["fastify.after"]);
+    deepEqual(normalized.noUnsafeAwaitIgnoreCalls, ["startServer", "fastify.after"]);
     equal(normalized.noUnsafeAwaitMode, "all");
     equal(normalized.preferMapErr, "suggestion");
 

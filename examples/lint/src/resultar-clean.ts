@@ -45,6 +45,8 @@ interface FastifyLifecycle {
   after(): Promise<void>;
 }
 
+const startServer = async (): Promise<void> => undefined;
+
 const validateEmail = (email: string): StrictResult<string, InvalidEmailError> =>
   email.includes("@") ? ok(email) : InvalidEmailError.err({ email });
 
@@ -128,7 +130,13 @@ export const loadUserAtPromiseBoundary = async (id: string): Promise<User> =>
   await runPromise(loadUser(id));
 
 // noUnsafeAwaitIgnoreCalls: project-level escape hatches are exact. This is
-// clean because tsconfig.json configures ["fastify.after"].
+// clean because tsconfig.json configures "startServer".
+export const waitForServerStartup = async (): Promise<void> => {
+  await startServer();
+};
+
+// noUnsafeAwaitIgnoreCalls: project-level escape hatches are exact. This is
+// clean because tsconfig.json configures "fastify.after".
 export const waitForFastifyLifecycle = async (fastify: FastifyLifecycle): Promise<void> => {
   await fastify.after();
 };

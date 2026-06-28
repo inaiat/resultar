@@ -1,5 +1,12 @@
 # resultar-check
 
+## 1.1.1
+
+### Patch Changes
+
+- Allow `noUnsafeAwaitIgnoreCalls` entries to be bare function identifiers such as `startServer`,
+  in addition to dotted call paths such as `fastify.after`.
+
 ## 1.1.0
 
 ### Minor Changes

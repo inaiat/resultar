@@ -1,6 +1,6 @@
 {
   "name": "@inaiat/resultar-check",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "license": "MIT",
   "exports": "./src/diagnostics.ts",
   "publish": { "include": ["LICENSE", "README.md", "schema.json", "src/**/*.ts"] }
