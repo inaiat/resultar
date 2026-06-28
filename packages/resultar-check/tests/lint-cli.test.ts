@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { equal, match, ok } from "node:assert";
+import { deepEqual, equal, match, ok } from "node:assert";
 
 import { afterEach, describe, it } from "vite-plus/test";
 import * as ts from "typescript";
@@ -15,6 +15,7 @@ import { findResultarPluginConfig, parsePluginOptions } from "../src/plugin-opti
 import { findDiscardedResults, findResultarLintFindings, runResultarLintCli } from "../src/lint.js";
 import {
   defaultResultarRulesOptions,
+  normalizeNoUnsafeAwaitIgnoreCalls,
   normalizeNoUnsafeAwaitMode,
   normalizeResultarRulesOptions,
   normalizeRuleSeverity,
@@ -132,10 +133,15 @@ describe("lint CLI and integration edges", () => {
     equal(normalizeNoUnsafeAwaitMode("all"), "all");
     equal(normalizeNoUnsafeAwaitMode("resultar-context"), "resultar-context");
     equal(normalizeNoUnsafeAwaitMode(false), defaultResultarRulesOptions.noUnsafeAwaitMode);
+    deepEqual(normalizeNoUnsafeAwaitIgnoreCalls(["fastify.after", "invalid path", 1]), [
+      "fastify.after",
+    ]);
+    deepEqual(normalizeNoUnsafeAwaitIgnoreCalls("fastify.after"), []);
 
     const parsed = parsePluginOptions({
       noDiscard: "off",
       noDiscardMode: "direct",
+      noUnsafeAwaitIgnoreCalls: ["fastify.after"],
       noUnsafeAwaitMode: "all",
       preferTaggedError: "suggestion",
       typedCatchMapper: "message",
@@ -143,6 +149,7 @@ describe("lint CLI and integration edges", () => {
 
     equal(parsed.noDiscard, "off");
     equal(parsed.noDiscardMode, "direct");
+    deepEqual(parsed.noUnsafeAwaitIgnoreCalls, ["fastify.after"]);
     equal(parsed.noUnsafeAwaitMode, "all");
     equal(parsed.preferTaggedError, "suggestion");
     equal(parsed.typedCatchMapper, "message");
@@ -152,10 +159,12 @@ describe("lint CLI and integration edges", () => {
 
     const normalized = normalizeResultarRulesOptions({
       noDiscard: "off",
+      noUnsafeAwaitIgnoreCalls: ["fastify.after"],
       noUnsafeAwaitMode: "all",
       preferMapErr: "suggestion",
     });
     equal(normalized.noDiscard, "off");
+    deepEqual(normalized.noUnsafeAwaitIgnoreCalls, ["fastify.after"]);
     equal(normalized.noUnsafeAwaitMode, "all");
     equal(normalized.preferMapErr, "suggestion");
 
@@ -226,7 +235,7 @@ saveUser()
 
     const help = runCli(["--help"], cleanRoot);
     equal(help.status, 0);
-    match(help.stdout, /resultar-check -p tsconfig\.json --noEmit/);
+    match(help.stdout, /Usage: resultar-check/);
 
     const removedCheckSubcommand = runCli(["check"], cleanRoot);
     equal(removedCheckSubcommand.status, 1);

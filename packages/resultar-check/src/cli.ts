@@ -1,22 +1,20 @@
 #!/usr/bin/env node
 import { runResultarCheckCli } from "./lint.js";
 
-const usage = `Usage: resultar-check -p tsconfig.json --noEmit
+const usage = `Usage: resultar-check
 
-Runs TypeScript 7 first, then all enabled Resultar diagnostics from tsconfig plugin options.
+Runs TypeScript 7 with no emit first, then all enabled Resultar diagnostics from tsconfig plugin options.
 `;
 
 const run = (args: readonly string[] = process.argv.slice(2)): number => {
   const [command] = args;
 
   if (command === "check") {
-    process.stderr.write(
-      "The check subcommand was removed. Use resultar-check -p tsconfig.json --noEmit.\n",
-    );
+    process.stderr.write("The check subcommand was removed. Use resultar-check.\n");
     return 1;
   }
 
-  if (command === "help" || command === "--help" || command === "-h" || command === undefined) {
+  if (command === "help" || command === "--help" || command === "-h") {
     process.stdout.write(usage);
     return 0;
   }

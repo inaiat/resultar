@@ -7,11 +7,15 @@ import type {
   DisposableResultAsync,
   Result,
   ResultAsync,
+  ResultAsyncAbortSignal,
   ResultAsyncConcurrency,
+  ResultAsyncRaceHandle,
   ResultAsyncRetryContext,
   ResultAsyncRetryOptions,
   ResultAsyncRetryOrElseOptions,
   ResultAsyncRetryTask,
+  ResultOperations,
+  TaggedEnumFactory,
 } from '../src/index.js'
 
 import * as resultar from '../src/index.js'
@@ -42,6 +46,8 @@ describe('public API', () => {
       'okAsync',
       'redact',
       'revealRedacted',
+      'runPromise',
+      'runSync',
       'safeTry',
       'taggedEnum',
       'try',
@@ -95,7 +101,7 @@ describe('public API', () => {
     deepEqual(concurrencyValues, [2, 'unbounded'])
 
     if (false) {
-      // @ts-expect-error inherited Effect-style concurrency is not part of Resultar.
+      // @ts-expect-error inherited concurrency sentinel is not part of Resultar.
       const invalid: ResultAsyncConcurrency = 'inherit'
 
       equal(invalid, undefined)
@@ -113,5 +119,75 @@ describe('public API', () => {
     deepEqual(context, { attempt: 0, nextAttempt: 1, retriesRemaining: 1 })
     deepEqual(options, { jittered: 0.2, times: 1 })
     equal(typeof fallbackOptions.orElse, 'function')
+  })
+
+  it('accepts method-shaped implementations for public method-like interfaces', () => {
+    const methodShapedResult: Pick<ResultOperations<number, string>, 'map' | 'unwrapOr'> = {
+      map(valueMapper) {
+        return resultar.ok<number, string>(1).map(valueMapper)
+      },
+      unwrapOr(defaultValue) {
+        return resultar.ok<number, string>(1).unwrapOr(defaultValue)
+      },
+    }
+
+    const methodShapedSignal: ResultAsyncAbortSignal = {
+      aborted: false,
+      addEventListener() {
+        return undefined
+      },
+      removeEventListener() {
+        return undefined
+      },
+    }
+
+    const methodShapedHandle: ResultAsyncRaceHandle<number, string> = {
+      abort() {
+        return undefined
+      },
+      signal: methodShapedSignal,
+      wait() {
+        return resultar.okAsync<number, string>(1)
+      },
+    }
+
+    type ReasonMembers = { Foo: { readonly id: string }; Nothing: Record<never, never> }
+
+    const methodShapedEnumMatch: Pick<TaggedEnumFactory<ReasonMembers>, '$match'> = {
+      $match() {
+        throw new Error('type-only')
+      },
+    }
+
+    expectTypeOf(methodShapedResult).toExtend<
+      Pick<ResultOperations<number, string>, 'map' | 'unwrapOr'>
+    >()
+    expectTypeOf(methodShapedSignal).toExtend<ResultAsyncAbortSignal>()
+    expectTypeOf(methodShapedHandle).toExtend<ResultAsyncRaceHandle<number, string>>()
+    expectTypeOf(methodShapedEnumMatch).toExtend<Pick<TaggedEnumFactory<ReasonMembers>, '$match'>>()
+  })
+
+  it('keeps public method-like properties writable at the type level', () => {
+    if (false) {
+      const result = resultar.ok<number, string>(1)
+      const map = result.map
+      result.map = map
+
+      const signal: ResultAsyncAbortSignal = new AbortController().signal
+      const addEventListener = signal.addEventListener
+      signal.addEventListener = addEventListener
+
+      const TestError = resultar.createTaggedError({ message: 'failed', name: 'TestError' })
+      const err = TestError.err
+      TestError.err = err
+
+      const reason = resultar.taggedEnum<{ Nothing: Record<never, never> }>()
+      const match = reason.$match
+      reason.$match = match
+
+      const redacted = resultar.redact('secret')
+      const toString = redacted.toString
+      redacted.toString = toString
+    }
   })
 })

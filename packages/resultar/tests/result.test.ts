@@ -19,10 +19,11 @@ import {
   fromPromise,
   fromThrowableAsync,
   okAsync,
+  runPromise,
   tryResultAsync,
   unitAsync,
 } from '../src/result-async.js'
-import { Result, err, ok, tryResult, unit } from '../src/result.js'
+import { Result, err, ok, runSync, tryResult, unit } from '../src/result.js'
 import { createTaggedError } from '../src/tagged-error.js'
 
 const validateUser = (user: Readonly<{ name: string }>): ResultAsync<{ name: string }, string> => {
@@ -2097,9 +2098,9 @@ describe('Utils', async () => {
 
     describe('object `ResultAsync.combine`', async () => {
       interface ITestInterface {
-        getName(): string
-        setName(name: string): void
-        getAsyncResult(): ResultAsync<ITestInterface, Error>
+        readonly getName: () => string
+        readonly setName: (name: string) => void
+        readonly getAsyncResult: () => ResultAsync<ITestInterface, Error>
       }
 
       it('Combines objects typed through interfaces', async () => {
@@ -2181,6 +2182,30 @@ describe('unwrapOrThrow', async () => {
       await assert.rejects(() => errAsync(new CustomError('boooom!', 'bar')).unwrapOrThrow(), {
         customProperty: 'bar',
       })
+    })
+  })
+})
+
+describe('run boundaries', async () => {
+  class BoundaryError extends Error {}
+
+  it('runs sync results and throws Err values', () => {
+    equal(runSync(ok<number, BoundaryError>(12)), 12)
+
+    const error = new BoundaryError('sync boundary failed')
+
+    assert.throws(() => runSync(err<number, BoundaryError>(error)), {
+      message: 'sync boundary failed',
+    })
+  })
+
+  it('runs async results and rejects Err values', async () => {
+    equal(await runPromise(okAsync<number, BoundaryError>(12)), 12)
+
+    const error = new BoundaryError('async boundary failed')
+
+    await assert.rejects(() => runPromise(errAsync<number, BoundaryError>(error)), {
+      message: 'async boundary failed',
     })
   })
 })

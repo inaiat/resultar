@@ -1,4 +1,10 @@
+/**
+ * Standard cancellation error used by ResultAsync retry, race, timeout, and resource helpers.
+ */
 export class AbortError extends Error {
+  /**
+   * Creates an AbortError.
+   */
   public constructor(message = 'Operation aborted', options?: ErrorOptions) {
     super(message, options)
     this.name = 'AbortError'
@@ -17,5 +23,8 @@ const hasAbortCode = (value: unknown): value is { readonly code: 'ABORT_ERR' } =
   'code' in value &&
   (value as { readonly code?: unknown }).code === 'ABORT_ERR'
 
+/**
+ * Checks whether a value is an AbortError or abort-shaped platform error.
+ */
 export const isAbortError = (value: unknown): value is AbortError =>
   value instanceof AbortError || hasAbortName(value) || hasAbortCode(value)

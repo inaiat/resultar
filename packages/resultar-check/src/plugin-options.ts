@@ -2,6 +2,7 @@ import { normalizeNoDiscardMode } from "./result-usage-core.js";
 import {
   type ResultarRulesOptions,
   defaultResultarRulesOptions,
+  normalizeNoUnsafeAwaitIgnoreCalls,
   normalizeNoUnsafeAwaitMode,
   normalizeRuleSeverity,
 } from "./rules-core.js";
@@ -34,6 +35,7 @@ export const parsePluginOptions = (config: unknown): ResultarLanguageServiceOpti
       config.noUnsafeAwait,
       defaultResultarRulesOptions.noUnsafeAwait,
     ),
+    noUnsafeAwaitIgnoreCalls: normalizeNoUnsafeAwaitIgnoreCalls(config.noUnsafeAwaitIgnoreCalls),
     noUnsafeAwaitMode: normalizeNoUnsafeAwaitMode(config.noUnsafeAwaitMode),
     noUselessRecovery: normalizeRuleSeverity(
       config.noUselessRecovery,

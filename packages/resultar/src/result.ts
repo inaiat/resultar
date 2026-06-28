@@ -190,21 +190,21 @@ interface Resultable<T, E> {
    *
    * @returns `true` if the result is an `OK` variant of Result
    */
-  isOk(): boolean
+  isOk: () => boolean
 
   /**
    * Used to check if a `Result` is an `Err`
    *
    * @returns `true` if the result is an `Err` variant of Result
    */
-  isErr(): boolean
+  isErr: () => boolean
   /**
    * Unwrap the `Ok` value, or return the default if there is an `Err`
    *
    * @param v the default value to return if there is an `Err`
    */
 
-  unwrapOr<A>(defaultValue: A): T | A
+  unwrapOr: <A>(defaultValue: A) => T | A
 
   // safeUnwrap(): Generator<Result<never, E>, T>
 
@@ -215,7 +215,7 @@ interface Resultable<T, E> {
    *
    * @param config
    */
-  _unsafeUnwrap(config?: ErrorConfig): T
+  _unsafeUnwrap: (config?: ErrorConfig) => T
 
   /**
    * **This method is unsafe, and should only be used in a test environments**
@@ -225,43 +225,98 @@ interface Resultable<T, E> {
    *
    * @param config
    */
-  _unsafeUnwrapErr(config?: ErrorConfig): E
+  _unsafeUnwrapErr: (config?: ErrorConfig) => E
 }
 
 export interface ResultOperations<T, E> {
-  isOk(): this is OkResult<T, E>
-  isErr(): this is ErrResult<T, E>
-  unwrapOr<A>(defaultValue: A): T | A
-  _unsafeUnwrap(config?: ErrorConfig): T
-  _unsafeUnwrapErr(config?: ErrorConfig): E
-  map<X>(f: (t: T) => X): Result<X, E>
-  as<X>(value: X): Result<X, E>
-  filterOrElse<U extends T, F>(
-    predicate: (value: T) => value is U,
-    onFalse: (value: T) => F,
-  ): Result<U, E | F>
-  filterOrElse<F>(predicate: (value: T) => boolean, onFalse: (value: T) => F): Result<T, E | F>
-  mapErr<X>(fn: (t: E) => X): Result<T, X>
-  andThen<X, Y>(f: (t: T) => Result<X, Y>): Result<X, E | Y>
-  if(fCondition: (t: T) => boolean): {
+  /**
+   * Narrows this result to the Ok variant.
+   */
+  isOk: () => this is OkResult<T, E>
+  /**
+   * Narrows this result to the Err variant.
+   */
+  isErr: () => this is ErrResult<T, E>
+  /**
+   * Returns the Ok value, or `defaultValue` when this result is Err.
+   */
+  unwrapOr: <A>(defaultValue: A) => T | A
+  /**
+   * Returns the Ok value or throws a Resultar diagnostic error when this result is Err.
+   *
+   * Prefer `match`, `unwrapOr`, or explicit error handling in application code. This helper is
+   * intended for tests and trusted final boundaries.
+   */
+  _unsafeUnwrap: (config?: ErrorConfig) => T
+  /**
+   * Returns the Err value or throws a Resultar diagnostic error when this result is Ok.
+   *
+   * Prefer `match`, `isErr`, or explicit error handling in application code. This helper is intended
+   * for tests.
+   */
+  _unsafeUnwrapErr: (config?: ErrorConfig) => E
+  /**
+   * Maps the Ok value while preserving the error channel.
+   */
+  map: <X>(f: (t: T) => X) => Result<X, E>
+  /**
+   * Replaces the Ok value with a constant while preserving the error channel.
+   */
+  as: <X>(value: X) => Result<X, E>
+  /**
+   * Keeps the Ok value only when the predicate passes; otherwise returns an Err from `onFalse`.
+   */
+  filterOrElse: {
+    <U extends T, F>(
+      predicate: (value: T) => value is U,
+      onFalse: (value: T) => F,
+    ): Result<U, E | F>
+    <F>(predicate: (value: T) => boolean, onFalse: (value: T) => F): Result<T, E | F>
+  }
+  /**
+   * Maps the Err value while preserving the Ok value.
+   */
+  mapErr: <X>(fn: (t: E) => X) => Result<T, X>
+  /**
+   * Chains another fallible operation from the Ok value.
+   *
+   * Use this instead of `map` when the callback returns another `Result`.
+   */
+  andThen: <X, Y>(f: (t: T) => Result<X, Y>) => Result<X, E | Y>
+  /**
+   * Branches from the Ok value into one of two fallible Result branches.
+   */
+  if: (fCondition: (t: T) => boolean) => {
     true: <X1, Y1>(
       fTrue: (t: T) => Result<X1, Y1>,
     ) => { false: <X2, Y2>(fFalse: (t: T) => Result<X2, Y2>) => Result<X1 | X2, Y1 | Y2 | E> }
   }
-  orElse<R extends Result<unknown, unknown>>(
+  /**
+   * Recovers from Err with another Result.
+   */
+  orElse: <R extends Result<unknown, unknown>>(
     f: (e: E) => R,
-  ): Result<InferOkTypes<R> | T, InferErrTypes<R>>
-  catchTag<const Tag extends TagsOf<E>, R extends Result<unknown, unknown>>(
+  ) => Result<InferOkTypes<R> | T, InferErrTypes<R>>
+  /**
+   * Recovers from a specific tagged error by `_tag`.
+   */
+  catchTag: <const Tag extends TagsOf<E>, R extends Result<unknown, unknown>>(
     tag: Tag,
     f: (error: ErrorForTag<E, Tag>) => R,
-  ): Result<T | InferOkTypes<R>, ExcludeTag<E, Tag> | InferErrTypes<R>>
-  catchTags<const Handlers extends object>(
+  ) => Result<T | InferOkTypes<R>, ExcludeTag<E, Tag> | InferErrTypes<R>>
+  /**
+   * Recovers from multiple tagged errors by `_tag`.
+   */
+  catchTags: <const Handlers extends object>(
     handlers: Handlers & CatchTagHandlers<E, Handlers>,
-  ): Result<
+  ) => Result<
     T | InferOkTypes<CatchTagHandlerResult<Handlers>>,
     ExcludeTag<E, keyof Handlers & string> | InferErrTypes<CatchTagHandlerResult<Handlers>>
   >
-  catchReason<
+  /**
+   * Recovers from a nested tagged `reason` on a specific tagged error.
+   */
+  catchReason: <
     const ErrorTag extends TagsWithReasonOf<E>,
     const ReasonTag extends ReasonTagsOf<E, ErrorTag>,
     R extends Result<unknown, unknown>,
@@ -269,56 +324,132 @@ export interface ResultOperations<T, E> {
     errorTag: ErrorTag,
     reasonTag: ReasonTag,
     f: (reason: ReasonForTag<E, ErrorTag, ReasonTag>, error: ErrorForTag<E, ErrorTag>) => R,
-  ): Result<T | InferOkTypes<R>, ExcludeReasonTag<E, ErrorTag, ReasonTag> | InferErrTypes<R>>
-  catchReasons<const ErrorTag extends TagsWithReasonOf<E>, const Handlers extends object>(
+  ) => Result<T | InferOkTypes<R>, ExcludeReasonTag<E, ErrorTag, ReasonTag> | InferErrTypes<R>>
+  /**
+   * Recovers from multiple nested tagged `reason` variants on a specific tagged error.
+   */
+  catchReasons: <const ErrorTag extends TagsWithReasonOf<E>, const Handlers extends object>(
     errorTag: ErrorTag,
     handlers: Handlers & CatchReasonHandlers<E, ErrorTag, Handlers>,
-  ): Result<
+  ) => Result<
     T | InferOkTypes<CatchReasonHandlerResult<Handlers>>,
     | ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>
     | InferErrTypes<CatchReasonHandlerResult<Handlers>>
   >
-  unwrapReason<const ErrorTag extends TagsWithReasonOf<E>>(
+  /**
+   * Moves the nested `reason` of a tagged error into the Result error channel.
+   */
+  unwrapReason: <const ErrorTag extends TagsWithReasonOf<E>>(
     errorTag: ErrorTag,
-  ): Result<T, ExcludeTag<E, ErrorTag> | ReasonsOf<E, ErrorTag>>
-  asyncAndThen<X, Y>(f: (t: T) => ResultAsync<X, Y>): ResultAsync<X, E | Y>
-  asyncMap<X>(f: (t: T) => Promise<X>): ResultAsync<X, E>
-  match<A, B = A>(handlers: MatchHandlers<T, E, A, B>): A | B
-  match<A, B = A>(fnOk: MatchOkHandler<T, A>, fnErr: MatchErrorHandler<E, B>): A | B
-  matchTags<A, const Handlers extends object>(
+  ) => Result<T, ExcludeTag<E, ErrorTag> | ReasonsOf<E, ErrorTag>>
+  /**
+   * Chains an async fallible operation from the Ok value.
+   */
+  asyncAndThen: <X, Y>(f: (t: T) => ResultAsync<X, Y>) => ResultAsync<X, E | Y>
+  /**
+   * Maps the Ok value with an async function and returns a `ResultAsync`.
+   */
+  asyncMap: <X>(f: (t: T) => Promise<X>) => ResultAsync<X, E>
+  /**
+   * Converts this Result into a plain value by handling both Ok and Err.
+   */
+  match: {
+    <A, B = A>(handlers: MatchHandlers<T, E, A, B>): A | B
+    <A, B = A>(fnOk: MatchOkHandler<T, A>, fnErr: MatchErrorHandler<E, B>): A | B
+  }
+  /**
+   * Converts this Result into a plain value with exhaustive tagged-error handlers.
+   */
+  matchTags: <A, const Handlers extends object>(
     fnOk: (t: T) => A,
     handlers: Handlers & MatchTagHandlers<E, Handlers>,
-  ): A | MatchTagHandlerResult<Handlers>
-  matchTagsPartial<A, B, const Handlers extends object>(
+  ) => A | MatchTagHandlerResult<Handlers>
+  /**
+   * Converts this Result into a plain value with partial tagged-error handlers and a fallback.
+   */
+  matchTagsPartial: <A, B, const Handlers extends object>(
     fnOk: (t: T) => A,
     handlers: Handlers & PartialMatchTagHandlers<E, Handlers>,
     fallback: (error: E) => B,
-  ): A | MatchTagHandlerResult<Handlers> | B
-  pipe<A>(ab: PipeFn<Result<T, E>, A>): A
-  pipe<A, B>(ab: PipeFn<Result<T, E>, A>, bc: PipeFn<A, B>): B
-  pipe<A, B, C>(ab: PipeFn<Result<T, E>, A>, bc: PipeFn<A, B>, cd: PipeFn<B, C>): C
-  log(fn: (t?: T, e?: E) => void): this
-  tap(fn: (t: T) => void): this
-  tapError(fn: (e: E) => void): this
-  toDisposable(f: ResultFinalizer<T, E>): DisposableResult<T, E>
-  unwrapOrThrow(): T
-  [Symbol.iterator](): Generator<Result<never, E>, T>
-  safeUnwrap(): Generator<Result<never, E>, T>
+  ) => A | MatchTagHandlerResult<Handlers> | B
+  /**
+   * Pipes this Result through reusable transformation functions.
+   */
+  pipe: {
+    <A>(ab: PipeFn<Result<T, E>, A>): A
+    <A, B>(ab: PipeFn<Result<T, E>, A>, bc: PipeFn<A, B>): B
+    <A, B, C>(ab: PipeFn<Result<T, E>, A>, bc: PipeFn<A, B>, cd: PipeFn<B, C>): C
+  }
+  /**
+   * Runs a side effect with the Ok or Err value and returns this same Result.
+   *
+   * Exceptions thrown by the side effect are swallowed.
+   */
+  log: (fn: (t?: T, e?: E) => void) => this
+  /**
+   * Runs a side effect only when this result is Ok and returns this same Result.
+   *
+   * Exceptions thrown by the side effect are swallowed.
+   */
+  tap: (fn: (t: T) => void) => this
+  /**
+   * Runs a side effect only when this result is Err and returns this same Result.
+   *
+   * Exceptions thrown by the side effect are swallowed.
+   */
+  tapError: (fn: (e: E) => void) => this
+  /**
+   * Attaches a synchronous disposal finalizer to this Result.
+   */
+  toDisposable: (f: ResultFinalizer<T, E>) => DisposableResult<T, E>
+  /**
+   * Returns the Ok value or throws the Err value.
+   *
+   * Use this at final application boundaries after the error channel has been modeled.
+   */
+  unwrapOrThrow: () => T
+  /**
+   * Enables `yield* result` inside `safeTry` generators.
+   */
+  [Symbol.iterator]: () => Generator<Result<never, E>, T>
+  /**
+   * Compatibility generator for `safeTry`. Prefer `yield* result` in new code.
+   */
+  safeUnwrap: () => Generator<Result<never, E>, T>
 }
 
 export interface OkResult<T, E> extends ResultOperations<T, E> {
+  /**
+   * Ok value carried by this result.
+   */
   readonly value: T
 }
 
 export interface ErrResult<T, E> extends ResultOperations<T, E> {
+  /**
+   * Err value carried by this result.
+   */
   readonly error: E
 }
 
 export type Result<T, E> = OkResult<T, E> | ErrResult<T, E>
 export type StrictResult<T, E extends Error = Error> = Result<T, E>
 
+/**
+ * Object form accepted by `tryResult`.
+ *
+ * Use this form when named `try` and `catch` fields make a synchronous boundary easier to read.
+ */
 export interface TryResultOptions<T, E = unknown> {
+  /**
+   * Runs the synchronous work whose thrown value should become `Err<E>`.
+   */
   readonly try: () => Exclude<T, Promise<unknown>>
+  /**
+   * Converts a thrown `unknown` cause into the typed Resultar error channel.
+   *
+   * If omitted, the error channel is `unknown`.
+   */
   readonly catch?: (e: unknown) => E
 }
 
@@ -327,7 +458,15 @@ export interface SafeTryOptions<
   GeneratorReturnResult extends Result<unknown, unknown>,
   CatchErr = never,
 > {
+  /**
+   * Generator body evaluated by `safeTry`.
+   *
+   * Use `yield* result` to unwrap Resultar values and short-circuit on Err.
+   */
   readonly try: () => Generator<YieldErr, GeneratorReturnResult>
+  /**
+   * Converts synchronous throws from the generator setup into the Result error channel.
+   */
   readonly catch?: (e: unknown) => CatchErr
 }
 
@@ -336,7 +475,16 @@ export interface SafeTryAsyncOptions<
   GeneratorReturnResult extends Result<unknown, unknown>,
   CatchErr = never,
 > {
+  /**
+   * Async generator body evaluated by `safeTry`.
+   *
+   * Use `yield* result` or `yield* resultAsync` to unwrap Resultar values and short-circuit on Err.
+   */
   readonly try: () => AsyncGenerator<YieldErr, GeneratorReturnResult>
+  /**
+   * Converts synchronous throws or async rejections from the generator setup into the ResultAsync
+   * error channel.
+   */
   readonly catch?: (e: unknown) => CatchErr
 }
 
@@ -548,159 +696,230 @@ export const getMatchErrorHandler = <T, E, A, B>(
 }
 
 interface ResultStatic {
-  [Symbol.hasInstance](value: unknown): boolean
   /**
+   * Runtime `instanceof Result` support for Ok and Err values.
+   */
+  [Symbol.hasInstance]: (value: unknown) => boolean
+  /**
+   * Runs synchronous work and captures thrown values into a Result.
+   *
    * Compatibility alias. Prefer the top-level `tryResult` helper in new code.
    */
-  tryCatch<T, E>(
+  tryCatch: <T, E>(
     this: void,
     fn: () => Exclude<T, Promise<unknown>>,
     errorFn?: (e: unknown) => E,
-  ): Result<T, E>
-  fromThrowable<Fn extends (...args: readonly any[]) => unknown, E>(
+  ) => Result<T, E>
+  /**
+   * Wraps a throwing synchronous function so every later call returns a Result.
+   */
+  fromThrowable: <Fn extends (...args: readonly any[]) => unknown, E>(
     this: void,
     fn: Fn,
     errorFn?: (e: any) => E,
-  ): (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E>
-  ok<T, E = never>(this: void, value: T): OkResult<T, E>
-  ok<E = never>(this: void, value: void): OkResult<void, E>
-  unit<E = never>(this: void): Result<undefined, E>
-  err<T = never, E extends string = string>(this: void, err: E): ErrResult<T, E>
-  err<T = never, E = unknown>(this: void, err: E): ErrResult<T, E>
-  err<T = never>(this: void, err: void): ErrResult<T, void>
-  combine<T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
-    this: void,
-    resultList: T,
-  ): CombineResults<T>
-  combine<T extends readonly Result<unknown, unknown>[]>(
-    this: void,
-    resultList: T,
-  ): CombineResults<T>
-  combine<T extends ResultRecord>(this: void, resultRecord: T): CombineResultsRecord<T>
-  combine<R extends Result<unknown, unknown>>(
-    this: void,
-    results: Iterable<R>,
-  ): CombineResultsIterable<R>
-  combineWithAllErrors<
-    T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
-  >(
-    this: void,
-    resultList: T,
-  ): CombineResultsWithAllErrorsArray<T>
-  combineWithAllErrors<T extends readonly Result<unknown, unknown>[]>(
-    this: void,
-    resultList: T,
-  ): CombineResultsWithAllErrorsArray<T>
-  combineWithAllErrors<T extends ResultRecord>(
-    this: void,
-    resultRecord: T,
-  ): CombineResultsRecordWithAllErrors<T>
-  combineWithAllErrors<R extends Result<unknown, unknown>>(
-    this: void,
-    results: Iterable<R>,
-  ): CombineResultsIterableWithAllErrors<R>
-  validateAll<T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
-    this: void,
-    resultList: T,
-  ): CombineResultsWithAllErrorsArray<T>
-  validateAll<T extends readonly Result<unknown, unknown>[]>(
-    this: void,
-    resultList: T,
-  ): CombineResultsWithAllErrorsArray<T>
-  validateAll<Item, R extends Result<unknown, unknown>>(
-    this: void,
-    items: Iterable<Item>,
-    f: (value: Item, index: number) => R,
-  ): ResultValidatedAll<R>
-  zip<Left extends Result<unknown, unknown>, Right extends Result<unknown, unknown>>(
+  ) => (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E>
+  /**
+   * Creates an Ok result.
+   */
+  ok: {
+    <T, E = never>(this: void, value: T): OkResult<T, E>
+    <E = never>(this: void, value: void): OkResult<void, E>
+  }
+  /**
+   * Creates an Ok result with `undefined`.
+   */
+  unit: <E = never>(this: void) => Result<undefined, E>
+  /**
+   * Creates an Err result.
+   */
+  err: {
+    <T = never, E extends string = string>(this: void, err: E): ErrResult<T, E>
+    <T = never, E = unknown>(this: void, err: E): ErrResult<T, E>
+    <T = never>(this: void, err: void): ErrResult<T, void>
+  }
+  /**
+   * Combines many Result values and stops at the first Err.
+   *
+   * Arrays return an Ok array, records return an Ok record with the same keys, and iterables return
+   * an Ok readonly array.
+   */
+  combine: {
+    <T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
+      this: void,
+      resultList: T,
+    ): CombineResults<T>
+    <T extends readonly Result<unknown, unknown>[]>(this: void, resultList: T): CombineResults<T>
+    <T extends ResultRecord>(this: void, resultRecord: T): CombineResultsRecord<T>
+    <R extends Result<unknown, unknown>>(
+      this: void,
+      results: Iterable<R>,
+    ): CombineResultsIterable<R>
+  }
+  /**
+   * Combines many Result values and collects every Err instead of stopping at the first one.
+   */
+  combineWithAllErrors: {
+    <T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
+      this: void,
+      resultList: T,
+    ): CombineResultsWithAllErrorsArray<T>
+    <T extends readonly Result<unknown, unknown>[]>(
+      this: void,
+      resultList: T,
+    ): CombineResultsWithAllErrorsArray<T>
+    <T extends ResultRecord>(this: void, resultRecord: T): CombineResultsRecordWithAllErrors<T>
+    <R extends Result<unknown, unknown>>(
+      this: void,
+      results: Iterable<R>,
+    ): CombineResultsIterableWithAllErrors<R>
+  }
+  /**
+   * Validates many Result values and collects every Err.
+   *
+   * When passed items plus a mapper, the mapper must return a Result for each item.
+   */
+  validateAll: {
+    <T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
+      this: void,
+      resultList: T,
+    ): CombineResultsWithAllErrorsArray<T>
+    <T extends readonly Result<unknown, unknown>[]>(
+      this: void,
+      resultList: T,
+    ): CombineResultsWithAllErrorsArray<T>
+    <Item, R extends Result<unknown, unknown>>(
+      this: void,
+      items: Iterable<Item>,
+      f: (value: Item, index: number) => R,
+    ): ResultValidatedAll<R>
+  }
+  /**
+   * Combines exactly two Result values into an Ok tuple or the first Err.
+   */
+  zip: <Left extends Result<unknown, unknown>, Right extends Result<unknown, unknown>>(
     this: void,
     left: Left,
     right: Right,
-  ): ResultZipped<Left, Right>
-  firstSuccessOf<Candidates extends Iterable<ResultCandidate>>(
+  ) => ResultZipped<Left, Right>
+  /**
+   * Runs candidates until the first Ok and returns the last Err if every candidate fails.
+   */
+  firstSuccessOf: <Candidates extends Iterable<ResultCandidate>>(
     this: void,
     candidates: Candidates,
-  ): FirstSuccessOf<Candidates>
-  if<OnTrue extends Result<unknown, unknown>, OnFalse extends Result<unknown, unknown>>(
+  ) => FirstSuccessOf<Candidates>
+  /**
+   * Chooses one of two Result branches from a boolean or Result boolean condition.
+   */
+  if: {
+    <OnTrue extends Result<unknown, unknown>, OnFalse extends Result<unknown, unknown>>(
+      this: void,
+      condition: ResultBooleanCondition,
+      options: ResultIfOptions<OnTrue, OnFalse>,
+    ): ResultIf<never, OnTrue, OnFalse>
+    <
+      Condition extends Result<boolean, unknown>,
+      OnTrue extends Result<unknown, unknown>,
+      OnFalse extends Result<unknown, unknown>,
+    >(
+      this: void,
+      condition: Condition,
+      options: ResultIfOptions<OnTrue, OnFalse>,
+    ): ResultIf<InferErrTypes<Condition>, OnTrue, OnFalse>
+  }
+  /**
+   * Runs `body` only when the condition is true; otherwise returns Ok(undefined).
+   */
+  when: <R extends Result<unknown, unknown>>(
     this: void,
     condition: ResultBooleanCondition,
-    options: ResultIfOptions<OnTrue, OnFalse>,
-  ): ResultIf<never, OnTrue, OnFalse>
-  if<
-    Condition extends Result<boolean, unknown>,
-    OnTrue extends Result<unknown, unknown>,
-    OnFalse extends Result<unknown, unknown>,
-  >(
+    body: () => R,
+  ) => ResultWhen<R>
+  /**
+   * Runs `body` only when a Result boolean condition is Ok(true).
+   */
+  whenResult: <Condition extends Result<boolean, unknown>, R extends Result<unknown, unknown>>(
     this: void,
     condition: Condition,
-    options: ResultIfOptions<OnTrue, OnFalse>,
-  ): ResultIf<InferErrTypes<Condition>, OnTrue, OnFalse>
-  when<R extends Result<unknown, unknown>>(
+    body: () => R,
+  ) => ResultWhenWithCondition<Condition, R>
+  /**
+   * Runs `body` only when the condition is false; otherwise returns Ok(undefined).
+   */
+  unless: <R extends Result<unknown, unknown>>(
     this: void,
     condition: ResultBooleanCondition,
     body: () => R,
-  ): ResultWhen<R>
-  whenResult<Condition extends Result<boolean, unknown>, R extends Result<unknown, unknown>>(
+  ) => ResultWhen<R>
+  /**
+   * Runs `body` only when a Result boolean condition is Ok(false).
+   */
+  unlessResult: <Condition extends Result<boolean, unknown>, R extends Result<unknown, unknown>>(
     this: void,
     condition: Condition,
     body: () => R,
-  ): ResultWhenWithCondition<Condition, R>
-  unless<R extends Result<unknown, unknown>>(
-    this: void,
-    condition: ResultBooleanCondition,
-    body: () => R,
-  ): ResultWhen<R>
-  unlessResult<Condition extends Result<boolean, unknown>, R extends Result<unknown, unknown>>(
-    this: void,
-    condition: Condition,
-    body: () => R,
-  ): ResultWhenWithCondition<Condition, R>
-  loop<State, BodyState extends State, R extends Result<unknown, unknown>>(
-    this: void,
-    initial: State,
-    options: ResultLoopOptions<State, BodyState, R>,
-  ): ResultLoopCollected<R>
-  loop<State, R extends Result<unknown, unknown>>(
-    this: void,
-    initial: State,
-    options: ResultLoopBooleanOptions<State, R>,
-  ): ResultLoopCollected<R>
-  loop<State, BodyState extends State, R extends Result<unknown, unknown>>(
-    this: void,
-    initial: State,
-    options: ResultLoopDiscardOptions<State, BodyState, R>,
-  ): ResultLoopDiscarded<R>
-  loop<State, R extends Result<unknown, unknown>>(
-    this: void,
-    initial: State,
-    options: ResultLoopBooleanDiscardOptions<State, R>,
-  ): ResultLoopDiscarded<R>
-  iterate<
-    State,
-    BodyState extends WidenLiteral<State>,
-    R extends Result<WidenLiteral<State>, unknown>,
-  >(
-    this: void,
-    initial: State,
-    options: ResultIterateOptions<WidenLiteral<State>, BodyState, R>,
-  ): ResultIterated<WidenLiteral<State>, R>
-  iterate<State, R extends Result<WidenLiteral<State>, unknown>>(
-    this: void,
-    initial: State,
-    options: ResultIterateBooleanOptions<WidenLiteral<State>, R>,
-  ): ResultIterated<WidenLiteral<State>, R>
-  forEach<Item, R extends Result<unknown, unknown>>(
-    this: void,
-    items: Iterable<Item>,
-    f: (value: Item, index: number) => R,
-    options?: ResultForEachOptions,
-  ): ResultForEachCollected<R>
-  forEach<Item, R extends Result<unknown, unknown>>(
-    this: void,
-    items: Iterable<Item>,
-    f: (value: Item, index: number) => R,
-    options: ResultForEachDiscardOptions,
-  ): ResultForEachDiscarded<R>
+  ) => ResultWhenWithCondition<Condition, R>
+  /**
+   * Repeats a Result-producing body while a condition holds.
+   *
+   * Use `discard: true` when only failure matters and collected Ok values are not needed.
+   */
+  loop: {
+    <State, BodyState extends State, R extends Result<unknown, unknown>>(
+      this: void,
+      initial: State,
+      options: ResultLoopOptions<State, BodyState, R>,
+    ): ResultLoopCollected<R>
+    <State, R extends Result<unknown, unknown>>(
+      this: void,
+      initial: State,
+      options: ResultLoopBooleanOptions<State, R>,
+    ): ResultLoopCollected<R>
+    <State, BodyState extends State, R extends Result<unknown, unknown>>(
+      this: void,
+      initial: State,
+      options: ResultLoopDiscardOptions<State, BodyState, R>,
+    ): ResultLoopDiscarded<R>
+    <State, R extends Result<unknown, unknown>>(
+      this: void,
+      initial: State,
+      options: ResultLoopBooleanDiscardOptions<State, R>,
+    ): ResultLoopDiscarded<R>
+  }
+  /**
+   * Repeatedly transforms state with a Result-producing body until the condition fails.
+   */
+  iterate: {
+    <State, BodyState extends WidenLiteral<State>, R extends Result<WidenLiteral<State>, unknown>>(
+      this: void,
+      initial: State,
+      options: ResultIterateOptions<WidenLiteral<State>, BodyState, R>,
+    ): ResultIterated<WidenLiteral<State>, R>
+    <State, R extends Result<WidenLiteral<State>, unknown>>(
+      this: void,
+      initial: State,
+      options: ResultIterateBooleanOptions<WidenLiteral<State>, R>,
+    ): ResultIterated<WidenLiteral<State>, R>
+  }
+  /**
+   * Runs a Result-producing mapper for each item.
+   *
+   * Use `discard: true` when only failure matters and collected Ok values are not needed.
+   */
+  forEach: {
+    <Item, R extends Result<unknown, unknown>>(
+      this: void,
+      items: Iterable<Item>,
+      f: (value: Item, index: number) => R,
+      options?: ResultForEachOptions,
+    ): ResultForEachCollected<R>
+    <Item, R extends Result<unknown, unknown>>(
+      this: void,
+      items: Iterable<Item>,
+      f: (value: Item, index: number) => R,
+      options: ResultForEachDiscardOptions,
+    ): ResultForEachDiscarded<R>
+  }
 }
 
 /**
@@ -1640,41 +1859,73 @@ class Err<T, E> extends ResultVariant<T, E> {
 export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
   private disposed = false
   private readonly finalizer: (value: unknown, error: unknown) => void
+  /**
+   * Wrapped Result value.
+   */
   public readonly result: Result<T, E>
 
+  /**
+   * Creates a disposable wrapper around a Result.
+   */
   public constructor(result: Result<T, E>, finalizer: ResultFinalizer<T, E>) {
     this.result = result
     this.finalizer = finalizer as (value: unknown, error: unknown) => void
   }
 
+  /**
+   * Ok value when present, otherwise undefined cast to `T` for compatibility.
+   */
   public get value(): T {
     return this.result.isOk() ? this.result.value : (undefined as T)
   }
 
+  /**
+   * Err value when present, otherwise undefined cast to `E` for compatibility.
+   */
   public get error(): E {
     return this.result.isErr() ? this.result.error : (undefined as E)
   }
 
+  /**
+   * Delegates to the wrapped Result `_unsafeUnwrap`.
+   */
   public _unsafeUnwrap(config?: ErrorConfig): T {
     return this.result._unsafeUnwrap(config)
   }
 
+  /**
+   * Delegates to the wrapped Result `_unsafeUnwrapErr`.
+   */
   public _unsafeUnwrapErr(config?: ErrorConfig): E {
     return this.result._unsafeUnwrapErr(config)
   }
 
+  /**
+   * Returns whether the wrapped Result is Ok.
+   */
   public isOk(): boolean {
     return this.result.isOk()
   }
 
+  /**
+   * Returns whether the wrapped Result is Err.
+   */
   public isErr(): boolean {
     return this.result.isErr()
   }
 
+  /**
+   * Returns the wrapped Ok value, or `defaultValue` when Err.
+   */
   public unwrapOr<A>(defaultValue: A): T | A {
     return this.result.unwrapOr(defaultValue)
   }
 
+  /**
+   * Runs the finalizer once.
+   *
+   * Finalizer exceptions are intentionally swallowed.
+   */
   public [Symbol.dispose](): void {
     if (this.disposed) {
       return
@@ -1693,16 +1944,10 @@ export class DisposableResult<T, E> implements Resultable<T, E>, Disposable {
 }
 
 /**
- * Evaluates the given generator to a Result returned or an Err yielded from it,
- * whichever comes first.
+ * Evaluates a synchronous generator and returns the first yielded Err or returned Result.
  *
- * This function, in combination with `Result.safeUnwrap()`, is intended to emulate
- * Rust's ? operator.
- * See `/tests/safeTry.test.ts` for examples.
- *
- * @param body - What is evaluated. In body, `yield* result.safeUnwrap()` works as
- * Rust's `result?` expression.
- * @returns The first occurence of either an yielded Err or a returned Result.
+ * Inside the generator, use `yield* result` to unwrap Ok values and short-circuit on Err. The object
+ * form can map thrown setup errors into the Result error channel.
  */
 export function safeTry<T, E, CatchErr = E>(
   input: SafeTryOptions<Result<never, E>, Result<T, E>, CatchErr> & {
@@ -1739,16 +1984,12 @@ export function safeTry<
 >
 
 /**
- * Evaluates the given generator to a Result returned or an Err yielded from it,
- * whichever comes first.
+ * Evaluates an async generator and returns a ResultAsync for the first yielded Err or returned
+ * Result.
  *
- * This function, in combination with `Result.safeUnwrap()`, is intended to emulate
- * Rust's ? operator.
- * See `/tests/safeTry.test.ts` for examples.
- *
- * @param body - What is evaluated. In body, `yield* result.safeUnwrap()`,
- * `yield* result`, and `yield* resultAsync` work as Rust's `result?` expression.
- * @returns The first occurence of either an yielded Err or a returned Result.
+ * Inside the generator, use `yield* result` or `yield* resultAsync` to unwrap Ok values and
+ * short-circuit on Err. The object form can map thrown or rejected setup errors into the ResultAsync
+ * error channel.
  */
 export function safeTry<T, E, CatchErr = E>(
   input: SafeTryAsyncOptions<Result<never, E>, Result<T, E>, CatchErr> & {
@@ -1823,12 +2064,18 @@ export function safeTry<T, E, CatchErr = never>(
   return n.value
 }
 
+/**
+ * Creates an Ok result.
+ */
 export function ok<T, E = never>(value: T): OkResult<T, E>
 export function ok<E = never>(value: void): OkResult<void, E>
 export function ok<T, E = never>(value: T): OkResult<T, E> {
   return new Ok<T, E>(value)
 }
 
+/**
+ * Creates an Err result.
+ */
 export function err<T = never, E extends string = string>(err: E): ErrResult<T, E>
 export function err<T = never, E = unknown>(err: E): ErrResult<T, E>
 export function err<T = never>(err: void): ErrResult<T, void>
@@ -1836,15 +2083,47 @@ export function err<T = never, E = unknown>(error: E): ErrResult<T, E> {
   return new Err<T, E>(error)
 }
 
+/**
+ * Wraps a throwing synchronous function so every later call returns a Result.
+ *
+ * Prefer `tryResult` when you want to run the operation immediately.
+ */
 export const fromThrowable: typeof Result.fromThrowable = Result.fromThrowable
 
+/**
+ * Runs synchronous work and captures thrown values into `Result<T, E>`.
+ *
+ * Use `tryResult` at the edge of uncontrolled synchronous code: JSON parsing, environment parsing,
+ * platform APIs, or third-party functions that may throw. The mapper receives the thrown `unknown`
+ * cause and returns the typed error for the Resultar channel.
+ *
+ * @example
+ * ```ts
+ * const config = tryResult(
+ *   () => JSON.parse(input) as Config,
+ *   (cause) => new ParseConfigError({ cause }),
+ * )
+ * ```
+ */
 export function tryResult<T, E>(
   fn: () => Exclude<T, Promise<unknown>>,
   errorFn: (e: unknown) => E,
 ): Result<T, E>
+/**
+ * Captures a synchronous boundary with named `try` and `catch` fields.
+ *
+ * This is equivalent to `tryResult(() => ..., toError)`, but it reads better when the boundary has
+ * a clear domain name or label.
+ */
 export function tryResult<T, E>(
   options: TryResultOptions<T, E> & { readonly catch: (e: unknown) => E },
 ): Result<T, E>
+/**
+ * Runs synchronous work and captures thrown values into `Result<T, unknown>`.
+ *
+ * Prefer the overload with a catch mapper in application code so the error channel stays documented.
+ * This overload is useful while adapting unknown external failures or during migration.
+ */
 export function tryResult<T>(
   input: (() => Exclude<T, Promise<unknown>>) | TryResultOptions<T>,
 ): Result<T, unknown>
@@ -1866,9 +2145,20 @@ export function tryResult<T, E = unknown>(
   }
 }
 
+/**
+ * Creates an Ok result with `undefined`.
+ */
 export function unit<E = never>(): OkResult<undefined, E> {
   return ok<undefined, E>(undefined)
 }
+
+/**
+ * Runs a `Result` at an application boundary and returns the success value.
+ *
+ * If the result is `Err`, this throws the error. Use it at final framework, CLI, test, or bootstrap
+ * boundaries after the error channel has already been modeled with Resultar.
+ */
+export const runSync = <T, E>(result: Result<T, E>): T => result.unwrapOrThrow()
 
 /** Compatibility alias. Prefer `tryResult` in new code. */
 export const tryCatch: typeof tryResult = tryResult

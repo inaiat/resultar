@@ -83,6 +83,8 @@ const expectedExports = [
   'okAsync',
   'redact',
   'revealRedacted',
+  'runPromise',
+  'runSync',
   'safeTry',
   'taggedEnum',
   'try',

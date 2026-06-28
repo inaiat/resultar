@@ -836,6 +836,27 @@ Use `fromPromise` when you already have a promise and need to map rejection into
 const user = fromPromise(loadUserFromRemote(id), (cause) => new FetchUserError({ cause, id }))
 ```
 
+Use `tryResultAsync` when the async boundary is the thing you want to name and document. The object
+form is useful for infrastructure helpers because the task and error mapper stay together:
+
+```ts
+import { createTaggedError, tryResultAsync } from 'resultar'
+import type { StrictResultAsync } from 'resultar'
+
+type AsyncTask = () => Promise<void>
+
+class TaskError extends createTaggedError({
+  name: 'TaskError',
+  message: 'Task failed: $label',
+}) {}
+
+const tryTask = (label: string, task: AsyncTask): StrictResultAsync<void, TaskError> =>
+  tryResultAsync({
+    try: task,
+    catch: (cause) => new TaskError({ cause, label }),
+  })
+```
+
 After that edge conversion, keep your own domain functions returning `Result` values instead of
 throwing expected failures.
 
@@ -962,10 +983,12 @@ Add a check script:
 ```json
 {
   "scripts": {
-    "check": "resultar-check -p tsconfig.json --noEmit"
+    "check": "resultar-check"
   }
 }
 ```
+
+`resultar-check` defaults to `tsconfig.json` and runs TypeScript with no emit.
 
 These fail in the default `must-use` mode:
 
@@ -990,14 +1013,20 @@ Configure Resultar rules in `tsconfig.json`:
 
 ```json
 {
+  "$schema": "./node_modules/resultar-check/schema.json",
   "compilerOptions": {
     "plugins": [{ "name": "resultar-check", "noDiscard": "error" }]
   }
 }
 ```
 
+The package-local schema provides editor completion and validation for `resultar-check` plugin
+options.
+
 Oxlint is intentionally not part of the Resultar rules path; use it only for general linting if your
 project wants it.
+
+For VS Code and Zed setup, use the editor integration section in the `resultar-check` package guide.
 
 ## API Decision Guide
 

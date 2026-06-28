@@ -1,3 +1,5 @@
+/* eslint-disable unicorn/throw-new-error */
+
 import { deepEqual, equal, ok as isTrue } from 'node:assert'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'

@@ -17,7 +17,7 @@ pnpm --filter resultar-example smoke
 pnpm --filter resultar-example start
 ```
 
-The `check` script runs `resultar-check -p tsconfig.json --noEmit`. The Resultar rule set is
+The `check` script runs `resultar-check`. The Resultar rule set is
 configured in `tsconfig.json`.
 
 ## Samples

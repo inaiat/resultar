@@ -11,5 +11,5 @@ pnpm add -D resultar-check typescript-7@npm:typescript@rc
 Then run:
 
 ```sh
-resultar-check -p tsconfig.json --noEmit
+resultar-check
 ```
