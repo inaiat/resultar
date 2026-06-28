@@ -16,7 +16,7 @@
         "noTaggedErrorConstructorOverride": "error",
         "noTryCatchInSafeTry": "error",
         "noUnsafeAwait": "error",
-        "noUnsafeAwaitIgnoreCalls": ["fastify.after"],
+        "noUnsafeAwaitIgnoreCalls": ["startServer", "fastify.after"],
         "noUnsafeAwaitMode": "all",
         "noUselessRecovery": "error",
         "preferAndThen": "error",

@@ -158,7 +158,7 @@ export const normalizeNoUnsafeAwaitMode = (
 ): NoUnsafeAwaitMode => (value === "all" || value === "resultar-context" ? value : fallback);
 
 const isValidCallPath = (value: string): boolean =>
-  /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/u.test(value);
+  /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/u.test(value);
 
 export const normalizeNoUnsafeAwaitIgnoreCalls = (value: unknown): readonly string[] =>
   Array.isArray(value)

@@ -559,20 +559,24 @@ describe("Resultar lint rules", () => {
       "no-unsafe-await",
       `
         declare function fetch(input: string): Promise<string>
+        declare function startServer(): Promise<void>
+        declare function startApp(): Promise<void>
         declare const fastify: { after(): Promise<void>; ready(): Promise<void> }
         declare const app: { after(): Promise<void> }
 
         async function run() {
+          await startServer()
+          await startApp()
           await fastify.after()
           await app.after()
           await fastify.ready()
           await fetch("/still-unsafe")
         }
       `,
-      { noUnsafeAwaitIgnoreCalls: ["fastify.after"], noUnsafeAwaitMode: "all" },
+      { noUnsafeAwaitIgnoreCalls: ["startServer", "fastify.after"], noUnsafeAwaitMode: "all" },
     );
 
-    equal(findings.length, 3);
+    equal(findings.length, 4);
     equal(
       findings.every((finding) => finding.rule === "no-unsafe-await"),
       true,

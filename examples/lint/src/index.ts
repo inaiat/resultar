@@ -130,6 +130,14 @@ const app = {
   after: async (): Promise<void> => undefined,
 };
 
+const startServer = async (): Promise<void> => undefined;
+
+// Bare function identifiers can also be ignored by exact source name. This call
+// is ignored because tsconfig.json configures "startServer".
+export const ignoredUnsafeAwaitFunctionExample = async (): Promise<void> => {
+  await startServer();
+};
+
 // noUnsafeAwaitIgnoreCalls is exact and source-name based. This call is ignored
 // by tsconfig.json because the configured path is "fastify.after".
 export const ignoredUnsafeAwaitCallExample = async (): Promise<void> => {

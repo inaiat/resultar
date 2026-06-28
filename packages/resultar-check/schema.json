@@ -72,7 +72,7 @@
           "type": "array",
           "items": { "$ref": "#/definitions/callPath" },
           "default": [],
-          "description": "Exact dot-separated call paths that noUnsafeAwait should ignore, such as fastify.after."
+          "description": "Exact source call paths that noUnsafeAwait should ignore, such as startServer or fastify.after."
         },
         "noUnsafeAwaitMode": {
           "type": "string",
@@ -125,7 +125,7 @@
     "resultarPluginName": { "type": "string", "enum": ["resultar-check", "resultar-lint"] },
     "callPath": {
       "type": "string",
-      "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)+$"
+      "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*$"
     },
     "ruleSeverity": {
       "type": "string",
