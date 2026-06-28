@@ -34,11 +34,13 @@ const callErrorHandler = <E, R>(
   error: E,
   handlers: { readonly Error?: (error: E) => R },
 ): TaggedHandlerCall<R> => {
-  if (handlers.Error === undefined) {
+  const handler = handlers.Error
+
+  if (handler === undefined) {
     return noTaggedHandlerMatch
   }
 
-  return { value: handlers.Error(error) }
+  return { value: handler(error) }
 }
 
 const callTaggedOrErrorHandler = <E, R>(error: E, handlers: object): TaggedHandlerCall<R> => {

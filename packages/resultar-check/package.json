@@ -25,7 +25,8 @@
   "files": [
     "dist",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "schema.json"
   ],
   "type": "module",
   "main": "dist/index.cjs",
@@ -37,7 +38,8 @@
       "import": "./dist/index.js",
       "require": "./dist/index.cjs",
       "default": "./dist/index.js"
-    }
+    },
+    "./schema.json": "./schema.json"
   },
   "scripts": {
     "build": "vp pack",

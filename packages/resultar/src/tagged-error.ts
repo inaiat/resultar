@@ -124,24 +124,54 @@ export interface TaggedErrorOptions<
   MessageTemplate extends string,
   Base extends Error = Error,
 > {
+  /**
+   * Optional base Error class to extend instead of native Error.
+   */
   readonly extends?: ErrorBaseConstructor<Base>
+  /**
+   * Message template. `$prop` placeholders are filled from constructor props.
+   */
   readonly message?: MessageTemplate
+  /**
+   * Stable runtime tag and Error name.
+   */
   readonly name: Tag
 }
 
+/**
+ * Instance type produced by `createTaggedError`.
+ */
 export type TaggedErrorInstance<
   Tag extends string,
   MessageTemplate extends string,
   Base extends Error = Error,
 > = Base &
   Readonly<TemplateProps<MessageTemplate>> & {
+    /**
+     * Stable runtime tag.
+     */
     readonly _tag: Tag
+    /**
+     * Stable identity for grouping errors by tag and message template.
+     */
     readonly fingerprint: readonly [Tag, MessageTemplate]
+    /**
+     * Original message template before interpolation.
+     */
     readonly messageTemplate: MessageTemplate
-    findCause<T extends Error>(ErrorClass: ErrorClass<T>): T | undefined
-    toJSON(): object
+    /**
+     * Finds a matching cause in the error cause chain.
+     */
+    findCause: <T extends Error>(ErrorClass: ErrorClass<T>) => T | undefined
+    /**
+     * Serializes the tagged error, metadata, and cause chain.
+     */
+    toJSON: () => object
   }
 
+/**
+ * Class type returned by `createTaggedError`.
+ */
 export type TaggedErrorClass<
   Tag extends string,
   MessageTemplate extends string,
@@ -150,14 +180,26 @@ export type TaggedErrorClass<
   new (
     ...args: TaggedErrorConstructorArgs<MessageTemplate>
   ): TaggedErrorInstance<Tag, MessageTemplate, Base>
+  /**
+   * Stable runtime tag.
+   */
   readonly tag: Tag
-  err<This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate>) => Error>(
+  /**
+   * Creates an Err containing this tagged error.
+   */
+  err: <This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate>) => Error>(
     this: This,
     ...args: TaggedErrorConstructorArgs<MessageTemplate>
-  ): ErrResult<never, ErrorClassInstance<This>>
-  is(value: unknown): value is TaggedErrorInstance<Tag, MessageTemplate, Base>
+  ) => ErrResult<never, ErrorClassInstance<This>>
+  /**
+   * Narrows a value to this tagged error class.
+   */
+  is: (value: unknown) => value is TaggedErrorInstance<Tag, MessageTemplate, Base>
 }
 
+/**
+ * Union of members produced by `taggedEnum`.
+ */
 export type TaggedEnum<Members extends Record<string, object>> = {
   readonly [Tag in keyof Members]: Readonly<Members[Tag]> & { readonly _tag: Tag }
 }[keyof Members]
@@ -170,16 +212,28 @@ type TaggedEnumConstructor<
 > = keyof Members[Tag] extends never
   ? (props?: Readonly<Members[Tag]>) => TaggedEnumMember<Members, Tag>
   : (props: Readonly<Members[Tag]>) => TaggedEnumMember<Members, Tag>
+/**
+ * Factory returned by `taggedEnum`.
+ */
 export type TaggedEnumFactory<Members extends Record<string, object>> = {
   readonly [Tag in keyof Members]: TaggedEnumConstructor<Members, Tag>
 } & {
-  $is<Tag extends keyof Members>(tag: Tag, value: unknown): value is TaggedEnumMember<Members, Tag>
-  $match<ReturnType>(
+  /**
+   * Narrows a value to a tagged enum member.
+   */
+  $is: <Tag extends keyof Members>(
+    tag: Tag,
+    value: unknown,
+  ) => value is TaggedEnumMember<Members, Tag>
+  /**
+   * Exhaustively matches a tagged enum value.
+   */
+  $match: <ReturnType>(
     value: TaggedEnum<Members>,
     handlers: {
       readonly [Tag in keyof Members]: (value: TaggedEnumMember<Members, Tag>) => ReturnType
     },
-  ): ReturnType
+  ) => ReturnType
 }
 
 type TaggedErrorLike = Error & { readonly _tag: string }
@@ -202,7 +256,7 @@ const defaultBaseError: ErrorBaseConstructor = Error
 const defaultMessageTemplate = '$message'
 
 const nativeError = Error as typeof Error & { isError?: (value: unknown) => boolean }
-const templateVariableMatcher = /\$([a-zA-Z_][a-zA-Z0-9_]*)/gu
+const templateVariableMatcher = /\$(?<name>[a-zA-Z_][a-zA-Z0-9_]*)/gu
 const reservedTemplateVariables = new Set<ReservedTemplateVariable>([
   '_tag',
   'cause',
@@ -215,6 +269,9 @@ const reservedTemplateVariables = new Set<ReservedTemplateVariable>([
 
 type TemplateValueStringifier = (value: unknown) => string
 
+/**
+ * Narrows a value to native or platform-recognized Error.
+ */
 export function isError(value: unknown): value is Error
 export function isError<Value>(value: Value): value is Extract<Value, Error>
 export function isError(value: unknown): value is Error {
@@ -270,7 +327,9 @@ const compileMessageInterpolator =
 
 const getTemplateVariableNames = (template: string): readonly string[] => {
   templateVariableMatcher.lastIndex = 0
-  return [...template.matchAll(templateVariableMatcher)].map((match) => String(match[1]))
+  return [...template.matchAll(templateVariableMatcher)].map((match) =>
+    String(match.groups?.['name']),
+  )
 }
 
 const assertNoReservedTemplateVariables = (tag: string, template: string): void => {
@@ -329,6 +388,9 @@ const serializeCause = (cause: unknown, seen = new Set<Error>()): unknown => {
   return json
 }
 
+/**
+ * Finds the first cause in an Error cause chain that is an instance of `ErrorClass`.
+ */
 export const findCause = <T extends Error>(
   error: Error,
   ErrorClass: ErrorClass<T>,
@@ -353,6 +415,19 @@ export const findCause = <T extends Error>(
   return undefined
 }
 
+/**
+ * Creates an Error class with a stable `_tag`, typed template props, cause support, and JSON output.
+ *
+ * Prefer tagged errors for domain failures that travel through Resultar error channels.
+ *
+ * @example
+ * ```ts
+ * class UserNotFoundError extends createTaggedError({
+ *   name: "UserNotFoundError",
+ *   message: "User $id was not found",
+ * }) {}
+ * ```
+ */
 export function createTaggedError<
   const Tag extends string,
   const MessageTemplate extends string = typeof defaultMessageTemplate,
@@ -388,10 +463,16 @@ export function createTaggedError<
       }
     }
 
+    /**
+     * Narrows a value to this tagged error class.
+     */
     public static is(value: unknown): value is TaggedErrorInstance<Tag, MessageTemplate, Base> {
       return value instanceof this
     }
 
+    /**
+     * Creates an Err containing this tagged error.
+     */
     public static err<
       This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate>) => Error,
     >(
@@ -402,10 +483,16 @@ export function createTaggedError<
       return resultErr<never, InstanceType<This>>(error)
     }
 
+    /**
+     * Finds a matching cause in this error's cause chain.
+     */
     public findCause<T extends Error>(ErrorClass: ErrorClass<T>): T | undefined {
       return findCause(this, ErrorClass)
     }
 
+    /**
+     * Serializes the tagged error, metadata, and cause chain.
+     */
     public toJSON(): object {
       const json: Record<string, unknown> = {
         _tag: this._tag,
@@ -432,6 +519,9 @@ export function createTaggedError<
   return GeneratedTaggedError as TaggedErrorClass<Tag, MessageTemplate, Base>
 }
 
+/**
+ * Creates a small tagged-union factory with member constructors, `$is`, and `$match`.
+ */
 export const taggedEnum = <
   Members extends Record<string, object>,
 >(): TaggedEnumFactory<Members> => {
@@ -492,6 +582,11 @@ export const taggedEnum = <
   }) as TaggedEnumFactory<Members>
 }
 
+/**
+ * Matches an Error by tagged `_tag`, with optional native `Error` fallback.
+ *
+ * Throws the original error when no handler matches.
+ */
 export const matchError = <ErrorType extends Error, ReturnType>(
   error: ErrorType,
   handlers: MatchHandlers<ErrorType, ReturnType>,
@@ -510,6 +605,9 @@ export const matchError = <ErrorType extends Error, ReturnType>(
   throw error
 }
 
+/**
+ * Matches an Error by tagged `_tag`, then native `Error`, then the provided fallback.
+ */
 export const matchErrorPartial = <ErrorType extends Error, ReturnType>(
   error: ErrorType,
   handlers: PartialMatchHandlers<ErrorType, ReturnType>,

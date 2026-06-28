@@ -74,28 +74,33 @@ pnpm add -D resultar-check typescript@rc
 ```json
 {
   "scripts": {
-    "check": "resultar-check -p tsconfig.json --noEmit"
+    "check": "resultar-check"
   }
 }
 ```
+
+`resultar-check` defaults to `tsconfig.json` and runs TypeScript with no emit.
 
 Configure the Resultar rules in `tsconfig.json`:
 
 ```json
 {
+  "$schema": "./node_modules/resultar-check/schema.json",
   "compilerOptions": {
     "plugins": [{ "name": "resultar-check", "noDiscard": "error" }]
   }
 }
 ```
 
+The package-local schema provides editor completion and validation for `resultar-check` plugin
+options.
+
 See [packages/resultar-check/README.md](packages/resultar-check/README.md) for rule configuration.
 Oxlint is intentionally not part of the Resultar rules path.
 
-For editor diagnostics, use the same `compilerOptions.plugins` entry. Zed works through `vtsls` with
-workspace TypeScript enabled; if you use `typescript-language-server`, configure its plugin
-`location` as the project root. VS Code should be set to
-`typescript.tsdk: "node_modules/typescript/lib"`.
+For editor diagnostics, use the same `compilerOptions.plugins` entry and configure your editor to use
+the workspace TypeScript version. The check package guide includes copy-paste setup for VS Code, Zed
+`vtsls`, and Zed `typescript-language-server`.
 If a project cannot replace its `typescript` package yet and only needs the CLI path, install
 `typescript-7@npm:typescript@rc` instead.
 

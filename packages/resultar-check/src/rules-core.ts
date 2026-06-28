@@ -15,7 +15,7 @@ type EnabledRuleSeverity = Exclude<ResultarRuleSeverity, "off">;
 export type NoUnsafeAwaitMode = "all" | "resultar-context";
 type ResultarRuleOptionName = Exclude<
   keyof ResultarRulesOptions,
-  "noDiscardMode" | "noUnsafeAwaitMode"
+  "noDiscardMode" | "noUnsafeAwaitIgnoreCalls" | "noUnsafeAwaitMode"
 >;
 type MutableResultarRulesOptions = {
   -readonly [Key in keyof ResultarRulesOptions]?: ResultarRulesOptions[Key];
@@ -49,6 +49,7 @@ export interface ResultarRulesOptions {
   readonly noTaggedErrorConstructorOverride: ResultarRuleSeverity;
   readonly noTryCatchInSafeTry: ResultarRuleSeverity;
   readonly noUnsafeAwait: ResultarRuleSeverity;
+  readonly noUnsafeAwaitIgnoreCalls: readonly string[];
   readonly noUnsafeAwaitMode: NoUnsafeAwaitMode;
   readonly noUselessRecovery: ResultarRuleSeverity;
   readonly preferAndThen: ResultarRuleSeverity;
@@ -96,6 +97,7 @@ export const defaultResultarRulesOptions: ResultarRulesOptions = {
   noTaggedErrorConstructorOverride: "warning",
   noTryCatchInSafeTry: "warning",
   noUnsafeAwait: "off",
+  noUnsafeAwaitIgnoreCalls: [],
   noUnsafeAwaitMode: "resultar-context",
   noUselessRecovery: "warning",
   preferAndThen: "warning",
@@ -155,6 +157,14 @@ export const normalizeNoUnsafeAwaitMode = (
   fallback: NoUnsafeAwaitMode = defaultResultarRulesOptions.noUnsafeAwaitMode,
 ): NoUnsafeAwaitMode => (value === "all" || value === "resultar-context" ? value : fallback);
 
+const isValidCallPath = (value: string): boolean =>
+  /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/u.test(value);
+
+export const normalizeNoUnsafeAwaitIgnoreCalls = (value: unknown): readonly string[] =>
+  Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && isValidCallPath(entry))
+    : defaultResultarRulesOptions.noUnsafeAwaitIgnoreCalls;
+
 export const normalizeResultarRulesOptions = (
   options: Partial<ResultarRulesOptions> = {},
 ): ResultarRulesOptions => ({
@@ -172,6 +182,7 @@ export const normalizeResultarRulesOptions = (
     options.noUnsafeAwait,
     defaultResultarRulesOptions.noUnsafeAwait,
   ),
+  noUnsafeAwaitIgnoreCalls: normalizeNoUnsafeAwaitIgnoreCalls(options.noUnsafeAwaitIgnoreCalls),
   noUnsafeAwaitMode: normalizeNoUnsafeAwaitMode(options.noUnsafeAwaitMode),
   noUselessRecovery: normalizeRuleSeverity(
     options.noUselessRecovery,
@@ -323,6 +334,25 @@ const getExpressionName = (tsApi: TypeScriptApi, expression: ts.Expression): str
   return undefined;
 };
 
+const getCallPath = (tsApi: TypeScriptApi, expression: ts.Expression): string | undefined => {
+  const unwrapped = unwrapExpression(tsApi, expression);
+
+  if (tsApi.isIdentifier(unwrapped)) {
+    return getIdentifierText(unwrapped);
+  }
+
+  if (tsApi.isPropertyAccessExpression(unwrapped)) {
+    const parentPath = getCallPath(tsApi, unwrapped.expression);
+    const propertyName = getIdentifierText(unwrapped.name);
+
+    return parentPath === undefined || propertyName === undefined
+      ? undefined
+      : `${parentPath}.${propertyName}`;
+  }
+
+  return undefined;
+};
+
 const getMethodCall = (
   tsApi: TypeScriptApi,
   node: ts.Node,
@@ -456,7 +486,19 @@ const getPromisedTypeOfPromise = (
   return checker.getPromisedTypeOfPromise?.(type, node);
 };
 
-const isSafeAwaitExpression = (context: RuleContext, expression: ts.Expression): boolean => {
+const isSafeAwaitExpression = (
+  context: RuleContext,
+  expression: ts.Expression,
+  ignoredCallPaths: ReadonlySet<string>,
+): boolean => {
+  if (isIgnoredUnsafeAwaitCallExpression(context, expression, ignoredCallPaths)) {
+    return true;
+  }
+
+  if (isRunPromiseAwaitExpression(context, expression)) {
+    return true;
+  }
+
   const expressionType = context.checker.getTypeAtLocation(expression);
 
   if (isResultAsyncLikeAwaitType(context, expression, expressionType)) {
@@ -473,6 +515,44 @@ const isSafeAwaitExpression = (context: RuleContext, expression: ts.Expression):
 
   return isResultLikeAwaitedType(context, expression, awaitedType);
 };
+
+function isIgnoredUnsafeAwaitCallExpression(
+  context: RuleContext,
+  expression: ts.Expression,
+  ignoredCallPaths: ReadonlySet<string>,
+): boolean {
+  const unwrapped = unwrapExpression(context.tsApi, expression);
+
+  if (!context.tsApi.isCallExpression(unwrapped)) {
+    return false;
+  }
+
+  const callPath = getCallPath(context.tsApi, unwrapped.expression);
+
+  return callPath !== undefined && ignoredCallPaths.has(callPath);
+}
+
+function isRunPromiseAwaitExpression(context: RuleContext, expression: ts.Expression): boolean {
+  const unwrapped = unwrapExpression(context.tsApi, expression);
+
+  if (!context.tsApi.isCallExpression(unwrapped)) {
+    return false;
+  }
+
+  if (getExpressionName(context.tsApi, unwrapped.expression) !== "runPromise") {
+    return false;
+  }
+
+  const [resultArgument] = unwrapped.arguments;
+
+  if (resultArgument === undefined) {
+    return false;
+  }
+
+  const argumentType = context.checker.getTypeAtLocation(resultArgument);
+
+  return isResultAsyncLikeAwaitType(context, resultArgument, argumentType);
+}
 
 const isPromiseOfResultLikeType = (context: RuleContext, node: ts.Node, type: ts.Type): boolean => {
   const unionOrIntersectionTypes = getUnionOrIntersectionTypes(context, type);
@@ -966,10 +1046,12 @@ const getNoUnsafeAwaitFindings = (
   context: RuleContext,
   severity: EnabledRuleSeverity,
   mode: NoUnsafeAwaitMode,
+  ignoredCalls: readonly string[],
 ): readonly ResultarLintFinding[] => {
   const findings: ResultarLintFinding[] = [];
   const boundaryBodies = collectResultarAwaitBoundaryBodies(context);
   const contextBodies = collectResultarAwaitContextBodies(context);
+  const ignoredCallPaths = new Set(ignoredCalls);
 
   const visit = (
     node: ts.Node,
@@ -987,7 +1069,7 @@ const getNoUnsafeAwaitFindings = (
       shouldCheckAwait &&
       context.tsApi.isAwaitExpression(node) &&
       !currentInsideBoundary &&
-      !isSafeAwaitExpression(context, node.expression)
+      !isSafeAwaitExpression(context, node.expression, ignoredCallPaths)
     ) {
       findings.push(
         createFinding(
@@ -1334,6 +1416,7 @@ export const getSourceFileResultarFindings = (
         context,
         noUnsafeAwaitSeverity,
         normalizedOptions.noUnsafeAwaitMode,
+        normalizedOptions.noUnsafeAwaitIgnoreCalls,
       ),
     );
   }

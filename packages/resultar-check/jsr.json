@@ -3,5 +3,5 @@
   "version": "1.0.0",
   "license": "MIT",
   "exports": "./src/diagnostics.ts",
-  "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }
+  "publish": { "include": ["LICENSE", "README.md", "schema.json", "src/**/*.ts"] }
 }

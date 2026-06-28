@@ -23,15 +23,19 @@ Add one check script:
 ```json
 {
   "scripts": {
-    "check": "resultar-check -p tsconfig.json --noEmit"
+    "check": "resultar-check"
   }
 }
 ```
+
+`resultar-check` defaults to `tsconfig.json` and passes `--noEmit` to TypeScript unless a
+`--noEmit` flag is already present.
 
 Configure Resultar rules in `tsconfig.json`:
 
 ```json
 {
+  "$schema": "./node_modules/resultar-check/schema.json",
   "compilerOptions": {
     "plugins": [
       {
@@ -45,6 +49,9 @@ Configure Resultar rules in `tsconfig.json`:
 }
 ```
 
+The package-local schema provides editor completion and validation for `resultar-check` plugin
+options.
+
 `resultar-check` resolves a project-local `typescript@7` first, then `typescript-7`. If a project
 cannot replace its `typescript` package yet and only needs the CLI path, use the compatibility alias:
 
@@ -57,13 +64,52 @@ pnpm add -D resultar-check typescript-7@npm:typescript@rc
 `resultar-check` is a TypeScript language-service plugin. Editors must run a TypeScript server that
 can resolve the local `resultar-check` package and see the `compilerOptions.plugins` entry above.
 
-### Zed
+Use `typescript@rc` for editor integration. The `typescript-7` alias is only for projects that need
+the CLI compatibility path and cannot replace their `typescript` package yet.
 
-Zed uses `vtsls` for TypeScript by default. Add this to your Zed settings when working in pnpm
-monorepos or when the bundled TypeScript server does not activate the plugin:
+After changing dependencies or `tsconfig.json`, restart the editor's TypeScript server. A working
+setup reports diagnostics whose source is `resultar` and whose message starts with a rule name such
+as `[resultar/noDiscard]`.
+
+### VS Code
+
+Add this to `.vscode/settings.json`:
 
 ```json
 {
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "typescript.tsserver.pluginPaths": ["./node_modules"]
+}
+```
+
+Then:
+
+1. Run `TypeScript: Select TypeScript Version`.
+2. Choose the workspace TypeScript version.
+3. Run `TypeScript: Restart TS Server`.
+
+If diagnostics still do not appear, confirm the workspace has `node_modules/typescript/lib`, the
+status bar shows the workspace TypeScript version, and `resultar-check` is installed in the same
+project or workspace root as the `tsconfig.json`.
+
+### Zed
+
+Use Zed's `vtsls` TypeScript server for plugin loading. Keep `typescript-language-server` in the
+language server list as a fallback, but configure workspace TypeScript plugins through `vtsls`.
+
+Add this to `.zed/settings.json`:
+
+```json
+{
+  "languages": {
+    "TSX": {
+      "language_servers": ["vtsls", "typescript-language-server", "..."]
+    },
+    "TypeScript": {
+      "language_servers": ["vtsls", "typescript-language-server", "..."]
+    }
+  },
   "lsp": {
     "vtsls": {
       "settings": {
@@ -81,50 +127,35 @@ monorepos or when the bundled TypeScript server does not activate the plugin:
 }
 ```
 
-If diagnostics do not appear, temporarily add `"log": "normal"` under `typescript.tsserver`, restart
-the TypeScript server, and check the Zed log. A working setup reports diagnostics whose source is
-`resultar` and whose message starts with `[resultar/noDiscard]`.
+You do not need a `typescript-language-server.initialization_options.plugins` block for
+`resultar-check` when `vtsls` is first in the Zed language-server list.
 
-If you use `typescript-language-server` in Zed instead of `vtsls`, pass the plugin through
-`initialization_options.plugins` and set `location` to the project root, not `./node_modules`.
-`typescript-language-server` resolves plugin packages from `${location}/node_modules`.
+Restart the TypeScript language server or reload Zed after changing settings. If diagnostics do not
+appear, temporarily enable tsserver logging and inspect the Zed log:
 
 ```json
 {
   "lsp": {
-    "typescript-language-server": {
-      "initialization_options": {
-        "plugins": [
-          {
-            "name": "resultar-check",
-            "location": "/absolute/path/to/project"
+    "vtsls": {
+      "settings": {
+        "typescript": {
+          "tsserver": {
+            "log": "normal",
+            "pluginPaths": ["./node_modules"]
           }
-        ]
+        },
+        "vtsls": {
+          "autoUseWorkspaceTsdk": true
+        }
       }
     }
   }
 }
 ```
 
-### VS Code
-
-Configure VS Code to use the workspace TypeScript version:
-
-```json
-{
-  "typescript.tsdk": "node_modules/typescript/lib",
-  "typescript.enablePromptUseWorkspaceTsdk": true
-}
-```
-
-Then run `TypeScript: Select TypeScript Version` and choose the workspace version. In pnpm monorepos
-where the plugin still does not activate, add this setting:
-
-```json
-{
-  "typescript.tsserver.pluginPaths": ["./node_modules"]
-}
-```
+If you have deliberately disabled `vtsls` and use only `typescript-language-server`, that server
+still requires explicit plugin configuration with an absolute or package-root `location`. Prefer the
+`vtsls` setup above for Zed projects.
 
 ## Rules
 
@@ -153,14 +184,33 @@ allowed in async catch helpers such as `tryAsync`, `tryResultAsync`, `tryCatchAs
 `noUnsafeAwaitMode: "all"` to also report framework/bootstrap awaits such as Fastify plugin
 registration.
 
+Use `noUnsafeAwaitIgnoreCalls` for framework lifecycle awaits that a project intentionally allows
+without wrapping in Resultar. Entries are exact dot-separated call paths; wildcards and type-aware
+matching are not supported:
+
+```json
+{
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "resultar-check",
+        "noUnsafeAwait": "error",
+        "noUnsafeAwaitMode": "all",
+        "noUnsafeAwaitIgnoreCalls": ["fastify.after"]
+      }
+    ]
+  }
+}
+```
+
 The default `noDiscard` mode is neverthrow-style `must-use`: it reports discarded Resultar
 expressions and assigned `Result` values that are passed around but never consumed with `match`,
 `unwrapOr`, `_unsafeUnwrap`, `isOk`, `isErr`, returned, or explicitly discarded. Use
 `--mode direct` for the lower-noise expression-only check.
 
 ```sh
-pnpm exec resultar-check -p tsconfig.json --noEmit
-pnpm exec resultar-check -p tsconfig.json --noEmit --mode direct
+pnpm exec resultar-check
+pnpm exec resultar-check --mode direct
 ```
 
 ## Deprecated Packages

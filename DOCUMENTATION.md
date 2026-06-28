@@ -2185,10 +2185,12 @@ Add a check script:
 ```json
 {
   "scripts": {
-    "check": "resultar-check -p tsconfig.json --noEmit"
+    "check": "resultar-check"
   }
 }
 ```
+
+`resultar-check` defaults to `tsconfig.json` and runs TypeScript with no emit.
 
 These fail in the default `must-use` mode:
 
@@ -2223,14 +2225,11 @@ Oxlint is intentionally not part of the Resultar rules path; use it only for gen
 project wants it. Until TypeScript 7 exposes the stable programmatic checker API Resultar needs,
 `resultar-check` keeps a TypeScript 6 diagnostics API as an internal bridge.
 
-For editor diagnostics, use the same `compilerOptions.plugins` entry. Zed uses `vtsls`; enable
-workspace TypeScript with `vtsls.autoUseWorkspaceTsdk` and, for pnpm monorepos, set
-`typescript.tsserver.pluginPaths` to `["./node_modules"]`. If you use
-`typescript-language-server` in Zed instead, configure its plugin `location` as the project root so it
-can resolve `resultar-check` from that project's `node_modules`. In VS Code, set `typescript.tsdk` to
-`"node_modules/typescript/lib"` and select the workspace TypeScript version. If a project cannot
-replace its `typescript` package yet and only needs CLI diagnostics, install
-`typescript-7@npm:typescript@rc` as a compatibility alias.
+For editor diagnostics, use the same `compilerOptions.plugins` entry and configure your editor to use
+the workspace TypeScript version. The `resultar-check` package guide includes copy-paste setup for VS
+Code, Zed `vtsls`, and Zed `typescript-language-server`. If a project cannot replace its
+`typescript` package yet and only needs CLI diagnostics, install `typescript-7@npm:typescript@rc` as
+a compatibility alias.
 
 ## Testing Resultar Code
 

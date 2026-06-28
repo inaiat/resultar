@@ -50,23 +50,63 @@ type ResultAsyncFinalizer<T, E> = (
   error: E | undefined,
 ) => void | Promise<void>
 
+/**
+ * Object form accepted by `tryResultAsync`.
+ *
+ * Use this form when named `try` and `catch` fields make an async boundary easier to read, or when
+ * you want the mapper next to the promise factory.
+ */
 export interface TryResultAsyncOptions<T, E = unknown> {
+  /**
+   * Creates the promise whose rejection should become `Err<E>`.
+   *
+   * Synchronous throws from this function are also captured.
+   */
   readonly try: () => Promise<T>
+  /**
+   * Converts a rejected or thrown `unknown` cause into the typed Resultar error channel.
+   *
+   * If omitted, the error channel is `unknown`.
+   */
   readonly catch?: (e: unknown) => E
 }
 
 export interface ResultAsyncAbortSignal {
+  /**
+   * Whether the cooperative async operation has been aborted.
+   */
   readonly aborted: boolean
+  /**
+   * Optional abort cause provided by the losing race, timeout, or caller.
+   */
   readonly reason?: unknown
-  addEventListener(type: 'abort', listener: () => void, options?: { readonly once?: boolean }): void
-  removeEventListener(type: 'abort', listener: () => void): void
+  /**
+   * Registers an abort listener.
+   */
+  addEventListener: (
+    type: 'abort',
+    listener: () => void,
+    options?: { readonly once?: boolean },
+  ) => void
+  /**
+   * Removes an abort listener.
+   */
+  removeEventListener: (type: 'abort', listener: () => void) => void
 }
 
+/**
+ * Concurrency setting for async collection helpers.
+ *
+ * Use a number for bounded parallelism or `'unbounded'` when every task may start immediately.
+ */
 export type ResultAsyncConcurrency = number | 'unbounded'
 
 type HandlerOk<R> = InferOkTypes<R> | InferAsyncOkTypes<R>
 type HandlerErr<R> = InferErrTypes<R> | InferAsyncErrTypes<R>
 type IterableElement<T> = T extends Iterable<infer Element> ? Element : never
+/**
+ * Candidate used by `ResultAsync.firstSuccessOf`.
+ */
 export type ResultAsyncCandidate = () => ResultAsync<unknown, unknown>
 type ResultAsyncRecord = Readonly<Record<string, ResultAsync<unknown, unknown>>>
 type CombineResultAsyncsRecord<T extends ResultAsyncRecord> = ResultAsync<
@@ -83,6 +123,11 @@ type CombineResultAsyncsIterable<R extends ResultAsync<unknown, unknown>> = Resu
 >
 type CombineResultAsyncsIterableWithAllErrors<R extends ResultAsync<unknown, unknown>> =
   ResultAsync<readonly InferAsyncOkTypes<R>[], InferAsyncErrTypes<R>[]>
+/**
+ * Task used by race, timeout, and retry helpers.
+ *
+ * The signal lets the task cooperate with cancellation when another task wins or a timeout fires.
+ */
 export type ResultAsyncRaceTask<T, E> = (signal: ResultAsyncAbortSignal) => ResultAsync<T, E>
 type ResultAsyncRaceTaskOk<Task> = Task extends ResultAsyncRaceTask<infer T, unknown> ? T : never
 type ResultAsyncRaceTaskErr<Task> = Task extends ResultAsyncRaceTask<unknown, infer E> ? E : never
@@ -91,19 +136,55 @@ type ResultAsyncRaceTasksOk<Tasks extends readonly ResultAsyncRaceTask<unknown, 
 type ResultAsyncRaceTasksErr<Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[]> =
   ResultAsyncRaceTaskErr<Tasks[number]>
 export interface ResultAsyncRaceHandle<T, E> {
+  /**
+   * Abort signal associated with the running task.
+   */
   readonly signal: ResultAsyncAbortSignal
-  abort(reason?: unknown): void
-  wait(): ResultAsync<T, E>
+  /**
+   * Aborts the running task with an optional reason.
+   */
+  abort: (reason?: unknown) => void
+  /**
+   * Waits for the task to settle as a ResultAsync.
+   */
+  wait: () => ResultAsync<T, E>
 }
+
+/**
+ * Options for `ResultAsync.timeout`.
+ */
 export interface ResultAsyncTimeoutOptions<E> {
+  /**
+   * Creates the typed timeout error when the timeout wins.
+   */
   readonly onTimeout: () => E
+  /**
+   * Timeout duration in milliseconds.
+   */
   readonly timeoutMs: number
 }
+
+/**
+ * Metadata passed to retry predicates, delays, callbacks, and fallback handlers.
+ */
 export interface ResultAsyncRetryContext {
+  /**
+   * Current attempt number, starting at 1.
+   */
   readonly attempt: number
+  /**
+   * Next attempt number if another retry is scheduled.
+   */
   readonly nextAttempt: number
+  /**
+   * Number of retries still available after the current failure.
+   */
   readonly retriesRemaining: number
 }
+
+/**
+ * Task used by `ResultAsync.retry` and `ResultAsync.retryOrElse`.
+ */
 export type ResultAsyncRetryTask<T, E> = (
   attempt: number,
   signal: ResultAsyncAbortSignal,
@@ -112,36 +193,102 @@ type ResultAsyncRetryTaskOk<Task> = Task extends ResultAsyncRetryTask<infer T, u
 type ResultAsyncRetryTaskErr<Task> = Task extends ResultAsyncRetryTask<unknown, infer E> ? E : never
 type ResultAsyncRetryDelay = number | ((context: ResultAsyncRetryContext) => number)
 export interface ResultAsyncRetryOptions<E> {
+  /**
+   * Delay in milliseconds before retrying. Functions receive retry context.
+   */
   readonly delayMs?: ResultAsyncRetryDelay
+  /**
+   * Randomizes the computed delay by this percentage factor.
+   *
+   * For example, `0.5` means 50% below to 50% above the computed delay.
+   */
   readonly jittered?: number
+  /**
+   * Side effect called after a failed attempt that will be retried.
+   */
   readonly onRetry?: (error: E, context: ResultAsyncRetryContext) => void | Promise<void>
+  /**
+   * Optional external abort signal for the retry loop.
+   */
   readonly signal?: ResultAsyncAbortSignal
+  /**
+   * Maximum number of retries after the initial attempt.
+   */
   readonly times: number
+  /**
+   * Predicate deciding whether a failure is retryable.
+   */
   readonly while?: (error: E, context: ResultAsyncRetryContext) => boolean | Promise<boolean>
 }
+
+/**
+ * Options for `ResultAsync.retryOrElse`.
+ */
 export interface ResultAsyncRetryOrElseOptions<E, F, U> extends ResultAsyncRetryOptions<E> {
+  /**
+   * Fallback Resultar operation used after retry exhaustion.
+   */
   readonly orElse: (error: E, context: ResultAsyncRetryContext) => Result<U, F> | ResultAsync<U, F>
 }
+
+/**
+ * Acquires a resource for `ResultAsync.withResource`.
+ */
 export type ResultAsyncResourceAcquire<Resource, E> = (
   signal: ResultAsyncAbortSignal,
 ) => ResultAsync<Resource, E>
+/**
+ * Operation accepted by `ResultAsync.withResource` use/release callbacks.
+ */
 export type ResultAsyncResourceEffect<T, E> = Result<T, E> | ResultAsync<T, E>
+/**
+ * Uses an acquired resource inside `ResultAsync.withResource`.
+ */
 export type ResultAsyncResourceUse<Resource, T, E> = (
   resource: Resource,
   signal: ResultAsyncAbortSignal,
 ) => ResultAsyncResourceEffect<T, E>
+
+/**
+ * Context passed to resource release callbacks.
+ */
 export interface ResultAsyncResourceReleaseContext {
+  /**
+   * Result produced by the use phase, or undefined when acquisition failed.
+   */
   readonly result: Result<unknown, unknown> | undefined
+  /**
+   * Abort signal shared by the resource lifecycle.
+   */
   readonly signal: ResultAsyncAbortSignal
 }
+/**
+ * Releases a resource after use, regardless of success or failure.
+ */
 export type ResultAsyncResourceRelease<Resource> = (
   resource: Resource,
   context: ResultAsyncResourceReleaseContext,
 ) => ResultAsyncResourceEffect<unknown, unknown> | Promise<void> | void
+
+/**
+ * Options for `ResultAsync.withResource`.
+ */
 export interface ResultAsyncWithResourceOptions<Resource, AcquireError, T, UseError> {
+  /**
+   * Acquires the resource.
+   */
   readonly acquire: ResultAsyncResourceAcquire<Resource, AcquireError>
+  /**
+   * Releases the resource after use.
+   */
   readonly release: ResultAsyncResourceRelease<Resource>
+  /**
+   * Optional external abort signal for the full lifecycle.
+   */
   readonly signal?: ResultAsyncAbortSignal
+  /**
+   * Uses the acquired resource.
+   */
   readonly use: ResultAsyncResourceUse<Resource, T, UseError>
 }
 export type FirstSuccessOfAsync<Candidates extends Iterable<ResultAsyncCandidate>> = ResultAsync<
@@ -1339,11 +1486,17 @@ export class DisposableResultAsync<T, E> implements PromiseLike<Result<T, E>>, A
   private readonly finalizer: (value: unknown, error: unknown) => void | Promise<void>
   private disposed = false
 
+  /**
+   * Creates an async disposable wrapper around a ResultAsync promise.
+   */
   public constructor(res: Promise<Result<T, E>>, finalizer: ResultAsyncFinalizer<T, E>) {
     this.innerPromise = res
     this.finalizer = finalizer as (value: unknown, error: unknown) => void | Promise<void>
   }
 
+  /**
+   * PromiseLike integration. Resolves to the wrapped Result.
+   */
   public then<A, B>(
     successCallback?: (res: Result<T, E>) => A | PromiseLike<A>,
     failureCallback?: (reason: unknown) => B | PromiseLike<B>,
@@ -1351,6 +1504,11 @@ export class DisposableResultAsync<T, E> implements PromiseLike<Result<T, E>>, A
     return this.innerPromise.then(successCallback, failureCallback)
   }
 
+  /**
+   * Runs the finalizer once after the wrapped Result resolves.
+   *
+   * Finalizer exceptions and rejections are intentionally swallowed.
+   */
   public async [Symbol.asyncDispose](): Promise<void> {
     if (this.disposed) {
       return
@@ -1523,6 +1681,12 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return new ResultAsync<T, E>(newPromise)
   }
 
+  /**
+   * Combines many ResultAsync values and stops at the first Err.
+   *
+   * Arrays return an Ok array, records return an Ok record with the same keys, and iterables return
+   * an Ok readonly array.
+   */
   public static combine<
     T extends readonly [ResultAsync<unknown, unknown>, ...ResultAsync<unknown, unknown>[]],
   >(this: void, asyncResultList: T): CombineResultAsyncs<T>
@@ -1566,6 +1730,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return combineResultAsyncRecord(input)
   }
 
+  /**
+   * Combines many ResultAsync values and collects every Err instead of stopping at the first one.
+   */
   public static combineWithAllErrors<
     T extends readonly [ResultAsync<unknown, unknown>, ...ResultAsync<unknown, unknown>[]],
   >(this: void, asyncResultList: T): CombineResultsWithAllErrorsArrayAsync<T>
@@ -1612,6 +1779,12 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return combineResultAsyncRecordWithAllErrors(input)
   }
 
+  /**
+   * Validates many ResultAsync values and collects every Err.
+   *
+   * When passed items plus a mapper, the mapper must return a ResultAsync for each item. Use the
+   * optional concurrency setting to bound parallel work.
+   */
   public static validateAll<
     T extends readonly [ResultAsync<unknown, unknown>, ...ResultAsync<unknown, unknown>[]],
   >(this: void, asyncResultList: T): CombineResultsWithAllErrorsArrayAsync<T>
@@ -1644,6 +1817,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return validateAllResultAsyncItems(asyncResultListOrItems as Iterable<Item>, f, options)
   }
 
+  /**
+   * Combines exactly two ResultAsync values into an Ok tuple or the first Err.
+   */
   public static zip<
     Left extends ResultAsync<unknown, unknown>,
     Right extends ResultAsync<unknown, unknown>,
@@ -1651,6 +1827,11 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return combineResultAsyncList([left, right]) as ResultAsyncZipped<Left, Right>
   }
 
+  /**
+   * Retries a ResultAsync task according to a typed retry policy.
+   *
+   * The returned error channel includes the task error and `AbortError`.
+   */
   public static retry<Task extends ResultAsyncRetryTask<unknown, unknown>>(
     this: void,
     task: Task,
@@ -1662,6 +1843,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Retries a ResultAsync task and falls back to another Resultar operation after retry exhaustion.
+   */
   public static retryOrElse<Task extends ResultAsyncRetryTask<unknown, unknown>, U, F>(
     this: void,
     task: Task,
@@ -1673,6 +1857,12 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Acquires, uses, and releases a resource with cleanup on every path.
+   *
+   * Release errors are intentionally not part of the success/error channel; model cleanup failures
+   * in `use` when they should affect control flow.
+   */
   public static withResource<Resource, AcquireError, T, UseError>(
     this: void,
     options: ResultAsyncWithResourceOptions<Resource, AcquireError, T, UseError>,
@@ -1680,6 +1870,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return withResultAsyncResource(options)
   }
 
+  /**
+   * Races two cooperative ResultAsync tasks and returns the first settled Result.
+   */
   public static race<
     Left extends ResultAsyncRaceTask<unknown, unknown>,
     Right extends ResultAsyncRaceTask<unknown, unknown>,
@@ -1694,6 +1887,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return raceResultAsyncTasks([left, right] as const)
   }
 
+  /**
+   * Races multiple cooperative ResultAsync tasks and returns the first settled Result.
+   */
   public static raceAll<
     Tasks extends readonly [
       ResultAsyncRaceTask<unknown, unknown>,
@@ -1706,6 +1902,11 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return raceResultAsyncTasks(tasks)
   }
 
+  /**
+   * Races two cooperative ResultAsync tasks and returns the first successful Ok.
+   *
+   * If both fail, the returned error is the final observed Err.
+   */
   public static raceFirst<
     Left extends ResultAsyncRaceTask<unknown, unknown>,
     Right extends ResultAsyncRaceTask<unknown, unknown>,
@@ -1728,6 +1929,12 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Races two cooperative ResultAsync tasks and lets handlers decide what to do when either side
+   * settles first.
+   *
+   * Handlers receive the settled Result and a handle to the still-running opposite task.
+   */
   public static raceWith<
     Left extends ResultAsyncRaceTask<unknown, unknown>,
     Right extends ResultAsyncRaceTask<unknown, unknown>,
@@ -1815,6 +2022,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return new ResultAsync(promise)
   }
 
+  /**
+   * Runs a cooperative ResultAsync task with a typed timeout error.
+   */
   public static timeout<Task extends ResultAsyncRaceTask<unknown, unknown>, TimeoutError>(
     this: void,
     task: Task,
@@ -1850,6 +2060,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     })
   }
 
+  /**
+   * Runs async candidates until the first Ok and returns the last Err if every candidate fails.
+   */
   public static firstSuccessOf<Candidates extends Iterable<ResultAsyncCandidate>>(
     this: void,
     candidates: Candidates,
@@ -1857,6 +2070,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return firstSuccessOfAsyncCandidates(candidates)
   }
 
+  /**
+   * Chooses one of two Resultar async branches from a boolean or Resultar boolean condition.
+   */
   public static if<OnTrue extends ResultAsyncConditional, OnFalse extends ResultAsyncConditional>(
     this: void,
     condition: ResultAsyncBooleanCondition,
@@ -1887,6 +2103,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return ifResultAsyncWithCondition(condition, options)
   }
 
+  /**
+   * Runs `body` only when the condition is true; otherwise returns Ok(undefined).
+   */
   public static when<R extends ResultAsyncConditional>(
     this: void,
     condition: ResultAsyncBooleanCondition,
@@ -1895,6 +2114,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return whenResultAsync(condition, body)
   }
 
+  /**
+   * Runs `body` only when a Resultar boolean condition is Ok(true).
+   */
   public static whenResult<
     Condition extends ResultAsyncConditionResult,
     R extends ResultAsyncConditional,
@@ -1902,6 +2124,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return whenResultAsyncWithCondition(condition, body)
   }
 
+  /**
+   * Runs `body` only when the condition is false; otherwise returns Ok(undefined).
+   */
   public static unless<R extends ResultAsyncConditional>(
     this: void,
     condition: ResultAsyncBooleanCondition,
@@ -1910,6 +2135,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return unlessResultAsync(condition, body)
   }
 
+  /**
+   * Runs `body` only when a Resultar boolean condition is Ok(false).
+   */
   public static unlessResult<
     Condition extends ResultAsyncConditionResult,
     R extends ResultAsyncConditional,
@@ -1917,6 +2145,11 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return unlessResultAsyncWithCondition(condition, body)
   }
 
+  /**
+   * Repeats a ResultAsync-producing body while a condition holds.
+   *
+   * Use `discard: true` when only failure matters and collected Ok values are not needed.
+   */
   public static loop<State, BodyState extends State, R extends ResultAsync<unknown, unknown>>(
     this: void,
     initial: State,
@@ -1949,6 +2182,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return loopResultAsync(initial, options as ResultAsyncLoopRuntimeOptions<State, R>)
   }
 
+  /**
+   * Repeatedly transforms state with a ResultAsync-producing body until the condition fails.
+   */
   public static iterate<
     State,
     BodyState extends WidenLiteral<State>,
@@ -1976,6 +2212,12 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Runs a ResultAsync-producing mapper for each item.
+   *
+   * Use `discard: true` when only failure matters and collected Ok values are not needed. Use
+   * `concurrency` to bound parallel work.
+   */
   public static forEach<Item, R extends ResultAsync<unknown, unknown>>(
     this: void,
     items: Iterable<Item>,
@@ -1998,12 +2240,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   }
 
   /**
-   * Wraps a async function with a try catch, creating a new function with the same
-   * arguments but returning `Ok` if successful, `Err` if the function throws
+   * Wraps an async function so every later call returns a ResultAsync.
    *
-   * @param fn function to wrap with ok on success or err on failure
-   * @param errorFn when an error is thrown, this will wrap the error result if provided
-   * @returns a new function that returns a `ResultAsync`
+   * Prefer `tryResultAsync` when you want to run the operation immediately.
    */
   public static fromThrowable<A extends readonly unknown[], T, E>(
     this: void,
@@ -2026,11 +2265,22 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
 
   private readonly innerPromise: Promise<Result<T, E>>
 
+  /**
+   * Creates a ResultAsync from a Promise that resolves to a Result.
+   *
+   * Most application code should prefer `tryResultAsync`, `fromPromise`, `okAsync`, or `errAsync`.
+   */
   public constructor(res: Promise<Result<T, E>>) {
     super()
     this.innerPromise = res
   }
 
+  /**
+   * PromiseLike integration. Resolves to the underlying `Result<T, E>`.
+   *
+   * Prefer ResultAsync combinators for application flow; this exists so ResultAsync can be awaited
+   * and used by Promise APIs.
+   */
   public then<A, B>(
     successCallback?: (res: Result<T, E>) => A | PromiseLike<A>,
     failureCallback?: (reason: unknown) => B | PromiseLike<B>,
@@ -2038,6 +2288,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     return this.innerPromise.then(successCallback, failureCallback)
   }
 
+  /**
+   * Maps the Err value while preserving the Ok value.
+   */
   public mapErr<U>(f: (t: E) => U | Promise<U>): ResultAsync<T, U> {
     return new ResultAsync<T, U>(
       this.innerPromise.then(async (res) => {
@@ -2050,6 +2303,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Maps the Ok value while preserving the error channel.
+   */
   public map<X>(f: (t: T) => X | Promise<X>): ResultAsync<X, E> {
     return new ResultAsync<X, E>(
       this.innerPromise.then(async (res: Result<T, E>) => {
@@ -2062,6 +2318,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Replaces the Ok value with a constant while preserving the error channel.
+   */
   public as<X>(value: X): ResultAsync<X, E> {
     return new ResultAsync<X, E>(
       this.innerPromise.then((res: Result<T, E>) => {
@@ -2074,6 +2333,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Keeps the Ok value only when the predicate passes; otherwise returns an Err from `onFalse`.
+   */
   public filterOrElse<U extends T, F>(
     predicate: (value: T) => value is U,
     onFalse: (value: T) => F | Promise<F>,
@@ -2101,6 +2363,11 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Chains another fallible sync or async operation from the Ok value.
+   *
+   * Use this instead of `map` when the callback returns `Result` or `ResultAsync`.
+   */
   public andThen<R extends Result<unknown, unknown>>(
     f: (t: T) => R,
   ): ResultAsync<InferOkTypes<R>, InferErrTypes<R> | E>
@@ -2121,6 +2388,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Branches from the Ok value into one of two async fallible Result branches.
+   */
   public if(fCondition: (t: T) => boolean): {
     true: <X1, Y1>(
       fTrue: (t: T) => ResultAsync<X1, Y1>,
@@ -2145,6 +2415,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     }
   }
 
+  /**
+   * Recovers from Err with another Result or ResultAsync.
+   */
   public orElse<R extends Result<unknown, unknown>>(
     f: (e: E) => R,
   ): ResultAsync<InferOkTypes<R> | T, InferErrTypes<R>>
@@ -2165,6 +2438,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Recovers from a specific tagged error by `_tag`.
+   */
   public catchTag<const Tag extends TagsOf<E>, R extends Result<unknown, unknown>>(
     tag: Tag,
     f: (error: ErrorForTag<E, Tag>) => R,
@@ -2197,6 +2473,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Recovers from multiple tagged errors by `_tag`.
+   */
   public catchTags<const Handlers extends object>(
     handlers: Handlers & CatchTagHandlers<E, Handlers>,
   ): ResultAsync<
@@ -2230,6 +2509,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Recovers from a nested tagged `reason` on a specific tagged error.
+   */
   public catchReason<
     const ErrorTag extends TagsWithReasonOf<E>,
     const ReasonTag extends ReasonTagsOf<E, ErrorTag>,
@@ -2301,6 +2583,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Recovers from multiple nested tagged `reason` variants on a specific tagged error.
+   */
   public catchReasons<const ErrorTag extends TagsWithReasonOf<E>, const Handlers extends object>(
     errorTag: ErrorTag,
     handlers: Handlers & CatchReasonHandlers<E, ErrorTag, Handlers>,
@@ -2350,6 +2635,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Moves the nested `reason` of a tagged error into the ResultAsync error channel.
+   */
   public unwrapReason<const ErrorTag extends TagsWithReasonOf<E>>(
     errorTag: ErrorTag,
   ): ResultAsync<T, ExcludeTag<E, ErrorTag> | ReasonsOf<E, ErrorTag>> {
@@ -2368,6 +2656,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Converts this ResultAsync into a Promise of a plain value by handling both Ok and Err.
+   */
   public async match<A, B = A>(handlers: MatchHandlers<T, E, A, B>): Promise<A | B>
   public async match<A, B = A>(ok: (t: T) => A, fnErr: (e: E) => B): Promise<A | B>
   public async match<A, B = A>(
@@ -2382,6 +2673,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Converts this ResultAsync into a Promise of a plain value with exhaustive tagged-error handlers.
+   */
   public async matchTags<A, const Handlers extends object>(
     ok: (t: T) => A,
     handlers: Handlers & MatchTagHandlers<E, Handlers>,
@@ -2399,6 +2693,10 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Converts this ResultAsync into a Promise of a plain value with partial tagged-error handlers and
+   * a fallback.
+   */
   public async matchTagsPartial<A, B, const Handlers extends object>(
     ok: (t: T) => A,
     handlers: Handlers & PartialMatchTagHandlers<E, Handlers>,
@@ -2414,10 +2712,18 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Resolves to the Ok value, or `t` when this ResultAsync is Err.
+   */
   public async unwrapOr<A>(t: A): Promise<T | A> {
     return this.innerPromise.then((res) => res.unwrapOr(t))
   }
 
+  /**
+   * Resolves to the Ok value or rejects with the Err value.
+   *
+   * Use this at final application boundaries after the error channel has been modeled.
+   */
   public async unwrapOrThrow(): Promise<T> {
     return this.innerPromise.then((res) => res.unwrapOrThrow())
   }
@@ -2488,10 +2794,16 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     )
   }
 
+  /**
+   * Attaches an async disposal finalizer to this ResultAsync.
+   */
   public toAsyncDisposable(f: ResultAsyncFinalizer<T, E>): DisposableResultAsync<T, E> {
     return new DisposableResultAsync(this.innerPromise, f)
   }
 
+  /**
+   * Enables `yield* resultAsync` inside async `safeTry` generators.
+   */
   public async *[Symbol.asyncIterator](): AsyncGenerator<Result<never, E>, T> {
     const result = await this.innerPromise
 
@@ -2511,20 +2823,77 @@ registerResultAsyncFactory(
 
 export type StrictResultAsync<T, E extends Error = Error> = ResultAsync<T, E>
 
+/**
+ * Creates an Ok ResultAsync.
+ */
 export const okAsync: typeof ResultAsync.okAsync = ResultAsync.okAsync
+/**
+ * Creates an Err ResultAsync.
+ */
 export const errAsync: typeof ResultAsync.errAsync = ResultAsync.errAsync
+/**
+ * Converts an existing promise into a ResultAsync and maps rejection into a typed Err.
+ */
 export const fromPromise: typeof ResultAsync.fromPromise = ResultAsync.fromPromise
+/**
+ * Converts an existing promise that is expected not to reject into a ResultAsync.
+ *
+ * Use `fromPromise` or `tryResultAsync` when rejection should become a typed Err.
+ */
 export const fromSafePromise: typeof ResultAsync.fromSafePromise = ResultAsync.fromSafePromise
+/**
+ * Creates an Ok ResultAsync with `undefined`.
+ */
 export const unitAsync: typeof ResultAsync.unitAsync = ResultAsync.unitAsync
+/**
+ * Wraps an async function so every later call returns a ResultAsync.
+ */
 export const fromThrowableAsync: typeof ResultAsync.fromThrowable = ResultAsync.fromThrowable
 
+/**
+ * Captures a promise or async factory into `ResultAsync<T, E>`.
+ *
+ * Use `tryResultAsync` at the edge of uncontrolled async code: network calls, file I/O,
+ * third-party SDKs, JSON parsing promises, and framework APIs that can reject. The mapper receives
+ * the rejected or thrown `unknown` cause and returns the typed error for the Resultar channel.
+ *
+ * Passing a factory is preferred when creating the promise can throw synchronously.
+ *
+ * @example
+ * ```ts
+ * const user = tryResultAsync(
+ *   () => fetchUser(id),
+ *   (cause) => new FetchUserError({ cause, id }),
+ * )
+ * ```
+ */
 export function tryResultAsync<T, E>(
   fn: Promise<T> | (() => Promise<T>),
   errorFn: (e: unknown) => E,
 ): ResultAsync<T, E>
+/**
+ * Captures an async boundary with named `try` and `catch` fields.
+ *
+ * This is equivalent to `tryResultAsync(() => ..., toError)`, but it reads better for reusable
+ * infrastructure helpers where the label, task, and mapper live together.
+ *
+ * @example
+ * ```ts
+ * const startup = tryResultAsync({
+ *   try: () => fastify.register(plugin),
+ *   catch: (cause) => new StartupTaskError({ cause, label: "register plugin" }),
+ * })
+ * ```
+ */
 export function tryResultAsync<T, E>(
   options: TryResultAsyncOptions<T, E> & { readonly catch: (e: unknown) => E },
 ): ResultAsync<T, E>
+/**
+ * Captures a promise or async factory into `ResultAsync<T, unknown>`.
+ *
+ * Prefer the overload with a catch mapper in application code so the error channel stays documented.
+ * This overload is useful while adapting unknown external failures or during migration.
+ */
 export function tryResultAsync<T>(
   input: Promise<T> | (() => Promise<T>) | TryResultAsyncOptions<T>,
 ): ResultAsync<T, unknown>
@@ -2548,6 +2917,14 @@ export function tryResultAsync<T, E = unknown>(
 
   return new ResultAsync<T, E>(newPromise)
 }
+
+/**
+ * Runs a `ResultAsync` at an application boundary and returns the success value.
+ *
+ * If the result is `Err`, this rejects with the error. Use it at final framework, CLI, test, or
+ * bootstrap boundaries after the error channel has already been modeled with Resultar.
+ */
+export const runPromise = <T, E>(result: ResultAsync<T, E>): Promise<T> => result.unwrapOrThrow()
 
 /** Compatibility alias. Prefer `tryResultAsync` in new code. */
 export const tryCatchAsync: typeof tryResultAsync = tryResultAsync

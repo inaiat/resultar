@@ -6,7 +6,11 @@ import { afterEach, describe, it } from "vite-plus/test";
 
 import type { ResultarRuleName } from "../src/finding.js";
 import { findResultarLintFindings } from "../src/lint.js";
-import { type ResultarRulesOptions, onlyResultarRule } from "../src/rules-core.js";
+import {
+  type ResultarRulesOptions,
+  onlyResultarRule,
+  resultarRuleNames,
+} from "../src/rules-core.js";
 const tempDirs: string[] = [];
 
 const createFixtureProject = async (source: string): Promise<string> => {
@@ -48,6 +52,8 @@ const runRule = async (
   return result.findings;
 };
 
+type RuleFixture = { readonly options?: Partial<ResultarRulesOptions>; readonly source: string };
+
 afterEach(async () => {
   await Promise.all(
     tempDirs.splice(0).map(async (dir) => rm(dir, { force: true, recursive: true })),
@@ -55,6 +61,153 @@ afterEach(async () => {
 });
 
 describe("Resultar lint rules", () => {
+  it("has a focused firing fixture for every registered rule", async () => {
+    const fixtures: Record<ResultarRuleName, RuleFixture> = {
+      "no-discard": {
+        source: `
+          type Result<T, E> = { readonly value?: T; readonly error?: E }
+          declare function save(): Result<string, Error>
+
+          save()
+        `,
+      },
+      "no-tagged-error-constructor-override": {
+        source: `
+          declare function createTaggedError(
+            options: { readonly message?: string; readonly name: string }
+          ): new (...args: readonly unknown[]) => Error
+
+          class InvalidEmailError extends createTaggedError({
+            name: "InvalidEmailError",
+            message: "Invalid email"
+          }) {
+            constructor() {
+              super()
+            }
+          }
+        `,
+      },
+      "no-try-catch-in-safe-try": {
+        source: `
+          declare function safeTry(value: unknown): unknown
+
+          safeTry(function* () {
+            try {
+              return 1
+            } catch {
+              return 2
+            }
+          })
+        `,
+      },
+      "no-unsafe-await": {
+        options: { noUnsafeAwaitMode: "all" },
+        source: `
+          declare function fetch(input: string): Promise<string>
+
+          async function run() {
+            return await fetch("/users")
+          }
+        `,
+      },
+      "no-useless-recovery": {
+        source: `
+          type Result<T, E> = {
+            mapErr<X>(fn: (error: E) => X): Result<T, X>
+          }
+          declare const result: Result<string, never>
+
+          result.mapErr((error) => error)
+        `,
+      },
+      "prefer-and-then": {
+        source: `
+          type Result<T, E> = {
+            map<X>(fn: (value: T) => X): Result<X, E>
+          }
+          declare function ok<T, E = never>(value: T): Result<T, E>
+          declare const result: Result<string, Error>
+
+          result.map((value) => ok(value.length))
+        `,
+      },
+      "prefer-map-err": {
+        source: `
+          type Result<T, E> = {
+            orElse<X, Y>(fn: (error: E) => Result<X, Y>): Result<T | X, Y>
+          }
+          declare function err<T = never, E = unknown>(error: E): Result<T, E>
+          declare const result: Result<string, Error>
+
+          result.orElse((error) => err(new TypeError(error.message)))
+        `,
+      },
+      "prefer-tagged-error": {
+        source: `
+          class DomainError extends Error {}
+        `,
+      },
+      "tagged-error-name-match": {
+        source: `
+          declare function createTaggedError(
+            options: { readonly message?: string; readonly name: string }
+          ): new (...args: readonly unknown[]) => Error
+
+          class InvalidEmailError extends createTaggedError({
+            name: "OtherEmailError",
+            message: "Invalid email"
+          }) {}
+        `,
+      },
+      "typed-catch-mapper": {
+        source: `
+          type Result<T, E> = { readonly value?: T; readonly error?: E }
+          declare function tryResult<T>(fn: () => T): Result<T, unknown>
+
+          tryResult(() => JSON.parse("{}"))
+        `,
+      },
+      "unsafe-result-type-assertion": {
+        source: `
+          type Result<T, E> = { readonly value?: T; readonly error?: E }
+          class FirstError extends Error { readonly first = true }
+          class SecondError extends Error { readonly second = true }
+          declare const result: Result<string, FirstError | SecondError>
+
+          const narrowed = result as Result<string, FirstError>
+        `,
+      },
+      "yield-star-in-safe-try": {
+        source: `
+          type Result<T, E> = { readonly value?: T; readonly error?: E }
+          declare function safeTry<T, E>(fn: () => Generator<Result<never, E>, T>): Result<T, E>
+          declare function parse(): Result<string, Error>
+
+          safeTry(function* () {
+            const value = yield parse()
+            return value
+          })
+        `,
+      },
+    };
+
+    const coveredRules = await Promise.all(
+      resultarRuleNames.map(async (ruleName) => {
+        const fixture = fixtures[ruleName];
+        const findings = await runRule(ruleName, fixture.source, fixture.options);
+
+        return { findings, ruleName };
+      }),
+    );
+
+    for (const { findings, ruleName } of coveredRules) {
+      isTrue(
+        findings.some((finding) => finding.rule === ruleName),
+        `Expected ${ruleName} fixture to produce a ${ruleName} finding`,
+      );
+    }
+  }, 30_000);
+
   it("flags orElse callbacks that only return Err", async () => {
     const findings = await runRule(
       "prefer-map-err",
@@ -367,18 +520,63 @@ describe("Resultar lint rules", () => {
 
         declare const resultAsync: ResultAsync<string, Error>
         declare function promiseReturningResult(): Promise<Result<string, Error>>
+        declare function runPromise<T, E>(result: ResultAsync<T, E>): Promise<T>
 
         async function run() {
           const first = await resultAsync
           const second = await promiseReturningResult()
+          const third = await runPromise(resultAsync)
           const value = await 1
-          return [first, second, value]
+          return [first, second, third, value]
         }
       `,
       { noUnsafeAwaitMode: "all" },
     );
 
     deepEqual(findings, []);
+  });
+
+  it("does not treat runPromise with plain promises as a Resultar-safe await", async () => {
+    const findings = await runRule(
+      "no-unsafe-await",
+      `
+        declare function fetch(input: string): Promise<string>
+        declare function runPromise<T>(promise: Promise<T>): Promise<T>
+
+        async function run() {
+          return await runPromise(fetch("/plain-promise"))
+        }
+      `,
+      { noUnsafeAwaitMode: "all" },
+    );
+
+    equal(findings.length, 1);
+    equal(findings[0]?.rule, "no-unsafe-await");
+  });
+
+  it("ignores configured unsafe-await call paths exactly", async () => {
+    const findings = await runRule(
+      "no-unsafe-await",
+      `
+        declare function fetch(input: string): Promise<string>
+        declare const fastify: { after(): Promise<void>; ready(): Promise<void> }
+        declare const app: { after(): Promise<void> }
+
+        async function run() {
+          await fastify.after()
+          await app.after()
+          await fastify.ready()
+          await fetch("/still-unsafe")
+        }
+      `,
+      { noUnsafeAwaitIgnoreCalls: ["fastify.after"], noUnsafeAwaitMode: "all" },
+    );
+
+    equal(findings.length, 3);
+    equal(
+      findings.every((finding) => finding.rule === "no-unsafe-await"),
+      true,
+    );
   });
 
   it("does not extend Resultar await boundaries into nested functions", async () => {

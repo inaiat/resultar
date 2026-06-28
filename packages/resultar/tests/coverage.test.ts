@@ -747,6 +747,8 @@ describe('coverage-focused public behavior', () => {
     equal(typeof resultar.fromPromise, 'function')
     equal(typeof resultar.fromSafePromise, 'function')
     equal(typeof resultar.fromThrowableAsync, 'function')
+    equal(typeof resultar.runPromise, 'function')
+    equal(typeof resultar.runSync, 'function')
     equal(typeof resultar.tryCatchAsync, 'function')
     equal(typeof resultar.safeTry, 'function')
     equal(typeof resultar.createTaggedError, 'function')

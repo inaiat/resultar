@@ -47,14 +47,14 @@ interface ResultarCheckCliOptions extends CliOptions {
   readonly tscArgs: readonly string[];
 }
 
-const usage = `Usage: resultar-check -p tsconfig.json --noEmit
+const usage = `Usage: resultar-check
 
 Flags:
   --mode <direct|must-use>  Check mode. Defaults to tsconfig plugin noDiscardMode or must-use.
   -p, --project <path>  TypeScript project file to inspect. Defaults to tsconfig.json.
   -h, --help            Show this help message.
 
-Runs TypeScript 7 first, then all enabled Resultar rules from tsconfig plugin options.
+Runs TypeScript 7 with no emit first, then all enabled Resultar rules from tsconfig plugin options.
 `;
 
 const failure = (error: Error): NoDiscardFailure => ({ error, ok: false });
@@ -441,6 +441,9 @@ const passthroughArgs = new Set(["--version", "-v"]);
 const shouldSkipResultarDiagnostics = (args: readonly string[]): boolean =>
   args.some((arg) => passthroughArgs.has(arg));
 
+const withDefaultNoEmit = (args: readonly string[]): readonly string[] =>
+  args.some((arg) => /^--noemit(?:=|$)/i.test(arg)) ? args : [...args, "--noEmit"];
+
 const runNode = (script: string, args: readonly string[]): number => {
   const result = spawnSync(process.execPath, [script, ...args], { stdio: "inherit" });
 
@@ -472,11 +475,13 @@ export const runResultarCheckCli = (args: readonly string[] = process.argv.slice
     return 1;
   }
 
-  const tscStatus = runNode(join(dirname(resolvedTypeScript.packageJson), "bin/tsc"), [
-    ...parsedArgs.options.tscArgs,
-  ]);
+  const skipResultarDiagnostics = shouldSkipResultarDiagnostics(args);
+  const tscArgs = skipResultarDiagnostics
+    ? parsedArgs.options.tscArgs
+    : withDefaultNoEmit(parsedArgs.options.tscArgs);
+  const tscStatus = runNode(join(dirname(resolvedTypeScript.packageJson), "bin/tsc"), tscArgs);
 
-  if (tscStatus !== 0 || shouldSkipResultarDiagnostics(args)) {
+  if (tscStatus !== 0 || skipResultarDiagnostics) {
     return tscStatus;
   }
 

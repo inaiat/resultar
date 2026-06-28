@@ -17,6 +17,12 @@ const runPipe = <Self>(self: Self, fns: readonly PipeFn<never, unknown>[]): unkn
 }
 
 export abstract class Pipeable {
+  /**
+   * Passes this value through one or more transformation functions.
+   *
+   * Use `pipe` to package reusable Result or ResultAsync combinators without hiding the underlying
+   * type.
+   */
   public pipe<A>(ab: PipeFn<this, A>): A
   public pipe<A, B>(ab: PipeFn<this, A>, bc: PipeFn<A, B>): B
   public pipe<A, B, C>(ab: PipeFn<this, A>, bc: PipeFn<A, B>, cd: PipeFn<B, C>): C

@@ -44,6 +44,7 @@ const requiredFiles = [
   "dist/index.d.ts",
   "dist/index.js",
   "package.json",
+  "schema.json",
 ] as const;
 
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
@@ -162,6 +163,14 @@ const help = execFileSync(process.execPath, [join(rootDir, "dist/cli.js"), "help
   encoding: "utf8",
 });
 
+const schema = JSON.parse(readFileSync(join(rootDir, "schema.json"), "utf8")) as {
+  readonly properties?: { readonly compilerOptions?: unknown };
+};
+
+if (schema.properties?.compilerOptions === undefined) {
+  throw new Error("Check package schema must describe tsconfig compilerOptions");
+}
+
 if (!help.includes("Usage: resultar-check")) {
   throw new Error("Check binary help output is missing expected usage text");
 }
@@ -174,9 +183,22 @@ const removedCheck = spawnSync(process.execPath, [join(rootDir, "dist/cli.js"), 
 
 if (
   removedCheck.status !== 1 ||
-  !`${removedCheck.stdout}${removedCheck.stderr}`.includes("The check subcommand was removed")
+  !`${removedCheck.stdout}${removedCheck.stderr}`.includes("Use resultar-check")
 ) {
   throw new Error("Check binary should reject the removed check subcommand");
+}
+
+const bareCheck = spawnSync(process.execPath, [join(rootDir, "dist/cli.js")], {
+  cwd: rootDir,
+  encoding: "utf8",
+  stdio: ["ignore", "pipe", "pipe"],
+});
+
+if (
+  bareCheck.status !== 0 ||
+  `${bareCheck.stdout}${bareCheck.stderr}`.includes("Usage: resultar-check")
+) {
+  throw new Error("Check binary should run diagnostics with default arguments");
 }
 
 const packageRootEntrypoint = getPluginInitializer(
@@ -274,7 +296,7 @@ for (const file of requiredFiles) {
 }
 
 const allowedPackedFile =
-  /^(?:LICENSE|README\.md|package\.json|dist\/[^/]+\.(?:cjs|js|d\.ts|map))$/;
+  /^(?:LICENSE|README\.md|package\.json|schema\.json|dist\/[^/]+\.(?:cjs|js|d\.ts|map))$/;
 const unexpectedFiles = packedFiles.filter((file: string) => !allowedPackedFile.test(file));
 
 if (unexpectedFiles.length > 0) {
