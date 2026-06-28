@@ -30,13 +30,14 @@ The package `tsconfig.json` enables every Resultar rule as an error and opts int
   "noDiscardMode": "must-use",
   "noUnsafeAwait": "error",
   "noUnsafeAwaitMode": "all",
-  "noUnsafeAwaitIgnoreCalls": ["fastify.after"]
+  "noUnsafeAwaitIgnoreCalls": ["startServer", "fastify.after"]
 }
 ```
 
 That means the example covers both normal Resultar contexts and broader framework/bootstrap awaits.
-`fastify.after` is intentionally ignored to document the exact call-path escape hatch: `fastify.after`
-is allowed, while `fastify.ready`, `app.after`, and unrelated raw Promise awaits are still reported.
+`startServer` and `fastify.after` are intentionally ignored to document the exact call-path escape
+hatch: those exact calls are allowed, while `fastify.ready`, `app.after`, and unrelated raw Promise
+awaits are still reported.
 
 The smoke test verifies that every configured Resultar rule is reported through TypeScript 7 and that
 `src/resultar-clean.ts` has no diagnostics.
