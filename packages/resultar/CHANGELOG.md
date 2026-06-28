@@ -1,5 +1,13 @@
 # resultar
 
+## 3.4.0
+
+### Minor Changes
+
+- 1e558ec: Add `runSync` and `runPromise` helpers for explicit final Resultar boundaries.
+
+  Add `noUnsafeAwaitIgnoreCalls` to `resultar-check` so projects can configure exact call paths, such as `fastify.after`, that should be ignored by `resultar/no-unsafe-await`.
+
 ## 3.3.1
 
 ### Patch Changes
