@@ -189,6 +189,25 @@ export const unsafeResultTypeAssertionExample = (
 export const preferTaggedErrorExample = (): Result<User, Error> =>
   err(new Error("Use createTaggedError for domain errors"));
 
+type RecordIdParts = {
+  readonly id: string;
+  readonly table: string;
+};
+
+// resultar/prefer-tagged-error: throwing new Error(...) also loses stable tags
+// and typed metadata. Convert throwing helpers to Resultar boundaries or throw a
+// createTaggedError instance when a throw boundary is intentional.
+export const preferTaggedErrorThrowExample = (
+  value: unknown,
+  table: string,
+): RecordIdParts => {
+  if (typeof value === "string") {
+    return { id: value, table };
+  }
+
+  throw new Error(`Invalid record id for table ${table}: ${String(value)}`);
+};
+
 // Use LegacyDomainError so the native Error subclass stays live in this example.
 export const legacyErrorInstance = new LegacyDomainError("legacy");
 

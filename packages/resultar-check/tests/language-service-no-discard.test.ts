@@ -18,7 +18,11 @@ type CreateLanguageServicePlugin = (modules: { readonly typescript: typeof ts })
 type GetProgramNoDiscardDiagnostics = (
   tsApi: typeof ts,
   program: ts.Program,
-  options?: { readonly noDiscard: "error" | "off"; readonly noDiscardMode?: "direct" | "must-use" },
+  options?: {
+    readonly ignoreFilePatterns?: readonly string[];
+    readonly noDiscard: "error" | "off";
+    readonly noDiscardMode?: "direct" | "must-use";
+  },
 ) => readonly ts.Diagnostic[];
 
 interface LoadedLanguageServiceModules {
@@ -83,8 +87,8 @@ const createFixtureProgram = async (source: string): Promise<ts.Program> => {
 const createLanguageService = (
   source: string,
   config: Record<string, unknown> = { noDiscard: "error" },
+  fileName = join(process.cwd(), "fixture.ts"),
 ): ts.LanguageService => {
-  const fileName = join(process.cwd(), "fixture.ts");
   const compilerOptions: ts.CompilerOptions = {
     module: ts.ModuleKind.NodeNext,
     moduleResolution: ts.ModuleResolutionKind.NodeNext,
@@ -187,7 +191,10 @@ describe("Resultar language-service no-discard diagnostics", () => {
   });
 
   it("reports no-discard diagnostics through the TypeScript language service plugin", () => {
-    const languageService = createLanguageService(sourceWithDiscardCases);
+    const languageService = createLanguageService(sourceWithDiscardCases, {
+      noDiscard: "error",
+      preferTaggedError: "off",
+    });
     const diagnostics = languageService.getSemanticDiagnostics(join(process.cwd(), "fixture.ts"));
     const resultarDiagnostics = diagnostics.filter(
       (diagnostic) => diagnostic.source === "resultar",
@@ -197,6 +204,21 @@ describe("Resultar language-service no-discard diagnostics", () => {
       resultarDiagnostics.map((diagnostic) => diagnostic.code),
       [91_001, 91_001],
     );
+  });
+
+  it("ignores files matching configured ignoreFilePatterns through the language service", () => {
+    const fileName = join(process.cwd(), "fixture.test.ts");
+    const languageService = createLanguageService(
+      sourceWithDiscardCases,
+      { ignoreFilePatterns: ["*.test.ts"], noDiscard: "error" },
+      fileName,
+    );
+    const diagnostics = languageService.getSemanticDiagnostics(fileName);
+    const resultarDiagnostics = diagnostics.filter(
+      (diagnostic) => diagnostic.source === "resultar",
+    );
+
+    deepEqual(resultarDiagnostics, []);
   });
 
   it("reports assigned-but-unhandled Result values by default", async () => {

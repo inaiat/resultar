@@ -90,6 +90,11 @@ assertIncludes(
   "assigned to `unhandled`",
   "Expected check command to report must-use assignment diagnostics",
 );
+assertIncludes(
+  lint.output,
+  "throwing `new Error(...)`",
+  "Expected check command to report thrown native Error diagnostics",
+);
 
 for (const rule of expectedRules) {
   assertIncludes(lint.output, rule, `Expected check command to report ${rule}`);

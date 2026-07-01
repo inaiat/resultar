@@ -776,6 +776,30 @@ describe("Resultar lint rules", () => {
     equal(findings[0]?.rule, "prefer-tagged-error");
   });
 
+  it("flags native Error instances thrown directly", async () => {
+    const findings = await runRule(
+      "prefer-tagged-error",
+      `
+        type RecordIdParts = { readonly table: string; readonly id: string }
+
+        export const coerceRecordIdParts = (
+          value: unknown,
+          table: string,
+        ): RecordIdParts => {
+          if (typeof value === "string") {
+            return { table, id: value }
+          }
+
+          throw new Error(\`Invalid record id for table \${table}: \${String(value)}\`)
+        }
+      `,
+    );
+
+    equal(findings.length, 1);
+    equal(findings[0]?.rule, "prefer-tagged-error");
+    isTrue(findings[0]?.message.includes("throwing `new Error(...)`"));
+  });
+
   it("allows err calls without a native Error instance", async () => {
     const findings = await runRule(
       "prefer-tagged-error",

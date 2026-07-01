@@ -8,6 +8,7 @@ import {
   normalizeNoDiscardMode,
   unwrapExpression,
 } from "./result-usage-core.js";
+import { normalizeIgnoreFilePatterns, shouldInspectSourceFile } from "./source-files.js";
 
 type TypeScriptApi = typeof ts;
 
@@ -15,7 +16,7 @@ type EnabledRuleSeverity = Exclude<ResultarRuleSeverity, "off">;
 export type NoUnsafeAwaitMode = "all" | "resultar-context";
 type ResultarRuleOptionName = Exclude<
   keyof ResultarRulesOptions,
-  "noDiscardMode" | "noUnsafeAwaitIgnoreCalls" | "noUnsafeAwaitMode"
+  "ignoreFilePatterns" | "noDiscardMode" | "noUnsafeAwaitIgnoreCalls" | "noUnsafeAwaitMode"
 >;
 type MutableResultarRulesOptions = {
   -readonly [Key in keyof ResultarRulesOptions]?: ResultarRulesOptions[Key];
@@ -44,6 +45,7 @@ type SafeTryBody =
   | ts.MethodDeclaration;
 
 export interface ResultarRulesOptions {
+  readonly ignoreFilePatterns: readonly string[];
   readonly noDiscard: ResultarRuleSeverity;
   readonly noDiscardMode: NoDiscardMode;
   readonly noTaggedErrorConstructorOverride: ResultarRuleSeverity;
@@ -92,6 +94,7 @@ export const ruleOptionNameByRule: Record<ResultarRuleName, ResultarRuleOptionNa
 };
 
 export const defaultResultarRulesOptions: ResultarRulesOptions = {
+  ignoreFilePatterns: [],
   noDiscard: "error",
   noDiscardMode: "must-use",
   noTaggedErrorConstructorOverride: "warning",
@@ -168,6 +171,7 @@ export const normalizeNoUnsafeAwaitIgnoreCalls = (value: unknown): readonly stri
 export const normalizeResultarRulesOptions = (
   options: Partial<ResultarRulesOptions> = {},
 ): ResultarRulesOptions => ({
+  ignoreFilePatterns: normalizeIgnoreFilePatterns(options.ignoreFilePatterns),
   noDiscard: normalizeRuleSeverity(options.noDiscard, defaultResultarRulesOptions.noDiscard),
   noDiscardMode: normalizeNoDiscardMode(options.noDiscardMode),
   noTaggedErrorConstructorOverride: normalizeRuleSeverity(
@@ -847,6 +851,14 @@ const classExtendsNativeError = (tsApi: TypeScriptApi, node: ts.ClassDeclaration
       ),
   );
 
+const isNativeErrorInstance = (tsApi: TypeScriptApi, expression: ts.Expression): boolean => {
+  const unwrapped = unwrapExpression(tsApi, expression);
+
+  return (
+    tsApi.isNewExpression(unwrapped) && getExpressionName(tsApi, unwrapped.expression) === "Error"
+  );
+};
+
 const getFirstResultErrorTypes = (
   context: RuleContext,
   node: ts.Node,
@@ -1252,6 +1264,22 @@ const getPreferTaggedErrorFindings = (
       return;
     }
 
+    if (context.tsApi.isThrowStatement(node) && node.expression !== undefined) {
+      if (isNativeErrorInstance(context.tsApi, node.expression)) {
+        findings.push(
+          createFinding(
+            context,
+            node.expression,
+            "prefer-tagged-error",
+            severity,
+            "Prefer a `createTaggedError` instance over throwing `new Error(...)` so failures keep a stable tag and typed metadata.",
+          ),
+        );
+      }
+
+      return;
+    }
+
     if (
       !context.tsApi.isCallExpression(node) ||
       getExpressionName(context.tsApi, node.expression) !== "err"
@@ -1265,12 +1293,7 @@ const getPreferTaggedErrorFindings = (
       return;
     }
 
-    const unwrappedErrorArgument = unwrapExpression(context.tsApi, errorArgument);
-
-    if (
-      context.tsApi.isNewExpression(unwrappedErrorArgument) &&
-      getExpressionName(context.tsApi, unwrappedErrorArgument.expression) === "Error"
-    ) {
+    if (isNativeErrorInstance(context.tsApi, errorArgument)) {
       findings.push(
         createFinding(
           context,
@@ -1396,6 +1419,11 @@ export const getSourceFileResultarFindings = (
   options: Partial<ResultarRulesOptions> = {},
 ): readonly ResultarLintFinding[] => {
   const normalizedOptions = normalizeResultarRulesOptions(options);
+
+  if (!shouldInspectSourceFile(sourceFile, normalizedOptions)) {
+    return [];
+  }
+
   const context: RuleContext = { checker, sourceFile, tsApi };
   const findings: ResultarLintFinding[] = [];
   const noDiscardSeverity = getRuleSeverity(normalizedOptions, "no-discard");
@@ -1457,14 +1485,13 @@ export const getProgramResultarFindings = (
 ): readonly ResultarLintFinding[] => {
   const checker = program.getTypeChecker();
   const findings: ResultarLintFinding[] = [];
+  const normalizedOptions = normalizeResultarRulesOptions(options);
 
   for (const sourceFile of program.getSourceFiles()) {
-    if (
-      !sourceFile.isDeclarationFile &&
-      !sourceFile.fileName.includes("/node_modules/") &&
-      !sourceFile.fileName.includes("\\node_modules\\")
-    ) {
-      findings.push(...getSourceFileResultarFindings(tsApi, checker, sourceFile, options));
+    if (shouldInspectSourceFile(sourceFile, normalizedOptions)) {
+      findings.push(
+        ...getSourceFileResultarFindings(tsApi, checker, sourceFile, normalizedOptions),
+      );
     }
   }
 

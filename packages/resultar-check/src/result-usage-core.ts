@@ -1,12 +1,13 @@
 import type * as ts from "typescript";
 
 import type { ResultarLintFinding } from "./finding.js";
+import { shouldInspectSourceFile, type SourceFileFilterOptions } from "./source-files.js";
 
 type TypeScriptApi = typeof ts;
 
 export type NoDiscardMode = "direct" | "must-use";
 
-export interface NoDiscardRuleOptions {
+export interface NoDiscardRuleOptions extends SourceFileFilterOptions {
   readonly mode?: NoDiscardMode;
 }
 
@@ -588,6 +589,10 @@ export const getSourceFileNoDiscardFindings = (
   sourceFile: ts.SourceFile,
   options: NoDiscardRuleOptions = {},
 ): readonly NoDiscardFinding[] => {
+  if (!shouldInspectSourceFile(sourceFile, options)) {
+    return [];
+  }
+
   const context: RuleContext = { checker, sourceFile, tsApi };
   const mode = normalizeNoDiscardMode(options.mode);
   const directFindings = getDirectFindings(context);
@@ -604,11 +609,7 @@ export const getProgramNoDiscardFindings = (
   const findings: NoDiscardFinding[] = [];
 
   for (const sourceFile of program.getSourceFiles()) {
-    if (
-      !sourceFile.isDeclarationFile &&
-      !sourceFile.fileName.includes("/node_modules/") &&
-      !sourceFile.fileName.includes("\\node_modules\\")
-    ) {
+    if (shouldInspectSourceFile(sourceFile, options)) {
       findings.push(...getSourceFileNoDiscardFindings(tsApi, checker, sourceFile, options));
     }
   }

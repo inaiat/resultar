@@ -2216,7 +2216,13 @@ Configure Resultar rules in `tsconfig.json`:
 ```json
 {
   "compilerOptions": {
-    "plugins": [{ "name": "resultar-check", "noDiscard": "error" }]
+    "plugins": [
+      {
+        "name": "resultar-check",
+        "ignoreFilePatterns": ["*.test.ts"],
+        "noDiscard": "error"
+      }
+    ]
   }
 }
 ```

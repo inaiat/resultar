@@ -7,6 +7,7 @@ import {
   normalizeResultarRulesOptions,
   onlyResultarRule,
 } from "./rules-core.js";
+import { shouldInspectSourceFile } from "./source-files.js";
 
 export const RESULTAR_DIAGNOSTIC_SOURCE = "resultar";
 export const RESULTAR_NO_DISCARD_DIAGNOSTIC_CODE = 91_001;
@@ -40,11 +41,6 @@ export interface ResultarDiagnosticInput {
   readonly sourceFile: ts.SourceFile;
   readonly tsApi: TypeScriptApi;
 }
-
-const isExternalSourceFile = (sourceFile: ts.SourceFile): boolean =>
-  sourceFile.isDeclarationFile ||
-  sourceFile.fileName.includes("/node_modules/") ||
-  sourceFile.fileName.includes("\\node_modules\\");
 
 const getDiagnosticCategory = (
   tsApi: TypeScriptApi,
@@ -87,7 +83,7 @@ export const getResultarDiagnostics = (
 ): readonly ts.Diagnostic[] => {
   const options = normalizeResultarRulesOptions(input.options);
 
-  if (isExternalSourceFile(input.sourceFile)) {
+  if (!shouldInspectSourceFile(input.sourceFile, options)) {
     return [];
   }
 
@@ -116,6 +112,7 @@ export const getNoDiscardDiagnostics = (input: ResultarDiagnosticInput): readonl
     ...input,
     options: {
       ...onlyResultarRule("no-discard", input.options?.noDiscard ?? "error"),
+      ignoreFilePatterns: input.options?.ignoreFilePatterns,
       noDiscardMode: input.options?.noDiscardMode,
     },
   });
@@ -127,5 +124,6 @@ export const getProgramNoDiscardDiagnostics = (
 ): readonly ts.Diagnostic[] =>
   getProgramResultarDiagnostics(tsApi, program, {
     ...onlyResultarRule("no-discard", options.noDiscard ?? "error"),
+    ignoreFilePatterns: options.ignoreFilePatterns,
     noDiscardMode: options.noDiscardMode,
   });

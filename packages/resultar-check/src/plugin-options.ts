@@ -6,6 +6,7 @@ import {
   normalizeNoUnsafeAwaitMode,
   normalizeRuleSeverity,
 } from "./rules-core.js";
+import { normalizeIgnoreFilePatterns } from "./source-files.js";
 
 export type ResultarLanguageServiceOptions = ResultarRulesOptions;
 
@@ -21,6 +22,7 @@ export const parsePluginOptions = (config: unknown): ResultarLanguageServiceOpti
   }
 
   return {
+    ignoreFilePatterns: normalizeIgnoreFilePatterns(config.ignoreFilePatterns),
     noDiscard: normalizeRuleSeverity(config.noDiscard, defaultResultarRulesOptions.noDiscard),
     noDiscardMode: normalizeNoDiscardMode(config.noDiscardMode),
     noTaggedErrorConstructorOverride: normalizeRuleSeverity(

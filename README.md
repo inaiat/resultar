@@ -87,7 +87,13 @@ Configure the Resultar rules in `tsconfig.json`:
 {
   "$schema": "./node_modules/resultar-check/schema.json",
   "compilerOptions": {
-    "plugins": [{ "name": "resultar-check", "noDiscard": "error" }]
+    "plugins": [
+      {
+        "name": "resultar-check",
+        "ignoreFilePatterns": ["*.test.ts"],
+        "noDiscard": "error"
+      }
+    ]
   }
 }
 ```
