@@ -27,7 +27,9 @@ The package `tsconfig.json` enables every Resultar rule as an error and opts int
 ```json
 {
   "name": "resultar-check",
+  "noAwaitInSafeTry": "error",
   "noDiscardMode": "must-use",
+  "noThrow": "error",
   "noUnsafeAwait": "error",
   "noUnsafeAwaitMode": "all",
   "noUnsafeAwaitIgnoreCalls": ["startServer", "fastify.after"]

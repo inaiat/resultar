@@ -134,6 +134,12 @@ export const noUnsafeAwaitRawPromiseBoundaryExample = async (): Promise<User> =>
 export const noUnsafeAwaitResultContextExample = async (): Promise<Result<User, FetchUserError>> =>
   ok(await fetchUser("unsafe-result-context"));
 
+// resultar/no-throw: expected failures should stay in Resultar channels instead
+// of escaping through throw control flow.
+export const noThrowExample = (): never => {
+  throw new SaveUserError({ id: "no-throw" });
+};
+
 const fastify = {
   after: async (): Promise<void> => undefined,
   ready: async (): Promise<void> => undefined,
@@ -180,6 +186,15 @@ export const noTryCatchInSafeTryExample = (): Result<User, SaveUserError> =>
     } catch {
       return SaveUserError.err({ id: "safe-try" });
     }
+  });
+
+// resultar/no-await-in-safe-try: inside safeTry, compose Resultar values with
+// yield*. Awaiting a ResultAsync unwraps the channel into ordinary control flow.
+export const noAwaitInSafeTryExample = (): ResultAsync<User, SaveUserError> =>
+  safeTry(async function* () {
+    const result = await saveUserAsync("await-in-safe-try");
+
+    return result;
   });
 
 // resultar/yield-star-in-safe-try: yield* is what unwraps Resultar values inside
