@@ -1,5 +1,13 @@
 # resultar-check
 
+## 1.1.2
+
+### Patch Changes
+
+- 1f2fa5d: Report `throw new Error(...)` through `resultar/prefer-tagged-error` so raw thrown failures are caught alongside plain Error subclasses and `err(new Error(...))`.
+- dcb03fe: Report `await` on Resultar async values inside raw `Promise<T>` functions when `noUnsafeAwaitMode` is `all`, so application boundaries preserve `ResultAsync` or `Promise<Result>` error channels instead of unwrapping and throwing.
+- 1f2fa5d: Add `ignoreFilePatterns` so projects can suppress Resultar diagnostics for files such as `*.test.ts` while keeping TypeScript checks intact.
+
 ## 1.1.1
 
 ### Patch Changes
