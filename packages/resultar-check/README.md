@@ -187,7 +187,9 @@ functions returning `ResultAsync` or `Promise<Result>`, plus `safeTry` bodies. R
 allowed in async catch helpers such as `tryAsync`, `tryResultAsync`, `tryCatchAsync`, and
 `fromThrowableAsync`; inside `safeTry`, prefer `yield*` with Resultar values. Use
 `noUnsafeAwaitMode: "all"` to also report framework/bootstrap awaits such as Fastify plugin
-registration.
+registration. In `all` mode, the rule also reports `await` on Resultar async values inside raw
+`Promise<T>` functions; return `ResultAsync` or `Promise<Result>` so the failure channel is preserved
+instead of unwrapping and throwing from the Promise boundary.
 
 Use `noUnsafeAwaitIgnoreCalls` for framework lifecycle awaits that a project intentionally allows
 without wrapping in Resultar. Entries are exact source call paths; bare function identifiers and

@@ -116,6 +116,19 @@ export const typedCatchMapperExample = () =>
 export const noUnsafeAwaitAllModeExample = async (): Promise<User> =>
   await fetchUser("unsafe-all-mode");
 
+// resultar/no-unsafe-await: awaiting a Resultar async value inside a raw
+// Promise<User> boundary unwraps the error channel back into thrown errors.
+export const noUnsafeAwaitRawPromiseBoundaryExample = async (): Promise<User> => {
+  const result = await saveUserAsync("raw-promise-boundary");
+
+  return result.match(
+    (user) => user,
+    (error) => {
+      throw error;
+    },
+  );
+};
+
 // resultar/no-unsafe-await: Resultar-returning async functions are checked even
 // in the default resultar-context mode.
 export const noUnsafeAwaitResultContextExample = async (): Promise<Result<User, FetchUserError>> =>

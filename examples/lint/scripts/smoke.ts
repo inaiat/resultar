@@ -95,6 +95,11 @@ assertIncludes(
   "throwing `new Error(...)`",
   "Expected check command to report thrown native Error diagnostics",
 );
+assertIncludes(
+  lint.output,
+  "raw Promise boundary",
+  "Expected check command to report Resultar async unwrapping in raw Promise boundaries",
+);
 
 for (const rule of expectedRules) {
   assertIncludes(lint.output, rule, `Expected check command to report ${rule}`);

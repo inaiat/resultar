@@ -143,6 +143,8 @@ const asyncAwaitBoundaryCallNames = new Set([
   "tryAsync",
 ]);
 
+const resultAsyncTypeNames = new Set(["DisposableResultAsync", "ResultAsync", "StrictResultAsync"]);
+
 export const normalizeRuleSeverity = (
   value: unknown,
   fallback: ResultarRuleSeverity,
@@ -391,6 +393,30 @@ const getMethodCall = (
 const getTypeName = (context: RuleContext, node: ts.Node, type: ts.Type): string =>
   context.checker.typeToString(type, node, context.tsApi.TypeFormatFlags.NoTruncation);
 
+const getSymbolName = (symbol: ts.Symbol | undefined): string | undefined => {
+  if (symbol === undefined) {
+    return undefined;
+  }
+
+  return typeof symbol.escapedName === "string" ? symbol.escapedName : symbol.name;
+};
+
+const getTypeSymbolName = (type: ts.Type): string | undefined => {
+  const aliasName = getSymbolName(type.aliasSymbol);
+
+  if (aliasName !== undefined) {
+    return aliasName;
+  }
+
+  const symbolName = getSymbolName(type.symbol);
+
+  if (symbolName !== undefined) {
+    return symbolName;
+  }
+
+  return getSymbolName((type as ts.TypeReference).target?.symbol);
+};
+
 const getUnionOrIntersectionTypes = (
   context: RuleContext,
   type: ts.Type,
@@ -442,9 +468,10 @@ const isResultAsyncLikeType = (context: RuleContext, node: ts.Node, type: ts.Typ
     );
   }
 
-  return /\b(?:DisposableResultAsync|ResultAsync|StrictResultAsync)\b/.test(
-    getTypeName(context, node, type),
-  );
+  const symbolName = getTypeSymbolName(type);
+
+  void node;
+  return symbolName !== undefined && resultAsyncTypeNames.has(symbolName);
 };
 
 const isResultLikeExpression = (context: RuleContext, expression: ts.Expression): boolean => {
@@ -490,6 +517,27 @@ const getPromisedTypeOfPromise = (
   return checker.getPromisedTypeOfPromise?.(type, node);
 };
 
+const isResultarChannelAwaitExpression = (
+  context: RuleContext,
+  expression: ts.Expression,
+): boolean => {
+  const expressionType = context.checker.getTypeAtLocation(expression);
+
+  if (isResultAsyncLikeAwaitType(context, expression, expressionType)) {
+    return true;
+  }
+
+  const promisedType = getPromisedTypeOfPromise(context, expression, expressionType);
+
+  if (promisedType === undefined) {
+    return false;
+  }
+
+  const awaitedType = context.checker.getAwaitedType(expressionType) ?? promisedType;
+
+  return isResultLikeAwaitedType(context, expression, awaitedType);
+};
+
 const isSafeAwaitExpression = (
   context: RuleContext,
   expression: ts.Expression,
@@ -503,21 +551,13 @@ const isSafeAwaitExpression = (
     return true;
   }
 
+  if (isResultarChannelAwaitExpression(context, expression)) {
+    return true;
+  }
+
   const expressionType = context.checker.getTypeAtLocation(expression);
 
-  if (isResultAsyncLikeAwaitType(context, expression, expressionType)) {
-    return true;
-  }
-
-  const promisedType = getPromisedTypeOfPromise(context, expression, expressionType);
-
-  if (promisedType === undefined) {
-    return true;
-  }
-
-  const awaitedType = context.checker.getAwaitedType(expressionType) ?? promisedType;
-
-  return isResultLikeAwaitedType(context, expression, awaitedType);
+  return getPromisedTypeOfPromise(context, expression, expressionType) === undefined;
 };
 
 function isIgnoredUnsafeAwaitCallExpression(
@@ -1077,21 +1117,28 @@ const getNoUnsafeAwaitFindings = (
     const currentInsideContext = insideResultarContext || startsResultarContext;
     const shouldCheckAwait = mode === "all" || currentInsideContext;
 
-    if (
-      shouldCheckAwait &&
-      context.tsApi.isAwaitExpression(node) &&
-      !currentInsideBoundary &&
-      !isSafeAwaitExpression(context, node.expression, ignoredCallPaths)
-    ) {
-      findings.push(
-        createFinding(
-          context,
-          node,
-          "no-unsafe-await",
-          severity,
-          "Wrap this awaited Promise in tryAsync, tryResultAsync, tryCatchAsync, or fromThrowableAsync so rejections stay in the Resultar error channel.",
-        ),
-      );
+    if (shouldCheckAwait && context.tsApi.isAwaitExpression(node) && !currentInsideBoundary) {
+      if (isResultarChannelAwaitExpression(context, node.expression) && !currentInsideContext) {
+        findings.push(
+          createFinding(
+            context,
+            node,
+            "no-unsafe-await",
+            severity,
+            "Do not unwrap a Resultar async value inside a raw Promise boundary. Return ResultAsync or Promise<Result> so failures stay in the Resultar error channel.",
+          ),
+        );
+      } else if (!isSafeAwaitExpression(context, node.expression, ignoredCallPaths)) {
+        findings.push(
+          createFinding(
+            context,
+            node,
+            "no-unsafe-await",
+            severity,
+            "Wrap this awaited Promise in tryAsync, tryResultAsync, tryCatchAsync, or fromThrowableAsync so rejections stay in the Resultar error channel.",
+          ),
+        );
+      }
     }
 
     if (node !== context.sourceFile && isFunctionLike(context.tsApi, node)) {
