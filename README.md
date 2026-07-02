@@ -136,12 +136,14 @@ pnpm smoke:package
 pnpm test:examples
 ```
 
-Release metadata is managed with Changesets:
+Release metadata is managed with Changesets. Add a changeset with the feature or fix:
 
 ```sh
 pnpm changeset
-pnpm run version:packages
 ```
+
+After the change merges to `main`, the `Release` workflow opens or updates a `Version packages` PR.
+When that PR is merged, CI publishes npm and JSR from the versioned package metadata.
 
 Dry-run publish checks:
 

@@ -15,6 +15,7 @@
     "fmt:check": "pnpm -r --filter './packages/*' run fmt:check",
     "release:jsr": "node scripts/publish-jsr.mjs",
     "release:npm": "node scripts/publish-npm.mjs",
+    "release:publish": "vp run check:full && vp run build && vp run smoke:package && vp run release:npm && vp run release:jsr",
     "smoke:package": "pnpm -r --filter './packages/*' run smoke:package",
     "sync:jsr-version": "node scripts/sync-jsr-versions.mjs && vp fmt packages/resultar/jsr.json packages/resultar-check/jsr.json",
     "test:examples": "pnpm run example:resultar && pnpm run example:resultar-check",
