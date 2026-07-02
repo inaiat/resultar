@@ -170,6 +170,8 @@ still requires explicit plugin configuration with an absolute or package-root `l
 | `resultar/prefer-map-err`                       | `preferMapErr`                     | Prefer `mapErr` when `orElse` only returns another `Err`.                          |
 | `resultar/prefer-and-then`                      | `preferAndThen`                    | Prefer `andThen` / `asyncAndThen` when `map` returns a Resultar value.             |
 | `resultar/typed-catch-mapper`                   | `typedCatchMapper`                 | Require catch conversion helpers to map caught values to typed errors.             |
+| `resultar/no-throw`                             | `noThrow`                          | Disallow `throw` statements so expected failures stay in Resultar error channels.  |
+| `resultar/no-await-in-safe-try`                 | `noAwaitInSafeTry`                 | Disallow `await` inside `safeTry`; use `yield*` for Resultar values.               |
 | `resultar/no-unsafe-await`                      | `noUnsafeAwait`                    | Require raw Promise awaits in Resultar async contexts to use Resultar boundaries.  |
 | `resultar/no-try-catch-in-safe-try`             | `noTryCatchInSafeTry`              | Avoid raw `try/catch` inside `safeTry` generators.                                 |
 | `resultar/yield-star-in-safe-try`               | `yieldStarInSafeTry`               | Require `yield*` for Resultar values inside `safeTry`.                             |
@@ -180,6 +182,16 @@ still requires explicit plugin configuration with an absolute or package-root `l
 | `resultar/no-useless-recovery`                  | `noUselessRecovery`                | Flag recovery calls on `Result<T, never>` / `ResultAsync<T, never>`.               |
 
 Each option accepts `"error"`, `"warning"`, `"suggestion"`, `"message"`, or `"off"`.
+`noThrow` defaults to `"off"` because it is a strict migration rule. Enable it when expected
+domain/application failures should always return `Err`/`errAsync` instead of throwing. It reports all
+`throw` statements in inspected source files, including throws inside `tryResultAsync` boundaries;
+use `ignoreFilePatterns` for test, script, or process-boundary files that intentionally throw.
+
+`noAwaitInSafeTry` defaults to `"warning"` and reports every `await` expression inside an inspectable
+`safeTry` body. Use `yield*` for both `Result` and `ResultAsync` values; wrap raw Promises with a
+Resultar helper before yielding them. Nested functions inside `safeTry` are not inspected by this
+rule.
+
 `noUnsafeAwait` defaults to `"off"` because it is an architectural rule and may require migration in
 existing async code. Enable it explicitly when a project is ready to enforce Resultar async
 boundaries. By default, `noUnsafeAwait` uses `noUnsafeAwaitMode: "resultar-context"` and checks

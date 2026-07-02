@@ -59,6 +59,8 @@ const expectedRules = [
   "resultar/prefer-map-err",
   "resultar/prefer-and-then",
   "resultar/typed-catch-mapper",
+  "resultar/no-throw",
+  "resultar/no-await-in-safe-try",
   "resultar/no-unsafe-await",
   "resultar/no-try-catch-in-safe-try",
   "resultar/yield-star-in-safe-try",

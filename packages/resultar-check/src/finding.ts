@@ -1,6 +1,8 @@
 export type ResultarRuleName =
   | "no-discard"
+  | "no-await-in-safe-try"
   | "no-tagged-error-constructor-override"
+  | "no-throw"
   | "no-try-catch-in-safe-try"
   | "no-unsafe-await"
   | "no-useless-recovery"

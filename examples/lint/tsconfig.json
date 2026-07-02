@@ -12,8 +12,10 @@
     "plugins": [
       {
         "name": "resultar-check",
+        "noAwaitInSafeTry": "error",
         "noDiscard": "error",
         "noTaggedErrorConstructorOverride": "error",
+        "noThrow": "error",
         "noTryCatchInSafeTry": "error",
         "noUnsafeAwait": "error",
         "noUnsafeAwaitIgnoreCalls": ["startServer", "fastify.after"],

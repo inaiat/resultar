@@ -150,8 +150,10 @@ describe("lint CLI and integration edges", () => {
 
     const parsed = parsePluginOptions({
       ignoreFilePatterns: ["*.test.ts"],
+      noAwaitInSafeTry: "error",
       noDiscard: "off",
       noDiscardMode: "direct",
+      noThrow: "error",
       noUnsafeAwaitIgnoreCalls: ["startServer", "fastify.after"],
       noUnsafeAwaitMode: "all",
       preferTaggedError: "suggestion",
@@ -159,25 +161,33 @@ describe("lint CLI and integration edges", () => {
     });
 
     deepEqual(parsed.ignoreFilePatterns, ["*.test.ts"]);
+    equal(parsed.noAwaitInSafeTry, "error");
     equal(parsed.noDiscard, "off");
     equal(parsed.noDiscardMode, "direct");
+    equal(parsed.noThrow, "error");
     deepEqual(parsed.noUnsafeAwaitIgnoreCalls, ["startServer", "fastify.after"]);
     equal(parsed.noUnsafeAwaitMode, "all");
     equal(parsed.preferTaggedError, "suggestion");
     equal(parsed.typedCatchMapper, "message");
 
     const fallback = parsePluginOptions("not an object");
+    equal(fallback.noAwaitInSafeTry, defaultResultarRulesOptions.noAwaitInSafeTry);
     equal(fallback.noDiscard, defaultResultarRulesOptions.noDiscard);
+    equal(fallback.noThrow, defaultResultarRulesOptions.noThrow);
 
     const normalized = normalizeResultarRulesOptions({
       ignoreFilePatterns: ["*.test.ts"],
+      noAwaitInSafeTry: "message",
       noDiscard: "off",
+      noThrow: "warning",
       noUnsafeAwaitIgnoreCalls: ["startServer", "fastify.after"],
       noUnsafeAwaitMode: "all",
       preferMapErr: "suggestion",
     });
     deepEqual(normalized.ignoreFilePatterns, ["*.test.ts"]);
+    equal(normalized.noAwaitInSafeTry, "message");
     equal(normalized.noDiscard, "off");
+    equal(normalized.noThrow, "warning");
     deepEqual(normalized.noUnsafeAwaitIgnoreCalls, ["startServer", "fastify.after"]);
     equal(normalized.noUnsafeAwaitMode, "all");
     equal(normalized.preferMapErr, "suggestion");
