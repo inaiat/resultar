@@ -34,7 +34,7 @@ jobs:
         run: vp install --frozen-lockfile
 
       - name: Version packages or publish
-        uses: changesets/action@v2
+        uses: changesets/action@v1
         with:
           version-script: vp run version:packages
           publish-script: vp run release:publish
