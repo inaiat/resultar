@@ -1,0 +1,29 @@
+{
+  "name": "resultar-request-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "resultar-check",
+    "prepare": "pnpm --filter resultar build && pnpm --filter resultar-check build && pnpm --filter resultar-request build && pnpm --filter resultar-request-typebox build && pnpm --filter resultar-request-zod build",
+    "server": "pnpm run prepare && tsx scripts/server.ts",
+    "server:smoke": "pnpm run prepare && tsx scripts/smoke.ts",
+    "smoke": "pnpm run prepare && pnpm run check && tsx scripts/smoke.ts",
+    "start": "pnpm run server",
+    "typebox": "pnpm run prepare && tsx src/typebox.ts",
+    "zod": "pnpm run prepare && tsx src/zod.ts"
+  },
+  "dependencies": {
+    "resultar": "workspace:*",
+    "resultar-check": "workspace:*",
+    "resultar-request": "workspace:*",
+    "resultar-request-typebox": "workspace:*",
+    "resultar-request-zod": "workspace:*",
+    "typebox": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
+    "typescript-7": "catalog:"
+  }
+}

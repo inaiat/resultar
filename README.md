@@ -12,11 +12,14 @@ difficult to ignore.
 
 ## Packages
 
-| Package         | Purpose                                                                                                                            | Documentation                                                                 |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `resultar`      | Core `Result<T, E>` and `ResultAsync<T, E>` library with tagged errors, typed async helpers, redaction, and strict result aliases. | [package README](packages/resultar/README.md), [full guide](DOCUMENTATION.md) |
-| `resultar-check` | TypeScript 7 `tsc` plus Resultar diagnostics.                                                                                      | [check README](packages/resultar-check/README.md)                              |
-| `resultar-tsgo` | Deprecated compatibility wrapper for older `resultar-check` installs.                                                              | [deprecated README](packages/resultar-tsgo/README.md)                         |
+| Package                    | Purpose                                                                                                                            | Documentation                                                                 |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `resultar`                 | Core `Result<T, E>` and `ResultAsync<T, E>` library with tagged errors, typed async helpers, redaction, and strict result aliases. | [package README](packages/resultar/README.md), [full guide](DOCUMENTATION.md) |
+| `resultar-check`           | TypeScript 7 `tsc` plus Resultar diagnostics.                                                                                      | [check README](packages/resultar-check/README.md)                             |
+| `resultar-request`         | Fetch-first JSON request helper with Resultar errors, validation, retry, and error mapping.                                        | [request README](packages/resultar-request/README.md)                         |
+| `resultar-request-typebox` | TypeBox adapter for `resultar-request`.                                                                                            | [TypeBox adapter README](packages/resultar-request-typebox/README.md)         |
+| `resultar-request-zod`     | Zod adapter for `resultar-request`.                                                                                                | [Zod adapter README](packages/resultar-request-zod/README.md)                 |
+| `resultar-tsgo`            | Deprecated compatibility wrapper for older `resultar-check` installs.                                                              | [deprecated README](packages/resultar-tsgo/README.md)                         |
 
 ## Main Library
 
@@ -112,10 +115,11 @@ If a project cannot replace its `typescript` package yet and only needs the CLI 
 
 ## Examples
 
-| Example                                  | Surface                     | What it validates                                                                 |
-| ---------------------------------------- | --------------------------- | --------------------------------------------------------------------------------- |
-| [examples/resultar](examples/resultar)   | Core Resultar cookbook      | Sync validation, `safeTry`, tagged errors, async resilience, and resource cleanup |
-| [examples/lint](examples/lint)           | TypeScript 7 Resultar check | `resultar-check` plus the full Resultar rule set                                  |
+| Example                                                | Surface                     | What it validates                                                                 |
+| ------------------------------------------------------ | --------------------------- | --------------------------------------------------------------------------------- |
+| [examples/resultar](examples/resultar)                 | Core Resultar cookbook      | Sync validation, `safeTry`, tagged errors, async resilience, and resource cleanup |
+| [examples/lint](examples/lint)                         | TypeScript 7 Resultar check | `resultar-check` plus the full Resultar rule set                                  |
+| [examples/resultar-request](examples/resultar-request) | Request helpers             | Fetch-style JSON calls with TypeBox and Zod adapters                              |
 
 The deprecated `resultar-tsgo` package remains only as a compatibility wrapper.
 

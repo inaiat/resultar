@@ -33,6 +33,11 @@ export class ReadConfigError extends createTaggedError({
   message: "Could not read config from $source",
 }) {}
 
+class MissingConfigError extends createTaggedError({
+  name: "MissingConfigError",
+  message: "Missing config from $source",
+}) {}
+
 export type ConfigError = ConfigShapeError | ParseConfigError | ReadConfigError;
 
 const isAppConfig = (input: unknown): input is AppConfig => {
@@ -72,7 +77,7 @@ export const parseConfigWithReusableWrapper = (
 
 const readConfigText = async (source: string): Promise<string> => {
   if (source === "missing") {
-    throw new Error("missing config");
+    throw new MissingConfigError({ source });
   }
 
   if (source === "bad-json") {

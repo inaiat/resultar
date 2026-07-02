@@ -27,6 +27,9 @@ catalogs:
     tsx:
       specifier: 4.22.4
       version: 4.22.4
+    typebox:
+      specifier: 1.3.3
+      version: 1.3.3
     typescript-7:
       specifier: npm:typescript@rc
       version: 7.0.1-rc
@@ -36,6 +39,9 @@ catalogs:
     vitest:
       specifier: 4.1.9
       version: 4.1.9
+    zod:
+      specifier: 4.4.3
+      version: 4.4.3
 
 importers:
 
@@ -91,6 +97,40 @@ importers:
       resultar-check:
         specifier: workspace:*
         version: link:../../packages/resultar-check
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.0.0
+      tsx:
+        specifier: 'catalog:'
+        version: 4.22.4
+      typescript-7:
+        specifier: 'catalog:'
+        version: typescript@7.0.1-rc
+
+  examples/resultar-request:
+    dependencies:
+      resultar:
+        specifier: workspace:*
+        version: link:../../packages/resultar
+      resultar-check:
+        specifier: workspace:*
+        version: link:../../packages/resultar-check
+      resultar-request:
+        specifier: workspace:*
+        version: link:../../packages/resultar-request
+      resultar-request-typebox:
+        specifier: workspace:*
+        version: link:../../packages/resultar-request-typebox
+      resultar-request-zod:
+        specifier: workspace:*
+        version: link:../../packages/resultar-request-zod
+      typebox:
+        specifier: 'catalog:'
+        version: 1.3.3
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -175,6 +215,93 @@ importers:
       vite-plus:
         specifier: 'catalog:'
         version: 0.2.1(@types/node@26.0.0)(@vitest/coverage-v8@4.1.9)(@vitest/ui@4.1.9)(esbuild@0.28.1)(tsx@4.22.4)(typescript@6.0.3)(vite@8.0.16(@types/node@26.0.0)(esbuild@0.28.1)(tsx@4.22.4))
+
+  packages/resultar-request:
+    dependencies:
+      resultar:
+        specifier: workspace:*
+        version: link:../resultar
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.0.0
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 4.1.9(@vitest/browser@4.1.9)(vitest@4.1.9)
+      '@vitest/ui':
+        specifier: 'catalog:'
+        version: 4.1.9(vitest@4.1.9)
+      tsx:
+        specifier: 'catalog:'
+        version: 4.22.4
+      vite-plus:
+        specifier: 'catalog:'
+        version: 0.2.1(@types/node@26.0.0)(@vitest/coverage-v8@4.1.9)(@vitest/ui@4.1.9)(esbuild@0.28.1)(tsx@4.22.4)(typescript@6.0.3)(vite@8.0.16(@types/node@26.0.0)(esbuild@0.28.1)(tsx@4.22.4))
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.9(@types/node@26.0.0)(@vitest/browser-preview@4.1.9)(@vitest/coverage-v8@4.1.9)(@vitest/ui@4.1.9)(vite@8.0.16(@types/node@26.0.0)(esbuild@0.28.1)(tsx@4.22.4))
+
+  packages/resultar-request-typebox:
+    dependencies:
+      resultar:
+        specifier: workspace:*
+        version: link:../resultar
+      resultar-request:
+        specifier: workspace:*
+        version: link:../resultar-request
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.0.0
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 4.1.9(@vitest/browser@4.1.9)(vitest@4.1.9)
+      '@vitest/ui':
+        specifier: 'catalog:'
+        version: 4.1.9(vitest@4.1.9)
+      tsx:
+        specifier: 'catalog:'
+        version: 4.22.4
+      typebox:
+        specifier: 'catalog:'
+        version: 1.3.3
+      vite-plus:
+        specifier: 'catalog:'
+        version: 0.2.1(@types/node@26.0.0)(@vitest/coverage-v8@4.1.9)(@vitest/ui@4.1.9)(esbuild@0.28.1)(tsx@4.22.4)(typescript@6.0.3)(vite@8.0.16(@types/node@26.0.0)(esbuild@0.28.1)(tsx@4.22.4))
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.9(@types/node@26.0.0)(@vitest/browser-preview@4.1.9)(@vitest/coverage-v8@4.1.9)(@vitest/ui@4.1.9)(vite@8.0.16(@types/node@26.0.0)(esbuild@0.28.1)(tsx@4.22.4))
+
+  packages/resultar-request-zod:
+    dependencies:
+      resultar:
+        specifier: workspace:*
+        version: link:../resultar
+      resultar-request:
+        specifier: workspace:*
+        version: link:../resultar-request
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.0.0
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 4.1.9(@vitest/browser@4.1.9)(vitest@4.1.9)
+      '@vitest/ui':
+        specifier: 'catalog:'
+        version: 4.1.9(vitest@4.1.9)
+      tsx:
+        specifier: 'catalog:'
+        version: 4.22.4
+      vite-plus:
+        specifier: 'catalog:'
+        version: 0.2.1(@types/node@26.0.0)(@vitest/coverage-v8@4.1.9)(@vitest/ui@4.1.9)(esbuild@0.28.1)(tsx@4.22.4)(typescript@6.0.3)(vite@8.0.16(@types/node@26.0.0)(esbuild@0.28.1)(tsx@4.22.4))
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.9(@types/node@26.0.0)(@vitest/browser-preview@4.1.9)(@vitest/coverage-v8@4.1.9)(@vitest/ui@4.1.9)(vite@8.0.16(@types/node@26.0.0)(esbuild@0.28.1)(tsx@4.22.4))
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
 
   packages/resultar-tsgo:
     dependencies:
@@ -2491,6 +2618,9 @@ packages:
     resolution: {integrity: sha512-1h/Lnq9yajKY2PEbBadPXj3VxsDDu844OnaAo52UVmIzIvwwtBPIuNvkjuzBlTWpfJyUbG3ez0KSBibQkj4ojg==}
     engines: {node: '>=0.6.11 <=0.7.0 || >=0.7.3'}
 
+  typebox@1.3.3:
+    resolution: {integrity: sha512-URXGUE31PJDQC+PtRMJeLdF4kmmOdFoVPikPCtV2oOIhUpNpppEdIz7W8bH8cFYPYHdDpaRvqwdegMTmHliudg==}
+
   typed-inject@5.0.0:
     resolution: {integrity: sha512-0Ql2ORqBORLMdAW89TQKZsb1PQkFGImFfVmncXWe7a+AA3+7dh7Se9exxZowH4kbnlvKEFkMxUYdHUpjYWFJaA==}
     engines: {node: '>=18'}
@@ -4703,6 +4833,8 @@ snapshots:
       fsevents: 2.3.3
 
   tunnel@0.0.6: {}
+
+  typebox@1.3.3: {}
 
   typed-inject@5.0.0: {}
 
