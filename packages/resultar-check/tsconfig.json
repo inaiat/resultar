@@ -10,6 +10,9 @@
     "forceConsistentCasingInFileNames": true,
     "isolatedDeclarations": true,
     "isolatedModules": true,
+    "plugins": [
+      { "name": "resultar-check", "ignoreFilePatterns": ["scripts/**/*.ts", "tests/**/*.ts"] }
+    ],
     "moduleDetection": "force",
     "noEmit": true,
     "noUncheckedIndexedAccess": true,

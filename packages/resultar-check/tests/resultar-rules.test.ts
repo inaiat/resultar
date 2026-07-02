@@ -503,11 +503,12 @@ describe("Resultar lint rules", () => {
     equal(findings[0]?.rule, "no-unsafe-await");
   });
 
-  it("allows awaits for Resultar-safe values", async () => {
+  it("allows awaits for Resultar-safe values inside Resultar async contexts", async () => {
     const findings = await runRule(
       "no-unsafe-await",
       `
         type Result<T, E> = { readonly value?: T; readonly error?: E }
+        declare function ok<T, E = never>(value: T): Result<T, E>
 
         class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
           then<TResult1 = Result<T, E>, TResult2 = never>(
@@ -522,18 +523,68 @@ describe("Resultar lint rules", () => {
         declare function promiseReturningResult(): Promise<Result<string, Error>>
         declare function runPromise<T, E>(result: ResultAsync<T, E>): Promise<T>
 
-        async function run() {
+        async function run(): Promise<Result<readonly unknown[], Error>> {
           const first = await resultAsync
           const second = await promiseReturningResult()
           const third = await runPromise(resultAsync)
           const value = await 1
-          return [first, second, third, value]
+          return ok([first, second, third, value])
         }
       `,
       { noUnsafeAwaitMode: "all" },
     );
 
     deepEqual(findings, []);
+  });
+
+  it("flags Resultar async awaits that unwrap into raw Promise boundaries", async () => {
+    const findings = await runRule(
+      "no-unsafe-await",
+      `
+        type Result<T, E> = {
+          isErr(): boolean
+          readonly error: E
+          readonly value?: T
+        }
+
+        class StrictResultAsync<T, E> implements PromiseLike<Result<T, E>> {
+          then<TResult1 = Result<T, E>, TResult2 = never>(
+            onfulfilled?: ((value: Result<T, E>) => TResult1 | PromiseLike<TResult1>) | null,
+            onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+          ): PromiseLike<TResult1 | TResult2> {
+            throw new Error("test fixture")
+          }
+        }
+
+        declare function configureLogging(): StrictResultAsync<void, Error>
+        declare function connectDatabase(): StrictResultAsync<string, Error>
+
+        export const createApp = async (): Promise<{
+          readonly container: { readonly connect: () => StrictResultAsync<string, Error> }
+          readonly port: number
+        }> => {
+          const loggingResult = await configureLogging()
+          if (loggingResult.isErr()) {
+            throw loggingResult.error
+          }
+
+          const connectionResult = await connectDatabase()
+          if (connectionResult.isErr()) {
+            throw connectionResult.error
+          }
+
+          return { container: { connect: connectDatabase }, port: 3000 }
+        }
+      `,
+      { noUnsafeAwaitMode: "all" },
+    );
+
+    equal(findings.length, 2);
+    deepEqual(
+      findings.map((finding) => finding.rule),
+      ["no-unsafe-await", "no-unsafe-await"],
+    );
+    isTrue(findings[0]?.message.includes("raw Promise boundary"));
   });
 
   it("does not treat runPromise with plain promises as a Resultar-safe await", async () => {
@@ -774,6 +825,30 @@ describe("Resultar lint rules", () => {
 
     equal(findings.length, 1);
     equal(findings[0]?.rule, "prefer-tagged-error");
+  });
+
+  it("flags native Error instances thrown directly", async () => {
+    const findings = await runRule(
+      "prefer-tagged-error",
+      `
+        type RecordIdParts = { readonly table: string; readonly id: string }
+
+        export const coerceRecordIdParts = (
+          value: unknown,
+          table: string,
+        ): RecordIdParts => {
+          if (typeof value === "string") {
+            return { table, id: value }
+          }
+
+          throw new Error(\`Invalid record id for table \${table}: \${String(value)}\`)
+        }
+      `,
+    );
+
+    equal(findings.length, 1);
+    equal(findings[0]?.rule, "prefer-tagged-error");
+    isTrue(findings[0]?.message.includes("throwing `new Error(...)`"));
   });
 
   it("allows err calls without a native Error instance", async () => {

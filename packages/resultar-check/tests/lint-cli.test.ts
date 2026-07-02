@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deepEqual, equal, match, ok } from "node:assert";
+import { deepEqual, doesNotMatch, equal, match, ok } from "node:assert";
 
 import { afterEach, describe, it } from "vite-plus/test";
 import * as ts from "typescript";
@@ -20,6 +20,7 @@ import {
   normalizeResultarRulesOptions,
   normalizeRuleSeverity,
 } from "../src/rules-core.js";
+import { isIgnoredFileName, normalizeIgnoreFilePatterns } from "../src/source-files.js";
 
 const tempDirs: string[] = [];
 
@@ -138,8 +139,17 @@ describe("lint CLI and integration edges", () => {
       ["startServer", "fastify.after"],
     );
     deepEqual(normalizeNoUnsafeAwaitIgnoreCalls("fastify.after"), []);
+    deepEqual(normalizeIgnoreFilePatterns(["*.test.ts", "tests/**", "", 1]), [
+      "*.test.ts",
+      "tests/**",
+    ]);
+    deepEqual(normalizeIgnoreFilePatterns("*.spec.ts"), ["*.spec.ts"]);
+    equal(isIgnoredFileName("/workspace/src/user.test.ts", ["*.test.ts"]), true);
+    equal(isIgnoredFileName("/workspace/tests/user.ts", ["tests/**"]), true);
+    equal(isIgnoredFileName("/workspace/src/user.ts", ["*.test.ts"]), false);
 
     const parsed = parsePluginOptions({
+      ignoreFilePatterns: ["*.test.ts"],
       noDiscard: "off",
       noDiscardMode: "direct",
       noUnsafeAwaitIgnoreCalls: ["startServer", "fastify.after"],
@@ -148,6 +158,7 @@ describe("lint CLI and integration edges", () => {
       typedCatchMapper: "message",
     });
 
+    deepEqual(parsed.ignoreFilePatterns, ["*.test.ts"]);
     equal(parsed.noDiscard, "off");
     equal(parsed.noDiscardMode, "direct");
     deepEqual(parsed.noUnsafeAwaitIgnoreCalls, ["startServer", "fastify.after"]);
@@ -159,11 +170,13 @@ describe("lint CLI and integration edges", () => {
     equal(fallback.noDiscard, defaultResultarRulesOptions.noDiscard);
 
     const normalized = normalizeResultarRulesOptions({
+      ignoreFilePatterns: ["*.test.ts"],
       noDiscard: "off",
       noUnsafeAwaitIgnoreCalls: ["startServer", "fastify.after"],
       noUnsafeAwaitMode: "all",
       preferMapErr: "suggestion",
     });
+    deepEqual(normalized.ignoreFilePatterns, ["*.test.ts"]);
     equal(normalized.noDiscard, "off");
     deepEqual(normalized.noUnsafeAwaitIgnoreCalls, ["startServer", "fastify.after"]);
     equal(normalized.noUnsafeAwaitMode, "all");
@@ -314,6 +327,60 @@ saveUser()
 
     equal(noDiscard.findings.length, 1);
     equal(allRules.findings.length, 1);
+  });
+
+  it("ignores files matching configured ignoreFilePatterns", async () => {
+    const rootDir = await createTempDir();
+    const source = `
+type Result<T, E> = { readonly value?: T; readonly error?: E }
+declare function saveUser(): Result<string, Error>
+saveUser()
+`;
+
+    await writeFile(join(rootDir, "fixture.ts"), source);
+    await writeFile(join(rootDir, "fixture.test.ts"), source);
+    await writeFile(
+      join(rootDir, "tsconfig.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            module: "NodeNext",
+            moduleResolution: "NodeNext",
+            plugins: [{ name: "resultar-check", ignoreFilePatterns: ["*.test.ts"] }],
+            strict: true,
+            target: "ES2022",
+          },
+          include: ["*.ts"],
+        },
+        undefined,
+        2,
+      ),
+    );
+
+    const noDiscard = findDiscardedResults({ rootDir });
+    const allRules = findResultarLintFindings({ rootDir });
+
+    if (!noDiscard.ok) {
+      throw noDiscard.error;
+    }
+
+    if (!allRules.ok) {
+      throw allRules.error;
+    }
+
+    deepEqual(
+      noDiscard.findings.map((finding) => finding.file.replaceAll("\\", "/").split("/").at(-1)),
+      ["fixture.ts"],
+    );
+    deepEqual(
+      allRules.findings.map((finding) => finding.file.replaceAll("\\", "/").split("/").at(-1)),
+      ["fixture.ts"],
+    );
+
+    const cli = runCli([], rootDir);
+    equal(cli.status, 1);
+    match(cli.stderr, /fixture\.ts/);
+    doesNotMatch(cli.stderr, /fixture\.test\.ts/);
   });
 
   it("surfaces TypeScript project semantic config errors", async () => {

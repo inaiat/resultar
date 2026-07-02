@@ -116,6 +116,19 @@ export const typedCatchMapperExample = () =>
 export const noUnsafeAwaitAllModeExample = async (): Promise<User> =>
   await fetchUser("unsafe-all-mode");
 
+// resultar/no-unsafe-await: awaiting a Resultar async value inside a raw
+// Promise<User> boundary unwraps the error channel back into thrown errors.
+export const noUnsafeAwaitRawPromiseBoundaryExample = async (): Promise<User> => {
+  const result = await saveUserAsync("raw-promise-boundary");
+
+  return result.match(
+    (user) => user,
+    (error) => {
+      throw error;
+    },
+  );
+};
+
 // resultar/no-unsafe-await: Resultar-returning async functions are checked even
 // in the default resultar-context mode.
 export const noUnsafeAwaitResultContextExample = async (): Promise<Result<User, FetchUserError>> =>
@@ -188,6 +201,25 @@ export const unsafeResultTypeAssertionExample = (
 // metadata; prefer a createTaggedError instance.
 export const preferTaggedErrorExample = (): Result<User, Error> =>
   err(new Error("Use createTaggedError for domain errors"));
+
+type RecordIdParts = {
+  readonly id: string;
+  readonly table: string;
+};
+
+// resultar/prefer-tagged-error: throwing new Error(...) also loses stable tags
+// and typed metadata. Convert throwing helpers to Resultar boundaries or throw a
+// createTaggedError instance when a throw boundary is intentional.
+export const preferTaggedErrorThrowExample = (
+  value: unknown,
+  table: string,
+): RecordIdParts => {
+  if (typeof value === "string") {
+    return { id: value, table };
+  }
+
+  throw new Error(`Invalid record id for table ${table}: ${String(value)}`);
+};
 
 // Use LegacyDomainError so the native Error subclass stays live in this example.
 export const legacyErrorInstance = new LegacyDomainError("legacy");

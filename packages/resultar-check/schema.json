@@ -42,6 +42,14 @@
           "$ref": "#/definitions/resultarPluginName",
           "description": "Resultar language-service plugin package name."
         },
+        "ignoreFilePatterns": {
+          "oneOf": [
+            { "$ref": "#/definitions/filePattern" },
+            { "type": "array", "items": { "$ref": "#/definitions/filePattern" } }
+          ],
+          "default": [],
+          "description": "Glob-style file patterns that Resultar diagnostics should ignore. Bare patterns such as *.test.ts match file basenames; slash patterns such as tests/** match normalized path suffixes."
+        },
         "noDiscard": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "error",
@@ -98,7 +106,7 @@
         "preferTaggedError": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",
-          "description": "Prefer createTaggedError over plain Error subclasses or err(new Error(...))."
+          "description": "Prefer createTaggedError over plain Error subclasses, err(new Error(...)), or throw new Error(...)."
         },
         "taggedErrorNameMatch": {
           "$ref": "#/definitions/ruleSeverity",
@@ -127,6 +135,7 @@
       "type": "string",
       "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*$"
     },
+    "filePattern": { "type": "string", "minLength": 1 },
     "ruleSeverity": {
       "type": "string",
       "enum": ["error", "warning", "suggestion", "message", "off"]

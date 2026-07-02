@@ -8,6 +8,7 @@ import {
   normalizeNoDiscardMode,
   unwrapExpression,
 } from "./result-usage-core.js";
+import { normalizeIgnoreFilePatterns, shouldInspectSourceFile } from "./source-files.js";
 
 type TypeScriptApi = typeof ts;
 
@@ -15,7 +16,7 @@ type EnabledRuleSeverity = Exclude<ResultarRuleSeverity, "off">;
 export type NoUnsafeAwaitMode = "all" | "resultar-context";
 type ResultarRuleOptionName = Exclude<
   keyof ResultarRulesOptions,
-  "noDiscardMode" | "noUnsafeAwaitIgnoreCalls" | "noUnsafeAwaitMode"
+  "ignoreFilePatterns" | "noDiscardMode" | "noUnsafeAwaitIgnoreCalls" | "noUnsafeAwaitMode"
 >;
 type MutableResultarRulesOptions = {
   -readonly [Key in keyof ResultarRulesOptions]?: ResultarRulesOptions[Key];
@@ -44,6 +45,7 @@ type SafeTryBody =
   | ts.MethodDeclaration;
 
 export interface ResultarRulesOptions {
+  readonly ignoreFilePatterns: readonly string[];
   readonly noDiscard: ResultarRuleSeverity;
   readonly noDiscardMode: NoDiscardMode;
   readonly noTaggedErrorConstructorOverride: ResultarRuleSeverity;
@@ -92,6 +94,7 @@ export const ruleOptionNameByRule: Record<ResultarRuleName, ResultarRuleOptionNa
 };
 
 export const defaultResultarRulesOptions: ResultarRulesOptions = {
+  ignoreFilePatterns: [],
   noDiscard: "error",
   noDiscardMode: "must-use",
   noTaggedErrorConstructorOverride: "warning",
@@ -140,6 +143,8 @@ const asyncAwaitBoundaryCallNames = new Set([
   "tryAsync",
 ]);
 
+const resultAsyncTypeNames = new Set(["DisposableResultAsync", "ResultAsync", "StrictResultAsync"]);
+
 export const normalizeRuleSeverity = (
   value: unknown,
   fallback: ResultarRuleSeverity,
@@ -168,6 +173,7 @@ export const normalizeNoUnsafeAwaitIgnoreCalls = (value: unknown): readonly stri
 export const normalizeResultarRulesOptions = (
   options: Partial<ResultarRulesOptions> = {},
 ): ResultarRulesOptions => ({
+  ignoreFilePatterns: normalizeIgnoreFilePatterns(options.ignoreFilePatterns),
   noDiscard: normalizeRuleSeverity(options.noDiscard, defaultResultarRulesOptions.noDiscard),
   noDiscardMode: normalizeNoDiscardMode(options.noDiscardMode),
   noTaggedErrorConstructorOverride: normalizeRuleSeverity(
@@ -387,6 +393,30 @@ const getMethodCall = (
 const getTypeName = (context: RuleContext, node: ts.Node, type: ts.Type): string =>
   context.checker.typeToString(type, node, context.tsApi.TypeFormatFlags.NoTruncation);
 
+const getSymbolName = (symbol: ts.Symbol | undefined): string | undefined => {
+  if (symbol === undefined) {
+    return undefined;
+  }
+
+  return typeof symbol.escapedName === "string" ? symbol.escapedName : symbol.name;
+};
+
+const getTypeSymbolName = (type: ts.Type): string | undefined => {
+  const aliasName = getSymbolName(type.aliasSymbol);
+
+  if (aliasName !== undefined) {
+    return aliasName;
+  }
+
+  const symbolName = getSymbolName(type.symbol);
+
+  if (symbolName !== undefined) {
+    return symbolName;
+  }
+
+  return getSymbolName((type as ts.TypeReference).target?.symbol);
+};
+
 const getUnionOrIntersectionTypes = (
   context: RuleContext,
   type: ts.Type,
@@ -438,9 +468,10 @@ const isResultAsyncLikeType = (context: RuleContext, node: ts.Node, type: ts.Typ
     );
   }
 
-  return /\b(?:DisposableResultAsync|ResultAsync|StrictResultAsync)\b/.test(
-    getTypeName(context, node, type),
-  );
+  const symbolName = getTypeSymbolName(type);
+
+  void node;
+  return symbolName !== undefined && resultAsyncTypeNames.has(symbolName);
 };
 
 const isResultLikeExpression = (context: RuleContext, expression: ts.Expression): boolean => {
@@ -486,6 +517,27 @@ const getPromisedTypeOfPromise = (
   return checker.getPromisedTypeOfPromise?.(type, node);
 };
 
+const isResultarChannelAwaitExpression = (
+  context: RuleContext,
+  expression: ts.Expression,
+): boolean => {
+  const expressionType = context.checker.getTypeAtLocation(expression);
+
+  if (isResultAsyncLikeAwaitType(context, expression, expressionType)) {
+    return true;
+  }
+
+  const promisedType = getPromisedTypeOfPromise(context, expression, expressionType);
+
+  if (promisedType === undefined) {
+    return false;
+  }
+
+  const awaitedType = context.checker.getAwaitedType(expressionType) ?? promisedType;
+
+  return isResultLikeAwaitedType(context, expression, awaitedType);
+};
+
 const isSafeAwaitExpression = (
   context: RuleContext,
   expression: ts.Expression,
@@ -499,21 +551,13 @@ const isSafeAwaitExpression = (
     return true;
   }
 
+  if (isResultarChannelAwaitExpression(context, expression)) {
+    return true;
+  }
+
   const expressionType = context.checker.getTypeAtLocation(expression);
 
-  if (isResultAsyncLikeAwaitType(context, expression, expressionType)) {
-    return true;
-  }
-
-  const promisedType = getPromisedTypeOfPromise(context, expression, expressionType);
-
-  if (promisedType === undefined) {
-    return true;
-  }
-
-  const awaitedType = context.checker.getAwaitedType(expressionType) ?? promisedType;
-
-  return isResultLikeAwaitedType(context, expression, awaitedType);
+  return getPromisedTypeOfPromise(context, expression, expressionType) === undefined;
 };
 
 function isIgnoredUnsafeAwaitCallExpression(
@@ -847,6 +891,14 @@ const classExtendsNativeError = (tsApi: TypeScriptApi, node: ts.ClassDeclaration
       ),
   );
 
+const isNativeErrorInstance = (tsApi: TypeScriptApi, expression: ts.Expression): boolean => {
+  const unwrapped = unwrapExpression(tsApi, expression);
+
+  return (
+    tsApi.isNewExpression(unwrapped) && getExpressionName(tsApi, unwrapped.expression) === "Error"
+  );
+};
+
 const getFirstResultErrorTypes = (
   context: RuleContext,
   node: ts.Node,
@@ -1065,21 +1117,28 @@ const getNoUnsafeAwaitFindings = (
     const currentInsideContext = insideResultarContext || startsResultarContext;
     const shouldCheckAwait = mode === "all" || currentInsideContext;
 
-    if (
-      shouldCheckAwait &&
-      context.tsApi.isAwaitExpression(node) &&
-      !currentInsideBoundary &&
-      !isSafeAwaitExpression(context, node.expression, ignoredCallPaths)
-    ) {
-      findings.push(
-        createFinding(
-          context,
-          node,
-          "no-unsafe-await",
-          severity,
-          "Wrap this awaited Promise in tryAsync, tryResultAsync, tryCatchAsync, or fromThrowableAsync so rejections stay in the Resultar error channel.",
-        ),
-      );
+    if (shouldCheckAwait && context.tsApi.isAwaitExpression(node) && !currentInsideBoundary) {
+      if (isResultarChannelAwaitExpression(context, node.expression) && !currentInsideContext) {
+        findings.push(
+          createFinding(
+            context,
+            node,
+            "no-unsafe-await",
+            severity,
+            "Do not unwrap a Resultar async value inside a raw Promise boundary. Return ResultAsync or Promise<Result> so failures stay in the Resultar error channel.",
+          ),
+        );
+      } else if (!isSafeAwaitExpression(context, node.expression, ignoredCallPaths)) {
+        findings.push(
+          createFinding(
+            context,
+            node,
+            "no-unsafe-await",
+            severity,
+            "Wrap this awaited Promise in tryAsync, tryResultAsync, tryCatchAsync, or fromThrowableAsync so rejections stay in the Resultar error channel.",
+          ),
+        );
+      }
     }
 
     if (node !== context.sourceFile && isFunctionLike(context.tsApi, node)) {
@@ -1252,6 +1311,22 @@ const getPreferTaggedErrorFindings = (
       return;
     }
 
+    if (context.tsApi.isThrowStatement(node) && node.expression !== undefined) {
+      if (isNativeErrorInstance(context.tsApi, node.expression)) {
+        findings.push(
+          createFinding(
+            context,
+            node.expression,
+            "prefer-tagged-error",
+            severity,
+            "Prefer a `createTaggedError` instance over throwing `new Error(...)` so failures keep a stable tag and typed metadata.",
+          ),
+        );
+      }
+
+      return;
+    }
+
     if (
       !context.tsApi.isCallExpression(node) ||
       getExpressionName(context.tsApi, node.expression) !== "err"
@@ -1265,12 +1340,7 @@ const getPreferTaggedErrorFindings = (
       return;
     }
 
-    const unwrappedErrorArgument = unwrapExpression(context.tsApi, errorArgument);
-
-    if (
-      context.tsApi.isNewExpression(unwrappedErrorArgument) &&
-      getExpressionName(context.tsApi, unwrappedErrorArgument.expression) === "Error"
-    ) {
+    if (isNativeErrorInstance(context.tsApi, errorArgument)) {
       findings.push(
         createFinding(
           context,
@@ -1396,6 +1466,11 @@ export const getSourceFileResultarFindings = (
   options: Partial<ResultarRulesOptions> = {},
 ): readonly ResultarLintFinding[] => {
   const normalizedOptions = normalizeResultarRulesOptions(options);
+
+  if (!shouldInspectSourceFile(sourceFile, normalizedOptions)) {
+    return [];
+  }
+
   const context: RuleContext = { checker, sourceFile, tsApi };
   const findings: ResultarLintFinding[] = [];
   const noDiscardSeverity = getRuleSeverity(normalizedOptions, "no-discard");
@@ -1457,14 +1532,13 @@ export const getProgramResultarFindings = (
 ): readonly ResultarLintFinding[] => {
   const checker = program.getTypeChecker();
   const findings: ResultarLintFinding[] = [];
+  const normalizedOptions = normalizeResultarRulesOptions(options);
 
   for (const sourceFile of program.getSourceFiles()) {
-    if (
-      !sourceFile.isDeclarationFile &&
-      !sourceFile.fileName.includes("/node_modules/") &&
-      !sourceFile.fileName.includes("\\node_modules\\")
-    ) {
-      findings.push(...getSourceFileResultarFindings(tsApi, checker, sourceFile, options));
+    if (shouldInspectSourceFile(sourceFile, normalizedOptions)) {
+      findings.push(
+        ...getSourceFileResultarFindings(tsApi, checker, sourceFile, normalizedOptions),
+      );
     }
   }
 

@@ -40,6 +40,7 @@ Configure Resultar rules in `tsconfig.json`:
     "plugins": [
       {
         "name": "resultar-check",
+        "ignoreFilePatterns": ["*.test.ts", "*.spec.ts"],
         "noDiscard": "error",
         "preferMapErr": "error",
         "preferAndThen": "error"
@@ -51,6 +52,10 @@ Configure Resultar rules in `tsconfig.json`:
 
 The package-local schema provides editor completion and validation for `resultar-check` plugin
 options.
+
+`ignoreFilePatterns` disables Resultar diagnostics for matching files while leaving normal TypeScript
+checking intact. Bare patterns such as `*.test.ts` match file basenames in any directory. Slash
+patterns such as `tests/**` match normalized path suffixes.
 
 `resultar-check` resolves a project-local `typescript@7` first, then `typescript-7`. If a project
 cannot replace its `typescript` package yet and only needs the CLI path, use the compatibility alias:
@@ -169,7 +174,7 @@ still requires explicit plugin configuration with an absolute or package-root `l
 | `resultar/no-try-catch-in-safe-try`             | `noTryCatchInSafeTry`              | Avoid raw `try/catch` inside `safeTry` generators.                                 |
 | `resultar/yield-star-in-safe-try`               | `yieldStarInSafeTry`               | Require `yield*` for Resultar values inside `safeTry`.                             |
 | `resultar/unsafe-result-type-assertion`         | `unsafeResultTypeAssertion`        | Prevent assertions that narrow Resultar error channels.                            |
-| `resultar/prefer-tagged-error`                  | `preferTaggedError`                | Prefer `createTaggedError` over plain `Error` subclasses or `err(new Error(...))`. |
+| `resultar/prefer-tagged-error`                  | `preferTaggedError`                | Prefer `createTaggedError` over plain `Error` subclasses, `err(new Error(...))`, or `throw new Error(...)`. |
 | `resultar/tagged-error-name-match`              | `taggedErrorNameMatch`             | Require `createTaggedError({ name })` to match the class name.                     |
 | `resultar/no-tagged-error-constructor-override` | `noTaggedErrorConstructorOverride` | Keep the generated tagged-error constructor intact.                                |
 | `resultar/no-useless-recovery`                  | `noUselessRecovery`                | Flag recovery calls on `Result<T, never>` / `ResultAsync<T, never>`.               |
@@ -182,7 +187,9 @@ functions returning `ResultAsync` or `Promise<Result>`, plus `safeTry` bodies. R
 allowed in async catch helpers such as `tryAsync`, `tryResultAsync`, `tryCatchAsync`, and
 `fromThrowableAsync`; inside `safeTry`, prefer `yield*` with Resultar values. Use
 `noUnsafeAwaitMode: "all"` to also report framework/bootstrap awaits such as Fastify plugin
-registration.
+registration. In `all` mode, the rule also reports `await` on Resultar async values inside raw
+`Promise<T>` functions; return `ResultAsync` or `Promise<Result>` so the failure channel is preserved
+instead of unwrapping and throwing from the Promise boundary.
 
 Use `noUnsafeAwaitIgnoreCalls` for framework lifecycle awaits that a project intentionally allows
 without wrapping in Resultar. Entries are exact source call paths; bare function identifiers and

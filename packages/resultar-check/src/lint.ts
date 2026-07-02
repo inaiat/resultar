@@ -16,6 +16,7 @@ import { type ResultarRulesOptions, getProgramResultarFindings } from "./rules-c
 import { findResultarPluginConfig } from "./plugin-options.js";
 
 export interface NoDiscardOptions {
+  readonly ignoreFilePatterns?: readonly string[];
   readonly mode?: ResultarNoDiscardMode;
   readonly project?: string;
   readonly rootDir?: string;
@@ -293,18 +294,24 @@ const readProject = (
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
   typeof value === "object" && value !== null;
 
-const getProjectNoDiscardMode = (config: unknown): ResultarNoDiscardMode | undefined => {
+const getProjectNoDiscardOptions = (
+  config: unknown,
+): { readonly ignoreFilePatterns?: readonly string[]; readonly mode?: ResultarNoDiscardMode } => {
   if (!isRecord(config) || !isRecord(config.compilerOptions)) {
-    return undefined;
+    return {};
   }
 
   const { plugins } = config.compilerOptions;
 
   if (!Array.isArray(plugins)) {
-    return undefined;
+    return {};
   }
 
-  return findResultarPluginConfig(plugins)?.noDiscardMode;
+  const pluginConfig = findResultarPluginConfig(plugins);
+
+  return pluginConfig === undefined
+    ? {}
+    : { ignoreFilePatterns: pluginConfig.ignoreFilePatterns, mode: pluginConfig.noDiscardMode };
 };
 
 const getProjectRuleOptions = (config: unknown): Partial<ResultarRulesOptions> | undefined => {
@@ -352,8 +359,10 @@ export const findDiscardedResults = (options: NoDiscardOptions = {}): NoDiscardR
   }
 
   const program = tsApi.createProgram(project.parsed.fileNames, project.parsed.options);
+  const projectNoDiscardOptions = getProjectNoDiscardOptions(project.config);
   const findings = getProgramNoDiscardFindings(tsApi, program, {
-    mode: normalizeNoDiscardMode(options.mode ?? getProjectNoDiscardMode(project.config)),
+    ignoreFilePatterns: options.ignoreFilePatterns ?? projectNoDiscardOptions.ignoreFilePatterns,
+    mode: normalizeNoDiscardMode(options.mode ?? projectNoDiscardOptions.mode),
   });
 
   return success(findings);
@@ -380,6 +389,10 @@ export const findResultarLintFindings = (options: ResultarLintOptions = {}): Res
   const findings = getProgramResultarFindings(tsApi, program, {
     ...projectRuleOptions,
     ...options.rules,
+    ignoreFilePatterns:
+      options.ignoreFilePatterns ??
+      options.rules?.ignoreFilePatterns ??
+      projectRuleOptions?.ignoreFilePatterns,
     noDiscardMode: normalizeNoDiscardMode(
       options.mode ?? options.rules?.noDiscardMode ?? projectRuleOptions?.noDiscardMode,
     ),
