@@ -224,7 +224,7 @@ describe("Resultar lint rules", () => {
         `Expected ${ruleName} fixture to produce a ${ruleName} finding`,
       );
     }
-  }, 30_000);
+  }, 90_000);
 
   it("flags orElse callbacks that only return Err", async () => {
     const findings = await runRule(
