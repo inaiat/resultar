@@ -187,7 +187,7 @@ domain/application failures should always return `Err`/`errAsync` instead of thr
 `throw` statements in inspected source files, including throws inside `tryResultAsync` boundaries;
 use `ignoreFilePatterns` for test, script, or process-boundary files that intentionally throw.
 
-`noAwaitInSafeTry` defaults to `"warning"` and reports every `await` expression inside an inspectable
+`noAwaitInSafeTry` defaults to `"error"` and reports every `await` expression inside an inspectable
 `safeTry` body. Use `yield*` for both `Result` and `ResultAsync` values; wrap raw Promises with a
 Resultar helper before yielding them. Nested functions inside `safeTry` are not inspected by this
 rule.

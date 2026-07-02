@@ -52,7 +52,7 @@
         },
         "noAwaitInSafeTry": {
           "$ref": "#/definitions/ruleSeverity",
-          "default": "warning",
+          "default": "error",
           "description": "Disallow await expressions inside safeTry bodies; use yield* for Resultar values."
         },
         "noDiscard": {

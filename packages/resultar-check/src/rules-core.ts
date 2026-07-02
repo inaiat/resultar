@@ -101,7 +101,7 @@ export const ruleOptionNameByRule: Record<ResultarRuleName, ResultarRuleOptionNa
 
 export const defaultResultarRulesOptions: ResultarRulesOptions = {
   ignoreFilePatterns: [],
-  noAwaitInSafeTry: "warning",
+  noAwaitInSafeTry: "error",
   noDiscard: "error",
   noDiscardMode: "must-use",
   noTaggedErrorConstructorOverride: "warning",
