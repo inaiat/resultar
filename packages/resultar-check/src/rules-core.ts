@@ -46,9 +46,11 @@ type SafeTryBody =
 
 export interface ResultarRulesOptions {
   readonly ignoreFilePatterns: readonly string[];
+  readonly noAwaitInSafeTry: ResultarRuleSeverity;
   readonly noDiscard: ResultarRuleSeverity;
   readonly noDiscardMode: NoDiscardMode;
   readonly noTaggedErrorConstructorOverride: ResultarRuleSeverity;
+  readonly noThrow: ResultarRuleSeverity;
   readonly noTryCatchInSafeTry: ResultarRuleSeverity;
   readonly noUnsafeAwait: ResultarRuleSeverity;
   readonly noUnsafeAwaitIgnoreCalls: readonly string[];
@@ -68,6 +70,8 @@ export const resultarRuleNames: readonly ResultarRuleName[] = [
   "prefer-map-err",
   "prefer-and-then",
   "typed-catch-mapper",
+  "no-throw",
+  "no-await-in-safe-try",
   "no-unsafe-await",
   "no-try-catch-in-safe-try",
   "yield-star-in-safe-try",
@@ -79,8 +83,10 @@ export const resultarRuleNames: readonly ResultarRuleName[] = [
 ];
 
 export const ruleOptionNameByRule: Record<ResultarRuleName, ResultarRuleOptionName> = {
+  "no-await-in-safe-try": "noAwaitInSafeTry",
   "no-discard": "noDiscard",
   "no-tagged-error-constructor-override": "noTaggedErrorConstructorOverride",
+  "no-throw": "noThrow",
   "no-try-catch-in-safe-try": "noTryCatchInSafeTry",
   "no-unsafe-await": "noUnsafeAwait",
   "no-useless-recovery": "noUselessRecovery",
@@ -95,9 +101,11 @@ export const ruleOptionNameByRule: Record<ResultarRuleName, ResultarRuleOptionNa
 
 export const defaultResultarRulesOptions: ResultarRulesOptions = {
   ignoreFilePatterns: [],
+  noAwaitInSafeTry: "error",
   noDiscard: "error",
   noDiscardMode: "must-use",
   noTaggedErrorConstructorOverride: "warning",
+  noThrow: "off",
   noTryCatchInSafeTry: "warning",
   noUnsafeAwait: "off",
   noUnsafeAwaitIgnoreCalls: [],
@@ -174,12 +182,17 @@ export const normalizeResultarRulesOptions = (
   options: Partial<ResultarRulesOptions> = {},
 ): ResultarRulesOptions => ({
   ignoreFilePatterns: normalizeIgnoreFilePatterns(options.ignoreFilePatterns),
+  noAwaitInSafeTry: normalizeRuleSeverity(
+    options.noAwaitInSafeTry,
+    defaultResultarRulesOptions.noAwaitInSafeTry,
+  ),
   noDiscard: normalizeRuleSeverity(options.noDiscard, defaultResultarRulesOptions.noDiscard),
   noDiscardMode: normalizeNoDiscardMode(options.noDiscardMode),
   noTaggedErrorConstructorOverride: normalizeRuleSeverity(
     options.noTaggedErrorConstructorOverride,
     defaultResultarRulesOptions.noTaggedErrorConstructorOverride,
   ),
+  noThrow: normalizeRuleSeverity(options.noThrow, defaultResultarRulesOptions.noThrow),
   noTryCatchInSafeTry: normalizeRuleSeverity(
     options.noTryCatchInSafeTry,
     defaultResultarRulesOptions.noTryCatchInSafeTry,
@@ -1058,6 +1071,31 @@ const getTypedCatchMapperFindings = (
   return findings;
 };
 
+const getNoThrowFindings = (
+  context: RuleContext,
+  severity: EnabledRuleSeverity,
+): readonly ResultarLintFinding[] => {
+  const findings: ResultarLintFinding[] = [];
+
+  visitSourceFile(context, (node) => {
+    if (!context.tsApi.isThrowStatement(node)) {
+      return;
+    }
+
+    findings.push(
+      createFinding(
+        context,
+        node,
+        "no-throw",
+        severity,
+        "Do not throw for expected Resultar failures. Return `Err`/`errAsync` or wrap uncontrolled external code with a Resultar catch boundary.",
+      ),
+    );
+  });
+
+  return findings;
+};
+
 const collectResultarAwaitBoundaryBodies = (context: RuleContext): ReadonlySet<ts.Node> => {
   const bodies = new Set<ts.Node>();
 
@@ -1184,6 +1222,41 @@ const getNoTryCatchInSafeTryFindings = (
             "no-try-catch-in-safe-try",
             severity,
             "Avoid raw try/catch inside `safeTry`. Use `safeTry({ try, catch })`, `tryResult`, or `tryResultAsync` to keep failures typed.",
+          ),
+        );
+      }
+    });
+  });
+
+  return findings;
+};
+
+const getNoAwaitInSafeTryFindings = (
+  context: RuleContext,
+  severity: EnabledRuleSeverity,
+): readonly ResultarLintFinding[] => {
+  const findings: ResultarLintFinding[] = [];
+
+  visitSourceFile(context, (node) => {
+    if (!context.tsApi.isCallExpression(node)) {
+      return;
+    }
+
+    const safeTryBody = getSafeTryBody(context.tsApi, node);
+
+    if (safeTryBody === undefined) {
+      return;
+    }
+
+    visitSafeTryBody(context.tsApi, safeTryBody, (bodyNode) => {
+      if (context.tsApi.isAwaitExpression(bodyNode)) {
+        findings.push(
+          createFinding(
+            context,
+            bodyNode,
+            "no-await-in-safe-try",
+            severity,
+            "Do not use `await` inside `safeTry`. Use `yield*` for Resultar values and wrap raw Promises before yielding them.",
           ),
         );
       }
@@ -1503,6 +1576,8 @@ export const getSourceFileResultarFindings = (
     ["prefer-map-err", getPreferMapErrFindings],
     ["prefer-and-then", getPreferAndThenFindings],
     ["typed-catch-mapper", getTypedCatchMapperFindings],
+    ["no-throw", getNoThrowFindings],
+    ["no-await-in-safe-try", getNoAwaitInSafeTryFindings],
     ["no-try-catch-in-safe-try", getNoTryCatchInSafeTryFindings],
     ["yield-star-in-safe-try", getYieldStarInSafeTryFindings],
     ["unsafe-result-type-assertion", getUnsafeResultTypeAssertionFindings],

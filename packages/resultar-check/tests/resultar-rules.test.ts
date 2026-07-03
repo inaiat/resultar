@@ -167,6 +167,24 @@ describe("Resultar lint rules", () => {
           tryResult(() => JSON.parse("{}"))
         `,
       },
+      "no-throw": {
+        source: `
+          declare const error: Error
+
+          throw error
+        `,
+      },
+      "no-await-in-safe-try": {
+        source: `
+          declare function loadUser(): Promise<string>
+          declare function safeTry(value: unknown): unknown
+
+          safeTry(async function* () {
+            const user = await loadUser()
+            return user
+          })
+        `,
+      },
       "unsafe-result-type-assertion": {
         source: `
           type Result<T, E> = { readonly value?: T; readonly error?: E }
@@ -206,7 +224,7 @@ describe("Resultar lint rules", () => {
         `Expected ${ruleName} fixture to produce a ${ruleName} finding`,
       );
     }
-  }, 30_000);
+  }, 90_000);
 
   it("flags orElse callbacks that only return Err", async () => {
     const findings = await runRule(
@@ -384,6 +402,43 @@ describe("Resultar lint rules", () => {
     deepEqual(typedReturnFindings, []);
     deepEqual(objectMapperFindings, []);
     equal(spreadPropertyFindings.length, 1);
+  });
+
+  it("flags throw statements including tagged errors inside Resultar boundaries", async () => {
+    const findings = await runRule(
+      "no-throw",
+      `
+        declare function tryResultAsync(value: unknown): unknown
+
+        class ValidationError extends Error {
+          static of(message: string): ValidationError {
+            return new ValidationError(message)
+          }
+        }
+
+        const parseBase64Image = (base64Image: string): string => {
+          if (!base64Image.startsWith("data:")) {
+            throw ValidationError.of("Imagem base64 inválida.")
+          }
+
+          return base64Image
+        }
+
+        tryResultAsync({
+          try: async () => {
+            throw ValidationError.of("S3 storage is not configured.")
+          },
+          catch: (error: unknown) => error
+        })
+      `,
+    );
+
+    equal(findings.length, 2);
+    deepEqual(
+      findings.map((finding) => finding.rule),
+      ["no-throw", "no-throw"],
+    );
+    isTrue(findings[0]?.message.includes("Return `Err`/`errAsync`"));
   });
 
   it("flags unsafe awaits outside Resultar async boundaries in all mode", async () => {
@@ -719,6 +774,60 @@ describe("Resultar lint rules", () => {
           }
 
           return nested()
+        })
+      `,
+    );
+
+    deepEqual(findings, []);
+  });
+
+  it("flags await expressions inside safeTry bodies", async () => {
+    const findings = await runRule(
+      "no-await-in-safe-try",
+      `
+        declare function loadUser(): Promise<string>
+        declare function loadProfile(): Promise<string>
+        declare function safeTry(value: unknown): unknown
+
+        safeTry(async function* () {
+          const user = await loadUser()
+          return user
+        })
+
+        safeTry({
+          try: async function* () {
+            const profile = await loadProfile()
+            return profile
+          },
+          catch: (error: unknown) => error
+        })
+      `,
+    );
+
+    equal(findings.length, 2);
+    deepEqual(
+      findings.map((finding) => finding.rule),
+      ["no-await-in-safe-try", "no-await-in-safe-try"],
+    );
+    isTrue(findings[0]?.message.includes("Use `yield*`"));
+  });
+
+  it("allows yield star and does not inspect nested functions inside safeTry", async () => {
+    const findings = await runRule(
+      "no-await-in-safe-try",
+      `
+        type Result<T, E> = { readonly value?: T; readonly error?: E }
+        declare function safeTry<T, E>(fn: () => AsyncGenerator<Result<never, E>, T>): Result<T, E>
+        declare function loadUser(): Result<string, Error>
+        declare function loadNested(): Promise<string>
+
+        safeTry(async function* () {
+          async function nested() {
+            return await loadNested()
+          }
+
+          const user = yield* loadUser()
+          return user
         })
       `,
     );

@@ -23,12 +23,17 @@ export const parsePluginOptions = (config: unknown): ResultarLanguageServiceOpti
 
   return {
     ignoreFilePatterns: normalizeIgnoreFilePatterns(config.ignoreFilePatterns),
+    noAwaitInSafeTry: normalizeRuleSeverity(
+      config.noAwaitInSafeTry,
+      defaultResultarRulesOptions.noAwaitInSafeTry,
+    ),
     noDiscard: normalizeRuleSeverity(config.noDiscard, defaultResultarRulesOptions.noDiscard),
     noDiscardMode: normalizeNoDiscardMode(config.noDiscardMode),
     noTaggedErrorConstructorOverride: normalizeRuleSeverity(
       config.noTaggedErrorConstructorOverride,
       defaultResultarRulesOptions.noTaggedErrorConstructorOverride,
     ),
+    noThrow: normalizeRuleSeverity(config.noThrow, defaultResultarRulesOptions.noThrow),
     noTryCatchInSafeTry: normalizeRuleSeverity(
       config.noTryCatchInSafeTry,
       defaultResultarRulesOptions.noTryCatchInSafeTry,

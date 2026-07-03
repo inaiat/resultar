@@ -176,6 +176,15 @@ export const createUserWithGenerator = (
     return insertUser(availableEmail);
   });
 
+// no-await-in-safe-try: async safeTry generators use yield* for ResultAsync
+// values instead of await.
+export const loadUserWithSafeTry = (id: string): StrictResultAsync<User, FetchUserError> =>
+  safeTry(async function* () {
+    const user = yield* loadUser(id);
+
+    return ok(user);
+  });
+
 export const runStartupTask = (
   label: string,
   task: () => Promise<void>,
