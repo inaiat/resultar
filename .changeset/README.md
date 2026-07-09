@@ -6,6 +6,7 @@ Typical flow:
 
 1. Run `pnpm changeset` in a feature branch.
 2. Select the packages that should be released and the bump type.
+   Active packages, including the request helpers, should be selected explicitly.
 3. Commit the generated `.changeset/*.md` file with the code change.
 4. Merge to `main`.
 
