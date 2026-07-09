@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 
-import type * as ts from "typescript";
+import * as ts from "./typescript-api.js";
 
 import type { ResultarLintFinding } from "./finding.js";
 import {
@@ -24,9 +24,20 @@ export interface NoDiscardOptions {
 
 export type { NoDiscardFinding, NoDiscardMode } from "./result-usage-core.js";
 
-type TypeScriptApi = typeof ts;
-
 type NoDiscardFailure = { readonly error: Error; readonly ok: false };
+
+interface OpenedProject {
+  readonly close: () => void;
+  readonly config: unknown;
+  readonly program: ts.Program;
+}
+
+interface TypeScriptProjectDiagnostic {
+  readonly code: number;
+  readonly fileName?: string;
+  readonly pos?: number;
+  readonly text: string;
+}
 
 export type NoDiscardResult =
   | NoDiscardFailure
@@ -71,11 +82,7 @@ const isTypeScript7Version = (version: string): boolean => version.startsWith("7
 const resolvePackageFromRoot = (rootDir: string, specifier: string): string => {
   const requireFromRoot = createRequire(resolve(rootDir, "package.json"));
 
-  try {
-    return requireFromRoot.resolve(specifier);
-  } catch {
-    return requireFromPackage.resolve(specifier);
-  }
+  return requireFromRoot.resolve(specifier);
 };
 
 const readPackageVersion = (packageJson: string): string => {
@@ -96,14 +103,23 @@ const resolveOptionalPackage = (rootDir: string, specifier: string): string | un
   }
 };
 
+const resolveOptionalBundledPackage = (specifier: string): string | undefined => {
+  try {
+    return requireFromPackage.resolve(specifier);
+  } catch {
+    return undefined;
+  }
+};
+
 const resolveTypeScript7PackageJson = (
   rootDir: string,
 ): NoDiscardFailure | { readonly ok: true; readonly packageJson: string } => {
-  const candidates = ["typescript/package.json", "typescript-7/package.json"];
+  const candidates = [
+    resolveOptionalPackage(rootDir, "typescript/package.json"),
+    resolveOptionalBundledPackage("typescript/package.json"),
+  ];
 
-  for (const candidate of candidates) {
-    const packageJson = resolveOptionalPackage(rootDir, candidate);
-
+  for (const packageJson of candidates) {
     if (packageJson !== undefined && isTypeScript7Version(readPackageVersion(packageJson))) {
       return { ok: true, packageJson };
     }
@@ -111,7 +127,7 @@ const resolveTypeScript7PackageJson = (
 
   return failure(
     new Error(
-      "Unable to resolve TypeScript 7. Install typescript@rc or typescript-7@npm:typescript@rc in this project.",
+      "Unable to resolve TypeScript 7. Install typescript@7.0.2 in this project or reinstall resultar-check with its dependencies.",
     ),
   );
 };
@@ -255,44 +271,45 @@ const parseCheckArgs = (
   };
 };
 
-const readProject = (
-  tsApi: TypeScriptApi,
-  projectPath: string,
-):
-  | NoDiscardFailure
-  | { readonly config: unknown; readonly ok: true; readonly parsed: ts.ParsedCommandLine } => {
-  const formatHost: ts.FormatDiagnosticsHost = {
-    getCanonicalFileName: (fileName) => fileName,
-    getCurrentDirectory: () => process.cwd(),
-    getNewLine: () => "\n",
-  };
-  const config = tsApi.readConfigFile(projectPath, (fileName) => tsApi.sys.readFile(fileName));
-
-  if (config.error) {
-    return failure(
-      new Error(tsApi.formatDiagnosticsWithColorAndContext([config.error], formatHost)),
-    );
-  }
-
-  const parsed = tsApi.parseJsonConfigFileContent(
-    config.config,
-    tsApi.sys,
-    resolve(projectPath, ".."),
-    undefined,
-    projectPath,
-  );
-
-  if (parsed.errors.length > 0) {
-    return failure(
-      new Error(tsApi.formatDiagnosticsWithColorAndContext(parsed.errors, formatHost)),
-    );
-  }
-
-  return { config: config.config, ok: true, parsed };
-};
-
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
   typeof value === "object" && value !== null;
+
+const readProjectConfig = (
+  projectPath: string,
+): NoDiscardFailure | { readonly config: unknown; readonly ok: true } => {
+  try {
+    return { config: JSON.parse(readFileSync(projectPath, "utf8")) as unknown, ok: true };
+  } catch (error) {
+    return failure(error instanceof Error ? error : new Error(String(error)));
+  }
+};
+
+const getLineAndColumn = (
+  text: string,
+  position: number,
+): { readonly column: number; readonly line: number } => {
+  const beforePosition = text.slice(0, position);
+  const lines = beforePosition.split(/\r\n|\r|\n/u);
+  const lastLine = lines.at(-1) ?? "";
+
+  return { column: lastLine.length + 1, line: lines.length };
+};
+
+const formatProjectDiagnostic = (diagnostic: TypeScriptProjectDiagnostic): string => {
+  const code = `TS${diagnostic.code}`;
+
+  if (diagnostic.fileName === undefined || diagnostic.pos === undefined || diagnostic.pos < 0) {
+    return `${code}: ${diagnostic.text}`;
+  }
+
+  try {
+    const position = getLineAndColumn(readFileSync(diagnostic.fileName, "utf8"), diagnostic.pos);
+
+    return `${diagnostic.fileName}:${position.line}:${position.column} - ${code}: ${diagnostic.text}`;
+  } catch {
+    return `${diagnostic.fileName} - ${code}: ${diagnostic.text}`;
+  }
+};
 
 const getProjectNoDiscardOptions = (
   config: unknown,
@@ -328,77 +345,124 @@ const getProjectRuleOptions = (config: unknown): Partial<ResultarRulesOptions> |
   return findResultarPluginConfig(plugins);
 };
 
-const resolveTypeScriptApi = (
-  _rootDir: string,
-): NoDiscardFailure | { readonly ok: true; readonly tsApi: TypeScriptApi } => {
+const createProgramFacade = (project: ts.ApiProject): ts.Program => {
+  const sourceFiles = project.program
+    .getSourceFileNames()
+    .map((fileName) => project.program.getSourceFile(fileName))
+    .filter((sourceFile): sourceFile is ts.SourceFile => sourceFile !== undefined);
+
+  return {
+    getSourceFile: (fileName) => project.program.getSourceFile(fileName),
+    getSourceFiles: () => sourceFiles,
+    getTypeChecker: () => project.checker,
+  };
+};
+
+const openProject = (
+  rootDir: string,
+  projectPath: string,
+): NoDiscardFailure | { readonly ok: true; readonly project: OpenedProject } => {
+  const api = new ts.API({ cwd: rootDir });
+
   try {
-    return { ok: true, tsApi: requireFromPackage("typescript") as TypeScriptApi };
-  } catch {
-    return failure(
-      new Error(
-        "Unable to resolve the internal TypeScript diagnostics API bundled with resultar-check.",
-      ),
-    );
+    api.parseConfigFile(projectPath);
+    const snapshot = api.updateSnapshot({ openProjects: [projectPath] });
+    const project =
+      snapshot.getProject(projectPath) ??
+      snapshot.getProjects().find((candidate) => resolve(candidate.configFileName) === projectPath);
+
+    if (project === undefined) {
+      api.close();
+
+      return failure(new Error(`Unable to open TypeScript project: ${projectPath}`));
+    }
+
+    const configDiagnostics = project.program.getConfigFileParsingDiagnostics();
+
+    if (configDiagnostics.length > 0) {
+      api.close();
+
+      return failure(
+        new Error(
+          configDiagnostics.map((diagnostic) => formatProjectDiagnostic(diagnostic)).join("\n"),
+        ),
+      );
+    }
+
+    const config = readProjectConfig(projectPath);
+
+    if (!config.ok) {
+      api.close();
+
+      return config;
+    }
+
+    return {
+      ok: true,
+      project: {
+        close: () => {
+          api.close();
+        },
+        config: config.config,
+        program: createProgramFacade(project),
+      },
+    };
+  } catch (error) {
+    api.close();
+
+    return failure(error instanceof Error ? error : new Error(String(error)));
   }
 };
 
 export const findDiscardedResults = (options: NoDiscardOptions = {}): NoDiscardResult => {
   const rootDir = resolve(options.rootDir ?? process.cwd());
   const projectPath = resolve(rootDir, options.project ?? "tsconfig.json");
-  const resolvedTypeScript = resolveTypeScriptApi(rootDir);
-
-  if (!resolvedTypeScript.ok) {
-    return resolvedTypeScript;
-  }
-
-  const { tsApi } = resolvedTypeScript;
-  const project = readProject(tsApi, projectPath);
+  const project = openProject(rootDir, projectPath);
 
   if (!project.ok) {
     return project;
   }
 
-  const program = tsApi.createProgram(project.parsed.fileNames, project.parsed.options);
-  const projectNoDiscardOptions = getProjectNoDiscardOptions(project.config);
-  const findings = getProgramNoDiscardFindings(tsApi, program, {
-    ignoreFilePatterns: options.ignoreFilePatterns ?? projectNoDiscardOptions.ignoreFilePatterns,
-    mode: normalizeNoDiscardMode(options.mode ?? projectNoDiscardOptions.mode),
-  });
+  try {
+    const projectNoDiscardOptions = getProjectNoDiscardOptions(project.project.config);
+    const findings = getProgramNoDiscardFindings(ts, project.project.program, {
+      ignoreFilePatterns: options.ignoreFilePatterns ?? projectNoDiscardOptions.ignoreFilePatterns,
+      mode: normalizeNoDiscardMode(options.mode ?? projectNoDiscardOptions.mode),
+    });
 
-  return success(findings);
+    return success(findings);
+  } finally {
+    project.project.close();
+  }
 };
 
 export const findResultarLintFindings = (options: ResultarLintOptions = {}): ResultarLintResult => {
   const rootDir = resolve(options.rootDir ?? process.cwd());
   const projectPath = resolve(rootDir, options.project ?? "tsconfig.json");
-  const resolvedTypeScript = resolveTypeScriptApi(rootDir);
-
-  if (!resolvedTypeScript.ok) {
-    return resolvedTypeScript;
-  }
-
-  const { tsApi } = resolvedTypeScript;
-  const project = readProject(tsApi, projectPath);
+  const project = openProject(rootDir, projectPath);
 
   if (!project.ok) {
     return project;
   }
 
-  const projectRuleOptions = getProjectRuleOptions(project.config);
-  const program = tsApi.createProgram(project.parsed.fileNames, project.parsed.options);
-  const findings = getProgramResultarFindings(tsApi, program, {
-    ...projectRuleOptions,
-    ...options.rules,
-    ignoreFilePatterns:
-      options.ignoreFilePatterns ??
-      options.rules?.ignoreFilePatterns ??
-      projectRuleOptions?.ignoreFilePatterns,
-    noDiscardMode: normalizeNoDiscardMode(
-      options.mode ?? options.rules?.noDiscardMode ?? projectRuleOptions?.noDiscardMode,
-    ),
-  });
+  try {
+    const projectRuleOptions = getProjectRuleOptions(project.project.config);
+    const findings = getProgramResultarFindings(ts, project.project.program, {
+      ...projectRuleOptions,
+      ...options.rules,
+      ignoreFilePatterns:
+        options.ignoreFilePatterns ??
+        options.rules?.ignoreFilePatterns ??
+        projectRuleOptions?.ignoreFilePatterns,
+      noDiscardMode: normalizeNoDiscardMode(
+        options.mode ?? options.rules?.noDiscardMode ?? projectRuleOptions?.noDiscardMode,
+      ),
+    });
 
-  return success(findings);
+    return success(findings);
+  } finally {
+    project.project.close();
+  }
 };
 
 const formatFinding = (finding: ResultarLintFinding, rootDir: string): string => {

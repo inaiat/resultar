@@ -1,4 +1,4 @@
-import type * as ts from "typescript";
+import type * as ts from "./typescript-api.js";
 
 export interface SourceFileFilterOptions {
   readonly ignoreFilePatterns?: readonly string[];

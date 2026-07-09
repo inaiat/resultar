@@ -13,13 +13,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import * as ts from "typescript";
+import * as ts from "../src/typescript-api.js";
+import type { LanguageServiceLike, PluginCreateInfo, PluginModule } from "../src/plugin.js";
 
 type PackFile = Readonly<{ path: string }>;
 type PackManifest = Readonly<{ files: readonly PackFile[] }>;
-type ResultarCheckPlugin = ((modules: {
-  readonly typescript: typeof ts;
-}) => ts.server.PluginModule) & {
+type ResultarCheckPlugin = ((modules: { readonly typescript: typeof ts }) => PluginModule) & {
   readonly createLanguageServicePlugin: unknown;
   readonly findResultarLintFindings: unknown;
   readonly getProgramResultarDiagnostics: unknown;
@@ -40,6 +39,12 @@ const requiredFiles = [
   "dist/cli.cjs",
   "dist/cli.d.ts",
   "dist/cli.js",
+  "dist/deno/plugin.cjs",
+  "dist/deno/plugin.d.ts",
+  "dist/deno/plugin.js",
+  "dist/eslint/plugin.cjs",
+  "dist/eslint/plugin.d.ts",
+  "dist/eslint/plugin.js",
   "dist/index.cjs",
   "dist/index.d.ts",
   "dist/index.js",
@@ -112,40 +117,57 @@ const getPluginInitializer = (value: unknown, label: string): ResultarCheckPlugi
 
 const createFixtureLanguageService = (
   source: string,
-): { readonly fileName: string; readonly service: ts.LanguageService } => {
-  const fileName = join(rootDir, "resultar-check-smoke-fixture.ts");
-  const compilerOptions: ts.CompilerOptions = {
-    module: ts.ModuleKind.NodeNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    plugins: [{ name: "resultar-check" }],
-    strict: true,
-    target: ts.ScriptTarget.ESNext,
+): {
+  readonly close: () => void;
+  readonly fileName: string;
+  readonly service: LanguageServiceLike;
+} => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "resultar-check-smoke-"));
+  const fileName = join(fixtureRoot, "fixture.ts");
+  const tsconfigFile = join(fixtureRoot, "tsconfig.json");
+
+  writeFileSync(fileName, source);
+  writeFileSync(
+    tsconfigFile,
+    JSON.stringify({
+      compilerOptions: {
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        plugins: [{ name: "resultar-check" }],
+        strict: true,
+        target: "ESNext",
+      },
+      include: ["fixture.ts"],
+    }),
+  );
+
+  const api = new ts.API({ cwd: fixtureRoot });
+  const snapshot = api.updateSnapshot({ openProjects: [tsconfigFile] });
+  const project = snapshot.getProject(tsconfigFile) ?? snapshot.getProjects()[0];
+
+  if (project === undefined) {
+    api.close();
+    throw new Error("Unable to open smoke fixture TypeScript project");
+  }
+
+  const sourceFiles = project.program
+    .getSourceFileNames()
+    .map((sourceFileName) => project.program.getSourceFile(sourceFileName))
+    .filter((sourceFile): sourceFile is ts.SourceFile => sourceFile !== undefined);
+  const program: ts.Program = {
+    getSourceFile: (sourceFileName) => project.program.getSourceFile(sourceFileName),
+    getSourceFiles: () => sourceFiles,
+    getTypeChecker: () => project.checker,
   };
-  const host: ts.LanguageServiceHost = {
-    directoryExists: (directoryName) => ts.sys.directoryExists(directoryName),
-    fileExists: (requestedFileName) =>
-      requestedFileName === fileName || ts.sys.fileExists(requestedFileName),
-    getCompilationSettings: () => compilerOptions,
-    getCurrentDirectory: () => rootDir,
-    getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
-    getDirectories: (directoryName) => ts.sys.getDirectories(directoryName),
-    getScriptFileNames: () => [fileName],
-    getScriptSnapshot: (requestedFileName) => {
-      if (requestedFileName === fileName) {
-        return ts.ScriptSnapshot.fromString(source);
-      }
 
-      const file = ts.sys.readFile(requestedFileName);
-
-      return file === undefined ? undefined : ts.ScriptSnapshot.fromString(file);
+  return {
+    close: () => {
+      api.close();
+      rmSync(fixtureRoot, { force: true, recursive: true });
     },
-    getScriptVersion: () => "1",
-    readDirectory: (...args) => ts.sys.readDirectory(...args),
-    readFile: (requestedFileName) =>
-      requestedFileName === fileName ? source : ts.sys.readFile(requestedFileName),
+    fileName,
+    service: { getProgram: () => program, getSemanticDiagnostics: () => [] },
   };
-
-  return { fileName, service: ts.createLanguageService(host) };
 };
 
 for (const file of requiredFiles) {
@@ -254,21 +276,23 @@ declare function saveUser(input: string): Result<string, Error>
 saveUser("ignored")
 `;
 const fixture = createFixtureLanguageService(fixtureSource);
-const pluginModule = packageRootEntrypoint({ typescript: ts });
-const wrappedService = pluginModule.create({
-  config: { noDiscard: "error" },
-  languageService: fixture.service,
-} as ts.server.PluginCreateInfo);
-const resultarDiagnostics: readonly ts.Diagnostic[] = wrappedService
-  .getSemanticDiagnostics(fixture.fileName)
-  .filter((diagnostic: ts.Diagnostic) => diagnostic.source === "resultar");
+try {
+  const pluginModule = packageRootEntrypoint({ typescript: ts });
+  const wrappedService = pluginModule.create({
+    config: { noDiscard: "error" },
+    languageService: fixture.service,
+  } satisfies PluginCreateInfo);
+  const resultarDiagnostics = wrappedService
+    .getSemanticDiagnostics(fixture.fileName)
+    .filter((diagnostic) => diagnostic.source === "resultar");
 
-if (!resultarDiagnostics.some((diagnostic) => diagnostic.code === 91_001)) {
-  throw new Error("Package-root plugin initializer did not emit a resultar/no-discard diagnostic");
-}
-
-if (packageJson.bin?.["resultar-lint"] !== undefined) {
-  throw new Error("Check package should not expose the deprecated resultar-lint binary");
+  if (!resultarDiagnostics.some((diagnostic) => diagnostic.code === 91_001)) {
+    throw new Error(
+      "Package-root plugin initializer did not emit a resultar/no-discard diagnostic",
+    );
+  }
+} finally {
+  fixture.close();
 }
 
 if (packageJson.bin?.["resultar-no-discard"] !== undefined) {
@@ -281,6 +305,46 @@ if (packageJson.exports?.["./no-discard"] !== undefined) {
 
 if (packageJson.exports?.["./oxlint"] !== undefined) {
   throw new Error("Check package should not expose the removed ./oxlint entrypoint");
+}
+
+for (const exportName of ["./deno", "./eslint"]) {
+  if (packageJson.exports?.[exportName] === undefined) {
+    throw new Error(`Check package is missing AST lint package export: ${exportName}`);
+  }
+}
+
+const eslintEntrypoint = (await import(
+  pathToFileURL(join(rootDir, "dist/eslint/plugin.js")).href
+)) as {
+  readonly default?: {
+    readonly configs?: { readonly recommended?: { readonly rules?: Record<string, unknown> } };
+    readonly meta?: { readonly name?: string };
+    readonly rules?: Record<string, unknown>;
+  };
+};
+const denoEntrypoint = (await import(pathToFileURL(join(rootDir, "dist/deno/plugin.js")).href)) as {
+  readonly default?: { readonly name?: string; readonly rules?: Record<string, unknown> };
+};
+
+if (
+  eslintEntrypoint.default?.meta?.name !== "resultar-check" ||
+  eslintEntrypoint.default.rules?.["no-await-in-safe-try"] === undefined
+) {
+  throw new TypeError("ESLint/Oxlint plugin export is missing expected metadata or rules");
+}
+
+if (
+  eslintEntrypoint.default?.configs?.recommended?.rules?.["resultar/yield-star-in-safe-try"] !==
+  "error"
+) {
+  throw new TypeError("Recommended ESLint/Oxlint config is missing yield-star-in-safe-try");
+}
+
+if (
+  denoEntrypoint.default?.name !== "resultar" ||
+  denoEntrypoint.default.rules?.["typed-catch-mapper"] === undefined
+) {
+  throw new TypeError("Deno plugin export is missing expected metadata or rules");
 }
 
 const packOutput = execFileSync("npm", ["pack", "--dry-run", "--json"], {
@@ -296,11 +360,11 @@ for (const file of requiredFiles) {
 }
 
 const allowedPackedFile =
-  /^(?:LICENSE|README\.md|package\.json|schema\.json|dist\/[^/]+\.(?:cjs|js|d\.ts|map))$/;
+  /^(?:LICENSE|README\.md|package\.json|schema\.json|dist\/(?:[^/]+\/)?[^/]+\.(?:cjs|js|d\.ts|map))$/;
 const unexpectedFiles = packedFiles.filter((file: string) => !allowedPackedFile.test(file));
 
 if (unexpectedFiles.length > 0) {
-  throw new Error(`Packed lint package contains unexpected files:\n${unexpectedFiles.join("\n")}`);
+  throw new Error(`Packed check package contains unexpected files:\n${unexpectedFiles.join("\n")}`);
 }
 
 process.stdout.write(`Check package smoke passed with ${packedFiles.length} packed files.\n`);

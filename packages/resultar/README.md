@@ -45,7 +45,7 @@ Use it when expected failures should be impossible to miss:
 - Ignored `Result` values can be reported by a type-aware no-discard check.
 
 Resultar began as an initial fork of `neverthrow`. The v3 line keeps the explicit wrapper model,
-then leans into Resultar-specific tagged errors, strict service-boundary types, TypeScript 7-first
+then leans into Resultar-specific tagged errors, strict service-boundary types, TypeScript >=7
 diagnostics, and ESM-only packaging.
 
 ## Install
@@ -61,7 +61,7 @@ npm install resultar
 ## Requirements
 
 - Node.js 24+
-- TypeScript 7 for the canonical Resultar diagnostics workflow
+- TypeScript >=7 for the canonical Resultar diagnostics workflow
 - ESM only
 
 ```ts
@@ -971,11 +971,11 @@ const config = safeTry({
 
 ## No-Discard Validation
 
-Resultar values should not be ignored. Use `resultar-check` to run TypeScript 7 and Resultar
+Resultar values should not be ignored. Use `resultar-check` to run TypeScript >=7 and Resultar
 diagnostics through one command.
 
 ```sh
-pnpm add -D resultar-check typescript-7@npm:typescript@rc
+pnpm add -D resultar-check "typescript@>=7"
 ```
 
 Add a check script:
@@ -1023,8 +1023,10 @@ Configure Resultar rules in `tsconfig.json`:
 The package-local schema provides editor completion and validation for `resultar-check` plugin
 options.
 
-Oxlint is intentionally not part of the Resultar rules path; use it only for general linting if your
-project wants it.
+For fast AST-only Oxlint, ESLint, or Deno Lint feedback, use the adapter exports documented in the
+`resultar-check` package guide. Use the `resultar-check` CLI for the full TypeScript-backed rule set.
+The `examples/lint` package shows how to compare Oxlint, ESLint, and CLI counts by running the CLI
+with the same AST-only rule subset.
 
 For VS Code and Zed setup, use the editor integration section in the `resultar-check` package guide.
 
@@ -1112,12 +1114,10 @@ More focused material:
 This repository is a pnpm workspace:
 
 - `packages/resultar`: Resultar runtime package.
-- `packages/resultar-check`: TypeScript 7 plus Resultar validation.
-- `packages/resultar-lint`: deprecated compatibility wrapper.
-- `packages/resultar-tsgo`: deprecated compatibility wrapper for older installs.
+- `packages/resultar-check`: TypeScript >=7 plus Resultar validation and AST-only lint adapters.
 - `benchmarks`: benchmark package.
 - `examples/resultar`: runnable core Resultar cookbook.
-- `examples/lint`: TypeScript 7 `resultar-check` smoke example.
+- `examples/lint`: adapter parity smoke for AST-only Resultar rules across Oxlint, ESLint, and `resultar-check` CLI.
 
 Common commands:
 

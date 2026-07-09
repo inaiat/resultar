@@ -13,8 +13,7 @@ export type ResultarLanguageServiceOptions = ResultarRulesOptions;
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
   typeof value === "object" && value !== null;
 
-const isResultarPluginName = (value: unknown): boolean =>
-  value === "resultar-check" || value === "resultar-lint";
+const isResultarPluginName = (value: unknown): boolean => value === "resultar-check";
 
 export const parsePluginOptions = (config: unknown): ResultarLanguageServiceOptions => {
   if (!isRecord(config)) {

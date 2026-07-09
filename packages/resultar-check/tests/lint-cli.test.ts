@@ -1,10 +1,10 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deepEqual, doesNotMatch, equal, match, ok } from "node:assert";
+import { deepEqual, doesNotMatch, equal, match } from "node:assert";
 
 import { afterEach, describe, it } from "vite-plus/test";
-import * as ts from "typescript";
+import * as ts from "../src/typescript-api.js";
 
 import {
   getNoDiscardDiagnostics,
@@ -21,6 +21,7 @@ import {
   normalizeRuleSeverity,
 } from "../src/rules-core.js";
 import { isIgnoredFileName, normalizeIgnoreFilePatterns } from "../src/source-files.js";
+import { openFixtureProgram } from "./typescript-fixture.js";
 
 const tempDirs: string[] = [];
 
@@ -66,38 +67,6 @@ const createFixtureProject = async (
   return rootDir;
 };
 
-const createProgram = (rootDir: string) => {
-  const configPath = join(rootDir, "tsconfig.json");
-  const config = ts.readConfigFile(configPath, (fileName) => ts.sys.readFile(fileName));
-  if (config.error) {
-    throw new Error(
-      ts.formatDiagnosticsWithColorAndContext([config.error], diagnosticHost(rootDir)),
-    );
-  }
-
-  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, rootDir);
-  if (parsed.errors.length > 0) {
-    throw new Error(
-      ts.formatDiagnosticsWithColorAndContext(parsed.errors, diagnosticHost(rootDir)),
-    );
-  }
-
-  return ts.createProgram({ options: parsed.options, rootNames: parsed.fileNames });
-};
-
-const diagnosticHost = (rootDir: string): ts.FormatDiagnosticsHost => ({
-  getCanonicalFileName: (fileName) => fileName,
-  getCurrentDirectory: () => rootDir,
-  getNewLine: () => "\n",
-});
-
-const getFixtureSourceFile = (program: ts.Program) => {
-  const sourceFile = program.getSourceFiles().find((file) => file.fileName.endsWith("fixture.ts"));
-
-  ok(sourceFile, "Expected fixture.ts to be part of the program");
-  return sourceFile;
-};
-
 const runCli = (args: readonly string[], cwd: string) => {
   const previousCwd = process.cwd();
   const originalStdoutWrite = process.stdout.write.bind(process.stdout);
@@ -106,14 +75,14 @@ const runCli = (args: readonly string[], cwd: string) => {
   let stderr = "";
 
   process.chdir(cwd);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = (chunk: string | Uint8Array) => {
     stdout += chunk.toString();
     return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: string | Uint8Array) => {
+  };
+  process.stderr.write = (chunk: string | Uint8Array) => {
     stderr += chunk.toString();
     return true;
-  }) as typeof process.stderr.write;
+  };
 
   try {
     return { status: runResultarLintCli(args), stderr, stdout };
@@ -197,11 +166,6 @@ describe("lint CLI and integration edges", () => {
       { name: "resultar-check", noDiscardMode: "direct" },
     ]);
     equal(config?.noDiscardMode, "direct");
-
-    const legacyConfig = findResultarPluginConfig([
-      { name: "resultar-lint", noDiscardMode: "direct" },
-    ]);
-    equal(legacyConfig?.noDiscardMode, "direct");
   });
 
   it("maps diagnostics severities and skips external source files", async () => {
@@ -210,29 +174,32 @@ type Result<T, E> = { value?: T; error?: E }
 declare function saveUser(): Result<string, Error>
 saveUser()
 `);
-    const program = createProgram(rootDir);
-    const sourceFile = getFixtureSourceFile(program);
+    const fixture = openFixtureProgram(rootDir);
 
-    const messageDiagnostics = getNoDiscardDiagnostics({
-      options: { noDiscard: "message" },
-      program,
-      sourceFile,
-      tsApi: ts,
-    });
-    equal(messageDiagnostics[0]?.category, ts.DiagnosticCategory.Message);
+    try {
+      const messageDiagnostics = getNoDiscardDiagnostics({
+        options: { noDiscard: "message" },
+        program: fixture.program,
+        sourceFile: fixture.sourceFile,
+        tsApi: ts,
+      });
+      equal(messageDiagnostics[0]?.category, ts.DiagnosticCategory.Message);
 
-    const suggestionDiagnostics = getResultarDiagnostics({
-      options: { noDiscard: "suggestion" },
-      program,
-      sourceFile,
-      tsApi: ts,
-    });
-    equal(suggestionDiagnostics[0]?.category, ts.DiagnosticCategory.Suggestion);
+      const suggestionDiagnostics = getResultarDiagnostics({
+        options: { noDiscard: "suggestion" },
+        program: fixture.program,
+        sourceFile: fixture.sourceFile,
+        tsApi: ts,
+      });
+      equal(suggestionDiagnostics[0]?.category, ts.DiagnosticCategory.Suggestion);
 
-    const warningDiagnostics = getProgramNoDiscardDiagnostics(ts, program, {
-      noDiscard: "warning",
-    });
-    equal(warningDiagnostics[0]?.category, ts.DiagnosticCategory.Warning);
+      const warningDiagnostics = getProgramNoDiscardDiagnostics(ts, fixture.program, {
+        noDiscard: "warning",
+      });
+      equal(warningDiagnostics[0]?.category, ts.DiagnosticCategory.Warning);
+    } finally {
+      fixture.close();
+    }
 
     const externalRoot = await createFixtureProject(
       `
@@ -242,16 +209,20 @@ saveUser()
 `,
       { fileName: "node_modules/pkg/fixture.ts" },
     );
-    const externalProgram = createProgram(externalRoot);
-    const externalSourceFile = getFixtureSourceFile(externalProgram);
-    equal(
-      getResultarDiagnostics({
-        program: externalProgram,
-        sourceFile: externalSourceFile,
-        tsApi: ts,
-      }).length,
-      0,
-    );
+    const externalFixture = openFixtureProgram(externalRoot, "node_modules/pkg/fixture.ts");
+
+    try {
+      equal(
+        getResultarDiagnostics({
+          program: externalFixture.program,
+          sourceFile: externalFixture.sourceFile,
+          tsApi: ts,
+        }).length,
+        0,
+      );
+    } finally {
+      externalFixture.close();
+    }
   });
 
   it("runs the CLI for help, argument errors, passing files, and failing findings", async () => {

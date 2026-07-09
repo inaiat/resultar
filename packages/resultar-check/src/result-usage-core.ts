@@ -1,4 +1,4 @@
-import type * as ts from "typescript";
+import type * as ts from "./typescript-api.js";
 
 import type { ResultarLintFinding } from "./finding.js";
 import { shouldInspectSourceFile, type SourceFileFilterOptions } from "./source-files.js";
@@ -62,34 +62,73 @@ const consumerMethods = new Set([
 
 const consumerProperties = new Set(["error", "value"]);
 
+const isObject = (value: unknown): value is object => typeof value === "object" && value !== null;
+
+const getObjectProperty = (value: object, property: PropertyKey): unknown =>
+  Reflect.get(value, property);
+
+const callObjectMethod = (
+  value: object,
+  methodName: PropertyKey,
+  args: readonly unknown[] = [],
+): unknown => {
+  const method = getObjectProperty(value, methodName);
+
+  return typeof method === "function" ? Reflect.apply(method, value, args) : undefined;
+};
+
+const isTypeLike = (value: unknown): value is ts.Type =>
+  isObject(value) && typeof getObjectProperty(value, "flags") === "number";
+
+const isTypeArray = (value: unknown): value is readonly ts.Type[] =>
+  Array.isArray(value) && value.every((entry) => isTypeLike(entry));
+
 const getUnionOrIntersectionTypes = (
   tsApi: TypeScriptApi,
-  type: ts.Type,
-): readonly ts.Type[] | undefined =>
-  (type.flags & (tsApi.TypeFlags.Union | tsApi.TypeFlags.Intersection)) === 0
-    ? undefined
-    : ((type as ts.UnionOrIntersectionType).types ?? []);
-
-const getSymbolName = (symbol: ts.Symbol | undefined): string | undefined => {
-  if (symbol === undefined) {
+  type: ts.Type | undefined,
+): readonly ts.Type[] | undefined => {
+  if (
+    type === undefined ||
+    (type.flags & (tsApi.TypeFlags.Union | tsApi.TypeFlags.Intersection)) === 0
+  ) {
     return undefined;
   }
 
-  if (typeof symbol.getName === "function") {
-    return symbol.getName();
-  }
+  const getTypesResult = callObjectMethod(type, "getTypes");
+  const types = getTypesResult ?? getObjectProperty(type, "types");
 
-  const { escapedName } = symbol;
-
-  return typeof escapedName === "string" ? escapedName : undefined;
+  return isTypeArray(types) ? types : [];
 };
 
-const getTypeSymbolName = (type: ts.Type): string | undefined => {
-  if (typeof type.getSymbol === "function") {
-    return getSymbolName(type.getSymbol());
+const getSymbolName = (symbol: unknown): string | undefined => {
+  if (!isObject(symbol)) {
+    return undefined;
   }
 
-  return getSymbolName(type.symbol);
+  const symbolName = callObjectMethod(symbol, "getName");
+
+  if (typeof symbolName === "string") {
+    return symbolName;
+  }
+
+  const escapedName = getObjectProperty(symbol, "escapedName");
+  const name = getObjectProperty(symbol, "name");
+
+  if (typeof escapedName === "string") {
+    return escapedName;
+  }
+
+  return typeof name === "string" ? name : undefined;
+};
+
+const getTypeSymbolName = (type: ts.Type | undefined): string | undefined => {
+  if (type === undefined) {
+    return undefined;
+  }
+
+  const directSymbol = callObjectMethod(type, "getSymbol");
+
+  return getSymbolName(directSymbol ?? getObjectProperty(type, "symbol"));
 };
 
 const getTokenPosOfNode = (
@@ -97,13 +136,9 @@ const getTokenPosOfNode = (
   node: ts.Node,
   sourceFile: ts.SourceFile,
 ): number => {
-  const getTokenPos = (
-    tsApi as unknown as {
-      readonly getTokenPosOfNode?: (node: ts.Node, sourceFile?: ts.SourceFile) => number;
-    }
-  ).getTokenPosOfNode;
+  const tokenPos = callObjectMethod(tsApi, "getTokenPosOfNode", [node, sourceFile]);
 
-  return getTokenPos === undefined ? node.pos : getTokenPos(node, sourceFile);
+  return typeof tokenPos === "number" ? tokenPos : node.pos;
 };
 
 const getNodeStart = (tsApi: TypeScriptApi, node: ts.Node, sourceFile: ts.SourceFile): number =>
@@ -116,7 +151,9 @@ const getIdentifierText = (identifier: IdentifierText): string => {
     return identifier.text;
   }
 
-  return identifier.escapedText === undefined ? "" : String(identifier.escapedText);
+  const { escapedText } = identifier;
+
+  return typeof escapedText === "string" || typeof escapedText === "number" ? `${escapedText}` : "";
 };
 
 const getNodeWidth = (tsApi: TypeScriptApi, node: ts.Node, sourceFile: ts.SourceFile): number => {
@@ -141,8 +178,12 @@ export const isResultLikeType = (
   tsApi: TypeScriptApi,
   checker: ts.TypeChecker,
   node: ts.Node,
-  type: ts.Type,
+  type: ts.Type | undefined,
 ): boolean => {
+  if (type === undefined) {
+    return false;
+  }
+
   const unionOrIntersectionTypes = getUnionOrIntersectionTypes(tsApi, type);
 
   if (unionOrIntersectionTypes !== undefined) {
@@ -151,7 +192,9 @@ export const isResultLikeType = (
     );
   }
 
-  const aliasName = getSymbolName(type.aliasSymbol);
+  const aliasName = getSymbolName(
+    callObjectMethod(type, "getAliasSymbol") ?? getObjectProperty(type, "aliasSymbol"),
+  );
   const symbolName = getTypeSymbolName(type);
 
   if (
@@ -229,8 +272,10 @@ export const isCallLikeDiscard = (tsApi: TypeScriptApi, expression: ts.Expressio
   return false;
 };
 
-const getTypeName = (context: RuleContext, node: ts.Node, type: ts.Type): string =>
-  context.checker.typeToString(type, node, context.tsApi.TypeFormatFlags.NoTruncation);
+const getTypeName = (context: RuleContext, node: ts.Node, type: ts.Type | undefined): string =>
+  type === undefined
+    ? "unknown"
+    : context.checker.typeToString(type, node, context.tsApi.TypeFormatFlags.NoTruncation);
 
 const createFinding = (
   context: RuleContext,
@@ -274,8 +319,15 @@ const createUnhandledFinding = (context: RuleContext, tracked: TrackedResult): N
     `Unhandled ${tracked.typeName} value assigned to \`${tracked.name}\`. Handle it, return it, or explicitly discard it with \`void\`.`,
   );
 
+const getSymbolIdentity = (symbol: ts.Symbol): unknown => {
+  const id = getObjectProperty(symbol, "id");
+  const valueDeclaration = getObjectProperty(symbol, "valueDeclaration");
+
+  return id ?? valueDeclaration ?? symbol;
+};
+
 const symbolsEqual = (left: ts.Symbol, right: ts.Symbol): boolean =>
-  left === right || left.valueDeclaration === right.valueDeclaration;
+  left === right || getSymbolIdentity(left) === getSymbolIdentity(right);
 
 const isWrapperParent = (tsApi: TypeScriptApi, parent: ts.Node, child: ts.Node): boolean =>
   (tsApi.isParenthesizedExpression(parent) && parent.expression === child) ||
@@ -443,7 +495,13 @@ const isIdentifierInsideDiscardedResultExpression = (
   let current: ts.Node = identifier;
 
   for (let index = ancestors.length - 1; index >= 0; index -= 1) {
-    current = ancestors[index]!;
+    const ancestor = ancestors[index];
+
+    if (ancestor === undefined) {
+      continue;
+    }
+
+    current = ancestor;
 
     if (context.tsApi.isExpressionStatement(current)) {
       if (
@@ -537,7 +595,9 @@ const markTrackedResultUses = (
       }
     }
 
-    context.tsApi.forEachChild(node, (child) => visit(child, [...ancestors, node]));
+    context.tsApi.forEachChild(node, (child) => {
+      visit(child, [...ancestors, node]);
+    });
   };
 
   visit(context.sourceFile, []);

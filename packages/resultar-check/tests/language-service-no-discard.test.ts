@@ -6,13 +6,18 @@ import { fileURLToPath } from "node:url";
 import { deepEqual, equal, ok as isTrue } from "node:assert";
 import { afterEach, beforeAll, describe, it } from "vite-plus/test";
 
-import * as ts from "typescript";
+import * as ts from "../src/typescript-api.js";
 
 import { getProgramNoDiscardDiagnostics } from "../src/diagnostics.js";
-import { createLanguageServicePlugin } from "../src/plugin.js";
+import {
+  createLanguageServicePlugin,
+  type LanguageServiceLike,
+  type PluginCreateInfo,
+} from "../src/plugin.js";
+import { type FixtureProgram, openFixtureProgram } from "./typescript-fixture.js";
 
 type CreateLanguageServicePlugin = (modules: { readonly typescript: typeof ts }) => {
-  readonly create: (info: ts.server.PluginCreateInfo) => ts.LanguageService;
+  readonly create: (info: PluginCreateInfo) => LanguageServiceLike;
 };
 
 type GetProgramNoDiscardDiagnostics = (
@@ -31,6 +36,7 @@ interface LoadedLanguageServiceModules {
 }
 
 const tempDirs: string[] = [];
+const fixtures: FixtureProgram[] = [];
 const workspaceDir = fileURLToPath(new URL("../../..", import.meta.url));
 const loadedModules: LoadedLanguageServiceModules = {
   createLanguageServicePlugin,
@@ -53,9 +59,12 @@ const createTempDir = async (prefix: string): Promise<string> => {
   return dir;
 };
 
-const createFixtureProgram = async (source: string): Promise<ts.Program> => {
+const createFixtureProgram = async (
+  source: string,
+  fileName = "fixture.ts",
+): Promise<FixtureProgram> => {
   const rootDir = await createTempDir("resultar-check-");
-  const sourceFile = join(rootDir, "fixture.ts");
+  const sourceFile = join(rootDir, fileName);
   const tsconfigFile = join(rootDir, "tsconfig.json");
 
   await writeFile(sourceFile, source);
@@ -68,60 +77,33 @@ const createFixtureProgram = async (source: string): Promise<ts.Program> => {
         strict: true,
         target: "ESNext",
       },
-      include: ["fixture.ts"],
+      include: [fileName],
     }),
   );
 
-  const config = ts.readConfigFile(tsconfigFile, (fileName) => ts.sys.readFile(fileName));
-  const parsed = ts.parseJsonConfigFileContent(
-    config.config,
-    ts.sys,
-    rootDir,
-    undefined,
-    tsconfigFile,
-  );
+  const fixture = openFixtureProgram(rootDir, fileName);
+  fixtures.push(fixture);
 
-  return ts.createProgram(parsed.fileNames, parsed.options);
+  return fixture;
 };
 
-const createLanguageService = (
+const createLanguageService = async (
   source: string,
   config: Record<string, unknown> = { noDiscard: "error" },
-  fileName = join(process.cwd(), "fixture.ts"),
-): ts.LanguageService => {
-  const compilerOptions: ts.CompilerOptions = {
-    module: ts.ModuleKind.NodeNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    plugins: [{ name: "resultar-check" }],
-    strict: true,
-    target: ts.ScriptTarget.ESNext,
+  fileName = "fixture.ts",
+): Promise<{ readonly fileName: string; readonly languageService: LanguageServiceLike }> => {
+  const fixture = await createFixtureProgram(source, fileName);
+  const languageService: LanguageServiceLike = {
+    getProgram: () => fixture.program,
+    getSemanticDiagnostics: () => [],
   };
-  const host: ts.LanguageServiceHost = {
-    directoryExists: (directoryName) => ts.sys.directoryExists(directoryName),
-    fileExists: (requestedFileName) => ts.sys.fileExists(requestedFileName),
-    getCompilationSettings: () => compilerOptions,
-    getCurrentDirectory: () => process.cwd(),
-    getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
-    getDirectories: (directoryName) => ts.sys.getDirectories(directoryName),
-    getScriptFileNames: () => [fileName],
-    getScriptSnapshot: (requestedFileName) => {
-      if (requestedFileName === fileName) {
-        return ts.ScriptSnapshot.fromString(source);
-      }
+  const { createLanguageServicePlugin: loadedCreateLanguageServicePlugin } = getLoadedModules();
+  const plugin = loadedCreateLanguageServicePlugin({ typescript: ts });
 
-      const file = ts.sys.readFile(requestedFileName);
-
-      return file === undefined ? undefined : ts.ScriptSnapshot.fromString(file);
-    },
-    getScriptVersion: () => "1",
-    readDirectory: (...args) => ts.sys.readDirectory(...args),
-    readFile: (requestedFileName) => ts.sys.readFile(requestedFileName),
+  return {
+    fileName: fixture.sourceFile.fileName,
+    languageService: plugin.create({ config, languageService }),
   };
-  const languageService = ts.createLanguageService(host);
-  const { createLanguageServicePlugin } = getLoadedModules();
-  const plugin = createLanguageServicePlugin({ typescript: ts });
-
-  return plugin.create({ config, languageService } as ts.server.PluginCreateInfo);
 };
 
 const sourceWithDiscardCases = `
@@ -167,6 +149,10 @@ handled.match((value) => value, (error) => error.message)
 `;
 
 afterEach(async () => {
+  for (const fixture of fixtures.splice(0)) {
+    fixture.close();
+  }
+
   await Promise.all(
     tempDirs.splice(0).map(async (dir) => rm(dir, { force: true, recursive: true })),
   );
@@ -174,9 +160,10 @@ afterEach(async () => {
 
 describe("Resultar language-service no-discard diagnostics", () => {
   it("flags ignored Result and ResultAsync values while allowing handled values", async () => {
-    const program = await createFixtureProgram(sourceWithDiscardCases);
-    const { getProgramNoDiscardDiagnostics } = getLoadedModules();
-    const diagnostics = getProgramNoDiscardDiagnostics(ts, program);
+    const fixture = await createFixtureProgram(sourceWithDiscardCases);
+    const { getProgramNoDiscardDiagnostics: loadedGetProgramNoDiscardDiagnostics } =
+      getLoadedModules();
+    const diagnostics = loadedGetProgramNoDiscardDiagnostics(ts, fixture.program);
 
     deepEqual(
       diagnostics.map(
@@ -190,12 +177,12 @@ describe("Resultar language-service no-discard diagnostics", () => {
     isTrue(String(diagnostics[1]?.messageText).includes("ResultAsync<string, Error>"));
   });
 
-  it("reports no-discard diagnostics through the TypeScript language service plugin", () => {
-    const languageService = createLanguageService(sourceWithDiscardCases, {
+  it("reports no-discard diagnostics through the TypeScript language service plugin", async () => {
+    const { fileName, languageService } = await createLanguageService(sourceWithDiscardCases, {
       noDiscard: "error",
       preferTaggedError: "off",
     });
-    const diagnostics = languageService.getSemanticDiagnostics(join(process.cwd(), "fixture.ts"));
+    const diagnostics = languageService.getSemanticDiagnostics(fileName);
     const resultarDiagnostics = diagnostics.filter(
       (diagnostic) => diagnostic.source === "resultar",
     );
@@ -206,12 +193,11 @@ describe("Resultar language-service no-discard diagnostics", () => {
     );
   });
 
-  it("ignores files matching configured ignoreFilePatterns through the language service", () => {
-    const fileName = join(process.cwd(), "fixture.test.ts");
-    const languageService = createLanguageService(
+  it("ignores files matching configured ignoreFilePatterns through the language service", async () => {
+    const { fileName, languageService } = await createLanguageService(
       sourceWithDiscardCases,
       { ignoreFilePatterns: ["*.test.ts"], noDiscard: "error" },
-      fileName,
+      "fixture.test.ts",
     );
     const diagnostics = languageService.getSemanticDiagnostics(fileName);
     const resultarDiagnostics = diagnostics.filter(
@@ -222,17 +208,20 @@ describe("Resultar language-service no-discard diagnostics", () => {
   });
 
   it("reports assigned-but-unhandled Result values by default", async () => {
-    const program = await createFixtureProgram(sourceWithMustUseCases);
-    const { getProgramNoDiscardDiagnostics } = getLoadedModules();
-    const diagnostics = getProgramNoDiscardDiagnostics(ts, program, { noDiscard: "error" });
+    const fixture = await createFixtureProgram(sourceWithMustUseCases);
+    const { getProgramNoDiscardDiagnostics: loadedGetProgramNoDiscardDiagnostics } =
+      getLoadedModules();
+    const diagnostics = loadedGetProgramNoDiscardDiagnostics(ts, fixture.program, {
+      noDiscard: "error",
+    });
 
     equal(diagnostics.length, 1);
     isTrue(String(diagnostics[0]?.messageText).includes("assigned to `unhandled`"));
   });
 
-  it("reports must-use diagnostics through the TypeScript language service plugin by default", () => {
-    const languageService = createLanguageService(sourceWithMustUseCases);
-    const diagnostics = languageService.getSemanticDiagnostics(join(process.cwd(), "fixture.ts"));
+  it("reports must-use diagnostics through the TypeScript language service plugin by default", async () => {
+    const { fileName, languageService } = await createLanguageService(sourceWithMustUseCases);
+    const diagnostics = languageService.getSemanticDiagnostics(fileName);
     const resultarDiagnostics = diagnostics.filter(
       (diagnostic) => diagnostic.source === "resultar",
     );

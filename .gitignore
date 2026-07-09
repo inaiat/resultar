@@ -1,6 +1,7 @@
 # compiled output
 /dist
 /benchmarks/node_modules
+/benchmarks/.tmp
 /examples/*/dist
 /examples/*/node_modules
 /packages/*/dist

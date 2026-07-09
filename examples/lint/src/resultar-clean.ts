@@ -129,14 +129,14 @@ export const loadUserWithFromPromise = (id: string): StrictResultAsync<User, Fet
 export const loadUserAtPromiseBoundary = async (id: string): Promise<User> =>
   await runPromise(loadUser(id));
 
-// noUnsafeAwaitIgnoreCalls: project-level escape hatches are exact. This is
-// clean because tsconfig.json configures "startServer".
+// noUnsafeAwaitIgnoreCalls: project-level escape hatches are exact. The full
+// TypeScript checker can allow this call by configuring "startServer".
 export const waitForServerStartup = async (): Promise<void> => {
   await startServer();
 };
 
-// noUnsafeAwaitIgnoreCalls: project-level escape hatches are exact. This is
-// clean because tsconfig.json configures "fastify.after".
+// noUnsafeAwaitIgnoreCalls: project-level escape hatches are exact. The full
+// TypeScript checker can allow this call by configuring "fastify.after".
 export const waitForFastifyLifecycle = async (fastify: FastifyLifecycle): Promise<void> => {
   await fastify.after();
 };

@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/resultar-check/schema.json",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "resultar-check",
+        "noAwaitInSafeTry": "error",
+        "noDiscard": "off",
+        "noTaggedErrorConstructorOverride": "error",
+        "noThrow": "error",
+        "noTryCatchInSafeTry": "error",
+        "noUnsafeAwait": "off",
+        "noUselessRecovery": "off",
+        "preferAndThen": "off",
+        "preferMapErr": "off",
+        "preferTaggedError": "error",
+        "taggedErrorNameMatch": "error",
+        "typedCatchMapper": "error",
+        "unsafeResultTypeAssertion": "off",
+        "yieldStarInSafeTry": "error"
+      }
+    ]
+  }
+}

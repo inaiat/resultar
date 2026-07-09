@@ -1,21 +1,17 @@
 # Resultar Check
 
-TypeScript 7 diagnostics for Resultar.
+Resultar diagnostics for projects using TypeScript >=7.
 
-`resultar-check` is the canonical Resultar diagnostics package and command. It runs TypeScript 7
-first, then runs Resultar diagnostics over the same `tsconfig.json`. Oxlint integration and TS6
-patching are no longer shipped as public lint surfaces.
-
-Until TypeScript 7 exposes the stable programmatic type-checker API Resultar needs, the package keeps
-a TypeScript 6 diagnostics API as an internal bridge. Projects should still standardize on the
-TypeScript 7 `resultar-check` command.
+`resultar-check` is the canonical Resultar diagnostics package and command. It requires TypeScript
+>=7, runs the compiler first, then runs Resultar diagnostics over the same `tsconfig.json`. The same
+package also ships AST-only adapters for Oxlint, ESLint, and Deno Lint.
 
 ## Install
 
-For editor diagnostics and CLI checks, install `resultar-check` with a project-local TypeScript RC:
+For editor diagnostics and CLI checks, install `resultar-check` with project-local TypeScript >=7:
 
 ```sh
-pnpm add -D resultar-check typescript@rc
+pnpm add -D resultar-check "typescript@>=7"
 ```
 
 Add one check script:
@@ -57,20 +53,16 @@ options.
 checking intact. Bare patterns such as `*.test.ts` match file basenames in any directory. Slash
 patterns such as `tests/**` match normalized path suffixes.
 
-`resultar-check` resolves a project-local `typescript@7` first, then `typescript-7`. If a project
-cannot replace its `typescript` package yet and only needs the CLI path, use the compatibility alias:
-
-```sh
-pnpm add -D resultar-check typescript-7@npm:typescript@rc
-```
+`resultar-check` resolves a project-local `typescript@>=7` first and falls back to the TypeScript
+dependency bundled with the package for CLI diagnostics.
 
 ## Editor Integration
 
 `resultar-check` is a TypeScript language-service plugin. Editors must run a TypeScript server that
 can resolve the local `resultar-check` package and see the `compilerOptions.plugins` entry above.
 
-Use `typescript@rc` for editor integration. The `typescript-7` alias is only for projects that need
-the CLI compatibility path and cannot replace their `typescript` package yet.
+Use TypeScript >=7 for editor integration so the editor's TypeScript server can load
+`resultar-check` from the same project.
 
 After changing dependencies or `tsconfig.json`, restart the editor's TypeScript server. A working
 setup reports diagnostics whose source is `resultar` and whose message starts with a rule name such
@@ -232,7 +224,157 @@ pnpm exec resultar-check
 pnpm exec resultar-check --mode direct
 ```
 
-## Deprecated Packages
+## AST-Only Lint Adapters
 
-`resultar-lint` and `resultar-tsgo` are compatibility wrappers. New projects should install
-`resultar-check` directly and use plugin name `"resultar-check"`.
+Use the AST-only adapters when a lint host should report fast syntax-only Resultar feedback. These
+adapters intentionally cover only rules that do not need TypeScript type information; use the
+`resultar-check` CLI with the normal project `tsconfig.json` for the full rule set.
+
+The AST-only adapter rules are:
+
+| Rule                                            | Checks                                                |
+| ----------------------------------------------- | ----------------------------------------------------- |
+| `resultar/no-await-in-safe-try`                 | `await` inside `safeTry` bodies                       |
+| `resultar/no-tagged-error-constructor-override` | constructor overrides on `createTaggedError` classes  |
+| `resultar/no-throw`                             | raw `throw` statements                                |
+| `resultar/no-try-catch-in-safe-try`             | raw `try/catch` inside `safeTry` bodies               |
+| `resultar/prefer-tagged-error`                  | native `Error` classes, `err(new Error(...))`, throws |
+| `resultar/tagged-error-name-match`              | tagged error runtime name and class name mismatch     |
+| `resultar/typed-catch-mapper`                   | missing catch mapper on Resultar try helpers          |
+| `resultar/yield-star-in-safe-try`               | plain `yield` inside `safeTry` bodies                 |
+
+### Oxlint
+
+Oxlint can load the same JavaScript plugin surface through `jsPlugins`:
+
+```json
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "jsPlugins": [
+    {
+      "name": "resultar",
+      "specifier": "./node_modules/resultar-check/dist/eslint/plugin.js"
+    }
+  ],
+  "rules": {
+    "resultar/no-await-in-safe-try": "error",
+    "resultar/no-tagged-error-constructor-override": "error",
+    "resultar/no-throw": "error",
+    "resultar/no-try-catch-in-safe-try": "error",
+    "resultar/prefer-tagged-error": "error",
+    "resultar/tagged-error-name-match": "error",
+    "resultar/typed-catch-mapper": "error",
+    "resultar/yield-star-in-safe-try": "error"
+  }
+}
+```
+
+The Oxlint configuration schema is shipped by `oxlint`, so package-local configs can use:
+
+```json
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json"
+}
+```
+
+### ESLint
+
+ESLint flat config can load `resultar-check/eslint`:
+
+```js
+import resultar from "resultar-check/eslint";
+
+export default [
+  {
+    plugins: { resultar },
+    rules: {
+      "resultar/no-await-in-safe-try": "error",
+      "resultar/no-tagged-error-constructor-override": "error",
+      "resultar/no-throw": "error",
+      "resultar/no-try-catch-in-safe-try": "error",
+      "resultar/prefer-tagged-error": "error",
+      "resultar/tagged-error-name-match": "error",
+      "resultar/typed-catch-mapper": "error",
+      "resultar/yield-star-in-safe-try": "error"
+    }
+  }
+];
+```
+
+### Deno Lint
+
+Deno Lint can load `resultar-check/deno`:
+
+```json
+{
+  "lint": {
+    "plugins": ["npm:resultar-check/deno"],
+    "rules": {
+      "include": [
+        "resultar/no-await-in-safe-try",
+        "resultar/no-tagged-error-constructor-override",
+        "resultar/no-throw",
+        "resultar/no-try-catch-in-safe-try",
+        "resultar/prefer-tagged-error",
+        "resultar/tagged-error-name-match",
+        "resultar/typed-catch-mapper",
+        "resultar/yield-star-in-safe-try"
+      ]
+    }
+  }
+}
+```
+
+### TypeScript Plugin + CLI
+
+The TypeScript plugin plus `resultar-check` CLI path is the full checker. It can run every rule,
+including rules that need TypeScript type information. Oxlint, ESLint, Deno Lint, and
+`resultar-check` can return the same Resultar diagnostic count only when they run the same AST-only
+rule subset.
+
+The default `resultar-check` CLI configuration may report additional type-aware rules such as
+`resultar/no-discard`, `resultar/no-unsafe-await`, `resultar/prefer-map-err`,
+`resultar/prefer-and-then`, `resultar/unsafe-result-type-assertion`, and
+`resultar/no-useless-recovery`.
+
+When you want to compare adapter output with the CLI, create a dedicated CLI project file that
+extends the normal `tsconfig.json` and turns off type-aware-only rules:
+
+```json
+{
+  "$schema": "./node_modules/resultar-check/schema.json",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "resultar-check",
+        "noAwaitInSafeTry": "error",
+        "noDiscard": "off",
+        "noTaggedErrorConstructorOverride": "error",
+        "noThrow": "error",
+        "noTryCatchInSafeTry": "error",
+        "noUnsafeAwait": "off",
+        "noUselessRecovery": "off",
+        "preferAndThen": "off",
+        "preferMapErr": "off",
+        "preferTaggedError": "error",
+        "taggedErrorNameMatch": "error",
+        "typedCatchMapper": "error",
+        "unsafeResultTypeAssertion": "off",
+        "yieldStarInSafeTry": "error"
+      }
+    ]
+  }
+}
+```
+
+Then run the CLI against that file:
+
+```sh
+pnpm exec resultar-check --project tsconfig.resultar-check.json
+```
+
+See `examples/lint` for a parity smoke that runs Oxlint, ESLint, and the CLI against the same
+fixture and fails if the per-rule counts differ.
+
+Rule IDs stay under the `resultar/` namespace for stable lint output and config.

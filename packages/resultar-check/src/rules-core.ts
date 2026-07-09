@@ -1,4 +1,4 @@
-import type * as ts from "typescript";
+import type * as ts from "./typescript-api.js";
 
 import type { ResultarLintFinding, ResultarRuleName, ResultarRuleSeverity } from "./finding.js";
 import {
@@ -43,6 +43,27 @@ type SafeTryBody =
   | ts.FunctionDeclaration
   | ts.FunctionExpression
   | ts.MethodDeclaration;
+
+const isObject = (value: unknown): value is object => typeof value === "object" && value !== null;
+
+const getObjectProperty = (value: object, property: PropertyKey): unknown =>
+  Reflect.get(value, property);
+
+const callObjectMethod = (
+  value: object,
+  methodName: PropertyKey,
+  args: readonly unknown[] = [],
+): unknown => {
+  const method = getObjectProperty(value, methodName);
+
+  return typeof method === "function" ? Reflect.apply(method, value, args) : undefined;
+};
+
+const isTypeLike = (value: unknown): value is ts.Type =>
+  isObject(value) && typeof getObjectProperty(value, "flags") === "number";
+
+const isTypeArray = (value: unknown): value is readonly ts.Type[] =>
+  Array.isArray(value) && value.every((entry) => isTypeLike(entry));
 
 export interface ResultarRulesOptions {
   readonly ignoreFilePatterns: readonly string[];
@@ -151,6 +172,16 @@ const asyncAwaitBoundaryCallNames = new Set([
   "tryAsync",
 ]);
 
+const resultLikeTypeNames = new Set([
+  "DisposableResult",
+  "DisposableResultAsync",
+  "ErrResult",
+  "OkResult",
+  "Result",
+  "ResultAsync",
+  "StrictResult",
+  "StrictResultAsync",
+]);
 const resultAsyncTypeNames = new Set(["DisposableResultAsync", "ResultAsync", "StrictResultAsync"]);
 
 export const normalizeRuleSeverity = (
@@ -262,13 +293,9 @@ const getRuleSeverity = (
 };
 
 const getTokenPosOfNode = (context: RuleContext, node: ts.Node): number => {
-  const getTokenPos = (
-    context.tsApi as unknown as {
-      readonly getTokenPosOfNode?: (node: ts.Node, sourceFile?: ts.SourceFile) => number;
-    }
-  ).getTokenPosOfNode;
+  const tokenPos = callObjectMethod(context.tsApi, "getTokenPosOfNode", [node, context.sourceFile]);
 
-  return getTokenPos === undefined ? node.pos : getTokenPos(node, context.sourceFile);
+  return typeof tokenPos === "number" ? tokenPos : node.pos;
 };
 
 const getNodeStart = (context: RuleContext, node: ts.Node): number =>
@@ -281,7 +308,9 @@ const getIdentifierText = (identifier: IdentifierText): string => {
     return identifier.text;
   }
 
-  return identifier.escapedText === undefined ? "" : String(identifier.escapedText);
+  const { escapedText } = identifier;
+
+  return typeof escapedText === "string" || typeof escapedText === "number" ? `${escapedText}` : "";
 };
 
 const getNodeWidth = (context: RuleContext, node: ts.Node): number => {
@@ -403,58 +432,99 @@ const getMethodCall = (
   };
 };
 
-const getTypeName = (context: RuleContext, node: ts.Node, type: ts.Type): string =>
-  context.checker.typeToString(type, node, context.tsApi.TypeFormatFlags.NoTruncation);
+const getTypeName = (context: RuleContext, node: ts.Node, type: ts.Type | undefined): string =>
+  type === undefined
+    ? "unknown"
+    : context.checker.typeToString(type, node, context.tsApi.TypeFormatFlags.NoTruncation);
 
-const getSymbolName = (symbol: ts.Symbol | undefined): string | undefined => {
-  if (symbol === undefined) {
+const getSymbolName = (symbol: unknown): string | undefined => {
+  if (!isObject(symbol)) {
     return undefined;
   }
 
-  return typeof symbol.escapedName === "string" ? symbol.escapedName : symbol.name;
+  const escapedName = getObjectProperty(symbol, "escapedName");
+  const name = getObjectProperty(symbol, "name");
+
+  if (typeof escapedName === "string") {
+    return escapedName;
+  }
+
+  return typeof name === "string" ? name : undefined;
 };
 
-const getTypeSymbolName = (type: ts.Type): string | undefined => {
-  const aliasName = getSymbolName(type.aliasSymbol);
+const getTypeSymbolName = (type: ts.Type | undefined): string | undefined => {
+  if (type === undefined) {
+    return undefined;
+  }
+
+  const aliasName = getSymbolName(
+    callObjectMethod(type, "getAliasSymbol") ?? getObjectProperty(type, "aliasSymbol"),
+  );
 
   if (aliasName !== undefined) {
     return aliasName;
   }
 
-  const symbolName = getSymbolName(type.symbol);
+  const symbolName = getSymbolName(
+    callObjectMethod(type, "getSymbol") ?? getObjectProperty(type, "symbol"),
+  );
 
   if (symbolName !== undefined) {
     return symbolName;
   }
 
-  return getSymbolName((type as ts.TypeReference).target?.symbol);
+  const target = getObjectProperty(type, "target");
+
+  return isObject(target) ? getSymbolName(getObjectProperty(target, "symbol")) : undefined;
 };
 
 const getUnionOrIntersectionTypes = (
   context: RuleContext,
-  type: ts.Type,
-): readonly ts.Type[] | undefined =>
-  (type.flags & (context.tsApi.TypeFlags.Union | context.tsApi.TypeFlags.Intersection)) === 0
-    ? undefined
-    : ((type as ts.UnionOrIntersectionType).types ?? []);
+  type: ts.Type | undefined,
+): readonly ts.Type[] | undefined => {
+  if (
+    type === undefined ||
+    (type.flags & (context.tsApi.TypeFlags.Union | context.tsApi.TypeFlags.Intersection)) === 0
+  ) {
+    return undefined;
+  }
 
-const getTypeArguments = (context: RuleContext, type: ts.Type): readonly ts.Type[] => {
-  const { aliasTypeArguments } = type;
+  const getTypesResult = callObjectMethod(type, "getTypes");
+  const types = getTypesResult ?? getObjectProperty(type, "types");
 
-  if (aliasTypeArguments !== undefined && aliasTypeArguments.length > 0) {
+  return isTypeArray(types) ? types : [];
+};
+
+const getTypeArguments = (_context: RuleContext, type: ts.Type): readonly ts.Type[] => {
+  const aliasTypeArguments =
+    callObjectMethod(type, "getAliasTypeArguments") ??
+    getObjectProperty(type, "aliasTypeArguments");
+
+  if (isTypeArray(aliasTypeArguments) && aliasTypeArguments.length > 0) {
     return aliasTypeArguments;
   }
 
-  const reference = type as ts.TypeReference;
-
-  return reference.target === undefined ? [] : context.checker.getTypeArguments(reference);
+  return [];
 };
 
 const getResultTypeParts = (
   context: RuleContext,
   node: ts.Node,
-  type: ts.Type,
+  type: ts.Type | undefined,
 ): readonly ResultTypeParts[] => {
+  if (type === undefined) {
+    return [];
+  }
+
+  const [directOkType, directErrorType] = getTypeArguments(context, type);
+
+  if (
+    (directOkType !== undefined || directErrorType !== undefined) &&
+    isResultLikeType(context.tsApi, context.checker, node, type)
+  ) {
+    return [{ error: directErrorType, ok: directOkType }];
+  }
+
   const unionOrIntersectionTypes = getUnionOrIntersectionTypes(context, type);
 
   if (unionOrIntersectionTypes !== undefined) {
@@ -496,7 +566,7 @@ const isResultLikeExpression = (context: RuleContext, expression: ts.Expression)
 const getUnionTypes = (context: RuleContext, type: ts.Type): readonly ts.Type[] | undefined =>
   (type.flags & context.tsApi.TypeFlags.Union) === 0
     ? undefined
-    : ((type as ts.UnionType).types ?? []);
+    : getUnionOrIntersectionTypes(context, type);
 
 const everyUnionPart = (
   context: RuleContext,
@@ -521,8 +591,12 @@ const isResultLikeAwaitedType = (context: RuleContext, node: ts.Node, type: ts.T
 const getPromisedTypeOfPromise = (
   context: RuleContext,
   node: ts.Node,
-  type: ts.Type,
+  type: ts.Type | undefined,
 ): ts.Type | undefined => {
+  if (type === undefined) {
+    return undefined;
+  }
+
   const checker = context.checker as ts.TypeChecker & {
     readonly getPromisedTypeOfPromise?: (type: ts.Type, errorNode?: ts.Node) => ts.Type | undefined;
   };
@@ -530,11 +604,79 @@ const getPromisedTypeOfPromise = (
   return checker.getPromisedTypeOfPromise?.(type, node);
 };
 
+const isPromiseTypeName = (typeName: string): boolean => /^Promise(?:Like)?<.+>$/u.test(typeName);
+
+const splitTopLevelGenericArguments = (value: string): readonly string[] => {
+  const argumentsText: string[] = [];
+  let depth = 0;
+  let start = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+
+    if (char === "<" || char === "(" || char === "[" || char === "{") {
+      depth += 1;
+    } else if (char === ">" || char === ")" || char === "]" || char === "}") {
+      depth = Math.max(0, depth - 1);
+    } else if (char === "," && depth === 0) {
+      argumentsText.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  argumentsText.push(value.slice(start).trim());
+
+  return argumentsText;
+};
+
+const getGenericArgumentTexts = (
+  typeName: string,
+  genericName: string,
+): readonly string[] | undefined => {
+  const prefix = `${genericName}<`;
+  const qualifiedPrefix = `.${genericName}<`;
+
+  if (!typeName.endsWith(">")) {
+    return undefined;
+  }
+
+  if (typeName.startsWith(prefix)) {
+    return splitTopLevelGenericArguments(typeName.slice(prefix.length, -1));
+  }
+
+  const qualifiedIndex = typeName.lastIndexOf(qualifiedPrefix);
+
+  if (qualifiedIndex === -1 || typeName.slice(0, qualifiedIndex).includes("<")) {
+    return undefined;
+  }
+
+  return splitTopLevelGenericArguments(typeName.slice(qualifiedIndex + qualifiedPrefix.length, -1));
+};
+
+const getSingleGenericArgumentText = (
+  typeName: string,
+  genericName: string,
+): string | undefined => {
+  const argumentTexts = getGenericArgumentTexts(typeName, genericName);
+
+  return argumentTexts?.length === 1 ? argumentTexts[0] : undefined;
+};
+
+const resultLikeTypeNamePattern =
+  /^(?:DisposableResult|DisposableResultAsync|ErrResult|OkResult|Result|ResultAsync|StrictResult|StrictResultAsync)(?:<|$)/u;
+
+const isResultLikeTypeName = (typeName: string): boolean =>
+  typeName.split(/\s*[|&]\s*/u).some((part) => resultLikeTypeNamePattern.test(part.trim()));
+
 const isResultarChannelAwaitExpression = (
   context: RuleContext,
   expression: ts.Expression,
 ): boolean => {
   const expressionType = context.checker.getTypeAtLocation(expression);
+
+  if (expressionType === undefined) {
+    return false;
+  }
 
   if (isResultAsyncLikeAwaitType(context, expression, expressionType)) {
     return true;
@@ -542,13 +684,15 @@ const isResultarChannelAwaitExpression = (
 
   const promisedType = getPromisedTypeOfPromise(context, expression, expressionType);
 
-  if (promisedType === undefined) {
-    return false;
+  if (promisedType !== undefined) {
+    return isResultLikeAwaitedType(context, expression, promisedType);
   }
 
-  const awaitedType = context.checker.getAwaitedType(expressionType) ?? promisedType;
+  const promiseTypeName =
+    getSingleGenericArgumentText(getTypeName(context, expression, expressionType), "Promise") ??
+    getSingleGenericArgumentText(getTypeName(context, expression, expressionType), "PromiseLike");
 
-  return isResultLikeAwaitedType(context, expression, awaitedType);
+  return promiseTypeName !== undefined && isResultLikeTypeName(promiseTypeName);
 };
 
 const isSafeAwaitExpression = (
@@ -570,7 +714,10 @@ const isSafeAwaitExpression = (
 
   const expressionType = context.checker.getTypeAtLocation(expression);
 
-  return getPromisedTypeOfPromise(context, expression, expressionType) === undefined;
+  return (
+    getPromisedTypeOfPromise(context, expression, expressionType) === undefined &&
+    !isPromiseTypeName(getTypeName(context, expression, expressionType))
+  );
 };
 
 function isIgnoredUnsafeAwaitCallExpression(
@@ -608,10 +755,20 @@ function isRunPromiseAwaitExpression(context: RuleContext, expression: ts.Expres
 
   const argumentType = context.checker.getTypeAtLocation(resultArgument);
 
-  return isResultAsyncLikeAwaitType(context, resultArgument, argumentType);
+  return (
+    argumentType !== undefined && isResultAsyncLikeAwaitType(context, resultArgument, argumentType)
+  );
 }
 
-const isPromiseOfResultLikeType = (context: RuleContext, node: ts.Node, type: ts.Type): boolean => {
+const isPromiseOfResultLikeType = (
+  context: RuleContext,
+  node: ts.Node,
+  type: ts.Type | undefined,
+): boolean => {
+  if (type === undefined) {
+    return false;
+  }
+
   const unionOrIntersectionTypes = getUnionOrIntersectionTypes(context, type);
 
   if (unionOrIntersectionTypes !== undefined) {
@@ -622,33 +779,50 @@ const isPromiseOfResultLikeType = (context: RuleContext, node: ts.Node, type: ts
 
   const promisedType = getPromisedTypeOfPromise(context, node, type);
 
-  if (promisedType === undefined) {
-    return false;
+  if (promisedType !== undefined) {
+    return isResultLikeAwaitedType(context, node, promisedType);
   }
 
-  const awaitedType = context.checker.getAwaitedType(type) ?? promisedType;
+  const promiseTypeName =
+    getSingleGenericArgumentText(getTypeName(context, node, type), "Promise") ??
+    getSingleGenericArgumentText(getTypeName(context, node, type), "PromiseLike");
 
-  return isResultLikeAwaitedType(context, node, awaitedType);
+  return promiseTypeName !== undefined && isResultLikeTypeName(promiseTypeName);
 };
 
 const isResultarAsyncContextReturnType = (
   context: RuleContext,
   node: ts.Node,
-  type: ts.Type,
+  type: ts.Type | undefined,
 ): boolean =>
-  isResultAsyncLikeType(context, node, type) || isPromiseOfResultLikeType(context, node, type);
+  (type !== undefined && isResultAsyncLikeType(context, node, type)) ||
+  isPromiseOfResultLikeType(context, node, type);
 
 const getFunctionLikeReturnType = (context: RuleContext, node: ts.Node): ts.Type | undefined => {
-  const signature = context.checker.getSignatureFromDeclaration(node as ts.SignatureDeclaration);
+  if (!isFunctionLike(context.tsApi, node)) {
+    return undefined;
+  }
+
+  const signature = context.checker.getSignatureFromDeclaration(node);
 
   if (signature !== undefined) {
-    return signature.getReturnType();
+    return context.checker.getReturnTypeOfSignature(signature);
   }
 
   const functionType = context.checker.getTypeAtLocation(node);
-  const [callSignature] = functionType.getCallSignatures();
 
-  return callSignature?.getReturnType();
+  if (functionType === undefined) {
+    return undefined;
+  }
+
+  const [callSignature] = context.checker.getSignaturesOfType(
+    functionType,
+    context.tsApi.SignatureKind.Call,
+  );
+
+  return callSignature === undefined
+    ? undefined
+    : context.checker.getReturnTypeOfSignature(callSignature);
 };
 
 const isResultarAsyncFunctionContext = (context: RuleContext, node: ts.Node): boolean => {
@@ -701,7 +875,7 @@ const getReturnedExpressions = (
   return expressions;
 };
 
-const isFunctionLike = (tsApi: TypeScriptApi, node: ts.Node): boolean =>
+const isFunctionLike = (tsApi: TypeScriptApi, node: ts.Node): node is SafeTryBody =>
   tsApi.isArrowFunction(node) ||
   tsApi.isFunctionDeclaration(node) ||
   tsApi.isFunctionExpression(node) ||
@@ -915,11 +1089,34 @@ const isNativeErrorInstance = (tsApi: TypeScriptApi, expression: ts.Expression):
 const getFirstResultErrorTypes = (
   context: RuleContext,
   node: ts.Node,
-  type: ts.Type,
+  type: ts.Type | undefined,
 ): readonly ts.Type[] =>
   getResultTypeParts(context, node, type)
     .map((part) => part.error)
     .filter((errorType): errorType is ts.Type => errorType !== undefined);
+
+const getFirstResultErrorTypeName = (
+  context: RuleContext,
+  node: ts.Node,
+  type: ts.Type | undefined,
+): string | undefined => {
+  if (type === undefined) {
+    return undefined;
+  }
+
+  const typeName = getTypeName(context, node, type);
+
+  for (const resultLikeTypeName of resultLikeTypeNames) {
+    const argumentTexts = getGenericArgumentTexts(typeName, resultLikeTypeName);
+    const errorTypeName = argumentTexts?.[1]?.trim();
+
+    if (errorTypeName !== undefined && errorTypeName !== "") {
+      return errorTypeName;
+    }
+  }
+
+  return undefined;
+};
 
 const getPreferMapErrFindings = (
   context: RuleContext,
@@ -1000,11 +1197,12 @@ const getPreferAndThenFindings = (
     }
 
     const returnedType = context.checker.getTypeAtLocation(returnedResult);
-    const methodName =
-      !isResultAsyncLikeType(context, methodCall.receiver, receiverType) &&
-      isResultAsyncLikeType(context, returnedResult, returnedType)
-        ? "asyncAndThen"
-        : "andThen";
+    const receiverIsResultAsync =
+      receiverType !== undefined &&
+      isResultAsyncLikeType(context, methodCall.receiver, receiverType);
+    const returnedIsResultAsync =
+      returnedType !== undefined && isResultAsyncLikeType(context, returnedResult, returnedType);
+    const methodName = !receiverIsResultAsync && returnedIsResultAsync ? "asyncAndThen" : "andThen";
 
     findings.push(
       createFinding(
@@ -1180,15 +1378,15 @@ const getNoUnsafeAwaitFindings = (
     }
 
     if (node !== context.sourceFile && isFunctionLike(context.tsApi, node)) {
-      context.tsApi.forEachChild(node, (child) =>
-        visit(child, startsResultarBoundary, startsResultarContext),
-      );
+      context.tsApi.forEachChild(node, (child) => {
+        visit(child, startsResultarBoundary, startsResultarContext);
+      });
       return;
     }
 
-    context.tsApi.forEachChild(node, (child) =>
-      visit(child, currentInsideBoundary, currentInsideContext),
-    );
+    context.tsApi.forEachChild(node, (child) => {
+      visit(child, currentInsideBoundary, currentInsideContext);
+    });
   };
 
   visit(context.sourceFile, false, false);
@@ -1327,17 +1525,36 @@ const getUnsafeResultTypeAssertionFindings = (
       return;
     }
 
-    const narrowedErrors = originalParts.flatMap((originalPart) =>
-      assertedParts
-        .filter(
-          (assertedPart) =>
-            originalPart.error !== undefined &&
-            assertedPart.error !== undefined &&
-            !isUnknownOrAnyType(context.tsApi, originalPart.error) &&
-            !context.checker.isTypeAssignableTo(originalPart.error, assertedPart.error),
-        )
-        .map((assertedPart) => ({ asserted: assertedPart.error!, original: originalPart.error! })),
-    );
+    const isRenderedUnionNarrowing = (original: ts.Type, asserted: ts.Type): boolean => {
+      const originalName = getTypeName(context, expression, original);
+      const assertedName = getTypeName(context, node, asserted);
+
+      return (
+        originalName !== assertedName &&
+        originalName.split(/\s*\|\s*/u).some((part) => part.trim() === assertedName)
+      );
+    };
+    const narrowedErrors = originalParts.flatMap((originalPart) => {
+      const originalError = originalPart.error;
+
+      if (originalError === undefined || isUnknownOrAnyType(context.tsApi, originalError)) {
+        return [];
+      }
+
+      return assertedParts.flatMap((assertedPart) => {
+        const assertedError = assertedPart.error;
+
+        if (
+          assertedError === undefined ||
+          (context.checker.isTypeAssignableTo(originalError, assertedError) &&
+            !isRenderedUnionNarrowing(originalError, assertedError))
+        ) {
+          return [];
+        }
+
+        return [{ asserted: assertedError, original: originalError }];
+      });
+    });
 
     if (narrowedErrors.length === 0) {
       return;
@@ -1510,11 +1727,13 @@ const getNoUselessRecoveryFindings = (
 
     const receiverType = context.checker.getTypeAtLocation(methodCall.receiver);
     const errorTypes = getFirstResultErrorTypes(context, methodCall.receiver, receiverType);
+    const errorTypeName = getFirstResultErrorTypeName(context, methodCall.receiver, receiverType);
+    const hasNeverErrorChannel =
+      errorTypes.length === 0
+        ? errorTypeName === "never"
+        : errorTypes.every((errorType) => isNeverType(context.tsApi, errorType));
 
-    if (
-      errorTypes.length === 0 ||
-      !errorTypes.every((errorType) => isNeverType(context.tsApi, errorType))
-    ) {
+    if (!hasNeverErrorChannel) {
       return;
     }
 

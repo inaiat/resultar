@@ -1,47 +1,78 @@
-import type * as ts from "typescript";
+import type * as ts from "./typescript-api.js";
 
 import { getResultarDiagnostics } from "./diagnostics.js";
 import { parsePluginOptions } from "./plugin-options.js";
 
 const pluginMarker = "__resultarLanguageServicePlugin";
 
+const getObjectProperty = (value: object, property: PropertyKey): unknown =>
+  Reflect.get(value, property);
+
+export interface LanguageServiceLike {
+  readonly getProgram?: () => ts.Program | undefined;
+  getSemanticDiagnostics: (
+    fileName: string,
+    ...args: readonly unknown[]
+  ) => readonly ts.Diagnostic[];
+}
+
+export interface PluginCreateInfo {
+  readonly config?: unknown;
+  readonly languageService: LanguageServiceLike;
+}
+
+export interface PluginModule {
+  readonly create: (info: PluginCreateInfo) => LanguageServiceLike;
+}
+
 export const createLanguageServicePlugin = (modules: {
   readonly typescript: typeof ts;
-}): ts.server.PluginModule => {
+}): PluginModule => {
   const tsApi = modules.typescript;
 
-  const create = (info: ts.server.PluginCreateInfo): ts.LanguageService => {
-    if ((info.languageService as unknown as Record<string, unknown>)[pluginMarker] === true) {
+  const create = (info: PluginCreateInfo): LanguageServiceLike => {
+    if (getObjectProperty(info.languageService, pluginMarker) === true) {
       return info.languageService;
     }
 
     const options = parsePluginOptions(info.config);
-    const proxy = Object.create(null) as ts.LanguageService & Record<string, unknown>;
-    const proxyRecord = proxy as unknown as Record<string, unknown>;
-    const serviceRecord = info.languageService as unknown as Record<string, unknown>;
-    proxy[pluginMarker] = true;
+    const proxy: LanguageServiceLike = {
+      getSemanticDiagnostics: (fileName: string, ...args: readonly unknown[]) => {
+        const diagnostics = info.languageService.getSemanticDiagnostics(fileName, ...args);
 
-    for (const key of Object.keys(serviceRecord)) {
-      const property = serviceRecord[key];
+        const program = info.languageService.getProgram?.();
+        const sourceFile = program?.getSourceFile(fileName);
+
+        if (program === undefined || sourceFile === undefined) {
+          return diagnostics;
+        }
+
+        return [...diagnostics, ...getResultarDiagnostics({ options, program, sourceFile, tsApi })];
+      },
+    };
+
+    Object.defineProperty(proxy, pluginMarker, { value: true });
+
+    for (const key of Object.keys(info.languageService)) {
+      if (key === "getSemanticDiagnostics") {
+        continue;
+      }
+
+      const property = getObjectProperty(info.languageService, key);
 
       if (typeof property === "function") {
-        proxyRecord[key] = (...args: readonly unknown[]) =>
-          Reflect.apply(property, info.languageService, args) as unknown;
+        Object.defineProperty(proxy, key, {
+          configurable: true,
+          enumerable: true,
+          value: (...args: readonly unknown[]): unknown => {
+            const result: unknown = Reflect.apply(property, info.languageService, args);
+
+            return result;
+          },
+          writable: true,
+        });
       }
     }
-
-    proxy.getSemanticDiagnostics = (fileName, ...args) => {
-      const diagnostics = info.languageService.getSemanticDiagnostics(fileName, ...args);
-
-      const program = info.languageService.getProgram();
-      const sourceFile = program?.getSourceFile(fileName);
-
-      if (program === undefined || sourceFile === undefined) {
-        return diagnostics;
-      }
-
-      return [...diagnostics, ...getResultarDiagnostics({ options, program, sourceFile, tsApi })];
-    };
 
     return proxy;
   };

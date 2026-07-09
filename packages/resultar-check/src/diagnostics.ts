@@ -1,4 +1,4 @@
-import type * as ts from "typescript";
+import type * as ts from "./typescript-api.js";
 
 import type { ResultarLintFinding, ResultarRuleName, ResultarRuleSeverity } from "./finding.js";
 import {

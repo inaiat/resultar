@@ -15,6 +15,6 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "tsx": "catalog:",
-    "typescript-7": "catalog:"
+    "typescript": "7.0.2"
   }
 }
