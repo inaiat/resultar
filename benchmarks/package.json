@@ -21,6 +21,7 @@
     "eslint": "10.6.0",
     "neverthrow": "^8.2.0",
     "oxlint": "1.72.0",
-    "tsx": "catalog:"
+    "tsx": "catalog:",
+    "typescript": "catalog:"
   }
 }

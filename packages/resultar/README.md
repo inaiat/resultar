@@ -738,6 +738,21 @@ const lines = ResultAsync.withResource({
 })
 ```
 
+Adapt callback and subscription APIs with `ResultAsync.fromCallback`. The callback source can
+resolve or reject once, receives the cooperative signal, and returns a synchronous unsubscribe
+function that runs after success, failure, or cancellation.
+
+```ts
+const nextValue = ResultAsync.fromCallback<number, SubscriptionError>({
+  catch: (cause) => new SubscriptionError({ cause }),
+  signal,
+  subscribe: ({ reject, resolve }) => {
+    const subscription = source.subscribe({ error: reject, next: resolve })
+    return () => subscription.unsubscribe()
+  },
+})
+```
+
 For pull-based streams, keep the runtime native: expose an `AsyncIterable<Result<T, E>>` and close
 resources in `finally`. See
 [DOCUMENTATION.md](../../DOCUMENTATION.md#resourceful-async-iterables) for the full recipe.
@@ -756,6 +771,7 @@ where the failure appears.
 | Catch thrown sync code now | `tryResult(fn, toError?)` |
 | Wrap a throwing sync function for later | `fromThrowable(fn, toError?)` |
 | Catch an existing rejecting promise | `fromPromise(promise, toError)` |
+| Adapt a callback or subscription | `ResultAsync.fromCallback({ subscribe, catch, signal? })` |
 | Catch a promise or async factory | `tryResultAsync(promiseOrFactory, toError?)` |
 | Wrap an async function for later | `fromThrowableAsync(fn, toError?)` |
 | Turn one error into another | `mapErr(fn)` |
@@ -1041,6 +1057,7 @@ For VS Code and Zed setup, use the editor integration section in the `resultar-c
 | Create an `Ok(undefined)` | `unit()` or `unitAsync()` |
 | Convert throwing sync code | `tryResult` or `fromThrowable` |
 | Convert rejecting async code | `tryResultAsync`, `fromPromise`, or `fromThrowableAsync` |
+| Convert a callback subscription | `ResultAsync.fromCallback` or `fromCallback` |
 | Treat an `Err` as unrecoverable at an edge | `unwrapOrThrow()` |
 | Transform success | `map` or `asyncMap` |
 | Replace success with a known value | `as(value)` |
@@ -1107,14 +1124,14 @@ More focused material:
 - [Full guide](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md)
 - [Type-safe error handling article, English](https://github.com/inaiat/resultar/blob/main/articles/en/type-safe.md)
 - [Artigo sobre tratamento de erros type-safe, Portuguese](https://github.com/inaiat/resultar/blob/main/articles/pt/type-safe.md)
-- [resultar-check package guide](https://github.com/inaiat/resultar/blob/main/packages/resultar-check/README.md)
+- [resultar-check package guide](https://github.com/inaiat/resultar/blob/main/packages/check/README.md)
 
 ## Repository
 
 This repository is a pnpm workspace:
 
 - `packages/resultar`: Resultar runtime package.
-- `packages/resultar-check`: TypeScript >=7 plus Resultar validation and AST-only lint adapters.
+- `packages/check`: TypeScript >=7 plus Resultar validation and AST-only lint adapters.
 - `benchmarks`: benchmark package.
 - `examples/resultar`: runnable core Resultar cookbook.
 - `examples/lint`: adapter parity smoke for AST-only Resultar rules across Oxlint, ESLint, and `resultar-check` CLI.

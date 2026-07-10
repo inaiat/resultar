@@ -1,0 +1,82 @@
+entry = ["src/index.ts", "src/cli.ts", "src/deno/plugin.ts", "src/eslint/plugin.ts"]
+publicPackages = ["resultar-check"]
+
+[[ignoreExports]]
+file = "src/core/ast.ts"
+exports = ["getIdentifierName", "unwrapExpression", "getCalleeName", "isCreateTaggedErrorCall"]
+
+[[ignoreExports]]
+file = "src/diagnostics.ts"
+exports = [
+  "RESULTAR_DIAGNOSTIC_SOURCE",
+  "RESULTAR_NO_DISCARD_DIAGNOSTIC_CODE",
+  "RESULTAR_RULE_DIAGNOSTIC_CODES",
+]
+
+[[ignoreExports]]
+file = "src/lint.ts"
+exports = ["NoDiscardFinding", "NoDiscardMode"]
+
+[[ignoreExports]]
+file = "src/rules-core.ts"
+exports = ["ruleOptionNameByRule"]
+
+[[ignoreExports]]
+file = "src/source-files.ts"
+exports = ["isExternalSourceFile"]
+
+[[ignoreExports]]
+file = "src/typescript-api.ts"
+exports = [
+  "ModuleKind",
+  "NodeBuilderFlags",
+  "ObjectFlags",
+  "SignatureKind",
+  "SymbolFlags",
+  "TypeFormatFlags",
+  "isTypeAssertionExpression",
+  "forEachChild",
+  "getLineAndCharacterOfPosition",
+  "CompilerOptions",
+  "Signature",
+  "TypeReference",
+  "UnionOrIntersectionType",
+  "UnionType",
+]
+
+[rules]
+circular-dependencies = "error"
+boundary-violation = "error"
+unused-class-members = "off"
+
+[duplicates]
+minLines = 58
+ignore = ["tests/**"]
+
+[health]
+ignore = ["tests/**"]
+
+[[health.thresholdOverrides]]
+files = ["src/result-usage-core.ts"]
+functions = ["isConsumedByReceiverChain"]
+maxCyclomatic = 15
+maxCognitive = 19
+reason = "Existing receiver-chain analysis complexity."
+
+[[health.thresholdOverrides]]
+files = ["src/cli.ts"]
+functions = ["run"]
+maxCrap = 73
+reason = "Existing CLI entry-point risk score."
+
+[[health.thresholdOverrides]]
+files = ["scripts/smoke-package.ts"]
+functions = ["getPluginInitializer"]
+maxCrap = 43
+reason = "Existing packaged-plugin compatibility checks."
+
+[[health.thresholdOverrides]]
+files = ["src/rules-core.ts"]
+functions = ["visit"]
+maxCrap = 31
+reason = "Existing AST visitor risk score."

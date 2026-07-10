@@ -1,0 +1,12 @@
+{
+  "name": "@inaiat/request-zod",
+  "version": "0.1.0",
+  "license": "MIT",
+  "exports": "./src/index.ts",
+  "imports": {
+    "resultar": "jsr:@inaiat/resultar@^3.4.0",
+    "resultar-request": "jsr:@inaiat/request@^0.1.0",
+    "zod": "npm:zod@^4.4.3"
+  },
+  "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }
+}

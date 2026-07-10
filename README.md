@@ -15,10 +15,10 @@ difficult to ignore.
 | Package         | Purpose                                                                                                                            | Documentation                                                                 |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `resultar`      | Core `Result<T, E>` and `ResultAsync<T, E>` library with tagged errors, typed async helpers, redaction, and strict result aliases. | [package README](packages/resultar/README.md), [full guide](DOCUMENTATION.md) |
-| `resultar-check` | `tsc` plus Resultar diagnostics for TypeScript >=7, with AST-only adapters for Oxlint, ESLint, and Deno Lint.                      | [check README](packages/resultar-check/README.md)                              |
-| `resultar-request`         | Fetch-first JSON request helper with Resultar errors, validation, retry, and error mapping.                                        | [request README](packages/resultar-request/README.md)                         |
-| `resultar-request-typebox` | TypeBox adapter for `resultar-request`.                                                                                            | [TypeBox adapter README](packages/resultar-request-typebox/README.md)         |
-| `resultar-request-zod`     | Zod adapter for `resultar-request`.                                                                                                | [Zod adapter README](packages/resultar-request-zod/README.md)                 |
+| `resultar-check`           | `tsc` plus Resultar diagnostics for TypeScript >=7, with AST-only adapters for Oxlint, ESLint, and Deno Lint.                      | [check README](packages/check/README.md)                              |
+| `resultar-request`         | Fetch-first JSON request helper with Resultar errors, validation, retry, and error mapping.                                        | [request README](packages/request/README.md)                          |
+| `resultar-request-typebox` | TypeBox adapter for `resultar-request`.                                                                                           | [TypeBox adapter README](packages/request-typebox/README.md)          |
+| `resultar-request-zod`     | Zod adapter for `resultar-request`.                                                                                               | [Zod adapter README](packages/request-zod/README.md)                  |
 
 ## Main Library
 
@@ -103,7 +103,7 @@ Configure the Resultar rules in `tsconfig.json`:
 The package-local schema provides editor completion and validation for `resultar-check` plugin
 options.
 
-See [packages/resultar-check/README.md](packages/resultar-check/README.md) for rule configuration
+See [packages/check/README.md](packages/check/README.md) for rule configuration
 and AST-only Oxlint, ESLint, and Deno Lint adapter setup.
 
 For editor diagnostics, use the same `compilerOptions.plugins` entry and configure your editor to use
@@ -116,7 +116,7 @@ the workspace TypeScript version. The check package guide includes copy-paste se
 | ---------------------------------------- | --------------------------- | --------------------------------------------------------------------------------- |
 | [examples/resultar](examples/resultar)   | Core Resultar cookbook      | Sync validation, `safeTry`, tagged errors, async resilience, and resource cleanup |
 | [examples/lint](examples/lint)           | Lint adapter parity         | AST-only Resultar rules compared across Oxlint, ESLint, and `resultar-check` CLI  |
-| [examples/resultar-request](examples/resultar-request) | Request helpers             | Fetch-style JSON calls with TypeBox and Zod adapters                              |
+| [examples/request](examples/request) | Request helpers             | Fetch-style JSON calls with TypeBox and Zod adapters                              |
 
 Run all example smokes with:
 

@@ -25,6 +25,12 @@ peerDependencyRules:
   allowedVersions:
     "@voidzero-dev/vite-plus-core>typescript": 7.0.2
 
+# Stryker 9 still calls the stable compiler API removed from TypeScript 7.
+packageExtensions:
+  "@stryker-mutator/core@9.6.1":
+    dependencies:
+      typescript: 6.0.3
+
 strictDepBuilds: true
 trustPolicy: no-downgrade
 trustPolicyExclude:

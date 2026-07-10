@@ -9,10 +9,10 @@ const registry = "https://jsr.io";
 
 const packages = [
   "packages/resultar",
-  "packages/resultar-check",
-  "packages/resultar-request",
-  "packages/resultar-request-typebox",
-  "packages/resultar-request-zod",
+  "packages/check",
+  "packages/request",
+  "packages/request-typebox",
+  "packages/request-zod",
 ];
 
 function run(command, args, options = {}) {

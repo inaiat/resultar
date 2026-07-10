@@ -2913,7 +2913,7 @@ entry point and API map above list the exported runtime helpers and type-only na
 This repository is a pnpm workspace:
 
 - `packages/resultar`: the Resultar runtime package.
-- `packages/resultar-check`: TypeScript >=7 plus Resultar validation and AST-only lint adapters.
+- `packages/check`: TypeScript >=7 plus Resultar validation and AST-only lint adapters.
 - `benchmarks`: benchmark workspace package.
 - `examples/resultar`: runnable core Resultar cookbook.
 - `examples/lint`: adapter parity smoke for AST-only Resultar rules across Oxlint, ESLint, and `resultar-check` CLI.

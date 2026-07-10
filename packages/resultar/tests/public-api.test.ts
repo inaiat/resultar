@@ -33,6 +33,7 @@ describe('public API', () => {
       'err',
       'errAsync',
       'findCause',
+      'fromCallback',
       'fromPromise',
       'fromSafePromise',
       'fromThrowable',

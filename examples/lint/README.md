@@ -148,6 +148,6 @@ CLI comparable with Oxlint and ESLint instead of reporting extra type-aware diag
 These adapter rules can be checked from syntax alone: safeTry generator misuse, native
 `throw`/`Error` use, tagged error shape, and missing `tryResult` catch mappers.
 
-The full type-aware Resultar checker remains in `packages/resultar-check`; use the TypeScript plugin
+The full type-aware Resultar checker remains in `packages/check`; use the TypeScript plugin
 or `resultar-check` CLI when you need rules such as no-discard, no-unsafe-await, prefer-map-err,
 prefer-and-then, unsafe-result-type-assertion, or no-useless-recovery.

@@ -1,5 +1,17 @@
 # resultar
 
+## 3.5.0
+
+### Minor Changes
+
+- Add `ResultAsync.fromCallback` for adapting callback and subscription APIs with typed failure
+  mapping, cooperative cancellation, and deterministic unsubscribe cleanup.
+
+### Patch Changes
+
+- dfbfcb3: Pin the workspace and Resultar diagnostics workflow to the published TypeScript 7 compiler package.
+  Fold the AST-only Oxlint, ESLint, and Deno Lint adapters into `resultar-check`.
+
 ## 3.4.0
 
 ### Minor Changes
