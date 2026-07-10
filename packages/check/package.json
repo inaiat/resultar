@@ -1,0 +1,85 @@
+{
+  "name": "resultar-check",
+  "version": "2.1.0",
+  "description": "Resultar diagnostics for TypeScript >=7",
+  "keywords": [
+    "lint",
+    "no-discard",
+    "resultar",
+    "typescript"
+  ],
+  "homepage": "https://github.com/inaiat/resultar",
+  "bugs": {
+    "url": "https://github.com/inaiat/resultar/issues"
+  },
+  "license": "MIT",
+  "author": "inaiat@gmail.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inaiat/resultar.git",
+    "directory": "packages/check"
+  },
+  "bin": {
+    "resultar-check": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "schema.json"
+  ],
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    },
+    "./deno": {
+      "types": "./dist/deno/plugin.d.ts",
+      "import": "./dist/deno/plugin.js",
+      "require": "./dist/deno/plugin.cjs",
+      "default": "./dist/deno/plugin.js"
+    },
+    "./eslint": {
+      "types": "./dist/eslint/plugin.d.ts",
+      "import": "./dist/eslint/plugin.js",
+      "require": "./dist/eslint/plugin.cjs",
+      "default": "./dist/eslint/plugin.js"
+    },
+    "./schema.json": "./schema.json"
+  },
+  "scripts": {
+    "analyze": "fallow",
+    "build": "vp pack",
+    "check": "vp check",
+    "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "prepare": "vp config || true",
+    "prepublishOnly": "vp pack",
+    "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts",
+    "test": "pnpm run build && vp test run",
+    "test:cov": "pnpm run build && vp test run --coverage",
+    "test:ui": "pnpm run build && vp test --ui --watch",
+    "test:watch": "pnpm run build && vp test watch"
+  },
+  "dependencies": {
+    "typescript": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "@vitest/ui": "catalog:",
+    "fallow": "catalog:",
+    "tsx": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -26,6 +26,7 @@ import {
   getMatchErrorHandler,
   ok as resultOk,
 } from './result.js'
+import { isError } from './tagged-error.js'
 import { callTaggedHandler, hasTag, isTaggedHandlerMatch, matchTaggedOr } from './tagged-match.js'
 import type {
   CatchTagHandlerResult,
@@ -92,6 +93,47 @@ export interface ResultAsyncAbortSignal {
    * Removes an abort listener.
    */
   removeEventListener: (type: 'abort', listener: () => void) => void
+}
+
+/**
+ * Context passed to `ResultAsync.fromCallback` subscriptions.
+ */
+export interface ResultAsyncCallbackContext<T> {
+  /**
+   * Completes the operation with `Ok(value)`.
+   */
+  readonly resolve: (value: T) => void
+  /**
+   * Completes the operation with a cause mapped by the subscription's `catch` function.
+   */
+  readonly reject: (cause: unknown) => void
+  /**
+   * Cooperative cancellation signal for the subscription.
+   */
+  readonly signal: ResultAsyncAbortSignal
+}
+
+/**
+ * Synchronous cleanup returned by a `ResultAsync.fromCallback` subscription.
+ */
+export type ResultAsyncCallbackCleanup = () => void
+
+/**
+ * Options for adapting a callback or subscription API into `ResultAsync`.
+ */
+export interface ResultAsyncFromCallbackOptions<T, E> {
+  /**
+   * Maps callback failures and synchronous subscription throws into the typed error channel.
+   */
+  readonly catch: (cause: unknown) => E
+  /**
+   * Optional external signal that cancels the subscription with `AbortError`.
+   */
+  readonly signal?: ResultAsyncAbortSignal
+  /**
+   * Registers the callback source and optionally returns a synchronous unsubscribe function.
+   */
+  readonly subscribe: (context: ResultAsyncCallbackContext<T>) => ResultAsyncCallbackCleanup | void
 }
 
 /**
@@ -695,6 +737,126 @@ const createResultAsyncResourceAbortError = (signal: ResultAsyncAbortSignal): Ab
   signal.reason === undefined
     ? new AbortError('ResultAsync resource scope aborted')
     : new AbortError('ResultAsync resource scope aborted', { cause: signal.reason })
+
+const createResultAsyncCallbackAbortError = (signal: ResultAsyncAbortSignal): AbortError =>
+  signal.reason === undefined
+    ? new AbortError('ResultAsync callback aborted')
+    : new AbortError('ResultAsync callback aborted', { cause: signal.reason })
+
+const emptyResultAsyncCallbackCleanup = (): void => undefined
+
+const callResultAsyncCallbackCleanup = (cleanup: ResultAsyncCallbackCleanup): void => {
+  try {
+    cleanup()
+  } catch {
+    /* Cleanup is best-effort; use withResource when cleanup failures affect control flow. */
+  }
+}
+
+const normalizeResultAsyncCallbackUnexpectedError = (error: unknown): Error =>
+  isError(error)
+    ? error
+    : new Error('ResultAsync callback error mapper threw a non-Error value', { cause: error })
+
+type ResultAsyncCallbackSettlement<T, E> =
+  | { readonly error: unknown }
+  | { readonly result: Result<T, E | AbortError> }
+
+interface ResultAsyncCallbackCompletion<T, E> {
+  readonly rejectResult: (error: Error) => void
+  readonly resolveResult: (result: Result<T, E | AbortError>) => void
+  readonly settlement: ResultAsyncCallbackSettlement<T, E>
+}
+
+const completeResultAsyncCallback = <T, E>(
+  completion: ResultAsyncCallbackCompletion<T, E>,
+): void => {
+  if ('error' in completion.settlement) {
+    completion.rejectResult(
+      normalizeResultAsyncCallbackUnexpectedError(completion.settlement.error),
+    )
+    return
+  }
+
+  completion.resolveResult(completion.settlement.result)
+}
+
+const fromResultAsyncCallback = <T, E>(
+  options: ResultAsyncFromCallbackOptions<T, E>,
+): ResultAsync<T, E | AbortError> => {
+  const signal: ResultAsyncAbortSignal = options.signal ?? new AbortController().signal
+  const promise = new Promise<Result<T, E | AbortError>>((resolveResult, rejectResult) => {
+    if (signal.aborted) {
+      resolveResult(Result.err(createResultAsyncCallbackAbortError(signal)))
+      return
+    }
+
+    let cleanup: ResultAsyncCallbackCleanup = emptyResultAsyncCallbackCleanup
+    let settlement: ResultAsyncCallbackSettlement<T, E> | undefined = undefined
+    let subscribed = false
+
+    const finalize = (): void => {
+      if (!subscribed) {
+        return
+      }
+
+      const completed = settlement
+
+      if (completed === undefined) {
+        return
+      }
+
+      signal.removeEventListener('abort', abort)
+      callResultAsyncCallbackCleanup(cleanup)
+      completeResultAsyncCallback({ rejectResult, resolveResult, settlement: completed })
+    }
+    const settle = (result: Result<T, E | AbortError>): void => {
+      if (settlement !== undefined) {
+        return
+      }
+
+      settlement = { result }
+      finalize()
+    }
+    const rejectUnexpected = (error: unknown): void => {
+      settlement = { error }
+      finalize()
+    }
+    const abort = (): void => {
+      settle(Result.err(createResultAsyncCallbackAbortError(signal)))
+    }
+    const context: ResultAsyncCallbackContext<T> = {
+      reject: (cause) => {
+        if (settlement !== undefined) {
+          return
+        }
+
+        try {
+          settle(Result.err(options.catch(cause)))
+        } catch (error) {
+          rejectUnexpected(error)
+        }
+      },
+      resolve: (value) => {
+        settle(Result.ok(value))
+      },
+      signal,
+    }
+
+    signal.addEventListener('abort', abort)
+
+    try {
+      cleanup = options.subscribe(context) ?? emptyResultAsyncCallbackCleanup
+    } catch (error) {
+      context.reject(error)
+    }
+
+    subscribed = true
+    finalize()
+  })
+
+  return new ResultAsync(promise)
+}
 
 const validateResultAsyncRetryTimes = (times: number): void => {
   if (!Number.isInteger(times) || times < 0) {
@@ -1559,7 +1721,7 @@ export class DisposableResultAsync<T, E> implements PromiseLike<Result<T, E>>, A
  * but operating in an asynchronous context.
  *
  * The class includes methods for:
- * - Creating ResultAsync instances (okAsync, errAsync, fromPromise)
+ * - Creating ResultAsync instances (okAsync, errAsync, fromPromise, fromCallback)
  * - Transforming values (map, mapErr)
  * - Chaining operations (andThen, orElse)
  * - Error handling (tapError)
@@ -1679,6 +1841,19 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
       .catch((error: unknown) => err<T, E>(errorFn(error)))
 
     return new ResultAsync<T, E>(newPromise)
+  }
+
+  /**
+   * Adapts a callback or subscription API into a cancellable ResultAsync.
+   *
+   * The returned cleanup function runs once after resolve, reject, cancellation, or synchronous
+   * subscription failure. Cleanup errors are ignored.
+   */
+  public static fromCallback<T, E>(
+    this: void,
+    options: ResultAsyncFromCallbackOptions<T, E>,
+  ): ResultAsync<T, E | AbortError> {
+    return fromResultAsyncCallback(options)
   }
 
   /**
@@ -2831,6 +3006,10 @@ export const okAsync: typeof ResultAsync.okAsync = ResultAsync.okAsync
  * Creates an Err ResultAsync.
  */
 export const errAsync: typeof ResultAsync.errAsync = ResultAsync.errAsync
+/**
+ * Adapts a callback or subscription API into a cancellable ResultAsync.
+ */
+export const fromCallback: typeof ResultAsync.fromCallback = ResultAsync.fromCallback
 /**
  * Converts an existing promise into a ResultAsync and maps rejection into a typed Err.
  */

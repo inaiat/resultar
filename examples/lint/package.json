@@ -1,21 +1,27 @@
 {
-  "name": "resultar-check-compat-example",
+  "name": "resultar-oxlint-example",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "resultar-check",
+    "check": "pnpm run check:oxlint",
+    "check:eslint": "eslint --config eslint.config.mjs src/index.ts src/resultar-clean.ts",
+    "check:oxlint": "oxlint --config oxlint.config.json src/index.ts src/resultar-clean.ts",
+    "check:resultar-check": "resultar-check --project tsconfig.resultar-check.json",
     "prepare": "pnpm --filter resultar build && pnpm --filter resultar-check build",
-    "smoke": "tsx scripts/smoke.ts",
-    "smoke:vite": "pnpm run smoke"
+    "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
     "resultar": "workspace:*"
   },
   "devDependencies": {
+    "@babel/core": "8.0.1",
+    "@babel/eslint-parser": "8.0.1",
+    "@babel/plugin-syntax-typescript": "8.0.3",
     "@types/node": "catalog:",
+    "eslint": "10.6.0",
+    "oxlint": "1.72.0",
     "resultar-check": "workspace:*",
     "tsx": "catalog:",
-    "typescript-7": "catalog:",
-    "vite-plus": "catalog:"
+    "typescript": "7.0.2"
   }
 }

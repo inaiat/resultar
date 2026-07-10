@@ -70,6 +70,7 @@ const expectedExports = [
   'err',
   'errAsync',
   'findCause',
+  'fromCallback',
   'fromPromise',
   'fromSafePromise',
   'fromThrowable',

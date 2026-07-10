@@ -1,6 +1,7 @@
 export {
   DisposableResultAsync,
   errAsync,
+  fromCallback,
   fromPromise,
   fromSafePromise,
   fromThrowableAsync,
@@ -14,7 +15,10 @@ export {
 } from './result-async.js'
 export type {
   ResultAsyncAbortSignal,
+  ResultAsyncCallbackCleanup,
+  ResultAsyncCallbackContext,
   ResultAsyncConcurrency,
+  ResultAsyncFromCallbackOptions,
   ResultAsyncRaceHandle,
   ResultAsyncRaceTask,
   ResultAsyncRetryContext,

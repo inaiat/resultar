@@ -48,7 +48,7 @@ should be handled in follow-up implementation tasks with focused tests.
 
 ## P2 - Maintainability
 
-- [x] Tighten TypeScript 6 strictness where practical.
+- [x] Tighten TypeScript strictness where practical.
   - Enabled `erasableSyntaxOnly`.
   - Enabled `exactOptionalPropertyTypes`.
   - Enabled `isolatedDeclarations`.

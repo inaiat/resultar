@@ -55,62 +55,111 @@ const assertExcludes = (output: string, unexpected: string, message: string): vo
 };
 
 const expectedRules = [
-  "resultar/no-discard",
-  "resultar/prefer-map-err",
-  "resultar/prefer-and-then",
-  "resultar/typed-catch-mapper",
-  "resultar/no-throw",
-  "resultar/no-await-in-safe-try",
-  "resultar/no-unsafe-await",
-  "resultar/no-try-catch-in-safe-try",
-  "resultar/yield-star-in-safe-try",
-  "resultar/unsafe-result-type-assertion",
-  "resultar/prefer-tagged-error",
-  "resultar/tagged-error-name-match",
-  "resultar/no-tagged-error-constructor-override",
-  "resultar/no-useless-recovery",
+  "no-await-in-safe-try",
+  "no-tagged-error-constructor-override",
+  "no-throw",
+  "no-try-catch-in-safe-try",
+  "prefer-tagged-error",
+  "tagged-error-name-match",
+  "typed-catch-mapper",
+  "yield-star-in-safe-try",
 ] as const;
+
+type ExpectedRule = (typeof expectedRules)[number];
+type RuleCounts = Record<ExpectedRule, number>;
+
+interface CheckRun {
+  readonly counts: RuleCounts;
+  readonly label: string;
+  readonly output: string;
+  readonly total: number;
+}
+
+const checkScripts = [
+  { label: "Oxlint", script: "check:oxlint" },
+  { label: "ESLint", script: "check:eslint" },
+  { label: "resultar-check CLI", script: "check:resultar-check" },
+] as const;
+
+const countText = (value: string, expected: string): number => value.split(expected).length - 1;
+
+const normalizeResultarRuleIds = (output: string): string =>
+  expectedRules.reduce(
+    (current, rule) => current.replaceAll(`resultar(${rule})`, `resultar/${rule}`),
+    output,
+  );
+
+const countRuleDiagnostics = (output: string): RuleCounts => {
+  const normalized = normalizeResultarRuleIds(output);
+  const entries = expectedRules.map((rule) => [
+    rule,
+    countText(normalized, `resultar/${rule}`),
+  ] as const);
+
+  return Object.fromEntries(entries) as RuleCounts;
+};
+
+const totalDiagnostics = (counts: RuleCounts): number =>
+  expectedRules.reduce((total, rule) => total + counts[rule], 0);
+
+const formatCounts = (counts: RuleCounts): string =>
+  expectedRules.map((rule) => `${rule}: ${counts[rule]}`).join(", ");
+
+const assertSameCounts = (base: CheckRun, candidate: CheckRun): void => {
+  if (candidate.total !== base.total) {
+    throw new Error(
+      `${candidate.label} reported ${candidate.total} diagnostics, expected ${base.total} from ${base.label}.\n${candidate.output}`,
+    );
+  }
+
+  for (const rule of expectedRules) {
+    if (candidate.counts[rule] !== base.counts[rule]) {
+      throw new Error(
+        `${candidate.label} reported ${candidate.counts[rule]} ${rule} diagnostics, expected ${base.counts[rule]} from ${base.label}.\n${candidate.output}`,
+      );
+    }
+  }
+};
 
 pnpm(["--filter", "resultar", "build"], { cwd: workspaceDir });
 pnpm(["--filter", "resultar-check", "build"], { cwd: workspaceDir });
 
-const version = pnpm(["exec", "resultar-check", "--version"], { cwd: exampleDir });
+const runs = checkScripts.map(({ label, script }) => {
+  const { output } = pnpm(["run", script], { cwd: exampleDir, expectFailure: true });
+  const counts = countRuleDiagnostics(output);
+  const total = totalDiagnostics(counts);
 
-if (!/Version 7\.0\./.test(version.output)) {
-  throw new Error(`Expected resultar-check to use TypeScript 7\n${version.output}`);
+  assertExcludes(
+    output,
+    "src/resultar-clean.ts:",
+    `Expected clean Resultar example file to have no ${label} diagnostics`,
+  );
+
+  return { counts, label, output, total };
+});
+
+const [baseRun, ...candidateRuns] = runs;
+
+if (baseRun === undefined) {
+  throw new Error("Expected at least one check run");
 }
-
-const lint = pnpm(["run", "check"], { cwd: exampleDir, expectFailure: true });
-
-assertIncludes(
-  lint.output,
-  "resultar/no-discard",
-  "Expected check command to report discarded Resultar values",
-);
-assertIncludes(
-  lint.output,
-  "assigned to `unhandled`",
-  "Expected check command to report must-use assignment diagnostics",
-);
-assertIncludes(
-  lint.output,
-  "throwing `new Error(...)`",
-  "Expected check command to report thrown native Error diagnostics",
-);
-assertIncludes(
-  lint.output,
-  "raw Promise boundary",
-  "Expected check command to report Resultar async unwrapping in raw Promise boundaries",
-);
 
 for (const rule of expectedRules) {
-  assertIncludes(lint.output, rule, `Expected check command to report ${rule}`);
+  if (baseRun.counts[rule] === 0) {
+    throw new Error(`Expected ${baseRun.label} to report ${rule}\n${baseRun.output}`);
+  }
 }
 
-assertExcludes(
-  lint.output,
-  "resultar-clean.ts",
-  "Expected clean Resultar example file to have no diagnostics",
+assertIncludes(
+  baseRun.output,
+  "throwing new Error(...)",
+  "Expected Oxlint plugin to report thrown native Error diagnostics",
 );
 
-process.stdout.write("Resultar lint TS7 example smoke passed.\n");
+for (const run of candidateRuns) {
+  assertSameCounts(baseRun, run);
+}
+
+process.stdout.write(
+  `Resultar lint adapter parity smoke passed (${baseRun.total} diagnostics: ${formatCounts(baseRun.counts)}).\n`,
+);

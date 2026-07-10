@@ -1,6 +1,6 @@
 {
   "name": "resultar",
-  "version": "3.4.0",
+  "version": "3.5.0",
   "description": "Result pattern for TypeScript",
   "keywords": [
     "error-handling",
@@ -67,12 +67,12 @@
     "@vitest/ui": "catalog:",
     "fallow": "catalog:",
     "tsx": "catalog:",
-    "typescript": "^6.0.3",
+    "typescript": "catalog:",
     "vite-plus": "catalog:",
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "typescript": ">=6.0.0"
+    "typescript": ">=7.0.0"
   },
   "peerDependenciesMeta": {
     "typescript": {

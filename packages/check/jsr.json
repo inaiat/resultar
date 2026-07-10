@@ -1,0 +1,11 @@
+{
+  "name": "@inaiat/resultar-check",
+  "version": "2.1.0",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/diagnostics.ts",
+    "./deno": "./src/deno/plugin.ts",
+    "./eslint": "./src/eslint/plugin.ts"
+  },
+  "publish": { "include": ["LICENSE", "README.md", "schema.json", "src/**/*.ts"] }
+}

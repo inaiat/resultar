@@ -4,15 +4,24 @@
   "type": "module",
   "scripts": {
     "bench": "pnpm --filter resultar build && node --import tsx resultar-vs-neverthrow.ts",
+    "bench:check-cli": "pnpm --filter resultar-check build && node --import tsx oxlint-vs-resultar-check-cli.ts",
+    "bench:check-cli:volume": "RESULTAR_CHECK_CLI_BENCH_TARGET=../examples/lint/src/index.ts RESULTAR_CHECK_CLI_BENCH_TARGET_COPIES=10 pnpm run bench:check-cli",
     "bench:neverthrow": "pnpm run bench",
     "bench:stable": "pnpm --filter resultar build && node --import tsx resultar-vs-stable.ts"
   },
   "dependencies": {
-    "resultar": "workspace:*"
+    "resultar": "workspace:*",
+    "resultar-check": "workspace:*"
   },
   "devDependencies": {
+    "@babel/core": "8.0.1",
+    "@babel/eslint-parser": "8.0.1",
+    "@babel/plugin-syntax-typescript": "8.0.3",
     "cronometro": "^6.0.3",
+    "eslint": "10.6.0",
     "neverthrow": "^8.2.0",
-    "tsx": "catalog:"
+    "oxlint": "1.72.0",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
   }
 }

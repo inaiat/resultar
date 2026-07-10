@@ -72,7 +72,7 @@ export const parseConfigWithReusableWrapper = (
 
 const readConfigText = async (source: string): Promise<string> => {
   if (source === "missing") {
-    throw new Error("missing config");
+    throw new ReadConfigError({ source });
   }
 
   if (source === "bad-json") {

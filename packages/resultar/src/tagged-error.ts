@@ -327,9 +327,7 @@ const compileMessageInterpolator =
 
 const getTemplateVariableNames = (template: string): readonly string[] => {
   templateVariableMatcher.lastIndex = 0
-  return [...template.matchAll(templateVariableMatcher)].map((match) =>
-    String(match.groups?.['name']),
-  )
+  return [...template.matchAll(templateVariableMatcher)].map((match) => String(match[1]))
 }
 
 const assertNoReservedTemplateVariables = (tag: string, template: string): void => {

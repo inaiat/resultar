@@ -6,7 +6,10 @@ const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const packages = [
   "packages/resultar",
-  "packages/resultar-check",
+  "packages/check",
+  "packages/request",
+  "packages/request-typebox",
+  "packages/request-zod",
 ];
 
 const parseJsonRecord = (contents, filePath) => {

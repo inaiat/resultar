@@ -1,0 +1,72 @@
+{
+  "name": "resultar-request-typebox",
+  "version": "0.1.0",
+  "description": "TypeBox adapter for request.",
+  "keywords": [
+    "fetch",
+    "json",
+    "request",
+    "resultar",
+    "typebox"
+  ],
+  "homepage": "https://github.com/inaiat/resultar",
+  "bugs": {
+    "url": "https://github.com/inaiat/resultar/issues"
+  },
+  "license": "MIT",
+  "author": "inaiat@gmail.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inaiat/resultar.git",
+    "directory": "packages/request-typebox"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "type": "module",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "analyze": "fallow",
+    "build": "vp pack",
+    "check": "vp check",
+    "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "prepare": "vp config || true",
+    "prepublishOnly": "vp pack",
+    "smoke:package": "pnpm --filter resultar-request build && pnpm run build && tsx scripts/smoke-package.ts",
+    "test": "vp test",
+    "test:watch": "vp test watch",
+    "test:ui": "vp test --ui --watch",
+    "test:cov": "vp test run --coverage"
+  },
+  "dependencies": {
+    "resultar": "workspace:*",
+    "resultar-request": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "@vitest/ui": "catalog:",
+    "fallow": "catalog:",
+    "tsx": "catalog:",
+    "typebox": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "typebox": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

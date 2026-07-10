@@ -1,5 +1,4 @@
 {
-  "$schema": "./node_modules/resultar-check/schema.json",
   "compilerOptions": {
     "target": "ESNext",
     "lib": ["ESNext"],
@@ -8,28 +7,7 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["node"],
-    "plugins": [
-      {
-        "name": "resultar-check",
-        "noAwaitInSafeTry": "error",
-        "noDiscard": "error",
-        "noTaggedErrorConstructorOverride": "error",
-        "noThrow": "error",
-        "noTryCatchInSafeTry": "error",
-        "noUnsafeAwait": "error",
-        "noUnsafeAwaitIgnoreCalls": ["startServer", "fastify.after"],
-        "noUnsafeAwaitMode": "all",
-        "noUselessRecovery": "error",
-        "preferAndThen": "error",
-        "preferMapErr": "error",
-        "preferTaggedError": "error",
-        "taggedErrorNameMatch": "error",
-        "typedCatchMapper": "error",
-        "unsafeResultTypeAssertion": "error",
-        "yieldStarInSafeTry": "error"
-      }
-    ]
+    "types": ["node"]
   },
-  "include": ["src/**/*.ts", "vite.config.ts"]
+  "include": ["src/**/*.ts"]
 }

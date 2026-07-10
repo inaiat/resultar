@@ -2173,11 +2173,11 @@ result.isOk()
 
 ## No-Discard Validation
 
-Resultar values should not be ignored. Use `resultar-check` to run TypeScript 7 and Resultar
+Resultar values should not be ignored. Use `resultar-check` to run TypeScript >=7 and Resultar
 diagnostics through one command.
 
 ```sh
-pnpm add -D resultar-check typescript@rc
+pnpm add -D resultar-check "typescript@>=7"
 ```
 
 Add a check script:
@@ -2227,15 +2227,14 @@ Configure Resultar rules in `tsconfig.json`:
 }
 ```
 
-Oxlint is intentionally not part of the Resultar rules path; use it only for general linting if your
-project wants it. Until TypeScript 7 exposes the stable programmatic checker API Resultar needs,
-`resultar-check` keeps a TypeScript 6 diagnostics API as an internal bridge.
+For AST-only Oxlint, ESLint, and Deno Lint feedback, use the `resultar-check/eslint` and
+`resultar-check/deno` package exports. Keep the `resultar-check` CLI for full TypeScript-backed
+Resultar diagnostics. When comparing CLI output with AST-only adapters, run the CLI with a dedicated
+project file that enables the same AST-only rule subset; `examples/lint` contains that parity smoke.
 
 For editor diagnostics, use the same `compilerOptions.plugins` entry and configure your editor to use
 the workspace TypeScript version. The `resultar-check` package guide includes copy-paste setup for VS
-Code, Zed `vtsls`, and Zed `typescript-language-server`. If a project cannot replace its
-`typescript` package yet and only needs CLI diagnostics, install `typescript-7@npm:typescript@rc` as
-a compatibility alias.
+Code, Zed `vtsls`, and Zed `typescript-language-server`.
 
 ## Testing Resultar Code
 
@@ -2914,12 +2913,10 @@ entry point and API map above list the exported runtime helpers and type-only na
 This repository is a pnpm workspace:
 
 - `packages/resultar`: the Resultar runtime package.
-- `packages/resultar-check`: TypeScript 7 plus Resultar validation.
-- `packages/resultar-lint`: deprecated compatibility wrapper.
-- `packages/resultar-tsgo`: deprecated compatibility wrapper for older installs.
+- `packages/check`: TypeScript >=7 plus Resultar validation and AST-only lint adapters.
 - `benchmarks`: benchmark workspace package.
 - `examples/resultar`: runnable core Resultar cookbook.
-- `examples/lint`: TypeScript 7 `resultar-check` smoke example.
+- `examples/lint`: adapter parity smoke for AST-only Resultar rules across Oxlint, ESLint, and `resultar-check` CLI.
 
 Common commands:
 

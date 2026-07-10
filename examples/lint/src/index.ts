@@ -151,14 +151,14 @@ const app = {
 
 const startServer = async (): Promise<void> => undefined;
 
-// Bare function identifiers can also be ignored by exact source name. This call
-// is ignored because tsconfig.json configures "startServer".
+// In the full TypeScript checker, bare function identifiers can be ignored by
+// exact source name. A project can allow this call by configuring "startServer".
 export const ignoredUnsafeAwaitFunctionExample = async (): Promise<void> => {
   await startServer();
 };
 
-// noUnsafeAwaitIgnoreCalls is exact and source-name based. This call is ignored
-// by tsconfig.json because the configured path is "fastify.after".
+// noUnsafeAwaitIgnoreCalls is exact and source-name based. A project can allow
+// this call by configuring "fastify.after".
 export const ignoredUnsafeAwaitCallExample = async (): Promise<void> => {
   await fastify.after();
 };

@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "declaration": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedDeclarations": true,
+    "isolatedModules": true,
+    "plugins": [
+      { "name": "resultar-check", "ignoreFilePatterns": ["scripts/**/*.ts", "tests/**/*.ts"] }
+    ],
+    "moduleDetection": "force",
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*.ts", "src/**/*.ts", "tests/**/*.ts", "vite.config.ts"],
+  "exclude": ["coverage", "dist", "node_modules", "report"]
+}

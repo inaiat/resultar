@@ -1,0 +1,14 @@
+entry = ["src/index.ts"]
+publicPackages = ["resultar-request"]
+
+[rules]
+circular-dependencies = "error"
+boundary-violation = "error"
+unused-class-members = "off"
+
+[duplicates]
+minLines = 18
+ignore = ["tests/**"]
+
+[health]
+ignore = ["tests/**"]
