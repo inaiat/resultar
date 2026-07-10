@@ -1,33 +1,135 @@
 # Resultar Check
 
-Resultar diagnostics for projects using TypeScript >=7.
+**Resultar-aware linting for TypeScript >=7. Fast feedback with Oxlint, full semantic enforcement
+with the TypeScript checker.**
 
-`resultar-check` is the canonical Resultar diagnostics package and command. It requires TypeScript
->=7, runs the compiler first, then runs Resultar diagnostics over the same `tsconfig.json`. The same
-package also ships AST-only adapters for Oxlint, ESLint, and Deno Lint.
+TypeScript can prove that a value has type `Result<T, E>`. It cannot prove that the value was handled,
+that a `safeTry` flow preserved its error channel, or that application code avoided falling back to
+`throw`, raw `await`, and broad `try/catch` patterns. General-purpose linters do not understand those
+contracts without Resultar-specific rules.
 
-## Install
+`resultar-check` turns those contracts into executable project policy. One package provides:
 
-For editor diagnostics and CLI checks, install `resultar-check` with project-local TypeScript >=7:
+- an **Oxlint JavaScript plugin** for fast, syntax-only feedback;
+- a **TypeScript language-service plugin** for diagnostics in the editor;
+- a **CLI** that runs TypeScript first and then applies every Resultar rule over the same project;
+- equivalent AST-only adapters for **ESLint** and **Deno Lint**.
+
+Use Oxlint continuously while writing code, then keep the full checker as the type-aware quality gate.
+Both surfaces use stable `resultar/*` rule IDs, so local feedback and CI speak the same language.
+
+## Why Resultar Check
+
+Result-based error handling is useful only while the failure channel remains visible. Small mistakes
+can compile while weakening that guarantee: a returned `Result` is ignored, a type assertion narrows
+away an error, `map` creates a nested Resultar value, or a familiar exception pattern appears inside
+a `safeTry` workflow.
+
+Resultar Check protects that design at review time:
+
+- **Keep failures explicit.** Detect discarded `Result` and `ResultAsync` values before they become
+  silent failure paths.
+- **Protect composition.** Guide `map`/`andThen` and `orElse`/`mapErr` usage so pipelines retain the
+  intended shape.
+- **Enforce Resultar boundaries.** Catch raw `throw`, unsafe `await`, and `try/catch` patterns where
+  they bypass typed error channels.
+- **Keep domain errors predictable.** Enforce tagged-error construction, names, metadata, and typed
+  catch mappers.
+- **Adopt incrementally.** Run eight syntax-only rules through Oxlint, or enable the full set of
+  fourteen rules when type information is available.
+
+### Deterministic Guardrails For AI-Assisted Code
+
+AI coding tools can generate valid TypeScript while falling back to common JavaScript patterns such
+as `throw new Error`, unhandled return values, raw Promise awaits, or generic `try/catch`. Those
+patterns may be reasonable in another codebase but violate a Resultar architecture.
+
+Resultar Check gives that probabilistic workflow a deterministic correction loop:
+
+1. The agent writes or refactors code.
+2. Oxlint reports structural Resultar mistakes immediately.
+3. `resultar-check` verifies type-aware contracts across the project.
+4. The agent receives a stable rule ID and an actionable diagnostic instead of relying on reviewer
+   memory.
+
+This works with any coding agent that can run project commands; no model-specific integration is
+required. It does not replace tests or review. It makes the architecture explicit enough for humans
+and agents to validate the same rules repeatedly.
+
+## Recommended Workflow
+
+| Stage | Tool | What it catches | Why use it |
+| --- | --- | --- | --- |
+| Write, save, staged files | Oxlint + Resultar plugin | Eight syntax-only Resultar rules | Fast feedback without creating a TypeScript Program |
+| Editor | TypeScript plugin | Full Resultar diagnostics beside TypeScript errors | Problems appear where code is written |
+| CI and release | `resultar-check` CLI | TypeScript diagnostics plus all fourteen Resultar rules | Authoritative project-wide gate |
+| Existing lint stack | ESLint or Deno Lint adapter | Same eight AST-only rules | Adopt Resultar policy without replacing the host |
+
+The recommended default is **Oxlint for the inner loop plus `resultar-check` for CI**. Oxlint is not a
+reduced replacement for the full checker; it is the low-latency first layer.
+
+## Quick Start With Oxlint
+
+Install Resultar Check and Oxlint:
+
+```sh
+pnpm add -D resultar-check oxlint
+```
+
+Create `oxlint.config.json`:
+
+```json
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "jsPlugins": [
+    {
+      "name": "resultar",
+      "specifier": "./node_modules/resultar-check/dist/eslint/plugin.js"
+    }
+  ],
+  "rules": {
+    "resultar/no-await-in-safe-try": "error",
+    "resultar/no-tagged-error-constructor-override": "error",
+    "resultar/no-throw": "error",
+    "resultar/no-try-catch-in-safe-try": "error",
+    "resultar/prefer-tagged-error": "error",
+    "resultar/tagged-error-name-match": "error",
+    "resultar/typed-catch-mapper": "error",
+    "resultar/yield-star-in-safe-try": "error"
+  }
+}
+```
+
+Add scripts for both feedback layers:
+
+```json
+{
+  "scripts": {
+    "lint:resultar": "oxlint --config oxlint.config.json",
+    "check:resultar": "resultar-check"
+  }
+}
+```
+
+Run Oxlint on every local lint pass and `resultar-check` in CI. The AST-only rules need no type
+information; the CLI requires a project-local TypeScript >=7 for the complete rule set.
+
+See the runnable
+[lint adapter example](https://github.com/inaiat/resultar/tree/main/examples/lint) for a parity test
+that verifies Oxlint, ESLint, and the CLI against the same Resultar violations.
+
+## Add The Full Type-Aware Gate
+
+Install project-local TypeScript >=7 for editor diagnostics and CLI checks:
 
 ```sh
 pnpm add -D resultar-check "typescript@>=7"
 ```
 
-Add one check script:
-
-```json
-{
-  "scripts": {
-    "check": "resultar-check"
-  }
-}
-```
-
 `resultar-check` defaults to `tsconfig.json` and passes `--noEmit` to TypeScript unless a
 `--noEmit` flag is already present.
 
-Configure Resultar rules in `tsconfig.json`:
+Configure the TypeScript plugin and type-aware rules in `tsconfig.json`:
 
 ```json
 {
@@ -38,8 +140,10 @@ Configure Resultar rules in `tsconfig.json`:
         "name": "resultar-check",
         "ignoreFilePatterns": ["*.test.ts", "*.spec.ts"],
         "noDiscard": "error",
+        "noUnsafeAwait": "error",
         "preferMapErr": "error",
-        "preferAndThen": "error"
+        "preferAndThen": "error",
+        "unsafeResultTypeAssertion": "error"
       }
     ]
   }
@@ -245,37 +349,14 @@ The AST-only adapter rules are:
 
 ### Oxlint
 
-Oxlint can load the same JavaScript plugin surface through `jsPlugins`:
+The [quick-start configuration](#quick-start-with-oxlint) is the recommended adapter path. Oxlint
+loads the packaged JavaScript rule modules through `jsPlugins` and reports them with the same
+`resultar/*` namespace used by ESLint and the CLI.
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "jsPlugins": [
-    {
-      "name": "resultar",
-      "specifier": "./node_modules/resultar-check/dist/eslint/plugin.js"
-    }
-  ],
-  "rules": {
-    "resultar/no-await-in-safe-try": "error",
-    "resultar/no-tagged-error-constructor-override": "error",
-    "resultar/no-throw": "error",
-    "resultar/no-try-catch-in-safe-try": "error",
-    "resultar/prefer-tagged-error": "error",
-    "resultar/tagged-error-name-match": "error",
-    "resultar/typed-catch-mapper": "error",
-    "resultar/yield-star-in-safe-try": "error"
-  }
-}
-```
-
-The Oxlint configuration schema is shipped by `oxlint`, so package-local configs can use:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json"
-}
-```
+This layer deliberately avoids type-dependent guesses. It catches structural Resultar violations
+quickly and leaves questions such as whether a value is actually `Result<T, E>` to the TypeScript
+plugin and CLI. The `$schema` entry comes from Oxlint and provides completion for the host config;
+Resultar rule names are registered by the JavaScript plugin.
 
 ### ESLint
 

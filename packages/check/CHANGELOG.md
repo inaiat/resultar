@@ -1,5 +1,11 @@
 # resultar-check
 
+## 2.1.1
+
+### Patch Changes
+
+- Rewrite the package guide around Oxlint-first adoption, full type-aware enforcement, and deterministic guardrails for AI-assisted development.
+
 ## 2.1.0
 
 ### Minor Changes
