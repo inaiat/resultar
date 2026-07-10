@@ -77,6 +77,6 @@ reason = "Existing packaged-plugin compatibility checks."
 
 [[health.thresholdOverrides]]
 files = ["src/rules-core.ts"]
-functions = ["visit"]
+functions = ["visitReturnedExpressions"]
 maxCrap = 31
-reason = "Existing AST visitor risk score."
+reason = "Existing returned-expression visitor risk score."

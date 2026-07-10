@@ -6,7 +6,7 @@
     "build": "pnpm -r --filter './packages/*' run build",
     "changeset": "changeset",
     "check": "pnpm -r --filter './packages/*' run check",
-    "check:full": "pnpm run analyze && pnpm -r --filter './packages/*' run check:full",
+    "check:full": "pnpm -r --filter './packages/*' run check:full && pnpm run analyze",
     "example:resultar": "pnpm --filter resultar-example smoke",
     "example:oxlint": "pnpm --filter resultar-oxlint-example smoke",
     "example:request": "pnpm --filter resultar-request-example smoke",

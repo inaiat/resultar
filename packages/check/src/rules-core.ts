@@ -857,7 +857,7 @@ const getReturnedExpressions = (
   }
 
   const { body } = callback;
-  const visit = (node: ts.Node): void => {
+  const visitReturnedExpressions = (node: ts.Node): void => {
     if (node !== body && isFunctionLike(tsApi, node)) {
       return;
     }
@@ -867,10 +867,10 @@ const getReturnedExpressions = (
       return;
     }
 
-    tsApi.forEachChild(node, visit);
+    tsApi.forEachChild(node, visitReturnedExpressions);
   };
 
-  visit(body);
+  visitReturnedExpressions(body);
 
   return expressions;
 };
