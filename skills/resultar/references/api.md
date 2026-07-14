@@ -1,287 +1,217 @@
-# Resultar API Reference For AI Agents
+# Resultar v3.5+ API Guide
 
-Use this reference when writing or reviewing code that consumes Resultar.
+Use this reference after checking the version installed by the consuming project. The local package
+types and source are authoritative when they differ from this guide.
 
-Resultar began as an initial fork of `neverthrow`, but v2 should be documented and consumed as a
-Resultar-specific API with tagged errors, strict service-boundary aliases, and ESM-only packaging.
+## Contents
 
-## Package Shape
+- [Package Baseline](#package-baseline)
+- [Core Types And Constructors](#core-types-and-constructors)
+- [Composition And Recovery](#composition-and-recovery)
+- [Tagged Errors](#tagged-errors)
+- [Boundary Matching](#boundary-matching)
+- [Async Boundaries](#async-boundaries)
+- [Async Policies](#async-policies)
+- [Collections And Control Flow](#collections-and-control-flow)
+- [`safeTry`](#safetry)
+- [Observation And Cleanup](#observation-and-cleanup)
 
-Resultar is ESM-only and targets Node.js 24+.
+## Package Baseline
 
-```ts
-import {
-  Result,
-  ResultAsync,
-  createTaggedError,
-  err,
-  errAsync,
-  findCause,
-  fromPromise,
-  fromSafePromise,
-  fromThrowable,
-  fromThrowableAsync,
-  isError,
-  matchError,
-  matchErrorPartial,
-  ok,
-  okAsync,
-  safeTry,
-  tryCatch,
-  tryCatchAsync,
-  unit,
-  unitAsync,
-} from 'resultar'
-```
+Resultar v3.5 is an ESM package targeting Node.js 24+. The repository currently uses TypeScript 7.
+Do not infer consumer requirements from memory: inspect `package.json`, the lockfile, and exported
+types first.
 
-Use type-only imports for exported types:
+Prefer named imports and type-only imports:
 
 ```ts
-import type {
-  StrictResult,
-  StrictResultAsync,
-  TaggedEnum,
-  TaggedErrorClass,
-  TaggedErrorInstance,
-  TaggedErrorOptions,
-} from 'resultar'
+import { ResultAsync, createTaggedError, ok, safeTry, tryResult, tryResultAsync } from "resultar";
+import type { StrictResult, StrictResultAsync } from "resultar";
 ```
 
-## Result<T, E>
+`tryCatch` and `tryCatchAsync` remain compatibility aliases. Prefer `tryResult` and
+`tryResultAsync` in new v3.5+ code.
 
-`Result<T, E>` is the sync fallible value type.
-It remains generic for local flows, but production-facing expected failures should usually be real
-`Error` instances through `StrictResult` and `createTaggedError`.
+## Core Types And Constructors
 
-Constructors:
+| Need                                                | API                                      |
+| --------------------------------------------------- | ---------------------------------------- |
+| Synchronous fallible value                          | `Result<T, E>`                           |
+| Asynchronous fallible value                         | `ResultAsync<T, E>`                      |
+| Error-only sync channel                             | `StrictResult<T, E extends Error>`       |
+| Error-only async channel                            | `StrictResultAsync<T, E extends Error>`  |
+| Successful value                                    | `ok(value)` / `okAsync(value)`           |
+| Successful `undefined`                              | `unit()` / `unitAsync()`                 |
+| Expected failure                                    | `err(error)` / `errAsync(error)`         |
+| Catch synchronous throws now                        | `tryResult(fn, toError)`                 |
+| Wrap a synchronous throwing function                | `fromThrowable(fn, toError)`             |
+| Catch promise rejection or a throwing async factory | `tryResultAsync(input, toError)`         |
+| Wrap an async throwing function                     | `fromThrowableAsync(fn, toError)`        |
+| Deliberately leave Resultar at a terminal boundary  | `runSync(result)` / `runPromise(result)` |
 
-- `ok(value)` -> `Result<T, never>`
-- `err(error)` -> `Result<never, E>`
-- `unit()` -> `Result<undefined, never>`
-- `tryCatch(fn, errorFn?)` -> catches synchronous throws
-- `fromThrowable(fn, errorFn?)` -> wraps a throwing function
-
-Methods:
-
-- `isOk()` narrows to `Result<T, never>`.
-- `isErr()` narrows to `Result<never, E>`.
-- `map(fn)` transforms only the `Ok` value.
-- `mapErr(fn)` transforms only the `Err` value.
-- `filterOrElse(predicate, onFalse)` keeps `Ok` values that pass and converts failures to `Err`.
-- `andThen(fn)` chains a function returning `Result`.
-- `asyncAndThen(fn)` chains a function returning `ResultAsync`.
-- `orElse(fn)` recovers from an error with another `Result`.
-- `catchTag(tag, fn)` recovers from one tagged error variant.
-- `catchTags(handlers)` partially recovers from multiple tagged error variants; unhandled tags stay
-  in the `Err` side.
-- `match(okFn, errFn)` returns the output of the matching handler.
-- `matchTags(okFn, handlers)` matches `Ok` and tagged `Error` variants without nesting `matchError`.
-- `matchTagsPartial(okFn, handlers, fallback)` matches selected tagged `Error` variants and sends
-  unhandled errors to `fallback`.
-- `pipe(fn, ...)` applies reusable combinators to the current `Result`.
-- `unwrapOr(defaultValue)` returns the value or default.
-- `unwrapOrThrow()` returns the value or throws the error.
-- `_unsafeUnwrap()` and `_unsafeUnwrapErr()` are for tests.
-- `safeUnwrap()` is legacy support for `safeTry`; prefer `yield* result`.
-
-Static methods:
-
-- `Result.ok(value)`
-- `Result.err(error)`
-- `Result.unit()`
-- `Result.tryCatch(fn, errorFn?)`
-- `Result.fromThrowable(fn, errorFn?)`
-- `Result.combine(results)` short-circuits at the first error.
-- `Result.combineWithAllErrors(results)` collects all errors.
-
-## StrictResult<T, E extends Error>
-
-`StrictResult<T, E extends Error>` is a type-only alias for `Result<T, E>` when the error channel
-must contain real `Error` instances.
-
-Use it at backend/application/service boundaries:
+Use the named options form when it improves readability:
 
 ```ts
-class InvalidEmailError extends createTaggedError({
-  name: 'InvalidEmailError',
-  message: 'Invalid email $email',
-}) {}
-
-const validateEmail = (email: string): StrictResult<string, InvalidEmailError> =>
-  email.includes('@') ? ok(email) : InvalidEmailError.err({ email })
+const parsed = tryResult({
+  try: () => JSON.parse(input) as unknown,
+  catch: (cause) => new ParsePayloadError({ cause }),
+});
 ```
 
-Keep `Result<T, E>` for narrow local flows that intentionally use strings, enums, or lightweight
-domain objects. Prefer `StrictResult` when logging, `cause`, stack traces, and tagged-error matching
-matter.
+`runSync` returns the `Ok` value or throws the `Err`; `runPromise` resolves the `Ok` value or
+rejects with the `Err`. Keep both at framework, bootstrap, CLI, or test boundaries.
 
-Expected domain/application failures should normally be Resultar tagged errors. Untagged `Error`
-subclasses are still appropriate for external/native/library failures that already carry useful
-identity, such as validation, database, abort, or platform errors.
+## Composition And Recovery
 
-## API Decision Guide
+- `map` transforms an `Ok` value with an infallible function.
+- `mapErr` transforms an `Err` value.
+- `filterOrElse` validates or narrows an `Ok` value and introduces a typed error on failure.
+- `andThen` chains fallible work. On `ResultAsync`, it accepts sync or async Resultar work.
+- `asyncAndThen` bridges a synchronous `Result` into `ResultAsync`.
+- `orElse` recovers the complete error channel.
+- `catchTag` recovers one tagged error.
+- `catchTags` recovers selected tagged errors; unhandled variants stay in the error union.
+- `pipe` applies named combinators without changing Result semantics.
 
-- Use `map` when an `Ok` value changes and the transform cannot fail.
-- Use `andThen` when the next step can fail and returns `Result`.
-- Use `asyncAndThen` when a sync `Result` continues into `ResultAsync`.
-- Use `mapErr` when an error should be transformed.
-- Use `orElse` when an error should recover into another result.
-- Use `catchTag` / `catchTags` for local tagged-error recovery.
-- Use `match` for simple boundaries.
-- Use `matchTags` when every tagged error must be mapped.
-- Use `matchTagsPartial` when selected tagged errors need custom handling and the rest should go to a
-  fallback.
-- Use `fromPromise(promise, toError)` when the promise already exists.
-- Use `tryCatchAsync(() => promiseFactory(), toError?)` when creating the promise can throw
-  synchronously.
+Let each step expose its narrow error type and let composition infer the union:
 
-## ResultAsync<T, E>
+```ts
+type CreateUserError = InvalidEmailError | UserExistsError | SaveUserError;
 
-`ResultAsync<T, E>` wraps `Promise<Result<T, E>>` and is thenable.
+const createUser = (input: CreateUserInput): StrictResultAsync<User, CreateUserError> =>
+  validateEmail(input.email)
+    .asyncAndThen(ensureEmailAvailable)
+    .andThen((email) => saveUser({ ...input, email }));
+```
 
-Constructors:
-
-- `okAsync(value)` -> successful async result
-- `errAsync(error)` -> failed async result
-- `unitAsync()` -> successful async result with `undefined`
-- `fromPromise(promise, errorFn)` -> maps rejections into `Err`
-- `fromSafePromise(promise)` -> wraps a promise expected not to reject
-- `tryCatchAsync(promiseOrFactory, errorFn?)` -> catches rejections and sync throws from factories
-- `fromThrowableAsync(fn, errorFn?)` -> wraps an async throwing function
-
-Methods mirror `Result` where useful:
-
-- `map(fn)`
-- `mapErr(fn)`
-- `andThen(fn)` accepts functions returning `Result` or `ResultAsync`.
-- `orElse(fn)` accepts recovery functions returning `Result` or `ResultAsync`.
-- `match(okFn, errFn)` resolves to the handler output.
-- `matchTags(okFn, handlers)` resolves to direct tagged-error boundary handling.
-- `matchTagsPartial(okFn, handlers, fallback)` resolves to selected tagged-error boundary handling
-  with a fallback for unhandled errors.
-- `unwrapOr(defaultValue)` resolves to value or default.
-- `unwrapOrThrow()` resolves to value or throws the error.
-- Prefer `yield* resultAsync`; async `safeUnwrap()` is not part of the v2 API.
-
-Static methods:
-
-- `ResultAsync.combine(results)` short-circuits at the first error after all promises settle.
-- `ResultAsync.combineWithAllErrors(results)` collects all errors after all promises settle.
-
-`StrictResultAsync<T, E extends Error>` is the async type-only alias for Error-only failure channels.
+Do not manually cast the final error union. A surprising inferred union is usually evidence that a
+step has a broad or inaccurate signature.
 
 ## Tagged Errors
 
-`createTaggedError` creates a real `Error` subclass with stable metadata.
+`createTaggedError` creates nominal `Error` subclasses with stable `_tag`, message-template props,
+`cause`, `fingerprint`, `toJSON()`, and `.err()` support.
 
 ```ts
-class PaymentDeclinedError extends createTaggedError({
-  name: 'PaymentDeclinedError',
-  message: 'Payment $paymentId was declined by $provider',
+class UserNotFoundError extends createTaggedError({
+  name: "UserNotFoundError",
+  message: "User $userId was not found in $source",
 }) {}
+
+const missing = UserNotFoundError.err({ userId, source: "database" });
 ```
 
-Instances expose:
+- Let `$variables` in the message template define required constructor props.
+- Preserve the original failure with `cause` when adapting external code.
+- Keep the configured `name` equal to the class name.
+- Do not override the generated constructor.
+- Treat `ErrorClass.is(value)` as a nominal `instanceof`-based guard; a matching `_tag` is not
+  sufficient.
+- Avoid reserved template fields such as `_tag`, `name`, `message`, `messageTemplate`,
+  `fingerprint`, `stack`, and `cause`.
+- Use `TaggedEnum`/`taggedEnum` for lightweight tagged data that should not be an `Error`.
+- Use `redact`, `isRedacted`, and `revealRedacted` when sensitive error metadata must not serialize
+  or log by default.
+- Use `findCause` or an instance's `findCause` to inspect a typed cause chain.
 
-- `_tag`
-- `message`
-- `messageTemplate`
-- `fingerprint`
-- typed props inferred from `$variables`
-- `cause`
-- `toJSON()`
-- `findCause(ErrorClass)`
+## Boundary Matching
 
-Static members:
+Use branch methods inside an algorithm and matching when converting the completed result:
 
-- `ErrorClass.tag`
-- `ErrorClass.is(value)`, a nominal `instanceof`-based guard
-- `ErrorClass.err(props)`
+- `isOk()` / `isErr()` narrow for direct control flow.
+- `match(onOk, onErr)` handles a simple boundary.
+- `matchTags(onOk, handlers)` exhaustively maps tagged errors.
+- `matchTagsPartial(onOk, handlers, fallback)` handles selected tags with a deliberate fallback.
+- `matchError(error, handlers)` handles an error value directly.
+- `matchErrorPartial(error, handlers, fallback)` partially handles an error value.
 
-Reserved template variables are rejected because they conflict with `Error` or tagged-error
-metadata: `_tag`, `name`, `message`, `messageTemplate`, `fingerprint`, `stack`, and `cause`.
+Include an `Error` handler whenever an error union can contain an untagged `Error`. Do not invent
+`partialCatchTags`; `catchTags` already supports partial recovery.
 
-Use `.err(props)` when returning the error side of a result:
+## Async Boundaries
+
+Choose the wrapper based on ownership of the promise:
+
+- `fromPromise(existingPromise, toError)` wraps a promise that has already been created.
+- `tryResultAsync(() => createPromise(), toError)` also catches synchronous factory throws and is
+  preferred when the agent controls creation.
+- `fromSafePromise(promise)` is only for promises guaranteed not to reject by contract.
+- `fromCallback(options)` adapts callback or subscription APIs and returns
+  `ResultAsync<T, E | AbortError>`. Supply cleanup and forward cancellation where supported.
+- `AbortError` and `isAbortError` identify Resultar cancellation.
+
+Always map `unknown` causes into a specific error near the external boundary:
 
 ```ts
-const decline = (paymentId: string) => PaymentDeclinedError.err({ paymentId, provider: 'stripe' })
+const loadUser = (id: string): StrictResultAsync<User, LoadUserError> =>
+  tryResultAsync(
+    () => client.loadUser(id),
+    (cause) => new LoadUserError({ cause, id }),
+  );
 ```
 
-Use `TaggedEnum<Members>` for lightweight non-Error variants:
+## Async Policies
+
+Use the built-in lazy policies instead of hand-written `Promise.race`, timers, or retry loops:
+
+- `ResultAsync.retry(task, options)` retries typed failures and includes `AbortError` in the error
+  channel. Use `times`, `delayMs`, `jittered`, `while`, and the provided signal deliberately.
+- `ResultAsync.retryOrElse(task, options)` applies a typed fallback after retry exhaustion. The
+  exhausted task error is replaced by the fallback error channel.
+- `ResultAsync.timeout(task, options)` returns the task error or the typed `onTimeout` error.
+- `ResultAsync.race(left, right)` and `raceAll(tasks)` return the first settled result.
+- `ResultAsync.raceFirst(left, right)` returns the first `Ok`; if both fail, it returns the last
+  observed `Err`.
+- `ResultAsync.raceWith(left, right, handlers)` exposes the winner and a handle to the still-running
+  task for custom cooperative policy.
+- `ResultAsync.withResource({ acquire, use, release })` releases after every acquire-success path.
+  Release errors are best-effort and do not enter the result channel; model cleanup in `use` when it
+  must affect control flow.
+
+Race, timeout, retry, callback, and resource helpers rely on cooperative cancellation. Pass their
+`AbortSignal` into fetch, database, SDK, timer, or subscription work; aborting a wrapper cannot stop
+an underlying operation that ignores the signal.
+
+## Collections And Control Flow
+
+Both `Result` and `ResultAsync` provide collection helpers:
+
+- `combine` preserves array/tuple/record shape and returns the first error.
+- `combineWithAllErrors` collects every error.
+- `validateAll` collects all validation errors; async mapped use supports bounded `concurrency`.
+- `zip` combines exactly two values.
+- `firstSuccessOf` tries candidates until one succeeds and otherwise returns the final error.
+- `forEach` stops at the first error; use `{ discard: true }` when successful values are irrelevant.
+- `when`, `unless`, `loop`, and `iterate` model Resultar-native control flow where they improve
+  clarity.
+
+Prefer `ResultAsync.forEach(items, mapper, { concurrency })` for bounded first-error processing and
+`ResultAsync.validateAll(items, mapper, { concurrency })` for independent validation where every
+error matters.
+
+## `safeTry`
+
+Use `safeTry` when a linear generator is clearer than a chain:
 
 ```ts
-type PaymentError = TaggedEnum<{
-  CardDeclined: { readonly code: string }
-  InsufficientFunds: { readonly balance: number }
-}>
+const workflow = safeTry(async function* () {
+  const input = yield* validateInput(raw);
+  const remote = yield* loadRemote(input);
+  const saved = yield* saveRemote(remote);
+
+  return ok(saved);
+});
 ```
 
-## Matching Tagged Errors
-
-Use `matchError(error, handlers)` when all tagged errors in a union must be handled.
-
-```ts
-const response = matchError(error, {
-  InvalidEmailError: (error) => ({ statusCode: 400, body: error.toJSON() }),
-  UserAlreadyExistsError: (error) => ({ statusCode: 409, body: error.toJSON() }),
-  DatabaseError: (error) => ({ statusCode: 500, body: error.toJSON() }),
-})
-```
-
-When plain or untagged `Error` is part of the union, include an `Error` handler:
-
-```ts
-const message = matchError(error, {
-  DatabaseError: (error) => error.message,
-  Error: (error) => error.message,
-  InvalidEmailError: (error) => error.message,
-})
-```
-
-Use `matchErrorPartial(error, handlers, fallback)` when only selected errors need custom handling.
-
-Do not add `partialCatchTags`; `catchTags` already has partial recovery semantics. Use
-`matchTagsPartial(okHandler, handlers, fallback)` for partial boundary mapping.
+Use `yield*` for `Result` and `ResultAsync`. Wrap raw promises before yielding. Avoid raw `await`,
+`try/catch`, and legacy `safeUnwrap()` inside the generator.
 
 ## Observation And Cleanup
 
-`tap`, `tapError`, and `log` are best-effort observation helpers, not transform helpers.
+`tap`, `tapError`, and `log` preserve the original result. Callback throws and rejected callback
+promises are intentionally ignored, so use them only for best-effort logging, metrics, tracing, and
+observation. Use `andThen`, `orElse`, or a Resultar boundary when side-effect failure must alter the
+workflow.
 
-- They preserve the original `Result` or `ResultAsync`.
-- Callback errors are intentionally ignored, including disposable cleanup callbacks.
-- On `ResultAsync`, rejected callback promises are intentionally ignored.
-- Use them for metrics, logging, tracing, and cleanup.
-- Use `toDisposable` and `toAsyncDisposable` for Node.js 24 `using` / `await using` cleanup scopes.
-- Use `map`, `mapErr`, `andThen`, `orElse`, or `tryCatch` for fallible work that should affect the result.
-
-## Current Preferred Style
-
-Prefer this:
-
-```ts
-const result = validateInput(input)
-  .andThen(saveInput)
-  .tap((saved) => logger.info({ id: saved.id }, 'saved input'))
-  .tapError((error) => logger.error({ error }, 'failed to save input'))
-```
-
-Avoid this for expected failures:
-
-```ts
-try {
-  return await saveInputOrThrow(input)
-} catch (error) {
-  return error
-}
-```
-
-## Coming From Other Styles
-
-- From `try/catch`: convert uncontrolled throws at the edge with `tryCatch` / `tryCatchAsync`, then
-  return `Result` values from domain code.
-- From neverthrow-style wrappers: keep wrapper composition, but prefer tagged `Error` values for
-  production failure channels.
-- From raw `T | Error`: Resultar keeps `Ok` and `Err` structurally separate, so success values can be
-  `Error` objects without being mistaken for failures.
-- From application runtimes: Resultar does not provide dependency injection, fibers, schedules,
-  streams, scopes, or a runtime. Keep examples focused on explicit result composition.
+`toDisposable` and `toAsyncDisposable` integrate with Node.js `using` / `await using`; their
+cleanup callbacks are also best-effort. Prefer `withResource` for acquire/use/release workflows.

@@ -72,6 +72,7 @@ export interface ResultarRulesOptions {
   readonly noDiscardMode: NoDiscardMode;
   readonly noTaggedErrorConstructorOverride: ResultarRuleSeverity;
   readonly noThrow: ResultarRuleSeverity;
+  readonly noTryCatch: ResultarRuleSeverity;
   readonly noTryCatchInSafeTry: ResultarRuleSeverity;
   readonly noUnsafeAwait: ResultarRuleSeverity;
   readonly noUnsafeAwaitIgnoreCalls: readonly string[];
@@ -92,6 +93,7 @@ export const resultarRuleNames: readonly ResultarRuleName[] = [
   "prefer-and-then",
   "typed-catch-mapper",
   "no-throw",
+  "no-try-catch",
   "no-await-in-safe-try",
   "no-unsafe-await",
   "no-try-catch-in-safe-try",
@@ -108,6 +110,7 @@ export const ruleOptionNameByRule: Record<ResultarRuleName, ResultarRuleOptionNa
   "no-discard": "noDiscard",
   "no-tagged-error-constructor-override": "noTaggedErrorConstructorOverride",
   "no-throw": "noThrow",
+  "no-try-catch": "noTryCatch",
   "no-try-catch-in-safe-try": "noTryCatchInSafeTry",
   "no-unsafe-await": "noUnsafeAwait",
   "no-useless-recovery": "noUselessRecovery",
@@ -127,6 +130,7 @@ export const defaultResultarRulesOptions: ResultarRulesOptions = {
   noDiscardMode: "must-use",
   noTaggedErrorConstructorOverride: "warning",
   noThrow: "off",
+  noTryCatch: "off",
   noTryCatchInSafeTry: "warning",
   noUnsafeAwait: "off",
   noUnsafeAwaitIgnoreCalls: [],
@@ -224,6 +228,7 @@ export const normalizeResultarRulesOptions = (
     defaultResultarRulesOptions.noTaggedErrorConstructorOverride,
   ),
   noThrow: normalizeRuleSeverity(options.noThrow, defaultResultarRulesOptions.noThrow),
+  noTryCatch: normalizeRuleSeverity(options.noTryCatch, defaultResultarRulesOptions.noTryCatch),
   noTryCatchInSafeTry: normalizeRuleSeverity(
     options.noTryCatchInSafeTry,
     defaultResultarRulesOptions.noTryCatchInSafeTry,
@@ -1429,6 +1434,31 @@ const getNoTryCatchInSafeTryFindings = (
   return findings;
 };
 
+const getNoTryCatchFindings = (
+  context: RuleContext,
+  severity: EnabledRuleSeverity,
+): readonly ResultarLintFinding[] => {
+  const findings: ResultarLintFinding[] = [];
+
+  visitSourceFile(context, (node) => {
+    if (!context.tsApi.isTryStatement(node) || node.catchClause === undefined) {
+      return;
+    }
+
+    findings.push(
+      createFinding(
+        context,
+        node,
+        "no-try-catch",
+        severity,
+        "Avoid raw try/catch for expected failures. Use tryResult or tryResultAsync to preserve the typed error channel.",
+      ),
+    );
+  });
+
+  return findings;
+};
+
 const getNoAwaitInSafeTryFindings = (
   context: RuleContext,
   severity: EnabledRuleSeverity,
@@ -1796,6 +1826,7 @@ export const getSourceFileResultarFindings = (
     ["prefer-and-then", getPreferAndThenFindings],
     ["typed-catch-mapper", getTypedCatchMapperFindings],
     ["no-throw", getNoThrowFindings],
+    ["no-try-catch", getNoTryCatchFindings],
     ["no-await-in-safe-try", getNoAwaitInSafeTryFindings],
     ["no-try-catch-in-safe-try", getNoTryCatchInSafeTryFindings],
     ["yield-star-in-safe-try", getYieldStarInSafeTryFindings],

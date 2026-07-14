@@ -76,6 +76,11 @@
           "default": "off",
           "description": "Disallow throw statements so expected failures stay in Resultar error channels."
         },
+        "noTryCatch": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "off",
+          "description": "Disallow try/catch blocks so expected failures use typed Resultar boundaries. Try/finally without catch remains allowed."
+        },
         "noTryCatchInSafeTry": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",

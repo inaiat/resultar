@@ -132,6 +132,7 @@ describe("lint CLI and integration edges", () => {
       noDiscard: "off",
       noDiscardMode: "direct",
       noThrow: "error",
+      noTryCatch: "suggestion",
       noUnsafeAwaitIgnoreCalls: ["startServer", "fastify.after"],
       noUnsafeAwaitMode: "all",
       preferTaggedError: "suggestion",
@@ -143,6 +144,7 @@ describe("lint CLI and integration edges", () => {
     equal(parsed.noDiscard, "off");
     equal(parsed.noDiscardMode, "direct");
     equal(parsed.noThrow, "error");
+    equal(parsed.noTryCatch, "suggestion");
     deepEqual(parsed.noUnsafeAwaitIgnoreCalls, ["startServer", "fastify.after"]);
     equal(parsed.noUnsafeAwaitMode, "all");
     equal(parsed.preferTaggedError, "suggestion");
@@ -152,12 +154,14 @@ describe("lint CLI and integration edges", () => {
     equal(fallback.noAwaitInSafeTry, defaultResultarRulesOptions.noAwaitInSafeTry);
     equal(fallback.noDiscard, defaultResultarRulesOptions.noDiscard);
     equal(fallback.noThrow, defaultResultarRulesOptions.noThrow);
+    equal(fallback.noTryCatch, defaultResultarRulesOptions.noTryCatch);
 
     const normalized = normalizeResultarRulesOptions({
       ignoreFilePatterns: ["*.test.ts"],
       noAwaitInSafeTry: "message",
       noDiscard: "off",
       noThrow: "warning",
+      noTryCatch: "message",
       noUnsafeAwaitIgnoreCalls: ["startServer", "fastify.after"],
       noUnsafeAwaitMode: "all",
       preferMapErr: "suggestion",
@@ -166,6 +170,7 @@ describe("lint CLI and integration edges", () => {
     equal(normalized.noAwaitInSafeTry, "message");
     equal(normalized.noDiscard, "off");
     equal(normalized.noThrow, "warning");
+    equal(normalized.noTryCatch, "message");
     deepEqual(normalized.noUnsafeAwaitIgnoreCalls, ["startServer", "fastify.after"]);
     equal(normalized.noUnsafeAwaitMode, "all");
     equal(normalized.preferMapErr, "suggestion");

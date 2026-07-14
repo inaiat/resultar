@@ -174,6 +174,15 @@ describe("Resultar lint rules", () => {
           throw error
         `,
       },
+      "no-try-catch": {
+        source: `
+          try {
+            JSON.parse("{}")
+          } catch {
+            // Expected failures should use a typed Resultar boundary.
+          }
+        `,
+      },
       "no-await-in-safe-try": {
         source: `
           declare function loadUser(): Promise<string>
@@ -730,6 +739,33 @@ describe("Resultar lint rules", () => {
 
     equal(findings.length, 1);
     equal(findings[0]?.rule, "no-try-catch-in-safe-try");
+  });
+
+  it("flags project-wide try/catch but allows try/finally", async () => {
+    const caught = await runRule(
+      "no-try-catch",
+      `
+        try {
+          JSON.parse("{}")
+        } catch {
+          // Expected failures should use a typed Resultar boundary.
+        }
+      `,
+    );
+    const finalized = await runRule(
+      "no-try-catch",
+      `
+        try {
+          console.log("work")
+        } finally {
+          console.log("cleanup")
+        }
+      `,
+    );
+
+    equal(caught.length, 1);
+    equal(caught[0]?.rule, "no-try-catch");
+    deepEqual(finalized, []);
   });
 
   it("flags try/catch inside safeTry object methods", async () => {

@@ -108,8 +108,7 @@ export const preferAndThenExample = () =>
 
 // resultar/typed-catch-mapper: tryResult without a catch mapper leaves the error
 // channel as unknown instead of converting the thrown value to a domain error.
-export const typedCatchMapperExample = () =>
-  tryResult(() => JSON.parse("{\"id\":\"parsed\"}") as User);
+export const typedCatchMapperExample = () => tryResult(() => JSON.parse('{"id":"parsed"}') as User);
 
 // resultar/no-unsafe-await: raw Promise awaits can reject outside Resultar. In
 // all mode, this is reported even outside functions returning Result/ResultAsync.
@@ -138,6 +137,16 @@ export const noUnsafeAwaitResultContextExample = async (): Promise<Result<User, 
 // of escaping through throw control flow.
 export const noThrowExample = (): never => {
   throw new SaveUserError({ id: "no-throw" });
+};
+
+// resultar/no-try-catch: expected failures should be converted at the throwing
+// boundary with tryResult or tryResultAsync instead of broad exception control flow.
+export const noTryCatchExample = (input: string): User | undefined => {
+  try {
+    return JSON.parse(input) as User;
+  } catch {
+    return undefined;
+  }
 };
 
 const fastify = {
@@ -225,10 +234,7 @@ type RecordIdParts = {
 // resultar/prefer-tagged-error: throwing new Error(...) also loses stable tags
 // and typed metadata. Convert throwing helpers to Resultar boundaries or throw a
 // createTaggedError instance when a throw boundary is intentional.
-export const preferTaggedErrorThrowExample = (
-  value: unknown,
-  table: string,
-): RecordIdParts => {
+export const preferTaggedErrorThrowExample = (value: unknown, table: string): RecordIdParts => {
   if (typeof value === "string") {
     return { id: value, table };
   }
@@ -242,6 +248,4 @@ export const legacyErrorInstance = new LegacyDomainError("legacy");
 // resultar/no-useless-recovery: mapErr/orElse/catchTag cannot run when the error
 // channel is never. Remove the recovery or make the operation actually fallible.
 export const noUselessRecoveryExample = (): Result<User, never> =>
-  ok<User, never>({ email: "infallible@example.com", id: "infallible" }).mapErr(
-    (error) => error,
-  );
+  ok<User, never>({ email: "infallible@example.com", id: "infallible" }).mapErr((error) => error);

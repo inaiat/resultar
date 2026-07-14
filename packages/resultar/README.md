@@ -58,6 +58,24 @@ pnpm add resultar
 npm install resultar
 ```
 
+## HTTP Request Helpers
+
+Use the core [`resultar-request`](../request/README.md) package for Fetch-first JSON calls that
+should return `ResultAsync` values with typed request, HTTP, JSON, validation, and retry failures.
+The core request package is schema-library agnostic and accepts a custom `validator` or `decode`
+function.
+
+When response contracts already use a schema library, choose the matching optional adapter:
+
+- [`resultar-request-typebox`](../request-typebox/README.md) validates TypeBox schemas and derives
+  the success type with `Static<typeof schema>`.
+- [`resultar-request-zod`](../request-zod/README.md) parses Zod schemas and preserves transformed
+  `z.output<typeof schema>` values.
+
+The adapters delegate transport, JSON parsing, retries, and Resultar error mapping to
+[`resultar-request`](../request/README.md), and re-export its public request types. Install only the
+request package and schema adapter your service needs.
+
 ## Requirements
 
 - Node.js 24+

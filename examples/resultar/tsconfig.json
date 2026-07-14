@@ -13,6 +13,7 @@
         "name": "resultar-check",
         "noDiscard": "error",
         "noTaggedErrorConstructorOverride": "error",
+        "noTryCatch": "error",
         "noTryCatchInSafeTry": "error",
         "noUselessRecovery": "error",
         "preferAndThen": "error",

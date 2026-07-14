@@ -3,6 +3,7 @@ export type ResultarRuleName =
   | "no-await-in-safe-try"
   | "no-tagged-error-constructor-override"
   | "no-throw"
+  | "no-try-catch"
   | "no-try-catch-in-safe-try"
   | "no-unsafe-await"
   | "no-useless-recovery"

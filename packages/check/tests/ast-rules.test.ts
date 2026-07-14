@@ -68,6 +68,20 @@ describe("resultar-check AST-only rules", () => {
     equal(reports.length, 1);
   });
 
+  it("flags raw try/catch and allows try/finally", () => {
+    const caught = runRule("no-try-catch", "TryStatement", {
+      handler: { type: "CatchClause" },
+      type: "TryStatement",
+    });
+    const finalized = runRule("no-try-catch", "TryStatement", {
+      finalizer: blockStatement([]),
+      type: "TryStatement",
+    });
+
+    equal(caught.length, 1);
+    equal(finalized.length, 0);
+  });
+
   it("flags raw try/catch inside safeTry", () => {
     const reports = runRule(
       "no-try-catch-in-safe-try",
@@ -187,6 +201,7 @@ describe("resultar-check AST-only rules", () => {
       "no-await-in-safe-try",
       "no-tagged-error-constructor-override",
       "no-throw",
+      "no-try-catch",
       "no-try-catch-in-safe-try",
       "prefer-tagged-error",
       "tagged-error-name-match",
