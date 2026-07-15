@@ -1,6 +1,6 @@
 {
   "name": "resultar-request-typebox",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeBox adapter for request.",
   "keywords": [
     "fetch",

@@ -1,5 +1,12 @@
 # resultar
 
+## 3.5.1
+
+### Patch Changes
+
+- 8ab30ff: Rewrite the package README as a product-first guide with a cohesive account workflow, clearer
+  feature highlights, and focused links to the full Resultar documentation.
+
 ## 3.5.0
 
 ### Minor Changes

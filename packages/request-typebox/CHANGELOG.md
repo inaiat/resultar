@@ -1,5 +1,16 @@
 # resultar-request-typebox
 
+## 0.1.1
+
+### Patch Changes
+
+- 8ab30ff: Clarify the recommended validation workflow, request examples, runtime requirements, and published
+  documentation links across the checker and request packages.
+- Updated dependencies [8ab30ff]
+- Updated dependencies [8ab30ff]
+  - resultar@3.5.1
+  - resultar-request@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes
