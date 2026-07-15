@@ -26,11 +26,13 @@ and `scripts/smoke.ts`.
 
 The files are split by validator:
 
-- `src/typebox.ts` shows one direct TypeBox request example.
-- `src/zod.ts` shows one direct Zod transform example.
-- `src/account-server.ts` defines the local HTTP fixture with typed Resultar boundaries.
-- `src/server.ts` runs that fixture and manages its lifecycle with `ResultAsync.withResource`.
-- `scripts/smoke.ts` executes the TypeBox and Zod examples together.
+- [`src/typebox.ts`](src/typebox.ts) shows one direct TypeBox request example.
+- [`src/zod.ts`](src/zod.ts) shows one direct Zod transform example.
+- [`src/account-server.ts`](src/account-server.ts) defines the local HTTP fixture with typed Resultar
+  boundaries.
+- [`src/server.ts`](src/server.ts) runs that fixture and manages its lifecycle with
+  `ResultAsync.withResource`.
+- [`scripts/smoke.ts`](scripts/smoke.ts) executes the TypeBox and Zod examples together.
 
 The `src/typebox.ts` and `src/zod.ts` files are executable with `tsx` and always manage their local
 fixture internally.

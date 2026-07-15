@@ -5,10 +5,11 @@ Zod adapter for `resultar-request`.
 Use this package when a request response should be parsed with Zod while the transport and Resultar
 error flow stay in `resultar-request`.
 
-For a schema-library-agnostic request, use [`resultar-request`](../request/README.md) directly with
-its `validator` or `decode` options. The sibling
-[`resultar-request-typebox`](../request-typebox/README.md) package provides the same request flow
-with TypeBox schemas instead of Zod.
+For a schema-library-agnostic request, use
+[`resultar-request`](https://www.npmjs.com/package/resultar-request) directly with its `validator`
+or `decode` options. The sibling
+[`resultar-request-typebox`](https://www.npmjs.com/package/resultar-request-typebox) package
+provides the same request flow with TypeBox schemas instead of Zod.
 
 ## Install
 
@@ -74,5 +75,11 @@ The TypeBox and Zod adapters share the same transport behavior: the adapter supp
 while `resultar-request` handles Fetch-compatible responses, JSON errors, retries, and Resultar
 error mapping.
 
+## Requirements
+
+- Node.js 24+
+- ESM only
+- `zod` installed as a peer dependency
+
 For a runnable server-backed version of this flow, see the
-[request example](../../examples/request/README.md).
+[request example](https://github.com/inaiat/resultar/tree/main/examples/request).
