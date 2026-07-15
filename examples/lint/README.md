@@ -31,11 +31,11 @@ pnpm run check:oxlint
 
 The three explicit check scripts are:
 
-| Script                  | Host                  | Config file                       |
-| ----------------------- | --------------------- | --------------------------------- |
-| `check:oxlint`          | Oxlint JS plugin      | `oxlint.config.json`              |
-| `check:eslint`          | ESLint flat config    | `eslint.config.mjs`               |
-| `check:resultar-check`  | `resultar-check` CLI  | `tsconfig.resultar-check.json`    |
+| Script                 | Host                 | Config file                    |
+| ---------------------- | -------------------- | ------------------------------ |
+| `check:oxlint`         | Oxlint JS plugin     | `oxlint.config.json`           |
+| `check:eslint`         | ESLint flat config   | `eslint.config.mjs`            |
+| `check:resultar-check` | `resultar-check` CLI | `tsconfig.resultar-check.json` |
 
 All three are expected to return the same Resultar diagnostic count for this fixture because they
 enable the same AST-only rule subset. The smoke test normalizes the different reporter formats:
@@ -44,13 +44,14 @@ enable the same AST-only rule subset. The smoke test normalizes the different re
 - ESLint: `resultar/rule-name`
 - `resultar-check` CLI: `resultar/rule-name`
 
-The expected count is 12 diagnostics:
+The expected count is 14 diagnostics:
 
 | Rule                                            | Count |
 | ----------------------------------------------- | ----: |
 | `resultar/no-await-in-safe-try`                 |     1 |
 | `resultar/no-tagged-error-constructor-override` |     1 |
 | `resultar/no-throw`                             |     3 |
+| `resultar/no-try-catch`                         |     2 |
 | `resultar/no-try-catch-in-safe-try`             |     1 |
 | `resultar/prefer-tagged-error`                  |     3 |
 | `resultar/tagged-error-name-match`              |     1 |
@@ -76,6 +77,7 @@ Oxlint is the fastest adapter path and is the default `check` script for this ex
     "resultar/no-await-in-safe-try": "error",
     "resultar/no-tagged-error-constructor-override": "error",
     "resultar/no-throw": "error",
+    "resultar/no-try-catch": "error",
     "resultar/no-try-catch-in-safe-try": "error",
     "resultar/prefer-tagged-error": "error",
     "resultar/tagged-error-name-match": "error",
@@ -101,13 +103,14 @@ export default [
       "resultar/no-await-in-safe-try": "error",
       "resultar/no-tagged-error-constructor-override": "error",
       "resultar/no-throw": "error",
+      "resultar/no-try-catch": "error",
       "resultar/no-try-catch-in-safe-try": "error",
       "resultar/prefer-tagged-error": "error",
       "resultar/tagged-error-name-match": "error",
       "resultar/typed-catch-mapper": "error",
-      "resultar/yield-star-in-safe-try": "error"
-    }
-  }
+      "resultar/yield-star-in-safe-try": "error",
+    },
+  },
 ];
 ```
 
@@ -129,6 +132,7 @@ CLI comparable with Oxlint and ESLint instead of reporting extra type-aware diag
         "noDiscard": "off",
         "noTaggedErrorConstructorOverride": "error",
         "noThrow": "error",
+        "noTryCatch": "error",
         "noTryCatchInSafeTry": "error",
         "noUnsafeAwait": "off",
         "noUselessRecovery": "off",

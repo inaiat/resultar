@@ -42,6 +42,28 @@ const user = requestJson({
 The core package accepts Fetch `Response` objects and Undici-shaped response objects structurally.
 It does not import `undici`, `typebox`, `zod`, or `node:*` at runtime.
 
+## Schema Adapters
+
+`resultar-request` is the schema-library-agnostic core. Use its `validator` or `decode` options when
+you already have a custom type guard or decoder. When the response contract is described by a
+schema library, use one of the optional adapters instead:
+
+- [`resultar-request-typebox`](../request-typebox/README.md) validates responses with TypeBox and
+  derives the success type with `Static<typeof schema>`.
+- [`resultar-request-zod`](../request-zod/README.md) parses responses with Zod and preserves the
+  schema's transformed `z.output<typeof schema>` type.
+
+Both adapters use this package for transport, JSON parsing, retries, and error mapping. They also
+re-export the public request API, so you can keep using `RequestError`, retry types, and map-error
+types from the adapter package.
+
+Install the adapter and its peer schema library together:
+
+```sh
+pnpm add resultar-request-typebox typebox
+pnpm add resultar-request-zod zod
+```
+
 ## Decode
 
 Use `decode` when validation should also transform the payload.

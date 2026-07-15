@@ -9,6 +9,7 @@
         "noDiscard": "off",
         "noTaggedErrorConstructorOverride": "error",
         "noThrow": "error",
+        "noTryCatch": "error",
         "noTryCatchInSafeTry": "error",
         "noUnsafeAwait": "off",
         "noUselessRecovery": "off",

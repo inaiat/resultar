@@ -19,7 +19,7 @@
     "@babel/plugin-syntax-typescript": "8.0.3",
     "@types/node": "catalog:",
     "eslint": "10.6.0",
-    "oxlint": "1.72.0",
+    "oxlint": "catalog:",
     "resultar-check": "workspace:*",
     "tsx": "catalog:",
     "typescript": "7.0.2"

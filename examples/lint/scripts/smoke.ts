@@ -58,6 +58,7 @@ const expectedRules = [
   "no-await-in-safe-try",
   "no-tagged-error-constructor-override",
   "no-throw",
+  "no-try-catch",
   "no-try-catch-in-safe-try",
   "prefer-tagged-error",
   "tagged-error-name-match",
@@ -81,8 +82,6 @@ const checkScripts = [
   { label: "resultar-check CLI", script: "check:resultar-check" },
 ] as const;
 
-const countText = (value: string, expected: string): number => value.split(expected).length - 1;
-
 const normalizeResultarRuleIds = (output: string): string =>
   expectedRules.reduce(
     (current, rule) => current.replaceAll(`resultar(${rule})`, `resultar/${rule}`),
@@ -91,10 +90,13 @@ const normalizeResultarRuleIds = (output: string): string =>
 
 const countRuleDiagnostics = (output: string): RuleCounts => {
   const normalized = normalizeResultarRuleIds(output);
-  const entries = expectedRules.map((rule) => [
-    rule,
-    countText(normalized, `resultar/${rule}`),
-  ] as const);
+  const entries = expectedRules.map(
+    (rule) =>
+      [
+        rule,
+        [...normalized.matchAll(new RegExp(`resultar/${rule}(?![a-z-])`, "gu"))].length,
+      ] as const,
+  );
 
   return Object.fromEntries(entries) as RuleCounts;
 };

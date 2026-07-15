@@ -33,6 +33,7 @@ export const parsePluginOptions = (config: unknown): ResultarLanguageServiceOpti
       defaultResultarRulesOptions.noTaggedErrorConstructorOverride,
     ),
     noThrow: normalizeRuleSeverity(config.noThrow, defaultResultarRulesOptions.noThrow),
+    noTryCatch: normalizeRuleSeverity(config.noTryCatch, defaultResultarRulesOptions.noTryCatch),
     noTryCatchInSafeTry: normalizeRuleSeverity(
       config.noTryCatchInSafeTry,
       defaultResultarRulesOptions.noTryCatchInSafeTry,

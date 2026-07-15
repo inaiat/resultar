@@ -19,6 +19,7 @@ export type ResultarLintRuleName =
   | "no-await-in-safe-try"
   | "no-tagged-error-constructor-override"
   | "no-throw"
+  | "no-try-catch"
   | "no-try-catch-in-safe-try"
   | "prefer-tagged-error"
   | "tagged-error-name-match"
@@ -75,6 +76,20 @@ const noThrow = createRule("Disallow raw throw statements in Resultar code.", (c
     context.report({
       message:
         "Do not throw for expected Resultar failures. Return Err/errAsync or wrap external code with a Resultar catch boundary.",
+      node,
+    });
+  },
+}));
+
+const noTryCatch = createRule("Disallow raw try/catch blocks in Resultar code.", (context) => ({
+  TryStatement(node) {
+    if (!isNode(node.handler) || node.handler.type !== "CatchClause") {
+      return;
+    }
+
+    context.report({
+      message:
+        "Avoid raw try/catch for expected failures. Use tryResult or tryResultAsync to preserve the typed error channel.",
       node,
     });
   },
@@ -228,6 +243,7 @@ export const rules: Record<ResultarLintRuleName, ResultarRuleModule> = {
   "no-await-in-safe-try": noAwaitInSafeTry,
   "no-tagged-error-constructor-override": noTaggedErrorConstructorOverride,
   "no-throw": noThrow,
+  "no-try-catch": noTryCatch,
   "no-try-catch-in-safe-try": noTryCatchInSafeTry,
   "prefer-tagged-error": preferTaggedError,
   "tagged-error-name-match": taggedErrorNameMatch,
@@ -239,6 +255,7 @@ export const recommendedSeverities: Record<ResultarLintRuleName, "error" | "warn
   "no-await-in-safe-try": "error",
   "no-tagged-error-constructor-override": "warn",
   "no-throw": "warn",
+  "no-try-catch": "warn",
   "no-try-catch-in-safe-try": "warn",
   "prefer-tagged-error": "warn",
   "tagged-error-name-match": "warn",

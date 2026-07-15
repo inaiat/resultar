@@ -1,0 +1,4 @@
+interface:
+  display_name: "Resultar Engineering"
+  short_description: "Build and review typed Resultar workflows"
+  default_prompt: "Use $resultar to build or review a typed Resultar workflow."

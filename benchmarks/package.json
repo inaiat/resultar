@@ -20,7 +20,7 @@
     "cronometro": "^6.0.3",
     "eslint": "10.6.0",
     "neverthrow": "^8.2.0",
-    "oxlint": "1.72.0",
+    "oxlint": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:"
   }

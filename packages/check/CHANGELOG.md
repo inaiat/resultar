@@ -1,5 +1,13 @@
 # resultar-check
 
+## 2.2.0
+
+### Minor Changes
+
+- Add the opt-in `resultar/no-try-catch` rule for the CLI, TypeScript language-service plugin,
+  Oxlint, ESLint, and Deno Lint. The rule directs expected failures to `tryResult` or
+  `tryResultAsync` while continuing to allow `try/finally` cleanup.
+
 ## 2.1.1
 
 ### Patch Changes

@@ -3,20 +3,38 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "In a TypeScript service using Resultar, refactor this createUser flow so expected failures are typed instead of thrown. It validates email, checks if the user exists, inserts into a repository, and the route needs HTTP responses for invalid email, duplicate user, and database failure. Show the Resultar code with tagged errors and boundary matching.",
-      "expected_output": "Uses Result<ResultAsync as appropriate), createTaggedError classes with inferred props, .err helpers, and matchError at the HTTP boundary. Avoids T | Error as the primary model and avoids throwing for expected domain failures.",
+      "prompt": "Refactor a TypeScript createUser service that currently throws for invalid email, duplicate users, and repository failures. Use the Resultar version installed in the repository, preserve concrete error metadata and causes, and show how an HTTP route converts the final workflow into responses.",
+      "expected_output": "Inspects local Resultar truth; models expected failures with createTaggedError and StrictResult/StrictResultAsync; composes narrow errors with map, andThen, or asyncAndThen; and uses exhaustive matchTags at the HTTP boundary without T | Error, broad catches, or production unsafe unwraps.",
       "files": []
     },
     {
       "id": 2,
-      "prompt": "I have a Resultar async pipeline that calls an external API and then saves the response. Please write an example using ResultAsync, fromPromise or tryCatchAsync, and add metrics/logging without changing the result. Explain when to use tap, tapError, log, and toAsyncDisposable.",
-      "expected_output": "Shows ResultAsync composition, wraps external promises, uses side-effect helpers only for observation/cleanup, states that callback failures are ignored, and uses map/andThen/orElse for transformations.",
+      "prompt": "Design a Resultar async workflow that loads a user from a flaky upstream, retries only retryable failures, applies one overall timeout, races a primary and replica for the first success, writes the result with bounded concurrency, always releases an acquired session, and records metrics. Explain cancellation and cleanup semantics.",
+      "expected_output": "Uses ResultAsync.retry or retryOrElse, timeout nesting that makes the total budget explicit, raceFirst for first success, bounded forEach, withResource, and tap/tapError for best-effort observation. It forwards AbortSignal to underlying work and states that release/observation failures are best-effort unless modeled in the result channel.",
       "files": []
     },
     {
       "id": 3,
-      "prompt": "Write Vite+ tests for a Resultar tagged error API. I need runtime tests for .err(), .is(), matchError exhaustiveness behavior, and type-level tests for required template props using expectTypeOf and @ts-expect-error.",
-      "expected_output": "Uses vite-plus/test, node:assert runtime checks, expectTypeOf for inferred types, and @ts-expect-error for invalid constructor/err props. Covers .err() returning Result<never, ErrorClass>.",
+      "prompt": "Add tests for a Resultar tagged-error workflow. Cover success and every expected failure at runtime, inferred template props and error unions at the type level, exhaustive boundary matching, and deterministic retry, timeout, cancellation, and cleanup behavior. Use this repository's real test runner.",
+      "expected_output": "Uses vite-plus/test in the Resultar repository, runtime assertions for Ok and Err paths, expectTypeOf and @ts-expect-error for type behavior, and deterministic fakes for async policy. It keeps _unsafeUnwrap helpers in tests only and validates exhaustive tagged-error handling.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Implement a typed HTTP JSON request for a User response and show both alternatives: one service uses TypeBox and another uses a transforming Zod schema. Map request, status-specific HTTP, invalid JSON, and validation failures into tagged application errors, and retry transient failures safely.",
+      "expected_output": "Chooses resultar-request-typebox with Static<typeof schema> and resultar-request-zod with z.output<typeof schema>; uses a request factory for retry; preserves Zod transforms; maps all request failure categories with causes and metadata; and explains that the shared resultar-request core owns transport, parsing, retry, and error mapping.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Set up Resultar validation for a TypeScript 7 project used by humans and coding agents. I need the correct project/CI command, editor diagnostics, and optional Oxlint, ESLint, or Deno Lint integration. Explain the order and what each surface can prove.",
+      "expected_output": "Makes the resultar-check CLI the authoritative first gate, configures the TypeScript language-service plugin with workspace TypeScript second, and places Oxlint/ESLint/Deno Lint third as optional AST-only feedback. It uses stable resultar/* rules, does not claim lint replaces type-aware checks, and recommends native tests/build/examples afterward.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Review a Resultar pull request that adds domain workflows, request examples, and README guidance. Find stale or unsafe guidance such as thrown expected errors, discarded Results, map returning Result, broad JSON response types, incorrect request-adapter types, hand-written async policies, and lint-only validation claims. Propose focused fixes and a verification plan without touching unrelated changes.",
+      "expected_output": "Checks installed package/source truth, reports concrete review findings, recommends tagged explicit errors and correct combinators, preserves TypeBox Static and Zod z.output types, prefers built-in async policies, requires CLI then language-server then optional lint validation, includes runtime/type/example checks, and preserves unrelated workspace edits.",
       "files": []
     }
   ]

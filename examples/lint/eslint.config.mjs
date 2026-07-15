@@ -5,6 +5,7 @@ const resultarRules = {
   "resultar/no-await-in-safe-try": "error",
   "resultar/no-tagged-error-constructor-override": "error",
   "resultar/no-throw": "error",
+  "resultar/no-try-catch": "error",
   "resultar/no-try-catch-in-safe-try": "error",
   "resultar/prefer-tagged-error": "error",
   "resultar/tagged-error-name-match": "error",
