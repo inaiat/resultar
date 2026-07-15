@@ -22,23 +22,23 @@ configured in `tsconfig.json`.
 
 ## Samples
 
-- `src/sync-validation.ts`: field validation with `Result.validateAll`, tagged errors, redacted
-  props, validation adapter issues, and HTTP-style boundary mapping.
-- `src/domain-workflow.ts`: a linear domain flow using `andThen`, `mapErr`, and `safeTry` with
-  typed error unions.
-- `src/tagged-enum.ts`: lightweight tagged unions with `taggedEnum`, `$is`, and exhaustive
-  `$match`.
-- `src/edge-wrapping.ts`: `tryResult`, `tryResultAsync`, reusable throwing wrappers, safe promises,
-  direct error matching, and intentional unwrapping at edges.
-- `src/recovery-and-fallbacks.ts`: `catchTag`, `catchTags`, reasoned errors, `unwrapReason`,
-  `orElse`, `firstSuccessOf`, and partial boundary matching.
-- `src/collections-and-control-flow.ts`: `filterOrElse`, `as`, `unit`, `asyncMap`,
-  `asyncAndThen`, `zip`, `combine`, `combineWithAllErrors`, mapped validation, loops,
-  conditionals, async concurrency, observation, and disposable cleanup.
-- `src/async-resilience.ts`: `ResultAsync.fromPromise`, cooperative `timeout`, retry policies,
-  race variants, custom race handling, and abort detection.
-- `src/resource-cleanup.ts`: `ResultAsync.withResource` with release assertions for success and
-  failure paths.
+- [`src/sync-validation.ts`](src/sync-validation.ts): field validation with `Result.validateAll`,
+  tagged errors, redacted props, validation adapter issues, and HTTP-style boundary mapping.
+- [`src/domain-workflow.ts`](src/domain-workflow.ts): a linear domain flow using `andThen`, `mapErr`,
+  and `safeTry` with typed error unions.
+- [`src/tagged-enum.ts`](src/tagged-enum.ts): lightweight tagged unions with `taggedEnum`, `$is`,
+  and exhaustive `$match`.
+- [`src/edge-wrapping.ts`](src/edge-wrapping.ts): `tryResult`, `tryResultAsync`, reusable throwing
+  wrappers, safe promises, direct error matching, and intentional unwrapping at edges.
+- [`src/recovery-and-fallbacks.ts`](src/recovery-and-fallbacks.ts): `catchTag`, `catchTags`, reasoned
+  errors, `unwrapReason`, `orElse`, `firstSuccessOf`, and partial boundary matching.
+- [`src/collections-and-control-flow.ts`](src/collections-and-control-flow.ts): `filterOrElse`, `as`,
+  `unit`, `asyncMap`, `asyncAndThen`, `zip`, `combine`, `combineWithAllErrors`, mapped validation,
+  loops, conditionals, async concurrency, observation, and disposable cleanup.
+- [`src/async-resilience.ts`](src/async-resilience.ts): `ResultAsync.fromPromise`, cooperative
+  `timeout`, retry policies, race variants, custom race handling, and abort detection.
+- [`src/resource-cleanup.ts`](src/resource-cleanup.ts): `ResultAsync.withResource` with release
+  assertions for success and failure paths.
 
 The smoke script checks the expected `Ok` and `Err` branches so this example stays executable as the
 library evolves.

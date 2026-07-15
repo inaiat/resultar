@@ -10,7 +10,8 @@ contracts without Resultar-specific rules.
 
 `resultar-check` turns those contracts into executable project policy. One package provides:
 
-- a **CLI** that runs TypeScript first and then applies every Resultar rule over the same project;
+- a **CLI** that runs TypeScript first and then applies every enabled Resultar rule over the same
+  project;
 - a **TypeScript language-service plugin** for the same diagnostics in the editor;
 - an **Oxlint JavaScript plugin** for optional fast, syntax-only feedback;
 - equivalent AST-only adapters for **ESLint** and **Deno Lint**.
@@ -62,7 +63,7 @@ and agents to validate the same rules repeatedly.
 
 | Stage | Tool | What it catches | Why use it |
 | --- | --- | --- | --- |
-| CI, release, and explicit project checks | `resultar-check` CLI | TypeScript diagnostics plus all fifteen Resultar rules | Authoritative project-wide gate |
+| CI, release, and explicit project checks | `resultar-check` CLI | TypeScript diagnostics plus all configured Resultar rules | Authoritative project-wide gate |
 | Editor | TypeScript language-service plugin | Full Resultar diagnostics beside TypeScript errors | Problems appear where code is written |
 | Write, save, staged files | Oxlint + Resultar plugin | Nine syntax-only Resultar rules | Optional low-latency structural feedback |
 | Existing lint stack | ESLint or Deno Lint adapter | Same nine AST-only rules | Adopt Resultar policy without replacing the host |
@@ -71,12 +72,22 @@ The recommended default is **`resultar-check` for project and CI checks plus the
 language-service plugin for editor diagnostics**. Add Oxlint, ESLint, or Deno Lint only when their
 AST-only feedback fits the surrounding toolchain; none replaces the full checker.
 
+## Requirements
+
+- Node.js 24+
+- TypeScript 7+ for the CLI and language-service plugin
+- ESM or CommonJS projects; `resultar-check` publishes both module formats
+
 ## Quick Start With the CLI
 
 Install Resultar Check and a project-local TypeScript >=7:
 
 ```sh
 pnpm add -D resultar-check "typescript@>=7"
+```
+
+```sh
+npm install --save-dev resultar-check "typescript@>=7"
 ```
 
 Add the CLI to the project scripts:
@@ -93,6 +104,10 @@ Run the full project check with:
 
 ```sh
 pnpm exec resultar-check
+```
+
+```sh
+npx resultar-check
 ```
 
 The CLI defaults to `tsconfig.json`, runs TypeScript with no emit, and then applies the configured
@@ -116,6 +131,8 @@ Configure the TypeScript plugin and type-aware rules in `tsconfig.json`:
         "name": "resultar-check",
         "ignoreFilePatterns": ["*.test.ts", "*.spec.ts"],
         "noDiscard": "error",
+        "noThrow": "error",
+        "noTryCatch": "error",
         "noUnsafeAwait": "error",
         "preferMapErr": "error",
         "preferAndThen": "error",
@@ -308,15 +325,31 @@ pnpm exec resultar-check
 pnpm exec resultar-check --mode direct
 ```
 
-## AST-Only Lint Adapters
+## Optional AST-Only Lint Adapters
 
-Use the AST-only adapters when a lint host should report fast syntax-only Resultar feedback. These
-adapters intentionally cover only rules that do not need TypeScript type information; use the
-`resultar-check` CLI with the normal project `tsconfig.json` for the full rule set.
+Add a lint adapter only after the CLI and TypeScript language server are working. These adapters
+provide fast syntax-only feedback through an existing lint host, but they cannot run rules that need
+TypeScript type information. Keep `resultar-check` as the authoritative project and CI gate.
 
-### Quick Start With Oxlint
+The adapters expose the same nine structural rules:
 
-Install Resultar Check and Oxlint when the project wants an AST-only lint pass:
+| Rule                                            | Checks                                                |
+| ----------------------------------------------- | ----------------------------------------------------- |
+| `resultar/no-await-in-safe-try`                 | `await` inside `safeTry` bodies                       |
+| `resultar/no-tagged-error-constructor-override` | constructor overrides on `createTaggedError` classes  |
+| `resultar/no-throw`                             | raw `throw` statements                                |
+| `resultar/no-try-catch`                         | project-wide `try/catch` blocks                       |
+| `resultar/no-try-catch-in-safe-try`             | raw `try/catch` inside `safeTry` bodies               |
+| `resultar/prefer-tagged-error`                  | native `Error` classes, `err(new Error(...))`, throws |
+| `resultar/tagged-error-name-match`              | tagged error runtime name and class name mismatch     |
+| `resultar/typed-catch-mapper`                   | missing catch mapper on Resultar try helpers          |
+| `resultar/yield-star-in-safe-try`               | plain `yield` inside `safeTry` bodies                 |
+
+Rule IDs stay under the `resultar/` namespace across the CLI and every lint host.
+
+### Oxlint
+
+Install Oxlint alongside Resultar Check:
 
 ```sh
 pnpm add -D resultar-check oxlint
@@ -347,7 +380,7 @@ Create `oxlint.config.json`:
 }
 ```
 
-Add an optional lint script:
+Add an optional script:
 
 ```json
 {
@@ -357,35 +390,8 @@ Add an optional lint script:
 }
 ```
 
-The AST-only rules need no type information. Keep `resultar-check` as the authoritative CLI gate
-for the complete rule set. See the runnable
-[lint adapter example](https://github.com/inaiat/resultar/tree/main/examples/lint) for parity
-checks across Oxlint, ESLint, and the CLI.
-
-The AST-only adapter rules are:
-
-| Rule                                            | Checks                                                |
-| ----------------------------------------------- | ----------------------------------------------------- |
-| `resultar/no-await-in-safe-try`                 | `await` inside `safeTry` bodies                       |
-| `resultar/no-tagged-error-constructor-override` | constructor overrides on `createTaggedError` classes  |
-| `resultar/no-throw`                             | raw `throw` statements                                |
-| `resultar/no-try-catch`                         | project-wide `try/catch` blocks                       |
-| `resultar/no-try-catch-in-safe-try`             | raw `try/catch` inside `safeTry` bodies               |
-| `resultar/prefer-tagged-error`                  | native `Error` classes, `err(new Error(...))`, throws |
-| `resultar/tagged-error-name-match`              | tagged error runtime name and class name mismatch     |
-| `resultar/typed-catch-mapper`                   | missing catch mapper on Resultar try helpers          |
-| `resultar/yield-star-in-safe-try`               | plain `yield` inside `safeTry` bodies                 |
-
-### Oxlint
-
-The [quick-start configuration](#quick-start-with-oxlint) is the recommended adapter path. Oxlint
-loads the packaged JavaScript rule modules through `jsPlugins` and reports them with the same
-`resultar/*` namespace used by ESLint and the CLI.
-
-This layer deliberately avoids type-dependent guesses. It catches structural Resultar violations
-quickly and leaves questions such as whether a value is actually `Result<T, E>` to the TypeScript
-plugin and CLI. The `$schema` entry comes from Oxlint and provides completion for the host config;
-Resultar rule names are registered by the JavaScript plugin.
+Oxlint loads the packaged JavaScript rule modules through `jsPlugins`. The `$schema` entry provides
+completion for the host configuration; the plugin registers the Resultar rules.
 
 ### ESLint
 
@@ -437,57 +443,6 @@ Deno Lint can load `resultar-check/deno`:
 }
 ```
 
-### TypeScript Plugin + CLI
-
-The TypeScript plugin plus `resultar-check` CLI path is the full checker. It can run every rule,
-including rules that need TypeScript type information. Oxlint, ESLint, Deno Lint, and
-`resultar-check` can return the same Resultar diagnostic count only when they run the same AST-only
-rule subset.
-
-The default `resultar-check` CLI configuration may report additional type-aware rules such as
-`resultar/no-discard`, `resultar/no-unsafe-await`, `resultar/prefer-map-err`,
-`resultar/prefer-and-then`, `resultar/unsafe-result-type-assertion`, and
-`resultar/no-useless-recovery`.
-
-When you want to compare adapter output with the CLI, create a dedicated CLI project file that
-extends the normal `tsconfig.json` and turns off type-aware-only rules:
-
-```json
-{
-  "$schema": "./node_modules/resultar-check/schema.json",
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "plugins": [
-      {
-        "name": "resultar-check",
-        "noAwaitInSafeTry": "error",
-        "noDiscard": "off",
-        "noTaggedErrorConstructorOverride": "error",
-        "noThrow": "error",
-        "noTryCatch": "error",
-        "noTryCatchInSafeTry": "error",
-        "noUnsafeAwait": "off",
-        "noUselessRecovery": "off",
-        "preferAndThen": "off",
-        "preferMapErr": "off",
-        "preferTaggedError": "error",
-        "taggedErrorNameMatch": "error",
-        "typedCatchMapper": "error",
-        "unsafeResultTypeAssertion": "off",
-        "yieldStarInSafeTry": "error"
-      }
-    ]
-  }
-}
-```
-
-Then run the CLI against that file:
-
-```sh
-pnpm exec resultar-check --project tsconfig.resultar-check.json
-```
-
-See `examples/lint` for a parity smoke that runs Oxlint, ESLint, and the CLI against the same
-fixture and fails if the per-rule counts differ.
-
-Rule IDs stay under the `resultar/` namespace for stable lint output and config.
+For executable parity checks across Oxlint, ESLint, and the CLI, see the
+[lint adapter example](https://github.com/inaiat/resultar/tree/main/examples/lint). It deliberately
+configures the CLI with only this AST-only subset so the reported rule counts can be compared.

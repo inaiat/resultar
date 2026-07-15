@@ -48,10 +48,10 @@ It does not import `undici`, `typebox`, `zod`, or `node:*` at runtime.
 you already have a custom type guard or decoder. When the response contract is described by a
 schema library, use one of the optional adapters instead:
 
-- [`resultar-request-typebox`](../request-typebox/README.md) validates responses with TypeBox and
-  derives the success type with `Static<typeof schema>`.
-- [`resultar-request-zod`](../request-zod/README.md) parses responses with Zod and preserves the
-  schema's transformed `z.output<typeof schema>` type.
+- [`resultar-request-typebox`](https://www.npmjs.com/package/resultar-request-typebox) validates
+  responses with TypeBox and derives the success type with `Static<typeof schema>`.
+- [`resultar-request-zod`](https://www.npmjs.com/package/resultar-request-zod) parses responses with
+  Zod and preserves the schema's transformed `z.output<typeof schema>` type.
 
 Both adapters use this package for transport, JSON parsing, retries, and error mapping. They also
 re-export the public request API, so you can keep using `RequestError`, retry types, and map-error
@@ -86,6 +86,8 @@ const user = requestJson({
 Use `mapError` when callers need domain-specific errors instead of `RequestError`.
 
 ```ts
+const id = '123'
+
 const result = requestJson({
   request: () => fetch(`https://example.com/users/${id}`),
   validator: isUser,
@@ -127,3 +129,12 @@ Default retry policy:
 
 Retries require `request` to be a function. A promise request source cannot be retried because it has
 already started.
+
+## Requirements
+
+- Node.js 24+
+- ESM only
+- A Fetch-compatible response or structurally compatible Undici response
+
+For runnable TypeBox and Zod request workflows backed by a local HTTP server, see the
+[request example](https://github.com/inaiat/resultar/tree/main/examples/request).
