@@ -1,3 +1,10 @@
+/**
+ * Typed synchronous and asynchronous error workflows built around `Result<T, E>` and
+ * `ResultAsync<T, E>`.
+ *
+ * @module
+ */
+
 export {
   DisposableResultAsync,
   errAsync,
@@ -10,9 +17,12 @@ export {
   runPromise,
   tryCatchAsync,
   tryResultAsync,
-  tryResultAsync as tryAsync,
   unitAsync,
 } from './result-async.js'
+
+/** Compatibility alias for `tryResultAsync`. */
+export { tryResultAsync as tryAsync } from './result-async.js'
+
 export type {
   ResultAsyncAbortSignal,
   ResultAsyncCallbackCleanup,
@@ -43,12 +53,17 @@ export {
   Result,
   runSync,
   safeTry,
-  tryResult as default,
-  tryResult as try,
   tryCatch,
   tryResult,
   unit,
 } from './result.js'
+
+/** Default compatibility export for `tryResult`. */
+export { tryResult as default } from './result.js'
+
+/** Compatibility alias for `tryResult`. */
+export { tryResult as try } from './result.js'
+
 export type {
   ErrResult,
   OkResult,

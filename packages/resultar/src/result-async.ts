@@ -72,6 +72,7 @@ export interface TryResultAsyncOptions<T, E = unknown> {
   readonly catch?: (e: unknown) => E
 }
 
+/** Minimal abort-signal contract used by cancellable Resultar operations. */
 export interface ResultAsyncAbortSignal {
   /**
    * Whether the cooperative async operation has been aborted.
@@ -177,6 +178,7 @@ type ResultAsyncRaceTasksOk<Tasks extends readonly ResultAsyncRaceTask<unknown, 
   ResultAsyncRaceTaskOk<Tasks[number]>
 type ResultAsyncRaceTasksErr<Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[]> =
   ResultAsyncRaceTaskErr<Tasks[number]>
+/** Running cancellable task returned by Resultar race helpers. */
 export interface ResultAsyncRaceHandle<T, E> {
   /**
    * Abort signal associated with the running task.
@@ -234,6 +236,7 @@ export type ResultAsyncRetryTask<T, E> = (
 type ResultAsyncRetryTaskOk<Task> = Task extends ResultAsyncRetryTask<infer T, unknown> ? T : never
 type ResultAsyncRetryTaskErr<Task> = Task extends ResultAsyncRetryTask<unknown, infer E> ? E : never
 type ResultAsyncRetryDelay = number | ((context: ResultAsyncRetryContext) => number)
+/** Retry policy for `ResultAsync.retry` and related helpers. */
 export interface ResultAsyncRetryOptions<E> {
   /**
    * Delay in milliseconds before retrying. Functions receive retry context.
@@ -1643,6 +1646,7 @@ const callAsyncSideEffect = async (effect: () => void | Promise<void>): Promise<
   }
 }
 
+/** Async-disposable wrapper that finalizes a `ResultAsync` exactly once. */
 export class DisposableResultAsync<T, E> implements PromiseLike<Result<T, E>>, AsyncDisposable {
   private readonly innerPromise: Promise<Result<T, E>>
   private readonly finalizer: (value: unknown, error: unknown) => void | Promise<void>
@@ -2996,6 +3000,7 @@ registerResultAsyncFactory(
   (promise) => new ResultAsync(promise as Promise<Result<unknown, unknown>>),
 )
 
+/** `ResultAsync` convention that restricts the error channel to real `Error` instances. */
 export type StrictResultAsync<T, E extends Error = Error> = ResultAsync<T, E>
 
 /**

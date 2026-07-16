@@ -10,11 +10,13 @@ import {
   type RequestError,
 } from "resultar-request";
 
+/** Request input validated by a Zod schema. */
 export type RequestJsonZodInput<
   S extends z.ZodType,
   R extends RequestJsonResponseData = RequestJsonResponseData,
 > = RequestJsonBaseInput<R> & { readonly schema: S };
 
+/** Zod request input with an explicit domain-error mapping. */
 export type RequestJsonZodMappedInput<
   S extends z.ZodType,
   M extends RequestJsonMapError,
@@ -23,6 +25,12 @@ export type RequestJsonZodMappedInput<
 
 const toPath = (path: readonly PropertyKey[]) => path.map((part) => part);
 
+/**
+ * Executes a JSON request and validates the decoded value with Zod.
+ *
+ * The Ok type preserves `z.output<S>`. Transport, HTTP, JSON, and validation failures use the core
+ * `resultar-request` error channel or the supplied `mapError` handlers.
+ */
 export function requestJsonZod<
   S extends z.ZodType,
   M extends RequestJsonMapError,

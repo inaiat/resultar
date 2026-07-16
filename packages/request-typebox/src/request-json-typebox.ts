@@ -11,11 +11,13 @@ import {
   type RequestError,
 } from "resultar-request";
 
+/** Request input validated by a TypeBox schema. */
 export type RequestJsonTypeBoxInput<
   S extends TSchema,
   R extends RequestJsonResponseData = RequestJsonResponseData,
 > = RequestJsonBaseInput<R> & { readonly schema: S };
 
+/** TypeBox request input with an explicit domain-error mapping. */
 export type RequestJsonTypeBoxMappedInput<
   S extends TSchema,
   M extends RequestJsonMapError,
@@ -25,6 +27,12 @@ export type RequestJsonTypeBoxMappedInput<
 const getTypeBoxErrors = (schema: TSchema, value: unknown) =>
   [...Value.Errors(schema, value)].map((error) => ({ message: error.message }));
 
+/**
+ * Executes a JSON request and validates the decoded value with TypeBox.
+ *
+ * The Ok type is inferred from `Static<S>`. Transport, HTTP, JSON, and validation failures use the
+ * core `resultar-request` error channel or the supplied `mapError` handlers.
+ */
 export function requestJsonTypeBox<
   S extends TSchema,
   M extends RequestJsonMapError,

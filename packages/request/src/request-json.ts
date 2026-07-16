@@ -42,6 +42,7 @@ type NormalizedJsonResponseData = {
 
 type ErrorWithName = Error & { readonly name: string };
 
+/** Error cause containing the body, headers, and status of an unsuccessful HTTP response. */
 export class HttpResponseErrorCauseError extends Error {
   readonly body: string;
   readonly headers: RequestHeaders;
@@ -74,6 +75,7 @@ class RequestJsonValidationErrorCauseError extends Error {
   }
 }
 
+/** Default request failure used when no domain-specific `mapError` configuration is supplied. */
 export class RequestError extends Error {
   constructor(
     message?: string,
@@ -101,8 +103,10 @@ export class RequestError extends Error {
   }
 }
 
+/** Request error whose cause contains an unsuccessful HTTP response. */
 export type HttpResponseError = RequestError & { readonly cause: HttpResponseErrorCauseError };
 
+/** Narrows a request error to an HTTP-response error with structured response metadata. */
 export const isHttpResponseError = (error: RequestError): error is HttpResponseError =>
   error.cause instanceof HttpResponseErrorCauseError;
 
@@ -112,9 +116,11 @@ const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
 const isErrorWithName = (exception: unknown): exception is ErrorWithName =>
   exception instanceof Error && typeof exception.name === "string";
 
+/** Maps an unknown integration failure to a 500 `RequestError`. */
 export const integrationErrorHandler = (exception: unknown): RequestError =>
   RequestError.integrationError(exception);
 
+/** Maps timeout failures to 408 and other unknown request failures to 500. */
 export const baseRequestErrorHandler = (exception: unknown): RequestError => {
   if (isErrorWithName(exception) && timeoutErrorNames.has(exception.name)) {
     return new RequestError(exception.message, 408, exception);
@@ -344,6 +350,12 @@ const executeRequestJson = <T, R extends RequestJsonResponseData = RequestJsonRe
   return mapError === undefined ? result : result.mapErr(mapRequestJsonError(mapError));
 };
 
+/**
+ * Executes a Fetch-compatible JSON request and returns decoded data through `ResultAsync`.
+ *
+ * Supply `decode` or `validator` for the response contract, `retry` for retryable request factories,
+ * and `mapError` when the service boundary needs domain-specific error types.
+ */
 export function requestJson<
   T,
   M extends RequestJsonMapError,
