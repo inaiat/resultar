@@ -1,3 +1,12 @@
+/**
+ * TypeScript diagnostics for enforcing Resultar handling rules.
+ *
+ * Use these helpers to run the same type-aware diagnostics exposed by the
+ * `resultar-check` CLI and TypeScript language-service plugin.
+ *
+ * @module
+ */
+
 import type * as ts from "./typescript-api.js";
 
 import type { ResultarLintFinding, ResultarRuleName, ResultarRuleSeverity } from "./finding.js";
@@ -9,8 +18,13 @@ import {
 } from "./rules-core.js";
 import { shouldInspectSourceFile } from "./source-files.js";
 
+/** Stable diagnostic source reported to TypeScript clients. */
 export const RESULTAR_DIAGNOSTIC_SOURCE = "resultar";
+
+/** TypeScript diagnostic code assigned to the `resultar/no-discard` rule. */
 export const RESULTAR_NO_DISCARD_DIAGNOSTIC_CODE = 91_001;
+
+/** TypeScript diagnostic code assigned to each Resultar rule. */
 export const RESULTAR_RULE_DIAGNOSTIC_CODES: Record<ResultarRuleName, number> = {
   "no-await-in-safe-try": 91_014,
   "no-discard": RESULTAR_NO_DISCARD_DIAGNOSTIC_CODE,
@@ -38,10 +52,15 @@ interface DiagnosticContext {
   readonly tsApi: TypeScriptApi;
 }
 
+/** Inputs required to inspect one TypeScript source file. */
 export interface ResultarDiagnosticInput {
+  /** Resultar rule configuration, usually read from `compilerOptions.plugins`. */
   readonly options?: ResultarLanguageServiceOptions;
+  /** TypeScript program that owns the source file. */
   readonly program: ts.Program;
+  /** Source file to inspect. */
   readonly sourceFile: ts.SourceFile;
+  /** TypeScript API instance associated with the program. */
   readonly tsApi: TypeScriptApi;
 }
 
@@ -81,6 +100,11 @@ const createResultarDiagnostic = (
   };
 };
 
+/**
+ * Returns all enabled Resultar diagnostics for one source file.
+ *
+ * Files excluded by `ignoreFilePatterns` produce an empty diagnostic list.
+ */
 export const getResultarDiagnostics = (
   input: ResultarDiagnosticInput,
 ): readonly ts.Diagnostic[] => {
@@ -101,6 +125,7 @@ export const getResultarDiagnostics = (
   return diagnostics;
 };
 
+/** Returns all enabled Resultar diagnostics across a TypeScript program. */
 export const getProgramResultarDiagnostics = (
   tsApi: TypeScriptApi,
   program: ts.Program,
@@ -110,6 +135,7 @@ export const getProgramResultarDiagnostics = (
     .getSourceFiles()
     .flatMap((sourceFile) => getResultarDiagnostics({ options, program, sourceFile, tsApi }));
 
+/** Returns only `resultar/no-discard` diagnostics for one source file. */
 export const getNoDiscardDiagnostics = (input: ResultarDiagnosticInput): readonly ts.Diagnostic[] =>
   getResultarDiagnostics({
     ...input,
@@ -120,6 +146,7 @@ export const getNoDiscardDiagnostics = (input: ResultarDiagnosticInput): readonl
     },
   });
 
+/** Returns only `resultar/no-discard` diagnostics across a TypeScript program. */
 export const getProgramNoDiscardDiagnostics = (
   tsApi: TypeScriptApi,
   program: ts.Program,

@@ -1,12 +1,22 @@
+/**
+ * Fetch-first JSON request helpers with typed Resultar failures, retries, decoding, and custom
+ * error mapping.
+ *
+ * @module
+ */
+
 export {
   HttpResponseErrorCauseError,
-  HttpResponseErrorCauseError as HttpClientRequestErrorCause,
   RequestError,
   baseRequestErrorHandler,
   integrationErrorHandler,
   isHttpResponseError,
   requestJson,
 } from "./request-json.js";
+
+/** Compatibility alias for `HttpResponseErrorCauseError`. */
+export { HttpResponseErrorCauseError as HttpClientRequestErrorCause } from "./request-json.js";
+
 export type {
   FetchJsonResponseData,
   RequestHeaders,

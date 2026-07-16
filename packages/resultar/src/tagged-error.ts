@@ -119,6 +119,7 @@ type TaggedErrorConstructorArgs<Template extends string> = [
   ? [props?: { readonly cause?: unknown }]
   : [props: ConstructorProps<Template>]
 
+/** Configuration used to create a tagged `Error` class. */
 export interface TaggedErrorOptions<
   Tag extends string,
   MessageTemplate extends string,

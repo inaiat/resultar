@@ -15,6 +15,7 @@ import {
   visitSameFunctionDescendants,
 } from "./core/ast.js";
 
+/** Rule names implemented by the Deno Lint and ESLint adapters. */
 export type ResultarLintRuleName =
   | "no-await-in-safe-try"
   | "no-tagged-error-constructor-override"
@@ -26,19 +27,28 @@ export type ResultarLintRuleName =
   | "typed-catch-mapper"
   | "yield-star-in-safe-try";
 
+/** A finding reported by a Resultar syntax-only lint rule. */
 export interface RuleReportDescriptor {
+  /** Human-readable guidance for resolving the finding. */
   readonly message: string;
+  /** AST node that caused the finding. */
   readonly node: AstNode;
 }
 
+/** Minimal lint-host context consumed by Resultar rule implementations. */
 export interface RuleContext {
+  /** Reports a finding to the active lint host. */
   readonly report: (descriptor: RuleReportDescriptor) => void;
 }
 
+/** AST visitor callbacks returned by a Resultar rule. */
 export type RuleListener = Record<string, (node: AstNode) => void>;
 
+/** Host-neutral shape of a Resultar syntax-only lint rule. */
 export interface ResultarRuleModule {
+  /** Creates the rule's AST listeners for a lint run. */
   readonly create: (context: RuleContext) => RuleListener;
+  /** Metadata consumed by Deno Lint and ESLint. */
   readonly meta: {
     readonly docs: { readonly description: string };
     readonly schema: readonly unknown[];
@@ -239,6 +249,7 @@ const noTaggedErrorConstructorOverride = createRule(
   "suggestion",
 );
 
+/** Syntax-only Resultar rules shared by the Deno Lint and ESLint adapters. */
 export const rules: Record<ResultarLintRuleName, ResultarRuleModule> = {
   "no-await-in-safe-try": noAwaitInSafeTry,
   "no-tagged-error-constructor-override": noTaggedErrorConstructorOverride,
@@ -251,6 +262,7 @@ export const rules: Record<ResultarLintRuleName, ResultarRuleModule> = {
   "yield-star-in-safe-try": yieldStarInSafeTry,
 };
 
+/** Recommended severity for each syntax-only Resultar rule. */
 export const recommendedSeverities: Record<ResultarLintRuleName, "error" | "warn"> = {
   "no-await-in-safe-try": "error",
   "no-tagged-error-constructor-override": "warn",

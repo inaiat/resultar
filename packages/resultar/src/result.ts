@@ -228,6 +228,7 @@ interface Resultable<T, E> {
   _unsafeUnwrapErr: (config?: ErrorConfig) => E
 }
 
+/** Operations shared by the Ok and Err variants of `Result<T, E>`. */
 export interface ResultOperations<T, E> {
   /**
    * Narrows this result to the Ok variant.
@@ -418,6 +419,7 @@ export interface ResultOperations<T, E> {
   safeUnwrap: () => Generator<Result<never, E>, T>
 }
 
+/** Successful `Result` variant carrying a value of type `T`. */
 export interface OkResult<T, E> extends ResultOperations<T, E> {
   /**
    * Ok value carried by this result.
@@ -425,6 +427,7 @@ export interface OkResult<T, E> extends ResultOperations<T, E> {
   readonly value: T
 }
 
+/** Failed `Result` variant carrying an error of type `E`. */
 export interface ErrResult<T, E> extends ResultOperations<T, E> {
   /**
    * Err value carried by this result.
@@ -432,7 +435,10 @@ export interface ErrResult<T, E> extends ResultOperations<T, E> {
   readonly error: E
 }
 
+/** Success-or-failure value with explicit Ok and Err channels. */
 export type Result<T, E> = OkResult<T, E> | ErrResult<T, E>
+
+/** `Result` convention that restricts the error channel to real `Error` instances. */
 export type StrictResult<T, E extends Error = Error> = Result<T, E>
 
 /**
@@ -453,6 +459,7 @@ export interface TryResultOptions<T, E = unknown> {
   readonly catch?: (e: unknown) => E
 }
 
+/** Object-form synchronous generator workflow accepted by `safeTry`. */
 export interface SafeTryOptions<
   YieldErr extends Result<never, unknown>,
   GeneratorReturnResult extends Result<unknown, unknown>,
@@ -470,6 +477,7 @@ export interface SafeTryOptions<
   readonly catch?: (e: unknown) => CatchErr
 }
 
+/** Object-form asynchronous generator workflow accepted by `safeTry`. */
 export interface SafeTryAsyncOptions<
   YieldErr extends Result<never, unknown>,
   GeneratorReturnResult extends Result<unknown, unknown>,
@@ -1356,6 +1364,7 @@ class ResultNamespace {
   }
 }
 
+/** Static helpers for creating, combining, and iterating over Result values. */
 export const Result: ResultStatic = ResultNamespace
 
 abstract class ResultVariant<T, E> extends Pipeable {
