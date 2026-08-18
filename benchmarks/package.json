@@ -18,7 +18,7 @@
     "@babel/eslint-parser": "8.0.1",
     "@babel/plugin-syntax-typescript": "8.0.3",
     "cronometro": "^6.0.3",
-    "eslint": "10.6.0",
+    "eslint": "10.8.1",
     "neverthrow": "^8.2.0",
     "oxlint": "catalog:",
     "tsx": "catalog:",

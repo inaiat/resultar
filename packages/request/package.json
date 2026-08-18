@@ -49,7 +49,7 @@
     "test:cov": "vp test run --coverage"
   },
   "dependencies": {
-    "resultar": "workspace:*"
+    "resultar": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "catalog:",

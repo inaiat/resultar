@@ -67,4 +67,27 @@ describe("requestJsonTypeBox", () => {
     assert.equal(error.message, "User API returned 1 schema errors");
     assert.equal(receivedErrorCount, 1);
   });
+
+  it("given invalid TypeBox payload, then preserves error code, path, and message", async () => {
+    const invalidPayload = { email: 123, name: "Elizeu Drummond" };
+    let capturedErrors: readonly unknown[] = [];
+
+    const result = await requestJson({
+      request: async () => createFetchResponse(invalidPayload),
+      schema: userSchema,
+      validationError: ({ errors }) => {
+        capturedErrors = errors;
+
+        return "Validation failed";
+      },
+    });
+
+    assert.ok(result.isErr());
+    assert.equal(capturedErrors.length, 1);
+    assert.deepEqual(capturedErrors[0], {
+      code: "type",
+      message: "must be string",
+      path: "/email",
+    });
+  });
 });

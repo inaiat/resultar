@@ -25,7 +25,11 @@ export type RequestJsonTypeBoxMappedInput<
 > = RequestJsonTypeBoxInput<S, R> & { readonly mapError: M };
 
 const getTypeBoxErrors = (schema: TSchema, value: unknown) =>
-  [...Value.Errors(schema, value)].map((error) => ({ message: error.message }));
+  [...Value.Errors(schema, value)].map((error) => ({
+    code: error.keyword,
+    message: error.message,
+    path: error.instancePath,
+  }));
 
 /**
  * Executes a JSON request and validates the decoded value with TypeBox.

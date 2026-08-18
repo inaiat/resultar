@@ -412,4 +412,105 @@ describe("requestJson", () => {
     assert.equal(error.context.errorsLength, 1);
     assert.deepEqual(error.context.value, invalidPayload);
   });
+
+  it("given circular object or BigInt in exception, RequestError.exception serializes safely without throwing", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    const circularError = RequestError.exception(circular, 500);
+    assert.equal(circularError.statusCode, 500);
+    assert.equal(circularError.message, "[object Object]");
+
+    const bigintError = RequestError.exception(123n, 500);
+    assert.equal(bigintError.statusCode, 500);
+    assert.equal(bigintError.message, "123");
+
+    const objectWithBigIntError = RequestError.exception({ count: 123n }, 500);
+    assert.equal(objectWithBigIntError.statusCode, 500);
+    assert.equal(objectWithBigIntError.message, "[object Object]");
+  });
+
+  it("given HTTP error response and text() rejects, then returns RequestError without unhandled rejection", async () => {
+    const textRejectError = new Error("stream read failure");
+    const responseWithFailingText = {
+      headers: {},
+      json: async () => ({}),
+      status: 500,
+      text: () => Promise.reject(textRejectError),
+    };
+
+    const result = await requestJson({
+      request: async () => responseWithFailingText,
+      validator: isUserSample,
+    });
+
+    assert.ok(result.isErr());
+    const error = expectRequestError(result.error);
+    assert.equal(error.message, "stream read failure");
+    assert.equal(error.statusCode, 500);
+    assert.equal(error.cause, textRejectError);
+  });
+
+  it("given HTTP error response and text() throws synchronously, then returns RequestError", async () => {
+    const syncError = new Error("sync text error");
+    const responseWithSyncThrowText = {
+      headers: {},
+      json: async () => ({}),
+      status: 502,
+      text: () => {
+        throw syncError;
+      },
+    };
+
+    const result = await requestJson({
+      request: async () => responseWithSyncThrowText,
+      validator: isUserSample,
+    });
+
+    assert.ok(result.isErr());
+    const error = expectRequestError(result.error);
+    assert.equal(error.message, "sync text error");
+    assert.equal(error.statusCode, 500);
+    assert.equal(error.cause, syncError);
+  });
+
+  it("given body.json() throws BodyTimeoutError or TimeoutError, then returns 408 RequestError", async () => {
+    const bodyTimeoutError = Object.assign(new Error("body timeout"), { name: "BodyTimeoutError" });
+    const responseWithBodyTimeout = {
+      headers: {},
+      json: () => Promise.reject(bodyTimeoutError),
+      status: 200,
+      text: async () => "",
+    };
+
+    const result = await requestJson({
+      request: async () => responseWithBodyTimeout,
+      validator: isUserSample,
+    });
+
+    assert.ok(result.isErr());
+    const error = expectRequestError(result.error);
+    assert.equal(error.message, "body timeout");
+    assert.equal(error.statusCode, 408);
+    assert.equal(error.cause, bodyTimeoutError);
+
+    const abortTimeoutError = Object.assign(new Error("signal timeout"), { name: "TimeoutError" });
+    const responseWithSignalTimeout = {
+      headers: {},
+      json: () => Promise.reject(abortTimeoutError),
+      status: 200,
+      text: async () => "",
+    };
+
+    const resultSignal = await requestJson({
+      request: async () => responseWithSignalTimeout,
+      validator: isUserSample,
+    });
+
+    assert.ok(resultSignal.isErr());
+    const errorSignal = expectRequestError(resultSignal.error);
+    assert.equal(errorSignal.message, "signal timeout");
+    assert.equal(errorSignal.statusCode, 408);
+    assert.equal(errorSignal.cause, abortTimeoutError);
+  });
 });

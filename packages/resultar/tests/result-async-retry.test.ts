@@ -590,6 +590,7 @@ describe('ResultAsync retry helpers', () => {
 
       await vi.advanceTimersByTimeAsync(0)
       abortListener()
+      equal(vi.getTimerCount(), 0)
       const result = await resultPromise
 
       isTrue(result.isErr())
