@@ -1,6 +1,6 @@
 {
   "name": "resultar-request",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Fetch-first JSON request helpers for Resultar.",
   "keywords": [
     "fetch",

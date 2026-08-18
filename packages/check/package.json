@@ -1,6 +1,6 @@
 {
   "name": "resultar-check",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "Resultar diagnostics for TypeScript >=7",
   "keywords": [
     "lint",
