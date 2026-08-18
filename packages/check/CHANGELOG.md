@@ -1,5 +1,11 @@
 # resultar-check
 
+## 2.2.2
+
+### Patch Changes
+
+- 93b11c1: Document every JSR entrypoint and exported symbol so the registry can generate complete API documentation.
+
 ## 2.2.1
 
 ### Patch Changes

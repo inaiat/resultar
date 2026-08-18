@@ -34,7 +34,7 @@
     "version:packages": "changeset version && pnpm run sync:jsr-version"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.0"
+    "@changesets/cli": "^2.31.1"
   },
   "packageManager": "pnpm@11.9.0"
 }

@@ -1474,12 +1474,8 @@ describe('ResultAsync', async () => {
     })
 
     it('handles synchronous errors', async () => {
-      const example = fromThrowableAsync(async () => {
-        if (1 > 0) {
-          throw new Error('Oops: No!')
-        }
-
-        return 12
+      const example = fromThrowableAsync(async (): Promise<number> => {
+        throw new Error('Oops: No!')
       })
 
       const val = await example()
@@ -1488,12 +1484,9 @@ describe('ResultAsync', async () => {
     })
 
     it('handles asynchronous errors', async () => {
-      const example = fromThrowableAsync(async () => {
-        if (1 > 0) {
-          throw new Error('Oops: No!')
-        }
-
-        return 12
+      const example = fromThrowableAsync(async (): Promise<number> => {
+        await Promise.resolve()
+        throw new Error('Oops: No!')
       })
 
       const val = await example()

@@ -1,6 +1,6 @@
 {
   "name": "resultar-request-typebox",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "TypeBox adapter for request.",
   "keywords": [
     "fetch",
@@ -49,8 +49,8 @@
     "test:cov": "vp test run --coverage"
   },
   "dependencies": {
-    "resultar": "workspace:*",
-    "resultar-request": "workspace:*"
+    "resultar": "workspace:^",
+    "resultar-request": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "catalog:",
@@ -64,7 +64,7 @@
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "typebox": "catalog:"
+    "typebox": "^1.3.4"
   },
   "engines": {
     "node": ">=24"

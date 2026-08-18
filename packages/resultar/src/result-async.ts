@@ -213,7 +213,7 @@ export interface ResultAsyncTimeoutOptions<E> {
  */
 export interface ResultAsyncRetryContext {
   /**
-   * Current attempt number, starting at 1.
+   * Current attempt number, starting at 0.
    */
   readonly attempt: number
   /**
@@ -676,12 +676,7 @@ const runConcurrentResultAsyncItems = <Item, T, E, Output, Failure>(
           return
         }
 
-        if (state.stopScheduling) {
-          finishIfDone()
-          return
-        }
-
-        while (!state.iteratorDone && state.activeCount < concurrency) {
+        while (!state.stopScheduling && !state.iteratorDone && state.activeCount < concurrency) {
           const next = readNext()
 
           // Stryker disable next-line all: undefined means iterator.next threw and rejectOnce already settled.
@@ -720,7 +715,6 @@ const runConcurrentResultAsyncItems = <Item, T, E, Output, Failure>(
 
               state.activeCount -= 1
               schedule()
-              finishIfDone()
             })
         } catch (error) {
           rejectOnce(error)

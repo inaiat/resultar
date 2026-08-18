@@ -2,7 +2,7 @@ import {
   err,
   errAsync,
   fromPromise,
-  fromSafePromise,
+  fromThrowable,
   ok,
   ResultAsync,
   type ResultAsyncRetryContext,
@@ -31,6 +31,7 @@ const timeoutErrorNames = new Set([
   "BodyTimeoutError",
   "ConnectTimeoutError",
   "HeadersTimeoutError",
+  "TimeoutError",
 ]);
 
 type NormalizedJsonResponseData = {
@@ -41,6 +42,24 @@ type NormalizedJsonResponseData = {
 };
 
 type ErrorWithName = Error & { readonly name: string };
+
+const safeJsonStringify = fromThrowable((value: unknown) => JSON.stringify(value));
+const safeToString = fromThrowable(String);
+
+const safeSerialize = (value: unknown): string => {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "bigint" || typeof value === "symbol" || typeof value === "function") {
+    return safeToString(value).unwrapOr("Unknown error");
+  }
+
+  return safeJsonStringify(value)
+    .andThen((serialized) => (serialized === undefined ? err() : ok(serialized)))
+    .orElse(() => safeToString(value))
+    .unwrapOr("Unknown error");
+};
 
 /** Error cause containing the body, headers, and status of an unsuccessful HTTP response. */
 export class HttpResponseErrorCauseError extends Error {
@@ -95,7 +114,7 @@ export class RequestError extends Error {
       return new RequestError(exception.message, statusCode, exception);
     }
 
-    return new RequestError(JSON.stringify(exception), statusCode);
+    return new RequestError(safeSerialize(exception), statusCode, exception);
   }
 
   static integrationError(exception: unknown): RequestError {
@@ -166,7 +185,10 @@ const handleHttpErrors = <T extends RequestJsonResponseData>(response: T) => {
   const normalized = normalizeResponse(response);
 
   if (normalized.statusCode >= 400 && normalized.statusCode < 600) {
-    return fromSafePromise(normalized.text()).andThen((body) =>
+    return fromPromise(
+      Promise.resolve().then(() => normalized.text()),
+      baseRequestErrorHandler,
+    ).andThen((body) =>
       err(
         new RequestError(
           body,
@@ -218,23 +240,18 @@ const decodeSafely = <T>(
       readonly reason: RequestJsonValidationReason;
       readonly success: false;
     }
-  | { readonly success: true; readonly value: T } => {
-  try {
-    const decoded = decode(value);
-
-    if (decoded.success) {
-      return decoded;
-    }
-
-    return {
-      message: decoded.message,
-      reason: { cause: decoded.cause, errors: decoded.errors ?? [], value },
-      success: false,
-    };
-  } catch (cause) {
-    return { reason: { cause, errors: [], value }, success: false };
-  }
-};
+  | { readonly success: true; readonly value: T } =>
+  fromThrowable(decode)(value).match(
+    (decoded) =>
+      decoded.success
+        ? decoded
+        : {
+            message: decoded.message,
+            reason: { cause: decoded.cause, errors: decoded.errors ?? [], value },
+            success: false,
+          },
+    (cause) => ({ reason: { cause, errors: [], value }, success: false }),
+  );
 
 const getErrorCause = (error: RequestError) => (error.cause instanceof Error ? error.cause : error);
 
@@ -318,12 +335,15 @@ const executeRequestJson = <T, R extends RequestJsonResponseData = RequestJsonRe
 ) => {
   const createResult = () =>
     fromPromise(
-      typeof request === "function" ? Promise.resolve().then(request) : request,
+      Promise.resolve().then(() => (typeof request === "function" ? request() : request)),
       baseRequestErrorHandler,
     )
       .andThen(handleHttpErrors)
       .andThen((response) =>
-        fromPromise(normalizeResponse(response).json(), integrationErrorHandler),
+        fromPromise(
+          Promise.resolve().then(() => normalizeResponse(response).json()),
+          baseRequestErrorHandler,
+        ),
       )
       .andThen((value) => {
         const decoded = decodeSafely(decode, value);

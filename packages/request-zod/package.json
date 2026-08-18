@@ -1,6 +1,6 @@
 {
   "name": "resultar-request-zod",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Zod adapter for request.",
   "keywords": [
     "fetch",
@@ -49,8 +49,8 @@
     "test:cov": "vp test run --coverage"
   },
   "dependencies": {
-    "resultar": "workspace:*",
-    "resultar-request": "workspace:*"
+    "resultar": "workspace:^",
+    "resultar-request": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "catalog:",
@@ -64,7 +64,7 @@
     "zod": "catalog:"
   },
   "peerDependencies": {
-    "zod": "catalog:"
+    "zod": "^4.4.3"
   },
   "engines": {
     "node": ">=24"

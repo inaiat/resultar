@@ -1,5 +1,5 @@
 {
-  "$schema": "https://unpkg.com/@stryker-mutator/core@9.6.1/schema/stryker-schema.json",
+  "$schema": "https://unpkg.com/@stryker-mutator/core@10.0.0/schema/stryker-schema.json",
   "packageManager": "pnpm",
   "plugins": ["@stryker-mutator/vitest-runner"],
   "testRunner": "vitest",
