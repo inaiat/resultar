@@ -2,6 +2,7 @@ import {
   err,
   errAsync,
   fromPromise,
+  fromThrowable,
   ok,
   ResultAsync,
   type ResultAsyncRetryContext,
@@ -42,29 +43,22 @@ type NormalizedJsonResponseData = {
 
 type ErrorWithName = Error & { readonly name: string };
 
+const safeJsonStringify = fromThrowable((value: unknown) => JSON.stringify(value));
+const safeToString = fromThrowable(String);
+
 const safeSerialize = (value: unknown): string => {
   if (typeof value === "string") {
     return value;
   }
 
   if (typeof value === "bigint" || typeof value === "symbol" || typeof value === "function") {
-    return String(value);
+    return safeToString(value).unwrapOr("Unknown error");
   }
 
-  try {
-    const serialized = JSON.stringify(value);
-    if (serialized !== undefined) {
-      return serialized;
-    }
-  } catch {
-    // Fallback for circular structures, BigInt in object properties, etc.
-  }
-
-  try {
-    return String(value);
-  } catch {
-    return "Unknown error";
-  }
+  return safeJsonStringify(value)
+    .andThen((serialized) => (serialized === undefined ? err() : ok(serialized)))
+    .orElse(() => safeToString(value))
+    .unwrapOr("Unknown error");
 };
 
 /** Error cause containing the body, headers, and status of an unsuccessful HTTP response. */
@@ -246,23 +240,18 @@ const decodeSafely = <T>(
       readonly reason: RequestJsonValidationReason;
       readonly success: false;
     }
-  | { readonly success: true; readonly value: T } => {
-  try {
-    const decoded = decode(value);
-
-    if (decoded.success) {
-      return decoded;
-    }
-
-    return {
-      message: decoded.message,
-      reason: { cause: decoded.cause, errors: decoded.errors ?? [], value },
-      success: false,
-    };
-  } catch (cause) {
-    return { reason: { cause, errors: [], value }, success: false };
-  }
-};
+  | { readonly success: true; readonly value: T } =>
+  fromThrowable(decode)(value).match(
+    (decoded) =>
+      decoded.success
+        ? decoded
+        : {
+            message: decoded.message,
+            reason: { cause: decoded.cause, errors: decoded.errors ?? [], value },
+            success: false,
+          },
+    (cause) => ({ reason: { cause, errors: [], value }, success: false }),
+  );
 
 const getErrorCause = (error: RequestError) => (error.cause instanceof Error ? error.cause : error);
 
