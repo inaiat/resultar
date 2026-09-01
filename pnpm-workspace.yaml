@@ -3,21 +3,21 @@ packages:
   - benchmarks
   - examples/*
   - packages/*
+  - packages/check/native-packages/*
 
 catalog:
   "@stryker-mutator/core": 10.0.0
   "@stryker-mutator/vitest-runner": 10.0.0
-  "@types/node": 26.2.0
-  "@vitest/coverage-v8": 4.1.10
-  "@vitest/ui": 4.1.10
-  fallow: 3.17.0
-  oxlint: 1.78.0
-  tsx: 4.23.12
-  typebox: 1.3.15
-  vitest: 4.1.10
-  vite-plus: 0.2.9
+  "@types/node": 26.4.0
+  "@vitest/coverage-v8": 4.1.11
+  "@vitest/ui": 4.1.11
+  fallow: 3.20.0
+  tsx: 4.23.13
+  typebox: 1.3.22
+  vitest: 4.1.11
+  vite-plus: 0.3.0
   typescript: 7.0.2
-  zod: 4.4.3
+  zod: 4.5.4
 
 allowBuilds:
   esbuild: true
@@ -40,10 +40,11 @@ blockExoticSubdeps: true
 minimumReleaseAge: 10080 # 1 week
 minimumReleaseAgeExclude:
   - "@fallow-cli/*"
-  - fallow-type-aware
-  - fallow
+  # Transitive checker used internally by Vite+; not part of resultar-check's public surface.
   - "@oxlint/*"
   - oxlint
+  - fallow-type-aware
+  - fallow
   - "@types/*"
   - "@types/node"
   - "@typescript/*"
@@ -53,8 +54,8 @@ minimumReleaseAgeExclude:
   - typebox
   - zod
   - tsx
-  - '@stryker-mutator/api@10.0.0'
-  - '@stryker-mutator/core@10.0.0'
-  - '@stryker-mutator/instrumenter@10.0.0'
-  - '@stryker-mutator/util@10.0.0'
-  - '@stryker-mutator/vitest-runner@10.0.0'
+  - "@stryker-mutator/api@10.0.0"
+  - "@stryker-mutator/core@10.0.0"
+  - "@stryker-mutator/instrumenter@10.0.0"
+  - "@stryker-mutator/util@10.0.0"
+  - "@stryker-mutator/vitest-runner@10.0.0"

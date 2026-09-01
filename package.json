@@ -6,35 +6,32 @@
     "build": "pnpm -r --filter './packages/*' run build",
     "changeset": "changeset",
     "check": "pnpm -r --filter './packages/*' run check",
+    "check:native": "pnpm --filter resultar-check native:check",
     "check:full": "pnpm -r --filter './packages/*' run check:full && pnpm run analyze",
+    "example:check": "pnpm --filter resultar-check-example smoke",
     "example:resultar": "pnpm --filter resultar-example smoke",
-    "example:oxlint": "pnpm --filter resultar-oxlint-example smoke",
     "example:request": "pnpm --filter resultar-request-example smoke",
-    "example:resultar-check": "pnpm run example:oxlint",
-    "example:language-service": "pnpm run example:oxlint",
-    "example:vite-plus": "pnpm run example:oxlint",
     "fmt": "pnpm -r --filter './packages/*' run fmt",
     "fmt:check": "pnpm -r --filter './packages/*' run fmt:check",
     "release:jsr": "node scripts/publish-jsr.mjs",
     "release:npm": "node scripts/publish-npm.mjs",
     "release:publish": "vp run check:full && vp run build && vp run smoke:package && vp run release:npm && vp run release:jsr",
     "smoke:package": "pnpm -r --filter './packages/*' run smoke:package",
-    "sync:jsr-version": "node scripts/sync-jsr-versions.mjs && vp fmt packages/resultar/jsr.json packages/check/jsr.json packages/request/jsr.json packages/request-typebox/jsr.json packages/request-zod/jsr.json",
-    "test:examples": "pnpm run example:resultar && pnpm run example:oxlint && pnpm run example:request",
-    "test:language-service": "pnpm run example:oxlint",
+    "sync:jsr-version": "node scripts/sync-jsr-versions.mjs && vp fmt packages/resultar/jsr.json packages/request/jsr.json packages/request-typebox/jsr.json packages/request-zod/jsr.json",
+    "test:examples": "pnpm run example:check && pnpm run example:resultar && pnpm run example:request",
     "test": "pnpm -r --filter './packages/*' run test",
     "test:watch": "pnpm -r --filter './packages/*' run test:watch",
     "test:ui": "pnpm -r --filter './packages/*' run test:ui",
     "test:cov": "pnpm -r --filter './packages/*' run test:cov",
     "bench": "pnpm --filter resultar-benchmarks bench",
     "bench:check-cli": "pnpm --filter resultar-benchmarks bench:check-cli",
-    "bench:check-cli:volume": "pnpm --filter resultar-benchmarks bench:check-cli:volume",
+    "bench:check-native": "pnpm --filter resultar-benchmarks bench:check-native",
     "bench:neverthrow": "pnpm --filter resultar-benchmarks bench:neverthrow",
     "bench:stable": "pnpm --filter resultar-benchmarks bench:stable",
     "version:packages": "changeset version && pnpm run sync:jsr-version"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.1"
+    "@changesets/cli": "^3.0.1"
   },
-  "packageManager": "pnpm@11.9.0"
+  "packageManager": "pnpm@11.24.0"
 }

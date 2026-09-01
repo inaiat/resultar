@@ -65,6 +65,7 @@ const expectedExports = [
   'DisposableResultAsync',
   'Result',
   'ResultAsync',
+  'ResultTask',
   'createTaggedError',
   'default',
   'err',

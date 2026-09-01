@@ -9,6 +9,22 @@ describe('safeTry', async () => {
   const barValue = okAsync('bar')
   const errValue = errAsync('boom')
 
+  it('exposes gen as an exact safeTry alias', async () => {
+    equal(Result.gen, safeTry)
+
+    const syncResult = Result.gen(function* () {
+      const value = yield* ok(1)
+      return ok(value + 1)
+    })
+    deepEqual(syncResult, { value: 2 })
+
+    const asyncResult = Result.gen(async function* () {
+      const value = yield* okAsync(1)
+      return ok(value + 1)
+    })
+    deepEqual(await asyncResult, { value: 2 })
+  })
+
   it('SafeTryAsync with all Ok', async () => {
     const resultAsync = safeTry(async function* () {
       const okValues = new Array<string>()

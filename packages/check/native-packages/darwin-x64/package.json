@@ -1,0 +1,26 @@
+{
+  "name": "resultar-check-darwin-x64",
+  "version": "2.2.2",
+  "description": "Native resultar-check binary for macOS x64",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inaiat/resultar.git"
+  },
+  "bin": {
+    "resultar-check-native": "./bin/resultar-check"
+  },
+  "files": [
+    "bin"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "./bin/resultar-check",
+  "publishConfig": {
+    "access": "public"
+  }
+}

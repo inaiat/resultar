@@ -1,0 +1,43 @@
+{
+  "$schema": "./node_modules/resultar-check/schema.json",
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "plugins": [
+      {
+        "name": "resultar-check",
+        "noAwaitInSafeTry": "error",
+        "noDiscard": "error",
+        "noDiscardMode": "must-use",
+        "noPromiseInResultSuccess": "error",
+        "noTaggedErrorConstructorOverride": "error",
+        "noThrow": "error",
+        "noTryCatch": "error",
+        "noTryCatchInSafeTry": "error",
+        "noUnsafeAwait": "error",
+        "noUnsafeAwaitIgnoreCalls": ["startServer", "fastify.after"],
+        "noUnsafeAwaitMode": "all",
+        "noUnknownResultError": "error",
+        "noUselessRecovery": "error",
+        "preferAndThen": "error",
+        "preferCatchReason": "error",
+        "preferFirstSuccessOf": "error",
+        "preferMap": "error",
+        "preferMapErr": "error",
+        "preferResultForEach": "error",
+        "preferTaggedError": "error",
+        "taggedErrorNameMatch": "error",
+        "typedCatchMapper": "error",
+        "unsafeResultTypeAssertion": "error",
+        "yieldStarInSafeTry": "error",
+        "yieldStarInResultTaskGen": "error"
+      }
+    ]
+  },
+  "include": ["src/index.ts"]
+}

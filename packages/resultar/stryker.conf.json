@@ -20,6 +20,7 @@
     "src/result.ts",
     "src/result-async.ts",
     "src/result-async-adapter.ts",
+    "src/result-task.ts",
     "src/tagged-error.ts",
     "src/tagged-match.ts"
   ],

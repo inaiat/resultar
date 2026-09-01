@@ -155,9 +155,11 @@ export const recoverLocalProfile = (id: string): StrictResult<Profile, never> =>
   });
 
 export const profileWithFallbacks = (id: string): ResultValue<Profile, ProfileReadError> =>
-  readProfileFromCache(id)
-    .orElse(() => readProfileFromPrimary(id))
-    .orElse(() => readProfileFromReplica(id));
+  Result.firstSuccessOf([
+    () => readProfileFromCache(id),
+    () => readProfileFromPrimary(id),
+    () => readProfileFromReplica(id),
+  ]);
 
 export const firstAvailableProfile = (id: string): ResultValue<Profile, ProfileReadError> =>
   Result.firstSuccessOf([

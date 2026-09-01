@@ -63,6 +63,7 @@ const config: UserConfig = defineConfig({
       "no-rest-spread-properties": "allow",
       "no-ternary": "allow",
       "no-undefined": "allow",
+      "one-var": "allow",
       "no-use-before-define": "allow",
       "prefer-destructuring": "allow",
       "prefer-readonly-parameter-types": "allow",

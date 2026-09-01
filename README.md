@@ -14,8 +14,8 @@ If you are evaluating or using the main library, start with:
 
 | Package                    | Purpose                                                                                                                            | Documentation                                                                 |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `resultar`                 | Core `Result<T, E>` and `ResultAsync<T, E>` library with tagged errors, typed async helpers, redaction, and strict result aliases. | [package README](packages/resultar/README.md), [full guide](DOCUMENTATION.md) |
-| `resultar-check`           | `tsc` plus Resultar diagnostics for TypeScript >=7, with AST-only adapters for Oxlint, ESLint, and Deno Lint.                      | [check README](packages/check/README.md)                                      |
+| `resultar`                 | Core `Result<T, E>`, lazy `ResultTask<T, E>`, and `ResultAsync<T, E>` library with tagged errors, typed async helpers, redaction, and strict result aliases. | [package README](packages/resultar/README.md), [full guide](DOCUMENTATION.md) |
+| `resultar-check`           | Native TypeScript 7 compiler checks plus type-aware Resultar diagnostics.                                                          | [check README](packages/check/README.md)                                      |
 | `resultar-request`         | Fetch-first JSON request helper with Resultar errors, validation, retry, and error mapping.                                        | [request README](packages/request/README.md)                                  |
 | `resultar-request-typebox` | TypeBox adapter for `resultar-request`.                                                                                            | [TypeBox adapter README](packages/request-typebox/README.md)                  |
 | `resultar-request-zod`     | Zod adapter for `resultar-request`.                                                                                                | [Zod adapter README](packages/request-zod/README.md)                          |
@@ -36,7 +36,7 @@ npm install resultar
 The npm package README is [packages/resultar/README.md](packages/resultar/README.md). It covers the
 selling points and quick-start examples for:
 
-- `Result<T, E>` and `ResultAsync<T, E>`
+- `Result<T, E>`, lazy `ResultTask<T, E>`, and `ResultAsync<T, E>`
 - `StrictResult<T, E extends Error>` and `StrictResultAsync<T, E extends Error>`
 - `createTaggedError`, `taggedEnum`, and redacted error props
 - reusable `pipe` combinators for `Result` and `ResultAsync`
@@ -66,11 +66,11 @@ Use the full guide when you need a specific recipe:
 
 ## Resultar Check
 
-Use `resultar-check` as the canonical Resultar diagnostics command. It requires TypeScript >=7, runs
-the compiler first, then runs every enabled Resultar diagnostic over the same `tsconfig.json`.
+Use `resultar-check` as the canonical Resultar diagnostics command. Its native TypeScript-Go backend
+runs the compiler first, then runs every enabled Resultar diagnostic over the same `tsconfig.json`.
 
 ```sh
-pnpm add -D resultar-check "typescript@>=7"
+pnpm add -D resultar-check
 ```
 
 ```json
@@ -83,33 +83,20 @@ pnpm add -D resultar-check "typescript@>=7"
 
 `resultar-check` defaults to `tsconfig.json` and runs TypeScript with no emit.
 
-Use the TypeScript language-service plugin for the same enabled diagnostics while editing. Once the
-CLI and language server are working, optionally add Oxlint, ESLint, or Deno Lint for the nine rules
-that can run without type information.
-
 See [packages/check/README.md](packages/check/README.md) for the recommended `noDiscard`, `noThrow`,
-and `noTryCatch` configuration, every rule, editor setup, ignore patterns, and lint adapters.
+and `noTryCatch` configuration, every diagnostic, and ignore patterns.
 
 ## Examples
 
 | Example                                | Surface                | What it validates                                                                 |
 | -------------------------------------- | ---------------------- | --------------------------------------------------------------------------------- |
 | [examples/resultar](examples/resultar) | Core Resultar cookbook | Sync validation, `safeTry`, tagged errors, async resilience, and resource cleanup |
-| [examples/lint](examples/lint)         | Lint adapter parity    | AST-only Resultar rules compared across Oxlint, ESLint, and `resultar-check` CLI  |
 | [examples/request](examples/request)   | Request helpers        | Fetch-style JSON calls with TypeBox and Zod adapters                              |
 
 Run all example smokes with:
 
 ```sh
 pnpm test:examples
-```
-
-The lint example also exposes the individual parity commands:
-
-```sh
-pnpm --filter resultar-oxlint-example check:oxlint
-pnpm --filter resultar-oxlint-example check:eslint
-pnpm --filter resultar-oxlint-example check:resultar-check
 ```
 
 ## Development
@@ -142,7 +129,6 @@ pnpm run release:jsr -- --dry-run
 ## Requirements
 
 - Node.js 24+
-- TypeScript >=7 for the canonical `resultar-check` workflow
 - ESM-only core package
 
 The root package is private. Published package metadata and README content live in each package

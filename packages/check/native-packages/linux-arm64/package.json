@@ -1,0 +1,26 @@
+{
+  "name": "resultar-check-linux-arm64",
+  "version": "2.2.2",
+  "description": "Native resultar-check binary for Linux ARM64",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inaiat/resultar.git"
+  },
+  "bin": {
+    "resultar-check-native": "./bin/resultar-check"
+  },
+  "files": [
+    "bin"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "./bin/resultar-check",
+  "publishConfig": {
+    "access": "public"
+  }
+}

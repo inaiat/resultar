@@ -1,7 +1,7 @@
 # Resultar Cookbook Example
 
-This package is a runnable cookbook for the core `resultar` package. It uses `resultar-check` so the
-same command type-checks with TypeScript 7 and enforces Resultar rules.
+This package is a runnable cookbook for the core `resultar` package. It uses the native
+`resultar-check` command to type-check with TypeScript-Go and enforce Resultar rules.
 
 Run it from the repository root:
 

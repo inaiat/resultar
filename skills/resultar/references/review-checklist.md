@@ -90,9 +90,10 @@ validation. Report only issues supported by the installed Resultar version and r
 ## Validation Order
 
 1. Run the `resultar-check` CLI as the authoritative project check.
-2. Confirm the TypeScript language-service plugin uses the workspace TypeScript version and emits
-   Resultar diagnostics in the editor.
-3. Run Oxlint, ESLint, or Deno Lint only as optional AST-only feedback.
+2. Confirm the `resultar-check lsp` stdio server emits Resultar diagnostics and quick fixes in the
+   editor.
+3. Use JSONL, SARIF, or JUnit output when a CI/review system needs structured diagnostics; keep the
+   native CLI as the authoritative check.
 4. Run formatting, build, tests, analysis, package smoke tests, and example workflows that apply.
 5. Report exactly which commands passed, failed, or were blocked.
 

@@ -2173,11 +2173,11 @@ result.isOk()
 
 ## No-Discard Validation
 
-Resultar values should not be ignored. Use `resultar-check` to run TypeScript >=7 and Resultar
-diagnostics through one command.
+Resultar values should not be ignored. Use `resultar-check` to run the native TypeScript-Go compiler
+and Resultar diagnostics through one command.
 
 ```sh
-pnpm add -D resultar-check "typescript@>=7"
+pnpm add -D resultar-check
 ```
 
 Add a check script:
@@ -2227,14 +2227,9 @@ Configure Resultar rules in `tsconfig.json`:
 }
 ```
 
-For AST-only Oxlint, ESLint, and Deno Lint feedback, use the `resultar-check/eslint` and
-`resultar-check/deno` package exports. Keep the `resultar-check` CLI for full TypeScript-backed
-Resultar diagnostics. When comparing CLI output with AST-only adapters, run the CLI with a dedicated
-project file that enables the same AST-only rule subset; `examples/lint` contains that parity smoke.
-
-For editor diagnostics, use the same `compilerOptions.plugins` entry and configure your editor to use
-the workspace TypeScript version. The `resultar-check` package guide includes copy-paste setup for VS
-Code, Zed `vtsls`, and Zed `typescript-language-server`.
+The `compilerOptions.plugins` entry is configuration consumed by the native CLI and its stdio LSP
+mode. Start `resultar-check lsp` from the editor's language-server configuration; no TypeScript
+plugin installation is required.
 
 ## Testing Resultar Code
 
@@ -2913,17 +2908,16 @@ entry point and API map above list the exported runtime helpers and type-only na
 This repository is a pnpm workspace:
 
 - `packages/resultar`: the Resultar runtime package.
-- `packages/check`: TypeScript >=7 plus Resultar validation and AST-only lint adapters.
+- `packages/check`: native TypeScript 7 checks plus type-aware Resultar diagnostics.
 - `benchmarks`: benchmark workspace package.
 - `examples/resultar`: runnable core Resultar cookbook.
-- `examples/lint`: adapter parity smoke for AST-only Resultar rules across Oxlint, ESLint, and `resultar-check` CLI.
 
 Common commands:
 
 ```sh
 pnpm install
 pnpm run fmt:check
-pnpm run lint
+pnpm run check
 pnpm test
 pnpm run test:cov
 pnpm run build
