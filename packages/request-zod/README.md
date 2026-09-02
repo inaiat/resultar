@@ -75,6 +75,18 @@ The TypeBox and Zod adapters share the same transport behavior: the adapter supp
 while `resultar-request` handles Fetch-compatible responses, JSON errors, retries, and Resultar
 error mapping.
 
+## Shared Request Options
+
+| Option | Purpose |
+| --- | --- |
+| `request` | Promise or retryable promise factory returning a Fetch/Undici-compatible response |
+| `schema` | Zod schema used for runtime parsing and transformed `z.output` success inference |
+| `validationError` | Static or computed validation failure message |
+| `mapError` | Status-specific and category-specific domain error mapping |
+| `retry` | Attempts, delay, jitter, `when`, and `onRetry` policy inherited from `resultar-request` |
+
+Use a request factory whenever `retry` is enabled. A previously created promise cannot be restarted.
+
 ## Requirements
 
 - Node.js 24+

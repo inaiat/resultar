@@ -15,6 +15,18 @@ pnpm add resultar-request resultar
 npm install resultar-request resultar
 ```
 
+## Feature Map
+
+| Need | Option or API |
+| --- | --- |
+| Start a Fetch/Undici-compatible request | `request` |
+| Validate unknown JSON without transforming it | `validator` |
+| Validate and transform unknown JSON | `decode` |
+| Customize validation messages | `validationError` |
+| Map transport failures into domain errors | `mapError` |
+| Retry selected failures with delay and jitter | `retry` |
+| Use TypeBox or Zod schemas | `resultar-request-typebox`, `resultar-request-zod` |
+
 ## `requestJson`
 
 `requestJson` executes a request, parses the response body as JSON, validates or decodes the payload,
@@ -41,6 +53,10 @@ const user = requestJson({
 
 The core package accepts Fetch `Response` objects and Undici-shaped response objects structurally.
 It does not import `undici`, `typebox`, `zod`, or `node:*` at runtime.
+
+Without `mapError`, the result error channel is `RequestError`. It distinguishes request creation,
+HTTP status, invalid JSON, and validation failures while preserving the original cause and response
+context where available.
 
 ## Schema Adapters
 
@@ -81,6 +97,17 @@ const user = requestJson({
 })
 ```
 
+Use `validationError` to customize the default validation failure message without replacing the
+error type:
+
+```ts
+const user = requestJson({
+  request: () => fetch('https://example.com/users/123'),
+  validator: isUser,
+  validationError: ({ errors }) => `User response has ${errors.length} validation issue(s)`,
+})
+```
+
 ## Error Mapping
 
 Use `mapError` when callers need domain-specific errors instead of `RequestError`.
@@ -102,6 +129,8 @@ const result = requestJson({
 ```
 
 HTTP status-specific handlers win over the generic `http` handler.
+The returned error type is inferred as the union of every error produced by the map, including
+status-specific handlers.
 
 ## Retry
 
@@ -115,9 +144,17 @@ const result = requestJson({
     times: 2,
     delayMs: ({ nextAttempt }) => nextAttempt * 100,
     jittered: 0.2,
+    when: (context) =>
+      context.reason === 'request' ||
+      (context.reason === 'http' && context.statusCode >= 500),
+    onRetry: ({ attempt, reason }) => console.warn('retrying user request', { attempt, reason }),
   },
 })
 ```
+
+`when` can narrow the default policy with sync or async logic. `onRetry` receives the failure context
+plus attempt metadata and can also be asynchronous. `delayMs` can be a fixed number or a function;
+`jittered` applies proportional randomization to that delay.
 
 Default retry policy:
 

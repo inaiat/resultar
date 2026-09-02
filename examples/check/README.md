@@ -30,6 +30,23 @@ pnpm --filter resultar-check-example check:json
 pnpm --filter resultar-check-example check:clean
 ```
 
+The same fixture can demonstrate CI formats directly:
+
+```sh
+pnpm --filter resultar-check-example exec resultar-check --project tsconfig.json --format sarif
+pnpm --filter resultar-check-example exec resultar-check --project tsconfig.json --format junit
+```
+
+The diagnostics catalog covers:
+
+- must-use handling for `Result`, `ResultAsync`, and lazy `ResultTask` values;
+- safe sync, async, and generator boundaries;
+- `map`, `andThen`, recovery, fallback, and collection simplifications;
+- concrete error channels, safe type assertions, and typed catch mappers;
+- tagged-error construction and naming conventions;
+- Promise safety, raw `await`, and exact ignored-call paths;
+- `yield*` composition in both `safeTry` and `ResultTask.gen`.
+
 The smoke test builds the Resultar package, the `resultar-check` launcher, and the native binary for
 the current platform. It then verifies that:
 

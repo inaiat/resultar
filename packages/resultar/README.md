@@ -13,6 +13,7 @@ ResultTask<T, E, R>
 
 - `T` is the success value.
 - `E` is the expected failure.
+- `R` is the typed service environment still required by a `ResultTask`.
 - Callers must handle the result before they can use the value.
 
 Resultar stays focused on explicit values. It does not require a framework, dependency injection
@@ -409,6 +410,20 @@ Prefer a factory with `tryResultAsync` when creating the promise can also throw 
 work; `runResult`, `runExit`, or `runPromise` executes it explicitly. `R` records the service tags
 still required by the workflow, so the execution boundary can require an explicit environment.
 
+Unlike `ResultAsync`, a `ResultTask` is a reusable description of work rather than an already-started
+operation. Mapping, chaining, recovery, service provision, and generator composition all remain lazy.
+
+| Need | API |
+| --- | --- |
+| Create an immediate success or failure | `succeed`, `fail`, `fromResult` |
+| Defer synchronous work | `sync`, `try` |
+| Defer promise-producing work | `tryPromise` |
+| Transform or chain | `map`, `flatMap`, `andThen` |
+| Recover typed failures | `catchAll` |
+| Write a linear lazy workflow | `gen` with `yield*` |
+| Declare and provide dependencies | `service`, `provideService`, `provideServices` |
+| Execute at the application boundary | `runExit`, `runResult`, `runPromise` |
+
 ```ts
 import { ResultTask } from 'resultar'
 
@@ -422,10 +437,45 @@ const task = loadUser('user_123')
 const result = await ResultTask.runResult(task)
 ```
 
-`runResult` returns the familiar `Result`. `runExit` also preserves unexpected runtime defects as a
-`Die` cause, while `runPromise` returns the success value and rejects on failure. Workflows can
-request typed services with `yield*` and receive them at the boundary. Pass the service type and its
-literal identifier so the named environment remains checked:
+`sync` treats a thrown value as an unexpected defect. Use `try` or `tryPromise` when the boundary is
+expected to throw or reject and should map that cause into `E`. `tryPromise` receives the execution
+`AbortSignal`, so callers can cancel cooperative work without starting it early.
+
+Choose the execution boundary based on how much information the application needs:
+
+| Boundary | Result |
+| --- | --- |
+| `runExit(task)` | `Exit<T, E>` preserving `Success`, typed `Fail`, and unexpected `Die` causes |
+| `runResult(task)` | `Result<T, E>`; a `Die` rejects instead of entering the typed error channel |
+| `runPromise(task)` | `T`; typed failures and defects reject for integration with Promise-only APIs |
+
+```ts
+const controller = new AbortController()
+const exit = await ResultTask.runExit(loadUser('user_123'), {
+  signal: controller.signal,
+})
+
+if (exit._tag === 'Failure' && exit.cause._tag === 'Die') {
+  console.error('Unexpected defect', exit.cause.defect)
+}
+```
+
+Instance methods and their static functional forms preserve laziness and infer combined error and
+environment types:
+
+```ts
+const userName = loadUser('user_123')
+  .map((user) => String(user.name))
+  .andThen((name) => ResultTask.succeed(name.trim()))
+  .catchAll((error) => ResultTask.succeed(`unavailable: ${error.message}`))
+```
+
+`catchAll` recovers only typed failures. Runtime defects remain defects and are visible through
+`runExit`. The equivalent functional forms are `ResultTask.map`, `ResultTask.flatMap`, and
+`ResultTask.catchAll`.
+
+Workflows can request typed services with `yield*` and receive them at the boundary. Pass the service
+type and its literal identifier so the named environment remains checked:
 
 ```ts
 const Database = ResultTask.service<
@@ -446,8 +496,36 @@ const resultWithDatabase = await ResultTask.runResult(taskWithDatabase, {
 })
 ```
 
-`provideService` and `provideServices` can bind dependencies before the final boundary. Scopes,
-schedules, and `Fiber` remain the next runtime increments.
+The environment requirement is part of the task type. A missing or misspelled `Database` property is
+a compile-time error at `runResult`, `runExit`, or `runPromise`. Dependencies can also be bound before
+the final boundary:
+
+```ts
+const database = { findUser: async () => 'Ada' }
+
+const readyWithOne = ResultTask.provideService(taskWithDatabase, Database, database)
+const readyWithAll = ResultTask.provideServices(taskWithDatabase, { Database: database })
+
+await ResultTask.runResult(readyWithOne)
+await ResultTask.runResult(readyWithAll)
+```
+
+`ResultTask.gen` composes tasks and services linearly. On short-circuit, generator `finally` blocks
+are closed and any yielded cleanup tasks or services are interpreted before execution completes:
+
+```ts
+const program = ResultTask.gen(function* () {
+  try {
+    return yield* loadUser('user_123')
+  } finally {
+    yield* ResultTask.sync(() => logger.info('load-user finished'))
+  }
+})
+```
+
+If cleanup itself fails or defects, that cleanup exit becomes the final exit. ResultTask 3.6 keeps
+execution deliberately small: it provides laziness, typed services, cooperative cancellation, and
+explicit exits, but does not yet include a scheduler, scopes, or `Fiber` runtime.
 
 ## Production Async Policies
 
@@ -757,6 +835,10 @@ service needs.
 | Recover from failure | `orElse`, `catchTag`, `catchTags` |
 | Wrap throwing or rejecting code | `tryResult`, `tryResultAsync`, `fromPromise` |
 | Write linear Result code | `Result.gen` (`safeTry` compatibility alias) |
+| Describe reusable lazy work | `ResultTask.succeed`, `sync`, `try`, `tryPromise` |
+| Compose or recover lazy work | `ResultTask.map`, `flatMap`, `andThen`, `catchAll`, `gen` |
+| Require or bind typed services | `ResultTask.service`, `provideService`, `provideServices` |
+| Execute lazy work explicitly | `ResultTask.runExit`, `runResult`, `runPromise` |
 | Handle a final boundary | `match`, `matchTags`, `matchTagsPartial` |
 | Combine independent results | `zip`, `combine`, `combineWithAllErrors` |
 | Try ordered fallback candidates | `firstSuccessOf` |
@@ -777,6 +859,7 @@ reasons, disposable results, and compatibility APIs.
 ## More Documentation
 
 - [Full Resultar guide](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md)
+- [ResultTask core RFC](https://github.com/inaiat/resultar/blob/main/packages/resultar/RESULT-TASK-CORE-RFC.md)
 - [Runnable core cookbook](https://github.com/inaiat/resultar/tree/main/examples/resultar)
 - [Catching and recovering errors](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#catching-and-recovering-errors)
 - [Safe Try](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#safe-try)

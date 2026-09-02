@@ -12,13 +12,13 @@ If you are evaluating or using the main library, start with:
 
 ## Packages
 
-| Package                    | Purpose                                                                                                                            | Documentation                                                                 |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `resultar`                 | Core `Result<T, E>`, lazy `ResultTask<T, E>`, and `ResultAsync<T, E>` library with tagged errors, typed async helpers, redaction, and strict result aliases. | [package README](packages/resultar/README.md), [full guide](DOCUMENTATION.md) |
-| `resultar-check`           | Native TypeScript 7 compiler checks plus type-aware Resultar diagnostics.                                                          | [check README](packages/check/README.md)                                      |
-| `resultar-request`         | Fetch-first JSON request helper with Resultar errors, validation, retry, and error mapping.                                        | [request README](packages/request/README.md)                                  |
-| `resultar-request-typebox` | TypeBox adapter for `resultar-request`.                                                                                            | [TypeBox adapter README](packages/request-typebox/README.md)                  |
-| `resultar-request-zod`     | Zod adapter for `resultar-request`.                                                                                                | [Zod adapter README](packages/request-zod/README.md)                          |
+| Package                    | Purpose                                                                                                                                                             | Documentation                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `resultar`                 | Core `Result<T, E>`, lazy `ResultTask<T, E, R>`, and `ResultAsync<T, E>` library with tagged errors, typed services, async policies, redaction, and strict aliases. | [package README](packages/resultar/README.md), [full guide](DOCUMENTATION.md) |
+| `resultar-check`           | Native TypeScript 7 compiler checks plus type-aware Resultar diagnostics.                                                                                           | [check README](packages/check/README.md)                                      |
+| `resultar-request`         | Fetch-first JSON request helper with Resultar errors, validation, retry, and error mapping.                                                                         | [request README](packages/request/README.md)                                  |
+| `resultar-request-typebox` | TypeBox adapter for `resultar-request`.                                                                                                                             | [TypeBox adapter README](packages/request-typebox/README.md)                  |
+| `resultar-request-zod`     | Zod adapter for `resultar-request`.                                                                                                                                 | [Zod adapter README](packages/request-zod/README.md)                          |
 
 ## Main Library
 
@@ -37,11 +37,12 @@ The npm package README is [packages/resultar/README.md](packages/resultar/README
 selling points and quick-start examples for:
 
 - `Result<T, E>`, lazy `ResultTask<T, E>`, and `ResultAsync<T, E>`
+- explicit `ResultTask` execution with typed services, generator composition, defects, and cleanup
 - `StrictResult<T, E extends Error>` and `StrictResultAsync<T, E extends Error>`
 - `createTaggedError`, `taggedEnum`, and redacted error props
 - reusable `pipe` combinators for `Result` and `ResultAsync`
 - `ResultAsync.timeout`, `retry`, `retryOrElse`, `race`, `raceAll`, and `withResource`
-- `safeTry`, `matchTags`, local recovery, and boundary response mapping
+- `Result.gen`/`safeTry`, `matchTags`, local recovery, and boundary response mapping
 
 ## Documentation Map
 
@@ -54,6 +55,7 @@ Use the full guide when you need a specific recipe:
 | Redacted error props           | [Redacted Error Props](DOCUMENTATION.md#redacted-error-props)                               |
 | Catching and recovering errors | [Catching And Recovering Errors](DOCUMENTATION.md#catching-and-recovering-errors)           |
 | Async wrapping                 | [Wrapping Throwing Or Rejecting Code](DOCUMENTATION.md#wrapping-throwing-or-rejecting-code) |
+| Lazy workflows                 | [ResultTask core RFC](packages/resultar/RESULT-TASK-CORE-RFC.md)                            |
 | Local recovery                 | [Recovering Tagged Errors Locally](DOCUMENTATION.md#recovering-tagged-errors-locally)       |
 | Async racing and timeouts      | [Concurrent Racing And Timeouts](DOCUMENTATION.md#concurrent-racing-and-timeouts)           |
 | Async retry policies           | [Retrying Async Work](DOCUMENTATION.md#retrying-async-work)                                 |
@@ -74,23 +76,30 @@ pnpm add -D resultar-check
 ```
 
 ```json
-{
-  "scripts": {
-    "check": "resultar-check"
-  }
-}
+{ "scripts": { "check": "resultar-check" } }
 ```
 
 `resultar-check` defaults to `tsconfig.json` and runs TypeScript with no emit.
 
+Version 3 is native-only: a small Node launcher selects a platform package, then the TypeScript-Go
+binary performs compiler diagnostics and all 22 Resultar rules in one project pass. It also exposes:
+
+- human, JSON Lines, SARIF 2.1.0, and JUnit output;
+- configurable severities, file overrides, suppressions, and CI `failOn` policy;
+- a stdio LSP server with diagnostics and safe composition quick fixes;
+- `init` and `doctor` commands for a portable Zed setup;
+- macOS, Linux, and Windows binaries for ARM64 and x64.
+
 See [packages/check/README.md](packages/check/README.md) for the recommended `noDiscard`, `noThrow`,
-and `noTryCatch` configuration, every diagnostic, and ignore patterns.
+and `noTryCatch` configuration, every diagnostic, output formats, editor setup, and the v3 migration
+guide.
 
 ## Examples
 
 | Example                                | Surface                | What it validates                                                                 |
 | -------------------------------------- | ---------------------- | --------------------------------------------------------------------------------- |
 | [examples/resultar](examples/resultar) | Core Resultar cookbook | Sync validation, `safeTry`, tagged errors, async resilience, and resource cleanup |
+| [examples/check](examples/check)       | Native diagnostics     | Exact findings for all 22 rules plus a zero-diagnostic clean project              |
 | [examples/request](examples/request)   | Request helpers        | Fetch-style JSON calls with TypeBox and Zod adapters                              |
 
 Run all example smokes with:
