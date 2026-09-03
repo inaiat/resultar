@@ -8,6 +8,7 @@ const ignorePatterns = [
   '**/*.d.ts',
   '.github',
   'README.md',
+  '**/CHANGELOG.md',
   'articles',
   'benchmarks',
 ]
