@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "resultar-check --project tsconfig.json",
-    "check:clean": "resultar-check --project tsconfig.clean.json",
-    "check:json": "resultar-check --project tsconfig.json --json",
+    "check": "node ../../packages/check/dist/cli.js --project tsconfig.json",
+    "check:clean": "node ../../packages/check/dist/cli.js --project tsconfig.clean.json",
+    "check:json": "node ../../packages/check/dist/cli.js --project tsconfig.json --json",
     "prepare": "pnpm --filter resultar build && pnpm --filter resultar-check build && pnpm --filter resultar-check native:build:current",
     "smoke": "pnpm run prepare && tsx scripts/smoke.ts"
   },
