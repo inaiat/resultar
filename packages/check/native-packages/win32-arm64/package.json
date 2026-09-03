@@ -1,6 +1,6 @@
 {
   "name": "resultar-check-win32-arm64",
-  "version": "2.2.2",
+  "version": "3.0.0",
   "description": "Native resultar-check binary for Windows ARM64",
   "license": "MIT",
   "repository": {
