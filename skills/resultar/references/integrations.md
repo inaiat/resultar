@@ -12,8 +12,8 @@ versions and local README files before copying an example.
 - [Map Request Errors](#map-request-errors)
 - [Apply Retry Correctly](#apply-retry-correctly)
 - [Validate In The Preferred Order](#validate-in-the-preferred-order)
-- [Configure The CLI And Language Server](#configure-the-cli-and-language-server)
-- [Use Lint Adapters As Secondary Feedback](#use-lint-adapters-as-secondary-feedback)
+- [Configure The Native Checker](#configure-the-native-checker)
+- [Act On Diagnostics](#act-on-diagnostics)
 - [Discover Repository Commands](#discover-repository-commands)
 
 ## Choose A Request Package
@@ -89,21 +89,14 @@ const mapUserError = {
     new UserApiError({ cause, detail: cause.message, reason: "invalid-json" }),
   request: ({ cause }) => new UserApiError({ cause, detail: cause.message, reason: "request" }),
   validation: ({ errors }) =>
-    new UserApiError({
-      detail: `${errors.length} validation issue(s)`,
-      reason: "validation",
-    }),
+    new UserApiError({ detail: `${errors.length} validation issue(s)`, reason: "validation" }),
 } satisfies RequestJsonMapError;
 
 const user = requestJsonTypeBox({
   request: () => fetch(`https://example.com/users/${userId}`),
   schema: userSchema,
   mapError: mapUserError,
-  retry: {
-    times: 2,
-    delayMs: ({ nextAttempt }) => nextAttempt * 100,
-    jittered: 0.2,
-  },
+  retry: { times: 2, delayMs: ({ nextAttempt }) => nextAttempt * 100, jittered: 0.2 },
 });
 ```
 
@@ -119,11 +112,7 @@ import { requestJson as requestJsonZod, type RequestJsonMapError } from "resulta
 import { z } from "zod";
 
 const userSchema = z
-  .object({
-    email: z.string().email(),
-    id: z.string(),
-    seats: z.number().int().nonnegative(),
-  })
+  .object({ email: z.string().email(), id: z.string(), seats: z.number().int().nonnegative() })
   .transform((user) => ({
     ...user,
     email: user.email.toLowerCase(),
@@ -144,21 +133,14 @@ const mapUserError = {
     new UserApiError({ cause, detail: cause.message, reason: "invalid-json" }),
   request: ({ cause }) => new UserApiError({ cause, detail: cause.message, reason: "request" }),
   validation: ({ errors }) =>
-    new UserApiError({
-      detail: `${errors.length} validation issue(s)`,
-      reason: "validation",
-    }),
+    new UserApiError({ detail: `${errors.length} validation issue(s)`, reason: "validation" }),
 } satisfies RequestJsonMapError;
 
 const user = requestJsonZod({
   request: () => fetch(`https://example.com/users/${userId}`),
   schema: userSchema,
   mapError: mapUserError,
-  retry: {
-    times: 2,
-    delayMs: ({ nextAttempt }) => nextAttempt * 100,
-    jittered: 0.2,
-  },
+  retry: { times: 2, delayMs: ({ nextAttempt }) => nextAttempt * 100, jittered: 0.2 },
 });
 ```
 
@@ -185,11 +167,7 @@ other safe context needed for diagnosis. Do not map every category to a message-
 const user = requestJsonZod({
   request: () => fetch(`https://example.com/users/${userId}`),
   schema: userSchema,
-  retry: {
-    times: 2,
-    delayMs: ({ nextAttempt }) => nextAttempt * 100,
-    jittered: 0.2,
-  },
+  retry: { times: 2, delayMs: ({ nextAttempt }) => nextAttempt * 100, jittered: 0.2 },
 });
 ```
 
@@ -202,27 +180,24 @@ closure when the caller owns separate cancellation.
 
 ## Validate In The Preferred Order
 
-1. Run the `resultar-check` CLI as the authoritative local and CI gate. It runs TypeScript first and
-   then all Resultar rules over the project.
-2. Configure the `resultar-check` TypeScript language-service plugin for equivalent diagnostics
-   while editing, using the workspace TypeScript version.
-3. Add Oxlint, ESLint, or Deno Lint only for optional low-latency AST-only feedback.
-4. Run the repository's formatter, build, tests, static analysis, package smoke tests, and runnable
+1. Run the native `resultar-check` CLI as the authoritative local and CI gate. It uses TypeScript-Go
+   to run compiler diagnostics and all Resultar rules over the same project.
+2. Run the repository's formatter, build, tests, static analysis, package smoke tests, and runnable
    examples.
 
-Do not claim that an AST-only lint pass replaced the CLI. The adapters intentionally expose fewer
-rules because they do not have TypeScript type information.
+The Go analyzer is the single implementation of Resultar diagnostics.
 
-## Configure The CLI And Language Server
+## Configure The Native Checker
 
-Install a project-local TypeScript 7+ and Resultar Check:
+Install Resultar Check. A separate TypeScript installation is not required:
 
 ```sh
-pnpm add -D resultar-check "typescript@>=7"
+pnpm add -D resultar-check
 pnpm exec resultar-check
 ```
 
-Add the plugin to `tsconfig.json` and tune rules only when project policy requires it:
+Add the checker configuration marker to `tsconfig.json` and tune rules only when project policy
+requires it:
 
 ```json
 {
@@ -242,21 +217,15 @@ Add the plugin to `tsconfig.json` and tune rules only when project policy requir
 }
 ```
 
-Use the workspace TypeScript SDK in the editor, make sure the plugin can resolve from the workspace
-`node_modules`, then restart the TypeScript server. A working setup reports source `resultar` and
-messages such as `[resultar/noDiscard]`. The corresponding lint rule ID is
-`resultar/no-discard`.
+The `plugins` entry is consumed by the native CLI and stdio LSP server; it does not install an editor
+extension. Start `resultar-check lsp` from the editor's language-server configuration. Findings use
+rule IDs such as `resultar/no-discard`; pass `--format json` (or `--json`) when machine-readable JSON
+Lines output is needed.
 
-Read `packages/check/README.md` for current VS Code, Zed/vtsls, and other editor setup. Use narrow
-`ignoreFilePatterns` only for deliberate tests, scripts, generated files, or terminal process
-boundaries.
+Read `packages/check/README.md` for all rules, severities, modes, and command-line flags. Use narrow
+`ignoreFilePatterns` only for deliberate tests, scripts, generated files, or terminal process boundaries.
 
-## Use Lint Adapters As Secondary Feedback
-
-Oxlint, ESLint, and Deno Lint adapters expose the shared syntax-only rules. Add the adapter that
-matches the project's existing lint host after the CLI and language server are working. Keep rule
-IDs aligned across surfaces, but expect type-aware rules such as unsafe error-channel narrowing to
-remain CLI/language-server responsibilities.
+## Act On Diagnostics
 
 When an agent encounters a diagnostic, fix the architecture first:
 

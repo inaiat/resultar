@@ -709,6 +709,10 @@ interface ResultStatic {
    */
   [Symbol.hasInstance]: (value: unknown) => boolean
   /**
+   * Alias for `safeTry`, providing the same generator vocabulary as `ResultTask.gen`.
+   */
+  gen: typeof safeTry
+  /**
    * Runs synchronous work and captures thrown values into a Result.
    *
    * Compatibility alias. Prefer the top-level `tryResult` helper in new code.
@@ -938,6 +942,11 @@ class ResultNamespace {
   public static [Symbol.hasInstance](value: unknown): boolean {
     return value instanceof Ok || value instanceof Err
   }
+
+  /**
+   * Alias for the top-level `safeTry` generator workflow.
+   */
+  public static readonly gen: typeof safeTry = safeTry
 
   /**
    * Creates a `Result` by running a function that might throw.

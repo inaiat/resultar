@@ -7,6 +7,12 @@ const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const dryRun = process.argv.includes("--dry-run");
 
 const packages = [
+  "packages/check/native-packages/darwin-arm64",
+  "packages/check/native-packages/darwin-x64",
+  "packages/check/native-packages/linux-arm64",
+  "packages/check/native-packages/linux-x64",
+  "packages/check/native-packages/win32-arm64",
+  "packages/check/native-packages/win32-x64",
   "packages/resultar",
   "packages/check",
   "packages/request",
@@ -82,6 +88,8 @@ function removeStalePrereleaseTags(name, version) {
     }
   }
 }
+
+run("pnpm", ["--filter", "resultar-check", "native:build:all"]);
 
 for (const packageDir of packages) {
   const packageJsonPath = join(rootDir, packageDir, "package.json");

@@ -28,6 +28,7 @@ describe('public API', () => {
       'DisposableResultAsync',
       'Result',
       'ResultAsync',
+      'ResultTask',
       'createTaggedError',
       'default',
       'err',

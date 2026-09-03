@@ -28,7 +28,7 @@
     {
       "id": 5,
       "prompt": "Set up Resultar validation for a TypeScript 7 project used by humans and coding agents. I need the correct project/CI command, editor diagnostics, and optional Oxlint, ESLint, or Deno Lint integration. Explain the order and what each surface can prove.",
-      "expected_output": "Makes the resultar-check CLI the authoritative first gate, configures the TypeScript language-service plugin with workspace TypeScript second, and places Oxlint/ESLint/Deno Lint third as optional AST-only feedback. It uses stable resultar/* rules, does not claim lint replaces type-aware checks, and recommends native tests/build/examples afterward.",
+      "expected_output": "Makes the resultar-check CLI the authoritative first gate, configures resultar-check lsp as the editor's stdio server with inline diagnostics and quick fixes second, and uses JSONL/SARIF/JUnit for structured CI consumers. It uses stable resultar/* rules, does not claim structured output replaces type-aware checks, and recommends native tests/build/examples afterward.",
       "files": []
     },
     {

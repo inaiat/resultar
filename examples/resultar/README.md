@@ -1,7 +1,7 @@
 # Resultar Cookbook Example
 
-This package is a runnable cookbook for the core `resultar` package. It uses `resultar-check` so the
-same command type-checks with TypeScript 7 and enforces Resultar rules.
+This package is a runnable cookbook for the core `resultar` package. It uses the native
+`resultar-check` command to type-check with TypeScript-Go and enforce Resultar rules.
 
 Run it from the repository root:
 
@@ -42,3 +42,29 @@ configured in `tsconfig.json`.
 
 The smoke script checks the expected `Ok` and `Err` branches so this example stays executable as the
 library evolves.
+
+## Resultar 3.6 Additions
+
+`Result.gen` is now the canonical name for generator-based Result composition; `safeTry` remains an
+exact compatibility alias, so the cookbook's existing sample keeps the same behavior and inference.
+
+The new `ResultTask<T, E, R>` surface adds reusable lazy workflows, typed services, cooperative
+abort signals, generator composition, and explicit `runExit`, `runResult`, and `runPromise`
+boundaries:
+
+```ts
+import { ResultTask } from 'resultar'
+
+const task = ResultTask.gen(function* () {
+  return yield* ResultTask.tryPromise({
+    try: (signal) => fetch('https://example.com/users/123', { signal }),
+    catch: (cause) => new Error(`Could not load user: ${String(cause)}`),
+  })
+})
+
+const result = await ResultTask.runResult(task)
+```
+
+See the [ResultTask package guide](../../packages/resultar/README.md#lazy-workflows-with-resulttask)
+and the [core RFC](../../packages/resultar/RESULT-TASK-CORE-RFC.md) for the complete API and the
+planned runtime phases.

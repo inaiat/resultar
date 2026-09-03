@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://raw.githubusercontent.com/inaiat/resultar/main/packages/check/schema.json",
   "title": "Resultar Check tsconfig schema",
-  "description": "Schema extension for configuring the resultar-check TypeScript language-service plugin in tsconfig.json.",
+  "description": "Schema extension for configuring native resultar-check diagnostics in tsconfig.json.",
   "type": "object",
   "allowTrailingCommas": true,
   "additionalProperties": true,
@@ -40,7 +40,7 @@
       "properties": {
         "name": {
           "$ref": "#/definitions/resultarPluginName",
-          "description": "Resultar language-service plugin package name."
+          "description": "Resultar diagnostic configuration marker."
         },
         "ignoreFilePatterns": {
           "oneOf": [
@@ -49,6 +49,20 @@
           ],
           "default": [],
           "description": "Glob-style file patterns that Resultar diagnostics should ignore. Bare patterns such as *.test.ts match file basenames; slash patterns such as tests/** match normalized path suffixes."
+        },
+        "failOn": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "message",
+          "description": "Minimum Resultar diagnostic severity that makes the CLI exit with status 1. Use off to report without failing CI."
+        },
+        "diagnosticSeverity": {
+          "$ref": "#/definitions/diagnosticSeverity",
+          "description": "Set severities by stable diagnostic rule id. Names may use camelCase, kebab-case, or resultar/<rule>."
+        },
+        "overrides": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/diagnosticOverride" },
+          "description": "Apply diagnosticSeverity to files matching include globs. Later matching overrides win."
         },
         "noAwaitInSafeTry": {
           "$ref": "#/definitions/ruleSeverity",
@@ -59,6 +73,11 @@
           "$ref": "#/definitions/ruleSeverity",
           "default": "error",
           "description": "Require Result and ResultAsync values to be handled or explicitly discarded."
+        },
+        "noPromiseInResultSuccess": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Disallow Promise values in synchronous Result success channels; use asyncMap or ResultAsync."
         },
         "noDiscardMode": {
           "type": "string",
@@ -103,6 +122,11 @@
           "default": "resultar-context",
           "description": "Controls where noUnsafeAwait applies. resultar-context checks Resultar async contexts and safeTry bodies; all also reports framework and bootstrap awaits."
         },
+        "noUnknownResultError": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "suggestion",
+          "description": "Discourage unknown or any in Resultar error channels; prefer a concrete error type or typed catch mapper."
+        },
         "noUselessRecovery": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",
@@ -113,10 +137,30 @@
           "default": "warning",
           "description": "Prefer andThen or asyncAndThen when map returns a Resultar value."
         },
+        "preferCatchReason": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Prefer catchReason or catchReasons when catchTag manually inspects a nested reason tag."
+        },
+        "preferFirstSuccessOf": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Prefer Result.firstSuccessOf or ResultAsync.firstSuccessOf for independent orElse fallbacks."
+        },
+        "preferMap": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Prefer map when andThen only wraps the callback value in Ok."
+        },
         "preferMapErr": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",
           "description": "Prefer mapErr when orElse only returns another Err."
+        },
+        "preferResultForEach": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Prefer Result.forEach or ResultAsync.forEach over combine applied to an intermediate map result list."
         },
         "preferTaggedError": {
           "$ref": "#/definitions/ruleSeverity",
@@ -142,6 +186,11 @@
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",
           "description": "Require yield* for Resultar values inside safeTry."
+        },
+        "yieldStarInResultTaskGen": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Require yield* inside ResultTask.gen because plain yield is not a supported task or service composition."
         }
       }
     },
@@ -154,6 +203,30 @@
     "ruleSeverity": {
       "type": "string",
       "enum": ["error", "warning", "suggestion", "message", "off"]
+    },
+    "diagnosticSeverity": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/ruleSeverity" },
+      "propertyNames": { "pattern": "^(resultar/)?[A-Za-z][A-Za-z0-9_-]*$" }
+    },
+    "diagnosticOverride": {
+      "type": "object",
+      "required": ["include", "options"],
+      "properties": {
+        "include": {
+          "oneOf": [
+            { "$ref": "#/definitions/filePattern" },
+            { "type": "array", "items": { "$ref": "#/definitions/filePattern" } }
+          ]
+        },
+        "options": {
+          "type": "object",
+          "required": ["diagnosticSeverity"],
+          "properties": { "diagnosticSeverity": { "$ref": "#/definitions/diagnosticSeverity" } },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
     }
   }
 }

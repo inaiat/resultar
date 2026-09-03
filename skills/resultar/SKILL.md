@@ -151,10 +151,10 @@ Read `references/integrations.md` before implementing request adapters or diagno
 
 1. Run the `resultar-check` CLI as the authoritative project and CI gate. It runs TypeScript and the
    full Resultar rule set against the project.
-2. Configure the `resultar-check` TypeScript language-service plugin for editor diagnostics using
-   the workspace TypeScript version.
-3. Add Oxlint, ESLint, or Deno Lint adapters only as optional AST-only feedback. Do not present them
-   as replacements for the CLI or language-service plugin.
+2. Configure `resultar-check lsp` as the editor's stdio language server for inline diagnostics and
+   quick fixes. It reads the same project configuration as the CLI.
+3. Use JSONL, SARIF, or JUnit output when another CI or review system needs structured diagnostics;
+   do not present those consumers as replacements for the native checker.
 4. Run the repository's native formatting, build, tests, analysis, package smoke, and example
    workflows when available.
 

@@ -1,9 +1,11 @@
 {
   "name": "resultar-check",
   "version": "2.2.2",
-  "description": "Resultar diagnostics for TypeScript >=7",
+  "description": "Native Resultar diagnostics powered by TypeScript-Go",
   "keywords": [
-    "lint",
+    "diagnostics",
+    "go",
+    "native",
     "no-discard",
     "resultar",
     "typescript"
@@ -29,55 +31,38 @@
     "schema.json"
   ],
   "type": "module",
-  "main": "dist/index.cjs",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
-      "default": "./dist/index.js"
-    },
-    "./deno": {
-      "types": "./dist/deno/plugin.d.ts",
-      "import": "./dist/deno/plugin.js",
-      "require": "./dist/deno/plugin.cjs",
-      "default": "./dist/deno/plugin.js"
-    },
-    "./eslint": {
-      "types": "./dist/eslint/plugin.d.ts",
-      "import": "./dist/eslint/plugin.js",
-      "require": "./dist/eslint/plugin.cjs",
-      "default": "./dist/eslint/plugin.js"
-    },
     "./schema.json": "./schema.json"
   },
   "scripts": {
-    "analyze": "fallow",
     "build": "vp pack",
     "check": "vp check",
-    "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",
+    "check:full": "pnpm run build && pnpm run check && pnpm run native:test && pnpm run native:check",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
+    "native:build": "go -C native build -o resultar-check-native ./cmd/resultar-check",
+    "native:build:all": "node scripts/build-native-binaries.ts --all",
+    "native:build:current": "node scripts/build-native-binaries.ts --current",
+    "native:check": "go -C native run ./cmd/resultar-check --project ../tsconfig.json",
+    "native:fmt": "gofmt -w native/cmd native/internal",
+    "test": "pnpm run native:test",
+    "native:test": "go -C native test ./...",
     "prepare": "vp config || true",
     "prepublishOnly": "vp pack",
-    "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts",
-    "test": "pnpm run build && vp test run",
-    "test:cov": "pnpm run build && vp test run --coverage",
-    "test:ui": "pnpm run build && vp test --ui --watch",
-    "test:watch": "pnpm run build && vp test watch"
-  },
-  "dependencies": {
-    "typescript": "catalog:"
+    "smoke:package": "pnpm run build && pnpm run native:build:current && tsx scripts/smoke-package.ts"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "@vitest/coverage-v8": "catalog:",
-    "@vitest/ui": "catalog:",
-    "fallow": "catalog:",
     "tsx": "catalog:",
     "vite-plus": "catalog:"
+  },
+  "optionalDependencies": {
+    "resultar-check-darwin-arm64": "workspace:*",
+    "resultar-check-darwin-x64": "workspace:*",
+    "resultar-check-linux-arm64": "workspace:*",
+    "resultar-check-linux-x64": "workspace:*",
+    "resultar-check-win32-arm64": "workspace:*",
+    "resultar-check-win32-x64": "workspace:*"
   },
   "engines": {
     "node": ">=24"

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "resultar-check",
+    "check": "node ../../packages/check/dist/cli.js",
     "prepare": "pnpm --filter resultar build && pnpm --filter resultar-check build && pnpm --filter resultar-request build && pnpm --filter resultar-request-typebox build && pnpm --filter resultar-request-zod build",
     "server": "pnpm run prepare && tsx src/server.ts",
     "server:smoke": "pnpm run prepare && tsx scripts/smoke.ts",

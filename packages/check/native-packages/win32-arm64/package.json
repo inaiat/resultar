@@ -1,0 +1,26 @@
+{
+  "name": "resultar-check-win32-arm64",
+  "version": "2.2.2",
+  "description": "Native resultar-check binary for Windows ARM64",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inaiat/resultar.git"
+  },
+  "bin": {
+    "resultar-check-native": "./bin/resultar-check.exe"
+  },
+  "files": [
+    "bin"
+  ],
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "./bin/resultar-check.exe",
+  "publishConfig": {
+    "access": "public"
+  }
+}

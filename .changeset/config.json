@@ -2,7 +2,17 @@
   "$schema": "https://unpkg.com/@changesets/config@3.1.4/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "fixed": [],
+  "fixed": [
+    [
+      "resultar-check",
+      "resultar-check-darwin-arm64",
+      "resultar-check-darwin-x64",
+      "resultar-check-linux-arm64",
+      "resultar-check-linux-x64",
+      "resultar-check-win32-arm64",
+      "resultar-check-win32-x64"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",

@@ -24,9 +24,15 @@ jobs:
       - name: Set up Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
-          node-version: '24'
+          node-version: "24"
           cache: true
           run-install: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: packages/check/native/go.mod
+          cache-dependency-path: packages/check/native/go.sum
 
       - name: Install dependencies
         run: vp install --frozen-lockfile
@@ -39,6 +45,9 @@ jobs:
 
       - name: Package smoke
         run: vp run smoke:package
+
+      - name: Example smoke tests
+        run: vp run test:examples
 
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -57,12 +66,18 @@ jobs:
       - name: Set up Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
-          node-version: '24'
+          node-version: "24"
           cache: true
           run-install: false
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: "https://registry.npmjs.org"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: packages/check/native/go.mod
+          cache-dependency-path: packages/check/native/go.sum
 
       - name: Install dependencies
         run: vp install --frozen-lockfile
@@ -72,8 +87,8 @@ jobs:
         with:
           version: vp run version:packages
           publish: vp run release:publish
-          commit: 'Version packages'
-          title: 'Version packages'
+          commit: "Version packages"
+          title: "Version packages"
           createGithubReleases: false
           commitMode: github-api
         env:

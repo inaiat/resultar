@@ -17,7 +17,7 @@ const config: UserConfig = defineConfig({
     clean: true,
     dts: { sourcemap: false },
     deps: { onlyBundle: false },
-    entry: ["src/index.ts", "src/cli.ts", "src/deno/plugin.ts", "src/eslint/plugin.ts"],
+    entry: ["src/cli.ts"],
     format: ["esm", "cjs"],
     outExtensions: ({ format }) => ({ dts: ".d.ts", js: format === "cjs" ? ".cjs" : ".js" }),
     sourcemap: false,
@@ -40,10 +40,6 @@ const config: UserConfig = defineConfig({
       complexity: "allow",
       "consistent-type-definitions": "allow",
       curly: "allow",
-      "eslint/complexity": "allow",
-      "eslint/max-statements": "allow",
-      "eslint/require-unicode-regexp": "allow",
-      "eslint/sort-imports": "allow",
       "explicit-function-return-type": "allow",
       "func-style": "allow",
       "max-lines": "allow",
@@ -60,6 +56,7 @@ const config: UserConfig = defineConfig({
       "no-rest-spread-properties": "allow",
       "no-ternary": "allow",
       "no-undefined": "allow",
+      "one-var": "allow",
       "no-use-before-define": "allow",
       "no-void": "allow",
       "new-cap": "allow",
@@ -74,27 +71,15 @@ const config: UserConfig = defineConfig({
     },
     overrides: [
       {
-        files: ["**/tests/**", "**/scripts/**"],
+        files: ["**/scripts/**"],
         rules: {
-          "@typescript-eslint/no-unsafe-type-assertion": "allow",
-          "@typescript-eslint/require-await": "allow",
-          "@typescript-eslint/strict-boolean-expressions": "allow",
-          "max-lines": ["error", { max: 2000, skipBlankLines: true, skipComments: true }],
+          "no-unsafe-type-assertion": "allow",
           "no-magic-numbers": "allow",
           "prefer-template": "allow",
           "unicorn/consistent-function-scoping": "allow",
         },
       },
     ],
-  },
-  test: {
-    coverage: {
-      exclude: ["node_modules/", "dist/", "tests/", "src/index.ts"],
-      reporter: ["text", "json", "html", "lcov"],
-    },
-    globals: true,
-    include: ["tests/**/*.test.ts"],
-    testTimeout: 15_000,
   },
 });
 

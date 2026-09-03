@@ -8,10 +8,12 @@ Resultar makes expected failures visible in function signatures instead of hidin
 ```ts
 Result<T, E>
 ResultAsync<T, E>
+ResultTask<T, E, R>
 ```
 
 - `T` is the success value.
 - `E` is the expected failure.
+- `R` is the typed service environment still required by a `ResultTask`.
 - Callers must handle the result before they can use the value.
 
 Resultar stays focused on explicit values. It does not require a framework, dependency injection
@@ -22,12 +24,13 @@ container, scheduler, or application runtime.
 | You need | Resultar gives you |
 | --- | --- |
 | Expected failures in the type system | `Result<T, E>` and `ResultAsync<T, E>` |
+| Reusable lazy workflows | `ResultTask<T, E, R>` with explicit execution boundaries and typed services |
 | Production errors with useful metadata | Real `Error` subclasses from `createTaggedError` |
 | Composable sync and async workflows | `map`, `mapErr`, `andThen`, `asyncAndThen`, and `orElse` |
 | Linear code without scattered `try/catch` | `safeTry` with `yield*` short-circuiting |
 | Explicit production async policy | Typed timeout, retry, race, concurrency, and cleanup helpers |
 | Exhaustive application boundaries | `matchTags` for tagged error unions |
-| Guardrails for ignored results | The optional `resultar-check` CLI and language-server plugin |
+| Guardrails for ignored results | The optional native `resultar-check` CLI |
 
 Resultar began as a fork of `neverthrow`. The current API keeps the familiar explicit Result model
 and adds Resultar-specific tagged errors, production async helpers, exhaustive tagged boundaries,
@@ -41,8 +44,9 @@ and optional TypeScript-backed diagnostics.
 - [Compose Results](#compose-results)
 - [Tagged Errors](#tagged-errors)
 - [Async Work](#async-work)
+- [Lazy Workflows With ResultTask](#lazy-workflows-with-resulttask)
 - [Production Async Policies](#production-async-policies)
-- [Linear Workflows With safeTry](#linear-workflows-with-safetry)
+- [Linear Workflows With Result.gen](#linear-workflows-with-resultgen)
 - [Recover Inside A Workflow](#recover-inside-a-workflow)
 - [Handle Results At Boundaries](#handle-results-at-boundaries)
 - [Strict Results At Production Boundaries](#strict-results-at-production-boundaries)
@@ -400,6 +404,129 @@ Choose the wrapper that matches the external boundary:
 
 Prefer a factory with `tryResultAsync` when creating the promise can also throw synchronously.
 
+## Lazy Workflows With ResultTask
+
+`ResultTask<T, E, R>` is the lazy workflow primitive in Resultar. Creating one does not start the
+work; `runResult`, `runExit`, or `runPromise` executes it explicitly. `R` records the service tags
+still required by the workflow, so the execution boundary can require an explicit environment.
+
+Unlike `ResultAsync`, a `ResultTask` is a reusable description of work rather than an already-started
+operation. Mapping, chaining, recovery, service provision, and generator composition all remain lazy.
+
+| Need | API |
+| --- | --- |
+| Create an immediate success or failure | `succeed`, `fail`, `fromResult` |
+| Defer synchronous work | `sync`, `try` |
+| Defer promise-producing work | `tryPromise` |
+| Transform or chain | `map`, `flatMap`, `andThen` |
+| Recover typed failures | `catchAll` |
+| Write a linear lazy workflow | `gen` with `yield*` |
+| Declare and provide dependencies | `service`, `provideService`, `provideServices` |
+| Execute at the application boundary | `runExit`, `runResult`, `runPromise` |
+
+```ts
+import { ResultTask } from 'resultar'
+
+const loadUser = (id: string) =>
+  ResultTask.tryPromise({
+    try: (signal) => fetch(`/users/${id}`, { signal }).then((response) => response.json()),
+    catch: (cause) => new Error(`Could not load user: ${String(cause)}`),
+  })
+
+const task = loadUser('user_123')
+const result = await ResultTask.runResult(task)
+```
+
+`sync` treats a thrown value as an unexpected defect. Use `try` or `tryPromise` when the boundary is
+expected to throw or reject and should map that cause into `E`. `tryPromise` receives the execution
+`AbortSignal`, so callers can cancel cooperative work without starting it early.
+
+Choose the execution boundary based on how much information the application needs:
+
+| Boundary | Result |
+| --- | --- |
+| `runExit(task)` | `Exit<T, E>` preserving `Success`, typed `Fail`, and unexpected `Die` causes |
+| `runResult(task)` | `Result<T, E>`; a `Die` rejects instead of entering the typed error channel |
+| `runPromise(task)` | `T`; typed failures and defects reject for integration with Promise-only APIs |
+
+```ts
+const controller = new AbortController()
+const exit = await ResultTask.runExit(loadUser('user_123'), {
+  signal: controller.signal,
+})
+
+if (exit._tag === 'Failure' && exit.cause._tag === 'Die') {
+  console.error('Unexpected defect', exit.cause.defect)
+}
+```
+
+Instance methods and their static functional forms preserve laziness and infer combined error and
+environment types:
+
+```ts
+const userName = loadUser('user_123')
+  .map((user) => String(user.name))
+  .andThen((name) => ResultTask.succeed(name.trim()))
+  .catchAll((error) => ResultTask.succeed(`unavailable: ${error.message}`))
+```
+
+`catchAll` recovers only typed failures. Runtime defects remain defects and are visible through
+`runExit`. The equivalent functional forms are `ResultTask.map`, `ResultTask.flatMap`, and
+`ResultTask.catchAll`.
+
+Workflows can request typed services with `yield*` and receive them at the boundary. Pass the service
+type and its literal identifier so the named environment remains checked:
+
+```ts
+const Database = ResultTask.service<
+  { findUser: (id: string) => Promise<string> },
+  'Database'
+>('Database')
+
+const taskWithDatabase = ResultTask.gen(function* () {
+  const database = yield* Database
+  return yield* ResultTask.tryPromise({
+    try: () => database.findUser('user_123'),
+    catch: () => 'database-error' as const,
+  })
+})
+
+const resultWithDatabase = await ResultTask.runResult(taskWithDatabase, {
+  services: { Database: { findUser: async () => 'Ada' } },
+})
+```
+
+The environment requirement is part of the task type. A missing or misspelled `Database` property is
+a compile-time error at `runResult`, `runExit`, or `runPromise`. Dependencies can also be bound before
+the final boundary:
+
+```ts
+const database = { findUser: async () => 'Ada' }
+
+const readyWithOne = ResultTask.provideService(taskWithDatabase, Database, database)
+const readyWithAll = ResultTask.provideServices(taskWithDatabase, { Database: database })
+
+await ResultTask.runResult(readyWithOne)
+await ResultTask.runResult(readyWithAll)
+```
+
+`ResultTask.gen` composes tasks and services linearly. On short-circuit, generator `finally` blocks
+are closed and any yielded cleanup tasks or services are interpreted before execution completes:
+
+```ts
+const program = ResultTask.gen(function* () {
+  try {
+    return yield* loadUser('user_123')
+  } finally {
+    yield* ResultTask.sync(() => logger.info('load-user finished'))
+  }
+})
+```
+
+If cleanup itself fails or defects, that cleanup exit becomes the final exit. ResultTask 3.6 keeps
+execution deliberately small: it provides laziness, typed services, cooperative cancellation, and
+explicit exits, but does not yet include a scheduler, scopes, or `Fiber` runtime.
+
 ## Production Async Policies
 
 Resultar models common resilience policy in the expected error channel. These helpers use lazy tasks
@@ -507,19 +634,19 @@ See the full guides for
 [concurrency](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#async-concurrency-mapping),
 and [resource cleanup](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#resourceful-async-iterables).
 
-## Linear Workflows With `safeTry`
+## Linear Workflows With `Result.gen`
 
-Use `safeTry` when a longer chain reads better as linear code. `yield*` extracts the `Ok` value and
-short-circuits on the first `Err`.
+Use `Result.gen` when a longer chain reads better as linear code. `yield*` extracts the `Ok` value and
+short-circuits on the first `Err`. `safeTry` remains an exact compatibility alias.
 
 ```ts
-import { safeTry } from 'resultar'
+import { Result } from 'resultar'
 import type { ResultAsync } from 'resultar'
 
 const createAccountLinear = (
   input: string,
 ): ResultAsync<Account, CreateAccountAsyncError> =>
-  safeTry(async function* () {
+  Result.gen(async function* () {
     const email = yield* normalizeEmail(input)
     yield* ensureAccountIsAvailable(email)
 
@@ -531,7 +658,7 @@ The object form can map unexpected throws from inside the generator while leavin
 values unchanged:
 
 ```ts
-const account = safeTry({
+const account = Result.gen({
   async *try() {
     const email = yield* normalizeEmail(input)
     return persistAccount(email)
@@ -639,11 +766,10 @@ messages, causes, stack traces, and structured metadata.
 
 ## Prevent Ignored Results
 
-Result values are useful only when callers handle them. Install `resultar-check` with a project-local
-TypeScript 7+:
+Result values are useful only when callers handle them. Install the native `resultar-check` CLI:
 
 ```sh
-pnpm add -D resultar-check "typescript@>=7"
+pnpm add -D resultar-check
 ```
 
 Use the CLI as the authoritative local and CI check:
@@ -656,8 +782,8 @@ Use the CLI as the authoritative local and CI check:
 }
 ```
 
-The CLI runs TypeScript first and then Resultar diagnostics over the same `tsconfig.json`. Configure
-the TypeScript language-server plugin for equivalent feedback while editing:
+The CLI uses TypeScript-Go to run compiler and Resultar diagnostics over the same `tsconfig.json`.
+Configure its rules in the project file:
 
 ```json
 {
@@ -673,13 +799,13 @@ the TypeScript language-server plugin for equivalent feedback while editing:
 }
 ```
 
-After the CLI and language server are working, add the Oxlint, ESLint, or Deno Lint adapter only if
-you want optional low-latency syntax feedback. The adapters intentionally expose fewer rules because
-they do not have TypeScript type information.
+The `plugins` entry is configuration consumed by the native CLI and stdio LSP server; it does not
+install an editor extension. Run `resultar-check lsp` from an editor language-server configuration.
+A separate TypeScript installation is not required.
 
 See the
 [`resultar-check` guide](https://github.com/inaiat/resultar/blob/main/packages/check/README.md)
-for all rules, editor setup, ignore patterns, and lint adapter configuration.
+for all diagnostics, severities, modes, and ignore patterns.
 
 ## HTTP Request Packages
 
@@ -708,7 +834,11 @@ service needs.
 | Continue fallible work | `andThen`, `asyncAndThen` |
 | Recover from failure | `orElse`, `catchTag`, `catchTags` |
 | Wrap throwing or rejecting code | `tryResult`, `tryResultAsync`, `fromPromise` |
-| Write linear Result code | `safeTry` |
+| Write linear Result code | `Result.gen` (`safeTry` compatibility alias) |
+| Describe reusable lazy work | `ResultTask.succeed`, `sync`, `try`, `tryPromise` |
+| Compose or recover lazy work | `ResultTask.map`, `flatMap`, `andThen`, `catchAll`, `gen` |
+| Require or bind typed services | `ResultTask.service`, `provideService`, `provideServices` |
+| Execute lazy work explicitly | `ResultTask.runExit`, `runResult`, `runPromise` |
 | Handle a final boundary | `match`, `matchTags`, `matchTagsPartial` |
 | Combine independent results | `zip`, `combine`, `combineWithAllErrors` |
 | Try ordered fallback candidates | `firstSuccessOf` |
@@ -729,6 +859,7 @@ reasons, disposable results, and compatibility APIs.
 ## More Documentation
 
 - [Full Resultar guide](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md)
+- [ResultTask core RFC](https://github.com/inaiat/resultar/blob/main/packages/resultar/RESULT-TASK-CORE-RFC.md)
 - [Runnable core cookbook](https://github.com/inaiat/resultar/tree/main/examples/resultar)
 - [Catching and recovering errors](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#catching-and-recovering-errors)
 - [Safe Try](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#safe-try)
