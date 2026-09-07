@@ -27,6 +27,23 @@ export class ResultTaskCauseError extends Error {
 /** Type identifier symbol for nominal `ResultTask` branding and variance checks. */
 export const ResultTaskTypeId: unique symbol = Symbol.for('resultar/ResultTask')
 
+/** Type identifier symbol for nominal `ServiceTag` branding. */
+export const ServiceTagTypeId: unique symbol = Symbol.for('resultar/ServiceTag')
+
+/** Type identifier symbol for nominal `ResultTask` yieldable objects. */
+export const ResultTaskYieldTypeId: unique symbol = Symbol.for('resultar/ResultTaskYield')
+
+/** Error thrown as a Die cause when a requested service is not provided in the environment. */
+export class MissingServiceError extends Error {
+  public readonly serviceIdentifier: string
+
+  public constructor(serviceIdentifier: string) {
+    super(`Missing ResultTask service: ${serviceIdentifier}`)
+    this.name = 'MissingServiceError'
+    this.serviceIdentifier = serviceIdentifier
+  }
+}
+
 declare const scopeTypeId: unique symbol
 
 /** Tracks deferred release failures until the owning scope is closed. */
@@ -58,6 +75,7 @@ export type ResultTaskMatchOptions<A, E, B, C = B> =
 
 /** A service that can be requested from a `ResultTask.gen` workflow. */
 export interface ServiceTag<Identifier extends string, Service> {
+  readonly [ServiceTagTypeId]: typeof ServiceTagTypeId
   readonly _tag: 'ServiceTag'
   readonly identifier: Identifier
   readonly key: symbol
@@ -149,11 +167,13 @@ interface ResultTaskCloseRuntime {
 type ResultTaskExecutionOutcome = Exit<unknown, unknown> | { readonly error: unknown }
 
 interface ResultTaskYield<A, E, R> {
+  readonly [ResultTaskYieldTypeId]: typeof ResultTaskYieldTypeId
   readonly _tag: 'ResultTask'
   readonly task: ResultTask<A, E, R>
 }
 
 interface ResultTaskServiceYield<Tag extends AnyServiceTag> {
+  readonly [ResultTaskYieldTypeId]: typeof ResultTaskYieldTypeId
   readonly _tag: 'Service'
   readonly tag: Tag
 }
@@ -165,7 +185,9 @@ type GeneratorError<Yield> = Yield extends {
   ? Task extends ResultTask<infer _A, infer E, infer _R>
     ? E
     : never
-  : never
+  : Yield extends { readonly error: infer E; readonly isErr: unknown }
+    ? E
+    : never
 
 type GeneratorRequirements<Yield> = Yield extends {
   readonly _tag: 'ResultTask'
@@ -207,17 +229,31 @@ const throwDefect = (defect: unknown): never => {
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
   typeof value === 'object' && value !== null
 
-const createMissingServiceError = (identifier: string): Error => {
-  const error = new Error(`Missing ResultTask service: ${identifier}`)
-  error.name = 'MissingServiceError'
-  return error
-}
+/** Returns true if a value is a nominal `ServiceTag`. */
+export const isServiceTag = (value: unknown): value is ServiceTag<string, unknown> =>
+  isRecord(value) &&
+  ((value as Record<symbol, unknown>)[ServiceTagTypeId] === ServiceTagTypeId ||
+    (value['_tag'] === 'ServiceTag' && typeof value['identifier'] === 'string'))
+
+/** Returns true if a value is a `ResultTask` instance. */
+export const isResultTask = (value: unknown): value is ResultTask<unknown, unknown, unknown> =>
+  isRecord(value) &&
+  (value instanceof ResultTask ||
+    (value as Record<symbol, unknown>)[ResultTaskTypeId] !== undefined)
 
 const isResultTaskYield = (value: unknown): value is ResultTaskYield<unknown, unknown, unknown> =>
-  isRecord(value) && value['_tag'] === 'ResultTask' && value['task'] instanceof ResultTask
+  isRecord(value) && value['_tag'] === 'ResultTask' && isResultTask(value['task'])
 
 const isServiceYield = (value: unknown): value is ResultTaskServiceYield<AnyServiceTag> =>
-  isRecord(value) && value['_tag'] === 'Service' && value['tag'] instanceof ServiceTagValue
+  isRecord(value) && value['_tag'] === 'Service' && isServiceTag(value['tag'])
+
+const isErrResult = (
+  value: unknown,
+): value is { readonly error: unknown; readonly isErr: () => boolean } =>
+  isRecord(value) &&
+  'error' in value &&
+  typeof (value as { isErr?: unknown }).isErr === 'function' &&
+  (value as { isErr: () => boolean }).isErr()
 
 type ServiceLookup =
   | { readonly _tag: 'Found'; readonly value: unknown }
@@ -315,10 +351,13 @@ const closeGenerator = async <Yield, Return, Next, E>(
           finalExit = died<Return, E>(
             resolution._tag === 'Error'
               ? resolution.error
-              : createMissingServiceError(step.value.tag.identifier),
+              : new MissingServiceError(step.value.tag.identifier),
           )
           step = iterator.return(undefined as Return)
         }
+      } else if (isErrResult(step.value)) {
+        finalExit = failed<Return, E>(step.value.error as E)
+        step = iterator.return(undefined as Return)
       } else {
         finalExit = died<Return, E>(new TypeError('ResultTask.gen yielded an unsupported value'))
         step = iterator.return(undefined as Return)
@@ -380,6 +419,7 @@ class ServiceTagValue<Identifier extends string, Service> implements ServiceTag<
   Identifier,
   Service
 > {
+  public readonly [ServiceTagTypeId]: typeof ServiceTagTypeId = ServiceTagTypeId
   public readonly _tag = 'ServiceTag' as const
   public readonly identifier: Identifier
   public readonly key: symbol
@@ -394,10 +434,19 @@ class ServiceTagValue<Identifier extends string, Service> implements ServiceTag<
     Service,
     Service
   > {
-    const service = yield { _tag: 'Service', tag: this }
+    const service = yield {
+      [ResultTaskYieldTypeId]: ResultTaskYieldTypeId,
+      _tag: 'Service',
+      tag: this,
+    }
     return service
   }
 }
+
+/** Creates a service tag that can be requested with `yield*` inside `ResultTask.gen`. */
+export const serviceTag = <Service, const Identifier extends string = string>(
+  identifier: Identifier,
+): ServiceTag<Identifier, Service> => new ServiceTagValue<Identifier, Service>(identifier)
 
 type TaskInstruction =
   | { readonly _tag: 'Succeed'; readonly value: unknown }
@@ -873,11 +922,18 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
                   died<Return, GeneratorError<Yield>>(
                     resolution._tag === 'Error'
                       ? resolution.error
-                      : createMissingServiceError(step.value.tag.identifier),
+                      : new MissingServiceError(step.value.tag.identifier),
                   ),
                   closeRuntime,
                 )
               }
+            } else if (isErrResult(step.value)) {
+              // eslint-disable-next-line no-await-in-loop
+              return await closeGenerator(
+                iterator,
+                failed<Return, GeneratorError<Yield>>(step.value.error as GeneratorError<Yield>),
+                closeRuntime,
+              )
             } else {
               // eslint-disable-next-line no-await-in-loop
               return await closeGenerator(
@@ -993,9 +1049,41 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     return ResultTask.toResultAsync(this)
   }
 
+  /** Provides one required service and removes it from the task's requirements. */
+  public provideService<Tag extends Extract<R, AnyServiceTag>>(
+    tag: Tag,
+    service: ServiceForTag<Tag>,
+  ): ResultTask<A, E, Exclude<R, Tag>> {
+    return ResultTask.provideService(this, tag, service)
+  }
+
+  /** Provides all requirements using an object keyed by service identifier. */
+  public provideServices(
+    services: ResultTaskServices<R>,
+  ): ResultTask<A, E, Extract<R, ResultTaskScope<unknown>>> {
+    return ResultTask.provideServices(this, services)
+  }
+
+  /** Provides a lazy resolver for service tags that are not already in the environment. */
+  public provideServiceResolver<
+    Resolvers extends ResultTaskServiceResolver<NoInfer<R>, unknown, unknown>,
+  >(
+    resolvers: Resolvers,
+  ): ResultTask<
+    A,
+    E | ResolverError<Resolvers>,
+    WithoutServices<R> | ResolverRequirements<Resolvers>
+  > {
+    return ResultTask.provideServiceResolver(this, resolvers)
+  }
+
   /** Enables `yield* task` inside `ResultTask.gen` workflows. */
   public *[Symbol.iterator](): Generator<ResultTaskYield<A, E, R>, A, Exit<A, E>> {
-    const exit = yield { _tag: 'ResultTask', task: this }
+    const exit = yield {
+      [ResultTaskYieldTypeId]: ResultTaskYieldTypeId,
+      _tag: 'ResultTask',
+      task: this,
+    }
 
     if (exit._tag === 'Success') {
       return exit.value
@@ -1009,12 +1097,47 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     task: ResultTask<A, E, R>,
     tag: Tag,
     service: ServiceForTag<Tag>,
-  ): ResultTask<A, E, Exclude<R, Tag>> {
-    return new ResultTask<A, E, Exclude<R, Tag>>(async (context) => {
-      const services = new Map([...context.services, [tag.key, service] as const])
+  ): ResultTask<A, E, Exclude<R, Tag>>
+  public static provideService<Tag extends AnyServiceTag>(
+    tag: Tag,
+    service: ServiceForTag<Tag>,
+  ): <A, E, R>(task: ResultTask<A, E, R>) => ResultTask<A, E, Exclude<R, Tag>>
+  public static provideService<A, E, R, Tag extends Extract<R, AnyServiceTag>>(
+    taskOrTag: ResultTask<A, E, R> | Tag,
+    tagOrService: Tag | ServiceForTag<Tag>,
+    maybeService?: ServiceForTag<Tag>,
+  ):
+    | ResultTask<A, E, Exclude<R, Tag>>
+    | (<A2, E2, R2>(task: ResultTask<A2, E2, R2>) => ResultTask<A2, E2, Exclude<R2, Tag>>) {
+    if (isResultTask(taskOrTag)) {
+      if (maybeService === undefined) {
+        throw new TypeError('ResultTask.provideService requires a service implementation')
+      }
+      const task = taskOrTag
+      const tag = tagOrService as Tag
+      const service = maybeService
+      return new ResultTask<A, E, Exclude<R, Tag>>(async (context) => {
+        const services = new Map([...context.services, [tag.key, service] as const])
+        const namedServices = new Map([
+          ...context.namedServices,
+          [tag.identifier, service] as const,
+        ])
 
-      return task.execute(withServices(context, services)) as Promise<Exit<A, E>>
-    })
+        return task.execute(
+          withNamedServices(withServices(context, services), namedServices),
+        ) as Promise<Exit<A, E>>
+      })
+    }
+    const tag = taskOrTag as Tag
+    const service = tagOrService as ServiceForTag<Tag>
+    return ((task: ResultTask<unknown, unknown, unknown>) =>
+      ResultTask.provideService(
+        task as ResultTask<unknown, unknown, Extract<Tag, AnyServiceTag>>,
+        tag as Extract<Tag, AnyServiceTag>,
+        service,
+      )) as unknown as <A2, E2, R2>(
+      task: ResultTask<A2, E2, R2>,
+    ) => ResultTask<A2, E2, Exclude<R2, Tag>>
   }
 
   /** Provides a lazy resolver for service tags that are not already in the environment. */
@@ -1109,16 +1232,36 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   public static provideServices<A, E, R>(
     task: ResultTask<A, E, R>,
     services: ResultTaskServices<R>,
-  ): ResultTask<A, E, Extract<R, ResultTaskScope<unknown>>> {
-    return new ResultTask<A, E, Extract<R, ResultTaskScope<unknown>>>(async (context) => {
-      const namedServices = new Map(context.namedServices)
-
-      for (const [identifier, service] of Object.entries(services)) {
-        namedServices.set(identifier, service)
+  ): ResultTask<A, E, Extract<R, ResultTaskScope<unknown>>>
+  public static provideServices<R>(
+    services: ResultTaskServices<R>,
+  ): <A, E>(task: ResultTask<A, E, R>) => ResultTask<A, E, Extract<R, ResultTaskScope<unknown>>>
+  public static provideServices<A, E, R>(
+    taskOrServices: ResultTask<A, E, R> | ResultTaskServices<R>,
+    maybeServices?: ResultTaskServices<R>,
+  ):
+    | ResultTask<A, E, Extract<R, ResultTaskScope<unknown>>>
+    | (<A2, E2>(
+        task: ResultTask<A2, E2, R>,
+      ) => ResultTask<A2, E2, Extract<R, ResultTaskScope<unknown>>>) {
+    if (isResultTask(taskOrServices)) {
+      if (maybeServices === undefined) {
+        throw new TypeError('ResultTask.provideServices requires a services object')
       }
+      const task = taskOrServices
+      const services = maybeServices
+      return new ResultTask<A, E, Extract<R, ResultTaskScope<unknown>>>(async (context) => {
+        const namedServices = new Map(context.namedServices)
 
-      return task.execute(withNamedServices(context, namedServices)) as Promise<Exit<A, E>>
-    })
+        for (const [identifier, service] of Object.entries(services)) {
+          namedServices.set(identifier, service)
+        }
+
+        return task.execute(withNamedServices(context, namedServices)) as Promise<Exit<A, E>>
+      })
+    }
+    const services = taskOrServices
+    return (task) => ResultTask.provideServices(task, services)
   }
 
   /** Maps the success value using the canonical functional form or curried for `pipe`. */

@@ -1,4 +1,10 @@
-import { ResultTask, type ServiceTag, type Exit, type ResultTaskScope } from "resultar";
+import {
+  ResultTask,
+  type ServiceTag,
+  type Exit,
+  type ResultTaskScope,
+  ServiceTagTypeId,
+} from "resultar";
 
 /* eslint-disable @typescript-eslint/no-extraneous-class, unicorn/no-static-only-class */
 
@@ -23,6 +29,7 @@ function createServiceClass<const Identifier extends string, Self, E = never, R 
         throw new TypeError("Service classes are tokens; resolve them through a module");
       }
     }
+    public static readonly [ServiceTagTypeId]: typeof ServiceTagTypeId = ServiceTagTypeId;
     public static readonly _tag = tag._tag;
     public static readonly identifier = tag.identifier;
     public static readonly key = tag.key;
