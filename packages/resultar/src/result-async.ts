@@ -19,6 +19,7 @@ import type {
 import { AbortError } from './abort-error.js'
 import { Pipeable } from './pipe.js'
 import { registerResultAsyncFactory } from './result-async-adapter.js'
+import { ResultTask } from './result-task.js'
 import {
   Result,
   createEmptyResultsCollectionError,
@@ -1814,6 +1815,13 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     const newPromise = promise.then((value: T) => resultOk<T, E>(value))
 
     return new ResultAsync<T, E>(newPromise)
+  }
+
+  /**
+   * Eagerly executes a ResultTask using the standard runtime and wraps it in a ResultAsync.
+   */
+  public static fromTask<T, E>(this: void, task: ResultTask<T, E, never>): ResultAsync<T, E> {
+    return ResultTask.toResultAsync(task)
   }
 
   /**

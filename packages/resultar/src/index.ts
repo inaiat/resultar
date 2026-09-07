@@ -81,6 +81,7 @@ export type {
   Cause,
   Exit,
   ResultTaskAcquireReleaseOptions,
+  ResultTaskMatchOptions,
   ResultTaskRunOptions,
   ResultTaskScope,
   ResultTaskScopeOwner,

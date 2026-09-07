@@ -1,6 +1,8 @@
 import { Pipeable } from './pipe.js'
 import type { Result } from './result.js'
 import { err, ok } from './result.js'
+import type { ResultAsync } from './result-async.js'
+import { createResultAsync } from './result-async-adapter.js'
 import { AbortError } from './abort-error.js'
 import { TaskScope } from './task/scope.js'
 
@@ -48,6 +50,11 @@ export interface ResultTaskAcquireReleaseOptions<A, E, R, ReleaseError, ReleaseR
 export type Exit<A, E> =
   | { readonly _tag: 'Success'; readonly value: A }
   | { readonly _tag: 'Failure'; readonly cause: Cause<E> }
+
+/** Handlers for matching both success and failure cases of a ResultTask. */
+export type ResultTaskMatchOptions<A, E, B, C = B> =
+  | { readonly onSuccess: (value: A) => B; readonly onFailure: (error: E) => C }
+  | { readonly ok: (value: A) => B; readonly err: (error: E) => C }
 
 /** A service that can be requested from a `ResultTask.gen` workflow. */
 export interface ServiceTag<Identifier extends string, Service> {
@@ -408,6 +415,21 @@ type TaskInstruction =
       readonly f: (value: unknown) => unknown
     }
   | {
+      readonly _tag: 'MapError'
+      readonly task: ResultTask<unknown, unknown, unknown>
+      readonly f: (error: unknown) => unknown
+    }
+  | {
+      readonly _tag: 'Tap'
+      readonly task: ResultTask<unknown, unknown, unknown>
+      readonly f: (value: unknown) => unknown
+    }
+  | {
+      readonly _tag: 'TapError'
+      readonly task: ResultTask<unknown, unknown, unknown>
+      readonly f: (error: unknown) => unknown
+    }
+  | {
       readonly _tag: 'CatchAll'
       readonly task: ResultTask<unknown, unknown, unknown>
       readonly f: (error: unknown) => ResultTask<unknown, unknown, unknown>
@@ -419,6 +441,9 @@ type TaskContinuation =
       readonly f: (value: unknown) => ResultTask<unknown, unknown, unknown>
     }
   | { readonly _tag: 'Map'; readonly f: (value: unknown) => unknown }
+  | { readonly _tag: 'MapError'; readonly f: (error: unknown) => unknown }
+  | { readonly _tag: 'Tap'; readonly f: (value: unknown) => unknown }
+  | { readonly _tag: 'TapError'; readonly f: (error: unknown) => unknown }
   | {
       readonly _tag: 'CatchAll'
       readonly f: (error: unknown) => ResultTask<unknown, unknown, unknown>
@@ -430,38 +455,75 @@ interface ContinuationStep {
 }
 
 // fallow-ignore-next-line complexity
-const applyContinuation = (
+const applySuccessContinuation = (
   continuation: TaskContinuation,
-  exit: Exit<unknown, unknown>,
+  exit: Exit<unknown, unknown> & { readonly _tag: 'Success' },
 ): ContinuationStep => {
-  if (exit._tag === 'Success') {
-    switch (continuation._tag) {
-      case 'Map': {
-        try {
-          return { current: undefined, currentExit: success(continuation.f(exit.value)) }
-        } catch (error) {
-          return { current: undefined, currentExit: died(error) }
-        }
-      }
-      case 'FlatMap': {
-        try {
-          return { current: continuation.f(exit.value), currentExit: undefined }
-        } catch (error) {
-          return { current: undefined, currentExit: died(error) }
-        }
-      }
-      case 'CatchAll': {
-        return { current: undefined, currentExit: exit }
-      }
-      default: {
-        return { current: undefined, currentExit: exit }
+  switch (continuation._tag) {
+    case 'Map': {
+      try {
+        return { current: undefined, currentExit: success(continuation.f(exit.value)) }
+      } catch (error) {
+        return { current: undefined, currentExit: died(error) }
       }
     }
+    case 'FlatMap': {
+      try {
+        return { current: continuation.f(exit.value), currentExit: undefined }
+      } catch (error) {
+        return { current: undefined, currentExit: died(error) }
+      }
+    }
+    case 'Tap': {
+      try {
+        const res = continuation.f(exit.value)
+        return ResultTask.toTapContinuationStep(res, () => ResultTask.succeed(exit.value), exit)
+      } catch (error) {
+        return { current: undefined, currentExit: died(error) }
+      }
+    }
+    case 'MapError':
+    case 'TapError':
+    case 'CatchAll': {
+      return { current: undefined, currentExit: exit }
+    }
+    default: {
+      return { current: undefined, currentExit: exit }
+    }
   }
+}
 
+// fallow-ignore-next-line complexity
+const applyFailureContinuation = (
+  continuation: TaskContinuation,
+  exit: Exit<unknown, unknown> & { readonly _tag: 'Failure' },
+): ContinuationStep => {
   switch (continuation._tag) {
     case 'Map':
-    case 'FlatMap': {
+    case 'FlatMap':
+    case 'Tap': {
+      return { current: undefined, currentExit: exit }
+    }
+    case 'MapError': {
+      if (exit.cause._tag === 'Fail') {
+        try {
+          return { current: undefined, currentExit: failed(continuation.f(exit.cause.error)) }
+        } catch (error) {
+          return { current: undefined, currentExit: died(error) }
+        }
+      }
+      return { current: undefined, currentExit: exit }
+    }
+    case 'TapError': {
+      if (exit.cause._tag === 'Fail') {
+        try {
+          const failError = exit.cause.error
+          const res = continuation.f(failError)
+          return ResultTask.toTapContinuationStep(res, () => ResultTask.fail(failError), exit)
+        } catch (error) {
+          return { current: undefined, currentExit: died(error) }
+        }
+      }
       return { current: undefined, currentExit: exit }
     }
     case 'CatchAll': {
@@ -483,6 +545,14 @@ const applyContinuation = (
   }
 }
 
+const applyContinuation = (
+  continuation: TaskContinuation,
+  exit: Exit<unknown, unknown>,
+): ContinuationStep =>
+  exit._tag === 'Success'
+    ? applySuccessContinuation(continuation, exit)
+    : applyFailureContinuation(continuation, exit)
+
 interface InstructionStep {
   readonly nextCurrent: ResultTask<unknown, unknown, unknown> | undefined
   readonly exit: Exit<unknown, unknown> | undefined
@@ -497,6 +567,9 @@ const executeInstruction = async (
   switch (instruction._tag) {
     case 'FlatMap':
     case 'Map':
+    case 'MapError':
+    case 'Tap':
+    case 'TapError':
     case 'CatchAll': {
       continuations.push(instruction)
       return { nextCurrent: instruction.task, exit: undefined }
@@ -560,6 +633,33 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
         ? { _tag: 'Async', execute: instructionOrExecute }
         : instructionOrExecute
     this.execute = (context) => ResultTask.runTaskLoop(this, context)
+  }
+
+  /** @internal */
+  public static toTapContinuationStep(
+    res: unknown,
+    onSuccess: () => ResultTask<unknown, unknown, unknown>,
+    passThroughExit: Exit<unknown, unknown>,
+  ): ContinuationStep {
+    if (res instanceof ResultTask) {
+      return { current: res.flatMap(onSuccess), currentExit: undefined }
+    }
+    if (
+      typeof res === 'object' &&
+      res !== null &&
+      typeof (res as Promise<unknown>).then === 'function'
+    ) {
+      const promiseTask = new ResultTask(async () => {
+        try {
+          await (res as Promise<unknown>)
+          return success(undefined)
+        } catch (error) {
+          return died(error)
+        }
+      })
+      return { current: promiseTask.flatMap(onSuccess), currentExit: undefined }
+    }
+    return { current: undefined, currentExit: passThroughExit }
   }
 
   // fallow-ignore-next-line complexity
@@ -835,6 +935,64 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
+  /** Maps the error value without executing the task. */
+  public mapError<E2>(f: (error: E) => E2): ResultTask<A, E2, R> {
+    return new ResultTask<A, E2, R>({
+      _tag: 'MapError',
+      task: this as unknown as ResultTask<unknown, unknown, unknown>,
+      f: f as (error: unknown) => unknown,
+    })
+  }
+
+  /**
+   * Executes a side effect on the success value without modifying it.
+   * If the callback returns a `ResultTask`, its requirements and errors are merged.
+   */
+  public tap<E2 = never, R2 = never>(
+    f: (value: A) => ResultTask<unknown, E2, R2> | Promise<unknown> | void,
+  ): ResultTask<A, E | E2, R | R2> {
+    return new ResultTask<A, E | E2, R | R2>({
+      _tag: 'Tap',
+      task: this as unknown as ResultTask<unknown, unknown, unknown>,
+      f: f as (value: unknown) => unknown,
+    })
+  }
+
+  /**
+   * Executes a side effect on the error value without modifying it.
+   * If the callback returns a `ResultTask`, its requirements and errors are merged.
+   */
+  public tapError<E2 = never, R2 = never>(
+    f: (error: E) => ResultTask<unknown, E2, R2> | Promise<unknown> | void,
+  ): ResultTask<A, E | E2, R | R2> {
+    return new ResultTask<A, E | E2, R | R2>({
+      _tag: 'TapError',
+      task: this as unknown as ResultTask<unknown, unknown, unknown>,
+      f: f as (error: unknown) => unknown,
+    })
+  }
+
+  /** Replaces the success value with a constant. */
+  public as<B>(value: B): ResultTask<B, E, R> {
+    return this.map(() => value)
+  }
+
+  /**
+   * Transforms both success and failure cases into a single value type.
+   */
+  public match<B, C = B>(
+    handlers: ResultTaskMatchOptions<A, E, B, C>,
+  ): ResultTask<B | C, never, R> {
+    const onSuccess = 'onSuccess' in handlers ? handlers.onSuccess : handlers.ok
+    const onFailure = 'onFailure' in handlers ? handlers.onFailure : handlers.err
+    return this.map(onSuccess).catchAll((error) => ResultTask.succeed(onFailure(error)))
+  }
+
+  /** Converts this ResultTask into an eagerly started ResultAsync using the standard runtime. */
+  public toResultAsync(this: ResultTask<A, E, never>): ResultAsync<A, E> {
+    return ResultTask.toResultAsync(this)
+  }
+
   /** Enables `yield* task` inside `ResultTask.gen` workflows. */
   public *[Symbol.iterator](): Generator<ResultTaskYield<A, E, R>, A, Exit<A, E>> {
     const exit = yield { _tag: 'ResultTask', task: this }
@@ -963,28 +1121,237 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
-  /** Maps the success value using the canonical functional form. */
-  public static map<A, E, R, B>(
-    task: ResultTask<A, E, R>,
+  /** Maps the success value using the canonical functional form or curried for `pipe`. */
+  public static map<A, E, R, B>(task: ResultTask<A, E, R>, f: (value: A) => B): ResultTask<B, E, R>
+  public static map<A, B>(
     f: (value: A) => B,
-  ): ResultTask<B, E, R> {
-    return task.map(f)
+  ): <E, R>(task: ResultTask<A, E, R>) => ResultTask<B, E, R>
+  public static map<A, E, R, B>(
+    taskOrF: ResultTask<A, E, R> | ((value: A) => B),
+    f?: (value: A) => B,
+  ): ResultTask<B, E, R> | (<E2, R2>(task: ResultTask<A, E2, R2>) => ResultTask<B, E2, R2>) {
+    if (typeof taskOrF === 'function') {
+      return (task) => task.map(taskOrF)
+    }
+    if (f === undefined) {
+      throw new TypeError('ResultTask.map requires a mapping function')
+    }
+    return taskOrF.map(f)
   }
 
-  /** Chains a task using the canonical functional form. */
+  /** Maps the error value using the canonical functional form or curried for `pipe`. */
+  public static mapError<A, E, R, E2>(
+    task: ResultTask<A, E, R>,
+    f: (error: E) => E2,
+  ): ResultTask<A, E2, R>
+  public static mapError<E, E2>(
+    f: (error: E) => E2,
+  ): <A, R>(task: ResultTask<A, E, R>) => ResultTask<A, E2, R>
+  public static mapError<A, E, R, E2>(
+    taskOrF: ResultTask<A, E, R> | ((error: E) => E2),
+    f?: (error: E) => E2,
+  ): ResultTask<A, E2, R> | (<A2, R2>(task: ResultTask<A2, E, R2>) => ResultTask<A2, E2, R2>) {
+    if (typeof taskOrF === 'function') {
+      return (task) => task.mapError(taskOrF)
+    }
+    if (f === undefined) {
+      throw new TypeError('ResultTask.mapError requires an error mapping function')
+    }
+    return taskOrF.mapError(f)
+  }
+
+  /** Chains a task using the canonical functional form or curried for `pipe`. */
   public static flatMap<A, E, R, B, E2, R2>(
     task: ResultTask<A, E, R>,
     f: (value: A) => ResultTask<B, E2, R2>,
-  ): ResultTask<B, E | E2, R | R2> {
-    return task.flatMap(f)
+  ): ResultTask<B, E | E2, R | R2>
+  public static flatMap<A, B, E2, R2>(
+    f: (value: A) => ResultTask<B, E2, R2>,
+  ): <E, R>(task: ResultTask<A, E, R>) => ResultTask<B, E | E2, R | R2>
+  public static flatMap<A, E, R, B, E2, R2>(
+    taskOrF: ResultTask<A, E, R> | ((value: A) => ResultTask<B, E2, R2>),
+    f?: (value: A) => ResultTask<B, E2, R2>,
+  ):
+    | ResultTask<B, E | E2, R | R2>
+    | (<E3, R3>(task: ResultTask<A, E3, R3>) => ResultTask<B, E3 | E2, R3 | R2>) {
+    if (typeof taskOrF === 'function') {
+      return (task) => task.flatMap(taskOrF)
+    }
+    if (f === undefined) {
+      throw new TypeError('ResultTask.flatMap requires a continuation function')
+    }
+    return taskOrF.flatMap(f)
   }
 
-  /** Recovers from a typed failure using the canonical functional form. */
+  /** Alias for `flatMap`, matching the existing Resultar vocabulary. */
+  public static andThen<A, E, R, B, E2, R2>(
+    task: ResultTask<A, E, R>,
+    f: (value: A) => ResultTask<B, E2, R2>,
+  ): ResultTask<B, E | E2, R | R2>
+  public static andThen<A, B, E2, R2>(
+    f: (value: A) => ResultTask<B, E2, R2>,
+  ): <E, R>(task: ResultTask<A, E, R>) => ResultTask<B, E | E2, R | R2>
+  public static andThen<A, E, R, B, E2, R2>(
+    taskOrF: ResultTask<A, E, R> | ((value: A) => ResultTask<B, E2, R2>),
+    f?: (value: A) => ResultTask<B, E2, R2>,
+  ):
+    | ResultTask<B, E | E2, R | R2>
+    | (<E3, R3>(task: ResultTask<A, E3, R3>) => ResultTask<B, E3 | E2, R3 | R2>) {
+    if (typeof taskOrF === 'function') {
+      return (task) => task.flatMap(taskOrF)
+    }
+    if (f === undefined) {
+      throw new TypeError('ResultTask.andThen requires a continuation function')
+    }
+    return taskOrF.flatMap(f)
+  }
+
+  /** Recovers from a typed failure using the canonical functional form or curried for `pipe`. */
   public static catchAll<A, E, R, B, E2, R2>(
     task: ResultTask<A, E, R>,
     f: (error: E) => ResultTask<B, E2, R2>,
-  ): ResultTask<A | B, E2, R | R2> {
-    return task.catchAll(f)
+  ): ResultTask<A | B, E2, R | R2>
+  public static catchAll<E, B, E2, R2>(
+    f: (error: E) => ResultTask<B, E2, R2>,
+  ): <A, R>(task: ResultTask<A, E, R>) => ResultTask<A | B, E2, R | R2>
+  public static catchAll<A, E, R, B, E2, R2>(
+    taskOrF: ResultTask<A, E, R> | ((error: E) => ResultTask<B, E2, R2>),
+    f?: (error: E) => ResultTask<B, E2, R2>,
+  ):
+    | ResultTask<A | B, E2, R | R2>
+    | (<A2, R3>(task: ResultTask<A2, E, R3>) => ResultTask<A2 | B, E2, R3 | R2>) {
+    if (typeof taskOrF === 'function') {
+      return (task) => task.catchAll(taskOrF)
+    }
+    if (f === undefined) {
+      throw new TypeError('ResultTask.catchAll requires a recovery function')
+    }
+    return taskOrF.catchAll(f)
+  }
+
+  /** Executes a side effect on the success value using the canonical functional form or curried for `pipe`. */
+  public static tap<A, E, R, E2 = never, R2 = never>(
+    task: ResultTask<A, E, R>,
+    f: (value: A) => ResultTask<unknown, E2, R2> | Promise<unknown> | void,
+  ): ResultTask<A, E | E2, R | R2>
+  public static tap<A, E2 = never, R2 = never>(
+    f: (value: A) => ResultTask<unknown, E2, R2> | Promise<unknown> | void,
+  ): <E, R>(task: ResultTask<A, E, R>) => ResultTask<A, E | E2, R | R2>
+  public static tap<A, E, R, E2 = never, R2 = never>(
+    taskOrF:
+      | ResultTask<A, E, R>
+      | ((value: A) => ResultTask<unknown, E2, R2> | Promise<unknown> | void),
+    f?: (value: A) => ResultTask<unknown, E2, R2> | Promise<unknown> | void,
+  ):
+    | ResultTask<A, E | E2, R | R2>
+    | (<E3, R3>(task: ResultTask<A, E3, R3>) => ResultTask<A, E3 | E2, R3 | R2>) {
+    if (typeof taskOrF === 'function') {
+      return (task) => task.tap(taskOrF)
+    }
+    if (f === undefined) {
+      throw new TypeError('ResultTask.tap requires a side-effect function')
+    }
+    return taskOrF.tap(f)
+  }
+
+  /** Executes a side effect on the error value using the canonical functional form or curried for `pipe`. */
+  public static tapError<A, E, R, E2 = never, R2 = never>(
+    task: ResultTask<A, E, R>,
+    f: (error: E) => ResultTask<unknown, E2, R2> | Promise<unknown> | void,
+  ): ResultTask<A, E | E2, R | R2>
+  public static tapError<E, E2 = never, R2 = never>(
+    f: (error: E) => ResultTask<unknown, E2, R2> | Promise<unknown> | void,
+  ): <A, R>(task: ResultTask<A, E, R>) => ResultTask<A, E | E2, R | R2>
+  public static tapError<A, E, R, E2 = never, R2 = never>(
+    taskOrF:
+      | ResultTask<A, E, R>
+      | ((error: E) => ResultTask<unknown, E2, R2> | Promise<unknown> | void),
+    f?: (error: E) => ResultTask<unknown, E2, R2> | Promise<unknown> | void,
+  ):
+    | ResultTask<A, E | E2, R | R2>
+    | (<A3, R3>(task: ResultTask<A3, E, R3>) => ResultTask<A3, E | E2, R3 | R2>) {
+    if (typeof taskOrF === 'function') {
+      return (task) => task.tapError(taskOrF)
+    }
+    if (f === undefined) {
+      throw new TypeError('ResultTask.tapError requires an error side-effect function')
+    }
+    return taskOrF.tapError(f)
+  }
+
+  /** Replaces the success value with a constant using the canonical functional form or curried for `pipe`. */
+  public static as<A, E, R, B>(task: ResultTask<A, E, R>, value: B): ResultTask<B, E, R>
+  public static as<B>(value: B): <A, E, R>(task: ResultTask<A, E, R>) => ResultTask<B, E, R>
+  public static as<A, E, R, B>(
+    taskOrValue: ResultTask<A, E, R> | B,
+    value?: B,
+  ): ResultTask<B, E, R> | (<A2, E2, R2>(task: ResultTask<A2, E2, R2>) => ResultTask<B, E2, R2>) {
+    if (taskOrValue instanceof ResultTask) {
+      if (value === undefined) {
+        throw new TypeError('ResultTask.as requires a replacement value')
+      }
+      return taskOrValue.as(value)
+    }
+    return (task) => task.as(taskOrValue as B)
+  }
+
+  /** Matches both success and error cases using the canonical functional form or curried for `pipe`. */
+  public static match<A, E, R, B, C = B>(
+    task: ResultTask<A, E, R>,
+    handlers: ResultTaskMatchOptions<A, E, B, C>,
+  ): ResultTask<B | C, never, R>
+  public static match<A, E, B, C = B>(
+    handlers: ResultTaskMatchOptions<A, E, B, C>,
+  ): <R>(task: ResultTask<A, E, R>) => ResultTask<B | C, never, R>
+  public static match<A, E, R, B, C = B>(
+    taskOrHandlers: ResultTask<A, E, R> | ResultTaskMatchOptions<A, E, B, C>,
+    handlers?: ResultTaskMatchOptions<A, E, B, C>,
+  ):
+    | ResultTask<B | C, never, R>
+    | (<R2>(task: ResultTask<A, E, R2>) => ResultTask<B | C, never, R2>) {
+    if (taskOrHandlers instanceof ResultTask) {
+      if (handlers === undefined) {
+        throw new TypeError('ResultTask.match requires match handlers')
+      }
+      return taskOrHandlers.match(handlers)
+    }
+    return (task) => task.match(taskOrHandlers)
+  }
+
+  /**
+   * Eagerly executes a ResultTask using the standard runtime and returns a ResultAsync.
+   */
+  public static toResultAsync<A, E>(task: ResultTask<A, E, never>): ResultAsync<A, E> {
+    return createResultAsync<ResultAsync<A, E>>(ResultTask.runResult(task))
+  }
+
+  /**
+   * Captures an existing ResultAsync or creates a lazy task from a ResultAsync factory.
+   */
+  public static fromResultAsync<A, E>(
+    asyncResultOrFactory: ResultAsync<A, E> | ((signal: AbortSignal) => ResultAsync<A, E>),
+  ): ResultTask<A, E> {
+    return new ResultTask(async (context) => {
+      if (context.signal.aborted) {
+        return interrupted(context.signal)
+      }
+
+      try {
+        const asyncResult =
+          typeof asyncResultOrFactory === 'function'
+            ? asyncResultOrFactory(context.signal)
+            : asyncResultOrFactory
+        const result = await asyncResult
+
+        if (context.signal.aborted) {
+          return interrupted(context.signal)
+        }
+
+        return result.isOk() ? success(result.value) : failed(result.error)
+      } catch (error) {
+        return died(error)
+      }
+    })
   }
 
   private static async runExitInternal<A, E, R>(
