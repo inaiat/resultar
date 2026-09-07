@@ -746,7 +746,7 @@ const callResultAsyncCallbackCleanup = (cleanup: ResultAsyncCallbackCleanup): vo
   try {
     cleanup()
   } catch {
-    /* Cleanup is best-effort; use withResource when cleanup failures affect control flow. */
+    /* Cleanup is best-effort; use ResultTask.scoped/acquireRelease to preserve release failures. */
   }
 }
 

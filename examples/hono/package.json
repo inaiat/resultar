@@ -1,0 +1,24 @@
+{
+  "name": "resultar-hono-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:deps": "pnpm --filter resultar build && pnpm --filter resultar-di build && pnpm --filter resultar-hono build && pnpm --filter resultar-check build",
+    "check": "node ../../packages/check/dist/cli.js",
+    "start": "pnpm run build:deps && node --import tsx src/main.ts",
+    "smoke": "pnpm run build:deps && pnpm run check && node --import tsx scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.0.9",
+    "hono": "4.12.30",
+    "resultar": "workspace:*",
+    "resultar-di": "workspace:*",
+    "resultar-hono": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "resultar-check": "workspace:*",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
+  }
+}

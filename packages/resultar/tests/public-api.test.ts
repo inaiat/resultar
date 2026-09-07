@@ -29,6 +29,8 @@ describe('public API', () => {
       'Result',
       'ResultAsync',
       'ResultTask',
+      'ResultTaskCauseError',
+      'ResultTaskTypeId',
       'createTaggedError',
       'default',
       'err',

@@ -1,0 +1,225 @@
+/* eslint-disable unicorn/no-await-expression-member, unicorn/no-null */
+import { expect, expectTypeOf, test } from "vite-plus/test";
+import { ResultTask, type Result } from "resultar";
+import { createModule, service, resource } from "resultar-di";
+import { createHonoApp } from "../src/index.js";
+
+const build = () => {
+  const events: string[] = [];
+  let next = 0;
+  const Shared = resource("shared", {
+    acquire: ResultTask.sync(() => {
+      events.push("open root");
+      return {};
+    }),
+    release: () =>
+      ResultTask.sync(() => {
+        events.push("close root");
+      }),
+  });
+  const Local = resource("local", {
+    acquire: ResultTask.gen(function* acquireLocal() {
+      const shared = yield* Shared;
+      next += 1;
+      return { shared, id: next };
+    }),
+    release: () =>
+      ResultTask.sync(() => {
+        events.push("close child");
+      }),
+  });
+  const services = createModule().singleton(Shared).scoped(Local);
+  return { events, services };
+};
+
+test("infers bindings, shares a root and isolates concurrent requests", async () => {
+  const { events, services } = build();
+  let configured = 0;
+  const instances: object[] = [];
+  const app = createHonoApp({ services, bindings: ["local"] }, (router) => {
+    configured += 1;
+    router.get("/", (c) => {
+      instances.push(c.env.local.shared);
+      return c.json({ id: c.env.local.id });
+    });
+  });
+  expect(events).toEqual([]);
+  const responses = await Promise.all([
+    app.request("/"),
+    app.fetch(new Request("http://localhost/")),
+  ]);
+  const bodies = await Promise.all(responses.map((r) => r.json()));
+  expect(bodies[0]).not.toEqual(bodies[1]);
+  expect(instances[0]).toBe(instances[1]);
+  expect(configured).toBe(1);
+  expect(events).toEqual(["open root", "close child", "close child"]);
+  const firstClose = app.close();
+  expect(app.close()).toBe(firstClose);
+  expect((await firstClose).isOk()).toBe(true);
+  expect(events.at(-1)).toBe("close root");
+  await expect(app.request("/")).rejects.toThrow("closed");
+});
+
+test("close waits for response consumption and streaming cancellation releases resources", async () => {
+  const { events, services } = build();
+  let canceled = false;
+  const app = createHonoApp({ services, bindings: ["local"] }, (router) => {
+    router.get(
+      "/",
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode("chunk"));
+            },
+            cancel() {
+              canceled = true;
+            },
+          }),
+        ),
+    );
+  });
+  const response = await app.request("/");
+  const reader = response.body?.getReader();
+  if (reader === undefined) throw new Error("Expected a response body");
+  await reader.read();
+  expect(events).toEqual(["open root"]);
+  let closed = false;
+  const closing = app.close().then(() => {
+    closed = true;
+  });
+  await Promise.resolve();
+  expect(closed).toBe(false);
+  await reader.cancel();
+  await closing;
+  expect(canceled).toBe(true);
+  expect(events).toEqual(["open root", "close child", "close root"]);
+});
+
+test("request abort closes its child and aborts the source stream", async () => {
+  const { events, services } = build();
+  const app = createHonoApp({ services, bindings: ["local"] }, (router) =>
+    router.get("/", () => new Response(new ReadableStream())),
+  );
+  const controller = new AbortController();
+  const response = await app.request("/", { signal: controller.signal });
+  controller.abort("disconnect");
+  await app.close();
+  await expect(response.text()).rejects.toBeDefined();
+  expect(events).toEqual(["open root", "close child", "close root"]);
+});
+
+test("handles empty responses, 404, Hono errors and overrides", async () => {
+  const Value = service("value", {}, () => "live");
+  const services = createModule().scoped(Value).override("value", "fake");
+  const app = createHonoApp({ services, bindings: ["value"] }, (router) => {
+    router.onError(() => new Response("handled", { status: 500 }));
+    router.get("/value", (c) => c.text(c.env.value));
+    router.delete("/value", (c) => c.body(null, 204));
+    router.get("/error", () => {
+      throw new Error("handler failed");
+    });
+  });
+  expect(await (await app.request("/value")).text()).toBe("fake");
+  expect((await app.request("/value", { method: "DELETE" })).status).toBe(204);
+  const missing = await app.request("/missing");
+  expect(missing.status).toBe(404);
+  await missing.text();
+  expect(await (await app.request("/error")).text()).toBe("handled");
+  await app.close();
+});
+
+test("provider errors reject fetch and cleanup errors remain typed at close", async () => {
+  const Failing = service("failing", ResultTask.fail("offline" as const));
+  const broken = createHonoApp(
+    { services: createModule().scoped(Failing), bindings: ["failing"] },
+    (app) => app.get("/", (c) => c.text("unreachable")),
+  );
+  await expect(broken.request("/")).rejects.toThrow("Request scope failed");
+  await broken.close();
+  const Shared = resource("shared", {
+    acquire: ResultTask.succeed(1),
+    release: () => ResultTask.fail("cleanup" as const),
+  });
+  const app = createHonoApp(
+    { services: createModule().singleton(Shared), bindings: ["shared"] },
+    (r) => r.get("/", (c) => c.body(null, 204)),
+  );
+  await app.request("/");
+  expectTypeOf(app.close()).toEqualTypeOf<Promise<Result<void, "cleanup">>>();
+  const closed = await app.close();
+  expect(closed.isErr()).toBe(true);
+  if (closed.isErr()) expect(closed.error).toBe("cleanup");
+});
+
+test("stream errors and child cleanup failures surface to the body consumer", async () => {
+  const { services, events } = build();
+  const app = createHonoApp({ services, bindings: ["local"] }, (r) =>
+    r.get(
+      "/",
+      () =>
+        new Response(
+          new ReadableStream({
+            pull() {
+              throw new Error("stream failed");
+            },
+          }),
+        ),
+    ),
+  );
+  const response = await app.request("/");
+  await expect(response.text()).rejects.toThrow("stream failed");
+  await app.close();
+  expect(events).toEqual(["open root", "close child", "close root"]);
+  const Local = resource("local", {
+    acquire: ResultTask.succeed(1),
+    release: () => ResultTask.fail("cleanup"),
+  });
+  const other = createHonoApp(
+    { services: createModule().scoped(Local), bindings: ["local"] },
+    (r) => r.get("/", (c) => c.text("ok")),
+  );
+  await expect((await other.request("/")).text()).rejects.toThrow("Request scope failed");
+  await other.close();
+});
+
+test("configuration runs before any provider can be acquired", () => {
+  const { services, events } = build();
+  expect(() =>
+    createHonoApp({ services, bindings: ["local"] }, () => {
+      throw new Error("configuration");
+    }),
+  ).toThrow("configuration");
+  expect(events).toEqual([]);
+});
+
+// Compile-only negative cases must remain rejected by the public API.
+const checkTypes = () => {
+  const services = createModule().value("answer", 42);
+  // @ts-expect-error Unknown binding name.
+  createHonoApp({ services, bindings: ["missing"] }, () => {
+    /* Type-only configuration. */
+  });
+  createHonoApp({ services, bindings: ["answer"] }, (app) => {
+    app.get("/", (c) => {
+      expectTypeOf(c.env.answer).toEqualTypeOf<number>();
+      // @ts-expect-error Unselected services are not exposed.
+      expect(c.env.missing).toBeUndefined();
+      return c.text("ok");
+    });
+  });
+  const External = ResultTask.service<string, "external">("external");
+  const Dependent = service("dependent", { external: External }, ({ external }) => external);
+  // @ts-expect-error The HTTP application cannot run with a missing dependency.
+  createHonoApp({ services: createModule().scoped(Dependent), bindings: ["dependent"] }, () => {
+    /* Type-only configuration. */
+  });
+  // Unselected dependencies do not prevent creating a healthy endpoint.
+  createHonoApp(
+    { services: createModule().scoped(Dependent).merge(services), bindings: ["answer"] },
+    () => {
+      /* Type-only configuration. */
+    },
+  );
+};
+expectTypeOf(checkTypes).toBeFunction();

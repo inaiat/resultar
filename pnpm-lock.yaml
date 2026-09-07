@@ -58,9 +58,6 @@ importers:
       resultar:
         specifier: workspace:*
         version: link:../packages/resultar
-      resultar-check:
-        specifier: workspace:*
-        version: link:../packages/check
     devDependencies:
       cronometro:
         specifier: ^6.0.3
@@ -68,6 +65,9 @@ importers:
       neverthrow:
         specifier: ^8.2.0
         version: 8.2.0
+      resultar-check:
+        specifier: workspace:*
+        version: link:../packages/check
       tsx:
         specifier: 'catalog:'
         version: 4.23.13
@@ -80,22 +80,50 @@ importers:
       resultar:
         specifier: workspace:*
         version: link:../../packages/resultar
+    devDependencies:
       resultar-check:
         specifier: workspace:*
         version: link:../../packages/check
-    devDependencies:
       tsx:
         specifier: 'catalog:'
         version: 4.23.13
+
+  examples/hono:
+    dependencies:
+      '@hono/node-server':
+        specifier: 2.0.9
+        version: 2.0.9(hono@4.12.30)
+      hono:
+        specifier: 4.12.30
+        version: 4.12.30
+      resultar:
+        specifier: workspace:*
+        version: link:../../packages/resultar
+      resultar-di:
+        specifier: workspace:*
+        version: link:../../packages/di
+      resultar-hono:
+        specifier: workspace:*
+        version: link:../../packages/hono
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.4.0
+      resultar-check:
+        specifier: workspace:*
+        version: link:../../packages/check
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.13
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
 
   examples/request:
     dependencies:
       resultar:
         specifier: workspace:*
         version: link:../../packages/resultar
-      resultar-check:
-        specifier: workspace:*
-        version: link:../../packages/check
       resultar-request:
         specifier: workspace:*
         version: link:../../packages/request
@@ -115,6 +143,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 26.4.0
+      resultar-check:
+        specifier: workspace:*
+        version: link:../../packages/check
       tsx:
         specifier: 'catalog:'
         version: 4.23.13
@@ -127,13 +158,13 @@ importers:
       resultar:
         specifier: workspace:*
         version: link:../../packages/resultar
-      resultar-check:
-        specifier: workspace:*
-        version: link:../../packages/check
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
         version: 26.4.0
+      resultar-check:
+        specifier: workspace:*
+        version: link:../../packages/check
       tsx:
         specifier: 'catalog:'
         version: 4.23.13
@@ -183,6 +214,74 @@ importers:
   packages/check/native-packages/win32-arm64: {}
 
   packages/check/native-packages/win32-x64: {}
+
+  packages/di:
+    dependencies:
+      resultar:
+        specifier: workspace:^
+        version: link:../resultar
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.4.0
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 4.1.11(@vitest/browser@4.1.11)(vitest@4.1.11)
+      '@vitest/ui':
+        specifier: 'catalog:'
+        version: 4.1.11(vitest@4.1.11)
+      fallow:
+        specifier: 'catalog:'
+        version: 3.20.0
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.13
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vite-plus:
+        specifier: 'catalog:'
+        version: 0.3.0(@types/node@26.4.0)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.2.1(@types/node@26.4.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))(yaml@2.9.0)
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@26.4.0)(@vitest/browser-preview@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(vite@8.2.1(@types/node@26.4.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+
+  packages/hono:
+    dependencies:
+      resultar:
+        specifier: workspace:^
+        version: link:../resultar
+      resultar-di:
+        specifier: workspace:^
+        version: link:../di
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.4.0
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 4.1.11(@vitest/browser@4.1.11)(vitest@4.1.11)
+      '@vitest/ui':
+        specifier: 'catalog:'
+        version: 4.1.11(vitest@4.1.11)
+      fallow:
+        specifier: 'catalog:'
+        version: 3.20.0
+      hono:
+        specifier: 4.12.30
+        version: 4.12.30
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.13
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vite-plus:
+        specifier: 'catalog:'
+        version: 0.3.0(@types/node@26.4.0)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(esbuild@0.28.2)(tsx@4.23.13)(typescript@7.0.2)(vite@8.2.1(@types/node@26.4.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))(yaml@2.9.0)
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@26.4.0)(@vitest/browser-preview@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(vite@8.2.1(@types/node@26.4.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
   packages/request:
     dependencies:
@@ -808,6 +907,12 @@ packages:
     resolution: {integrity: sha512-OUU2fsFcLLwFznGAFzPaCa6Mi1HCtLCVDrVifk5d0mntXf0js6vdwWYyVGBamG/qc70MLhK41twTMDVwoI9kxg==}
     cpu: [x64]
     os: [win32]
+
+  '@hono/node-server@2.0.9':
+    resolution: {integrity: sha512-cNMw3ziCdDcx0+ldta60zvUL5XO0OLt521n2hjPp0PB0ugczDCEczXsf33qQbkKIXWGFQ03f0LC85u6YK8pCLA==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      hono: ^4
 
   '@inquirer/ansi@2.0.7':
     resolution: {integrity: sha512-3eTuUO1vH2cZm2ZKHeQxnOqlTi9EfZDGgIe3BL3I4u+rJHocr9Fz86M4fjYABPvFnQG/gGK551HqDiIcETwU6Q==}
@@ -2100,6 +2205,10 @@ packages:
     resolution: {integrity: sha512-l3GSdZL1Jr1C0kyb461tUjEdrRPZr8Qry7jByltf5JGrA0xvqOSrxRBfcrJqqV/AMEtqqhHhC6w8HW0gn76tRQ==}
     engines: {node: '>=14'}
 
+  hono@4.12.30:
+    resolution: {integrity: sha512-emn+JoJjrN9YTpRDS5it/UI2SO9BAE37T6I3d963RxcZ81G9A4pr2SZTEiiaiKbzx+NKRg5BZ89fCL7gCJCUog==}
+    engines: {node: '>=16.9.0'}
+
   html-escaper@2.0.2:
     resolution: {integrity: sha512-H2iMtd0I4Mt5eYiapRdIDjp+XzelXQ0tFE4JS7YFwFevXXMmOp9myNrUvCg0D6ws8iqkRPBfKHgbwig1SmlLfg==}
 
@@ -3220,6 +3329,10 @@ snapshots:
   '@fallow-cli/win32-x64-msvc@3.20.0':
     optional: true
 
+  '@hono/node-server@2.0.9(hono@4.12.30)':
+    dependencies:
+      hono: 4.12.30
+
   '@inquirer/ansi@2.0.7': {}
 
   '@inquirer/checkbox@5.2.1(@types/node@26.4.0)':
@@ -4230,6 +4343,8 @@ snapshots:
       '@assemblyscript/loader': 0.19.23
       base64-js: 1.5.1
       pako: 1.0.11
+
+  hono@4.12.30: {}
 
   html-escaper@2.0.2: {}
 

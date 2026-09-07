@@ -240,9 +240,41 @@ const program: ResultTask<User, DatabaseError, typeof Database> = ResultTask.gen
 const runnable = ResultTask.provideService(program, Database, databaseLive)
 ```
 
+Adapters de composição podem resolver tags sob demanda com `ResultTask.provideServiceResolver`.
+O adapter fornece um mapa tipado de identificadores para providers lazy. Cada provider devolve
+um `ResultTask` compatível com o contrato. Seus erros e requisitos externos são preservados,
+assim como os requisitos de scope. `makeScope()` permite ownership entre execuções e
+`memoize()` compartilha inicialização pendente, com retry após falha.
+
 Requisitos devem compor sem criar dependência de um singleton global. Uma API de `Layer` só deve
 ser considerada depois que casos reais demonstrarem a necessidade de construir grafos de serviços
 com ciclo de vida próprio.
+
+**DX em pacote separado (atualizado em 2026-09-05):** a migração do Replis motivou
+[`resultar-di`](../../packages/di/README.md), um pacote opcional de composição sobre as APIs públicas do core.
+A API principal define tokens com `service(name, dependencies, factory)` para criação síncrona,
+`service(name, task)` para inicialização com ResultTask e `resource(name, { acquire, release })`
+para recursos. As dependências são um objeto tipado de tokens ou requisitos declarados via
+`yield*`; o registro dos tokens no módulo não exige ordem de dependências.
+
+`createModule` registra esses tokens com `.singleton`, `.scoped` ou `.transient`: respectivamente,
+uma instância por raiz, uma por scope filho ou uma por resolução. `.value` fornece valores já
+criados e de ownership externo. `merge` combina módulos e `override` substitui serviços com
+verificação de contrato. Tokens em classes (`Service`), overloads com nomes e listas de dependências
+e os métodos de registro `.task`/`.resource` ficam em `resultar-di/advanced`, fora do autocomplete
+principal.
+
+`use` no módulo executa uma raiz isolada e aguarda sua finalização; `scope()` mantém uma raiz entre
+execuções, com um filho por `use` e fechamento explícito por `close()`. `withServices` fornece valores
+locais. Os adapters `http`/`fetch` mantêm o scope da resposta aberto até o consumo ou cancelamento
+do corpo. A seleção infere os erros e requisitos das dependências alcançáveis, incluindo requisitos
+do callback de `use`; para limitar o custo do compilador, a análise usa a união conservadora do grafo
+ao atingir oito etapas de expansão. Essa aproximação de tipos não faz executar serviços não selecionados.
+
+O core mantém `ServiceTag`, provisionamento e resolução de requisitos, ownership de recursos,
+memoização de tarefas, finalização, interrupção e causas. Registros, lifetimes, cache de serviços,
+validação do grafo e integração HTTP pertencem a `resultar-di`. O core não depende desse pacote,
+e a composição usa o runtime existente de ResultTask, sem adicionar um `Layer` ao core.
 
 ### Scope e recursos
 
@@ -271,6 +303,43 @@ Regras:
 - o `Exit` da região fica disponível ao finalizer;
 - falha no release não deve ser silenciosamente descartada em `runExit`;
 - `runResult` deve aplicar uma política documentada quando use e release falham juntos.
+
+### Recorte implementado: recursos (2026-09-05)
+
+A implementação incremental da Fase 3 inclui scope raiz por execução, `scoped`, `acquireRelease`,
+finalizers LIFO aguardados e protegidos do sinal de interrupção, e `Cause.Sequential`/`Interrupt`.
+Não inclui fibers, race, timeout, scheduler ou `Cause.Parallel`; a Fase 3 permanece parcial.
+
+Decisões do recorte:
+
+- `acquireRelease` acumula erros de release em `ResultTaskScope<ReleaseError>`, um requisito nominal
+  em `R`. O erro não pode ficar apenas em `E`: `catchAll` poderia removê-lo antes de o finalizer rodar.
+- `scoped` remove os requisitos de scope e incorpora seus erros em `E`. Os boundaries `run*` fornecem
+  o scope raiz automaticamente e incorporam seus erros na saída. Serviços continuam obrigatórios
+  quando houver service tags em `R`; prover serviços não remove os requisitos de scope.
+- Todos os finalizers recebem o mesmo `Exit` do corpo da região. Falhas de cleanup são anexadas em
+  ordem de execução como `Sequential`; os demais finalizers continuam rodando.
+- `runResult` retorna um único `Fail` como `Err`, rejeita `Die` com o defeito original, `Interrupt`
+  com `AbortError` e `Sequential` com `ResultTaskCauseError`. O campo `cause` preserva a árvore.
+  Essa é a política escolhida neste recorte para a questão em aberto nº 6, sem alargar todo `E`
+  com um tipo agregado ou descartar uma das falhas.
+- `catchAll` recupera somente `Fail` simples. Uma causa composta é preservada dentro de
+  `Die(ResultTaskCauseError)`: isso evita que variantes removidas de `E` reapareçam em `runExit`.
+  Recuperar após `scoped` permite tratar uma falha isolada de release.
+- Release captura os serviços disponíveis na aquisição e roda com um sinal novo, não abortado.
+  Recursos adquiridos pelo próprio release pertencem a um scope privado de cleanup.
+- Cancelamento permanece cooperativo: o runtime aguarda operações em andamento, registra a
+  liberação de aquisições que terminarem durante abort e só então fecha o scope. Não há promessa
+  de término para uma operação ou finalizer que nunca resolve.
+- `ResultAsync.withResource` e o comportamento de substituição de falhas em `finally` de generators
+  permanecem compatíveis. A preservação de causas combinadas pertence às novas APIs de scope.
+
+O exemplo `examples/resultar/src/application-lifecycle.ts` valida composição explícita, rollback de
+boot e encerramento HTTP → WhatsApp → banco com factories que retornam `ResultTask` e erros tipados.
+O `replis-api` foi integrado ao build local, mantendo os use cases em `StrictResultAsync`. O piloto
+cobre rollback, SSE, cancelamento e o adapter Node HTTP com portas locais reais. A validação com
+SurrealDB e sessões WhatsApp reais ainda está pendente. O scope deve abranger toda a vida do servidor,
+e não apenas sua criação. Isso não requer `Layer` ou um container novo.
 
 ### Schedule
 
@@ -480,16 +549,15 @@ separadamente, depois que a API nova estiver estável, para manter diffs revisá
 
 ## Estratégia de implementação
 
-### Fase 0: contratos e provas de conceito
+### Fase 0: contratos e provas de conceito (Concluída)
 
-- adicionar testes de tipos para lazy evaluation e inferência de `A`, `E` e `R`;
-- validar o desenho de `ResultTask.gen` com TypeScript 7;
-- medir o custo de uma cadeia longa de `flatMap`;
-- decidir nomes públicos antes de exportar pelo entrypoint principal;
-- implementar inicialmente em um subpath experimental, se necessário.
+- [x] adicionar testes de tipos para lazy evaluation e inferência de `A`, `E` e `R`;
+- [x] validar o desenho de `ResultTask.gen` com TypeScript 7;
+- [x] medir o custo de uma cadeia longa de `flatMap` (benchmarks adicionados em `benchmarks/resultar-task-chains.ts`);
+- [x] decidir nomes públicos antes de exportar pelo entrypoint principal (consolidado como `ResultTask`);
+- [x] implementar inicialmente em um subpath experimental, se necessário (disponibilizado na raiz com retrocompatibilidade total).
 
-Critério de saída: exemplos representativos compilam, lazy evaluation está provada por testes e a
-representação escolhida não causa stack overflow em chains longas.
+Critério de saída: exemplos representativos compilam, lazy evaluation está provada por testes e a representação por trampoline iterativo não causa stack overflow em chains longas (validado até 10.000+ iterações). Detalhes em [`rfc-0001-fase-0-pendencias.md`](./rfc-0001-fase-0-pendencias.md).
 
 ### Fase 1: núcleo lazy
 
@@ -508,7 +576,7 @@ sem iniciar operações durante a construção.
 - `ResultTask.gen`;
 - contrato yieldable nominal;
 - service tags;
-- `service`, `provideService` e `provideServices`;
+- `service`, `provideService`, `provideServices` e `provideServiceResolver`;
 - erros de serviço ausente como defeito de runtime;
 - testes de inferência de requisitos compostos.
 
@@ -645,11 +713,13 @@ Converter tudo para `Err` parece simples, mas perde a distinção entre domínio
 Por outro lado, expor `Cause` em toda API deixaria o caminho comum pesado. `Exit` deve permanecer um
 boundary avançado, enquanto `runResult` oferece a experiência cotidiana.
 
-## Questões em aberto
+## Questões em aberto e decisões consolidadas
 
-1. O nome final deve ser `ResultTask`, `TaskResult` ou outro?
+1. **O nome final deve ser `ResultTask`, `TaskResult` ou outro?**
+   - **Decisão:** `ResultTask`. Mantém a identidade com `Result` e paralelismo com `ResultAsync`.
 2. `R` deve representar service tags em união ou um shape de serviços em interseção?
-3. O primeiro release deve usar um subpath como `resultar/task`?
+3. **O primeiro release deve usar um subpath como `resultar/task`?**
+   - **Decisão:** Exposto diretamente no entrypoint raiz `resultar`, sem breaking changes e mantendo a ergonomia unificada do pacote.
 4. Métodos de instância serão parte da API canônica ou apenas funções pipeable?
 5. `runResult` deve rejeitar em interrupção ou retornar um `Err<AbortError>` explícito?
 6. Como representar simultaneamente falha de use e falha de release no boundary simplificado?

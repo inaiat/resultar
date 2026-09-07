@@ -1,4 +1,5 @@
 {
+  "$schema": "./node_modules/resultar-check/schema.json",
   "compilerOptions": {
     "target": "ESNext",
     "lib": ["ESNext"],

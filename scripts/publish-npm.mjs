@@ -14,6 +14,8 @@ const packages = [
   "packages/check/native-packages/win32-arm64",
   "packages/check/native-packages/win32-x64",
   "packages/resultar",
+  "packages/di",
+  "packages/hono",
   "packages/check",
   "packages/request",
   "packages/request-typebox",

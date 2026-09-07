@@ -846,6 +846,12 @@ func (a *Analyzer) isSafeAwaitExpression(expression *ast.Node, ignoredCalls map[
 		if _, ok := ignoredCalls[path]; ok {
 			return true
 		}
+		if isResultTaskStaticCall(unwrapped.AsCallExpression().Expression, "runExit") {
+			arguments := unwrapped.AsCallExpression().Arguments.Nodes
+			if len(arguments) > 0 && everyUnionPart(a.checker.GetTypeAtLocation(arguments[0]), isResultTaskLikeType) {
+				return true
+			}
+		}
 		if expressionName(unwrapped.AsCallExpression().Expression) == "runPromise" {
 			arguments := unwrapped.AsCallExpression().Arguments.Nodes
 			if len(arguments) > 0 && everyUnionPart(a.checker.GetTypeAtLocation(arguments[0]), isResultAsyncLikeType) {

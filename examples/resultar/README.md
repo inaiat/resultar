@@ -66,5 +66,5 @@ const result = await ResultTask.runResult(task)
 ```
 
 See the [ResultTask package guide](../../packages/resultar/README.md#lazy-workflows-with-resulttask)
-and the [core RFC](../../packages/resultar/RESULT-TASK-CORE-RFC.md) for the complete API and the
+and the [core RFC](../../docs/rfcs/rfc-0001-result-task-core.md) for the complete API and the
 planned runtime phases.

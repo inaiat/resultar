@@ -5,6 +5,13 @@ should be handled in follow-up implementation tasks with focused tests.
 
 ## P0 - Safety
 
+- [x] Implement the resource slice of RFC 0001 Phase 3: root/child scopes, `acquireRelease`,
+      LIFO awaited finalizers, deferred release error inference, and preserved sequential causes.
+- [x] Add a runnable application lifecycle example with boot rollback and HTTP-first shutdown.
+- [x] Integrate the linked build into Replis lifecycle and test the real Node HTTP adapter locally.
+- [ ] Validate Replis lifecycle with live SurrealDB and WhatsApp sessions before production adoption.
+- [ ] Complete the rest of Phase 3: child fibers, structured race/timeout, and their cancellation tests.
+
 - [x] Add no-discard protection for `Result` and `ResultAsync`.
   - Goal: flag calls like `saveUser(input)` when the returned result is ignored.
   - Accept explicit ignores with `void saveUser(input)` or another deliberate convention.

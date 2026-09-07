@@ -530,6 +530,46 @@ tryAsync(async () => {
 	}
 }
 
+func TestNoUnsafeAwaitAcceptsResultTaskRunExitOnly(t *testing.T) {
+	directory := writeFixture(t, `
+interface ResultTask<T, E = never> { readonly valueType: T; readonly errorType: E }
+declare const ResultTask: {
+  runExit<T, E>(task: ResultTask<T, E>): Promise<unknown>
+  runPromise<T, E>(task: ResultTask<T, E>): Promise<T>
+}
+declare const task: ResultTask<number, string>
+declare const other: { runExit(): Promise<void> }
+async function main() {
+  await ResultTask.runExit(task)
+  await ResultTask.runPromise(task)
+  await other.runExit()
+}
+`)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("unexpected TypeScript diagnostics: %v", diagnostics)
+	}
+	options := config.Defaults()
+	options.NoDiscard = config.SeverityOff
+	options.NoUnsafeAwait = config.SeverityWarning
+	options.NoUnsafeAwaitMode = "all"
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("unexpected runExit findings: %#v", findings)
+	}
+	for index, line := range []int{11, 12} {
+		if findings[index].Rule != "no-unsafe-await" || findings[index].Line != line {
+			t.Fatalf("unexpected finding: %#v", findings[index])
+		}
+	}
+}
+
 func TestNoUnsafeAwaitDoesNotTreatUnrelatedTryPromiseAsBoundary(t *testing.T) {
 	directory := writeFixture(t, `
 interface Client {

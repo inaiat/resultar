@@ -30,7 +30,10 @@ coverage/
 /.nyc_output
 
 # Docs
-/docs
+/docs/**
+!/docs/
+!/docs/**/
+!/docs/**/*.md
 
 # IDEs and editors
 /.idea

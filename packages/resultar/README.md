@@ -407,8 +407,9 @@ Prefer a factory with `tryResultAsync` when creating the promise can also throw 
 ## Lazy Workflows With ResultTask
 
 `ResultTask<T, E, R>` is the lazy workflow primitive in Resultar. Creating one does not start the
-work; `runResult`, `runExit`, or `runPromise` executes it explicitly. `R` records the service tags
-still required by the workflow, so the execution boundary can require an explicit environment.
+work; `runResult`, `runExit`, or `runPromise` executes it explicitly. `R` records required service
+tags and resource scope requirements. Run boundaries supply the root scope automatically and
+require an explicit environment for any remaining service tags.
 
 Unlike `ResultAsync`, a `ResultTask` is a reusable description of work rather than an already-started
 operation. Mapping, chaining, recovery, service provision, and generator composition all remain lazy.
@@ -421,7 +422,8 @@ operation. Mapping, chaining, recovery, service provision, and generator composi
 | Transform or chain | `map`, `flatMap`, `andThen` |
 | Recover typed failures | `catchAll` |
 | Write a linear lazy workflow | `gen` with `yield*` |
-| Declare and provide dependencies | `service`, `provideService`, `provideServices` |
+| Declare and provide dependencies | `service`, `provideService`, `provideServices`, `provideServiceResolver` |
+| Own resources and await cleanup | `acquireRelease`, `scoped` |
 | Execute at the application boundary | `runExit`, `runResult`, `runPromise` |
 
 ```ts
@@ -445,9 +447,13 @@ Choose the execution boundary based on how much information the application need
 
 | Boundary | Result |
 | --- | --- |
-| `runExit(task)` | `Exit<T, E>` preserving `Success`, typed `Fail`, and unexpected `Die` causes |
-| `runResult(task)` | `Result<T, E>`; a `Die` rejects instead of entering the typed error channel |
-| `runPromise(task)` | `T`; typed failures and defects reject for integration with Promise-only APIs |
+| `runExit(task)` | Preserves `Success`, typed `Fail`, `Die`, `Interrupt`, and `Sequential` causes |
+| `runResult(task)` | Returns a single typed failure as `Err`; rejects defects, interruption, and composite causes |
+| `runPromise(task)` | Returns `T`; rejects every failure for integration with Promise-only APIs |
+
+The error type of `runExit` and `runResult` includes deferred release failures from the root scope.
+Interruption rejects with `AbortError`. A composite cause rejects with `ResultTaskCauseError`, whose
+`cause` preserves the complete tree; use `runExit` to inspect it without rejection.
 
 ```ts
 const controller = new AbortController()
@@ -470,9 +476,20 @@ const userName = loadUser('user_123')
   .catchAll((error) => ResultTask.succeed(`unavailable: ${error.message}`))
 ```
 
-`catchAll` recovers only typed failures. Runtime defects remain defects and are visible through
-`runExit`. The equivalent functional forms are `ResultTask.map`, `ResultTask.flatMap`, and
-`ResultTask.catchAll`.
+`catchAll` recovers a single typed failure. Defects and interruption bypass recovery. Composite
+causes bypass recovery as `Die(ResultTaskCauseError)` with the original tree on the error's `cause`;
+this prevents removed error types from escaping as typed failures. The equivalent functional forms
+are `ResultTask.map`, `ResultTask.flatMap`, and `ResultTask.catchAll`.
+
+For promise adapters that do not need an error mapper, pass the lazy callback directly:
+
+```ts
+const response = ResultTask.tryPromise((signal) => fetch(url, { signal }))
+// ResultTask<Response, unknown>: synchronous throws and rejections remain typed failures.
+```
+
+The callback runs only when the task executes. Use `tryPromise({ try, catch })` when you need a
+specific error type; both forms receive the runtime signal and preserve interruption semantics.
 
 Workflows can request typed services with `yield*` and receive them at the boundary. Pass the service
 type and its literal identifier so the named environment remains checked:
@@ -510,6 +527,17 @@ await ResultTask.runResult(readyWithOne)
 await ResultTask.runResult(readyWithAll)
 ```
 
+Infrastructure such as a dependency-injection adapter can resolve service tags lazily with
+`provideServiceResolver(task, { Logger: () => loggerTask })`. Each required identifier has a
+typed lazy provider. Provider errors and external requirements remain in the resulting task type;
+resource-scope requirements also remain visible. Missing providers and incompatible values are
+compile-time errors.
+
+Adapters can use `ResultTask.makeScope()` to own resources across executions. Run tasks with
+`owner.use(task)` and execute `owner.close()` after consumers finish. Failed uses roll back their
+partial acquisitions. `ResultTask.memoize(task)` shares pending and successful executions and
+allows retry after failure; its first execution supplies the environment and resource scope.
+
 `ResultTask.gen` composes tasks and services linearly. On short-circuit, generator `finally` blocks
 are closed and any yielded cleanup tasks or services are interpreted before execution completes:
 
@@ -523,9 +551,75 @@ const program = ResultTask.gen(function* () {
 })
 ```
 
-If cleanup itself fails or defects, that cleanup exit becomes the final exit. ResultTask 3.6 keeps
-execution deliberately small: it provides laziness, typed services, cooperative cancellation, and
-explicit exits, but does not yet include a scheduler, scopes, or `Fiber` runtime.
+Generator `finally` retains its existing replacement policy if its cleanup fails. Use resource
+scopes below when both the body and cleanup failure must be preserved.
+
+### Resource scopes and application lifecycle
+
+```ts
+const connection = ResultTask.acquireRelease({
+  acquire: ResultTask.tryPromise({
+    try: (signal) => connectDatabase(signal),
+    catch: (cause) => new ConnectionError({ cause }),
+  }),
+  release: (database, exit) => ResultTask.tryPromise({
+    try: () => database.close(exit),
+    catch: (cause) => new CloseError({ cause }),
+  }),
+})
+
+const program = ResultTask.scoped(ResultTask.gen(function* () {
+  const database = yield* connection
+  return yield* ResultTask.tryPromise({
+    try: (signal) => database.query('SELECT 1', signal),
+    catch: (cause) => new QueryError({ cause }),
+  })
+}))
+
+const exit = await ResultTask.runExit(program)
+```
+
+Every run owns a root scope. `scoped` closes a child scope before the next task continues. Successful
+acquisitions register finalizers in LIFO order; every finalizer is awaited once, even after a body
+failure, defect, or interruption. Failed acquisition does not register its release. Earlier resources
+are still released if a later acquisition fails. Each finalizer receives the same region exit,
+before release failures are appended. Services provided around acquisition remain available during
+release, including services used only by the release callback.
+
+`acquireRelease` tracks deferred errors with `ResultTaskScope<ReleaseError>` in `R`. `scoped` removes
+that requirement and adds its errors to `E`; run boundaries do the same for the root scope. Service
+provision and `catchAll` before scope closure cannot erase pending release failures. To recover a
+single release failure, put `catchAll` after `scoped`.
+
+If use succeeds but release fails, the failure is returned as `Err`. If both fail, `runExit` retains
+them as `Sequential(useCause, releaseCause)`; subsequent release failures are appended in order.
+Release callbacks that throw produce defects. Resources acquired during a finalizer belong to a
+private cleanup scope, which is closed before the next finalizer starts.
+
+Cancellation is cooperative: tasks check the signal before starting, and promise operations receive
+it. Rejection after abort is classified as interruption. The runtime waits for in-flight operations
+to settle so a resource acquired during cancellation can still be registered and released. Cleanup
+uses a fresh, non-aborted signal. An operation or finalizer that never settles can therefore keep
+the run pending; there is no preemptive cancellation, scheduler, or `Fiber` runtime in this slice.
+
+For application composition, keep ordinary factories and existing `StrictResultAsync` use cases.
+Use service tags only when a program needs requirements supplied at execution. Put the **whole server
+lifetime** inside the resource scope: acquire database, WhatsApp, then HTTP; wait for shutdown; drain
+HTTP, close WhatsApp, then close database. Returning a server from a completed scope would return
+already-released resources. TypeScript does not enforce resource reference lifetimes.
+
+See the runnable [application lifecycle example](../../examples/resultar/src/application-lifecycle.ts)
+and its [smoke test](../../examples/resultar/scripts/lifecycle-smoke.ts). Run `pnpm run example:resultar`
+from the workspace root. Its factory and resource contracts return `ResultTask` with database,
+WhatsApp, and HTTP error types. Drivers expose Promises only inside `ResultTask.tryPromise` adapters,
+which receive the runtime signal without threading it through every application interface.
+Concrete adapters must clean up partial acquisitions before returning a
+failure and implement request draining, SSE termination, and suitable deadlines.
+
+`ResultAsync.withResource` keeps its existing best-effort release behavior. Existing `ResultAsync`
+instances have already started; wrapping one does not make it lazy or automatically cancelable.
+Invoke existing operations inside a task boundary when execution must be deferred. In this slice,
+interop remains explicit; the RFC's `fromResultAsync`/`toResultAsync` adapters are not added.
 
 ## Production Async Policies
 
@@ -859,7 +953,7 @@ reasons, disposable results, and compatibility APIs.
 ## More Documentation
 
 - [Full Resultar guide](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md)
-- [ResultTask core RFC](https://github.com/inaiat/resultar/blob/main/packages/resultar/RESULT-TASK-CORE-RFC.md)
+- [ResultTask core RFC](https://github.com/inaiat/resultar/blob/main/docs/rfcs/rfc-0001-result-task-core.md)
 - [Runnable core cookbook](https://github.com/inaiat/resultar/tree/main/examples/resultar)
 - [Catching and recovering errors](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#catching-and-recovering-errors)
 - [Safe Try](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#safe-try)

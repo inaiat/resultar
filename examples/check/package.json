@@ -10,10 +10,10 @@
     "smoke": "pnpm run prepare && tsx scripts/smoke.ts"
   },
   "dependencies": {
-    "resultar": "workspace:*",
-    "resultar-check": "workspace:*"
+    "resultar": "workspace:*"
   },
   "devDependencies": {
+    "resultar-check": "workspace:*",
     "tsx": "catalog:"
   }
 }

@@ -7,15 +7,16 @@
     "bench:check-cli": "pnpm run bench:check-native",
     "bench:check-native": "pnpm --filter resultar-check build && pnpm --filter resultar-check native:build && node --import tsx resultar-check-native.ts",
     "bench:neverthrow": "pnpm run bench",
-    "bench:stable": "pnpm --filter resultar build && node --import tsx resultar-vs-stable.ts"
+    "bench:stable": "pnpm --filter resultar build && node --import tsx resultar-vs-stable.ts",
+    "bench:task": "pnpm --filter resultar build && node --import tsx resultar-task-chains.ts"
   },
   "dependencies": {
-    "resultar": "workspace:*",
-    "resultar-check": "workspace:*"
+    "resultar": "workspace:*"
   },
   "devDependencies": {
     "cronometro": "^6.0.3",
     "neverthrow": "^8.2.0",
+    "resultar-check": "workspace:*",
     "tsx": "catalog:",
     "typescript": "catalog:"
   }

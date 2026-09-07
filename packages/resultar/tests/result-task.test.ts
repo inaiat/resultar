@@ -6,6 +6,59 @@ import type { Cause, Exit, Result, ResultTaskServices } from '../src/index.js'
 import { err, ok, ResultTask } from '../src/index.js'
 
 describe('ResultTask', () => {
+  it('accepts a lazy callback, infers unknown failures and passes the runtime signal', async () => {
+    const controller = new AbortController()
+    let executions = 0
+    const task = ResultTask.tryPromise(async (signal) => {
+      strictEqual(signal, controller.signal)
+      executions += 1
+      return executions
+    })
+    expectTypeOf(task).toEqualTypeOf<ResultTask<number, unknown>>()
+    equal(executions, 0)
+    equal(await ResultTask.runPromise(task, { signal: controller.signal }), 1)
+    equal(await ResultTask.runPromise(task, { signal: controller.signal }), 2)
+    const mapped = ResultTask.tryPromise({ try: async () => 1, catch: () => 'offline' as const })
+    expectTypeOf(mapped).toEqualTypeOf<ResultTask<number, 'offline'>>()
+  })
+
+  it('preserves thrown values and rejected promises in the callback error channel', async () => {
+    const cause = { reason: 'offline' }
+    const thrown = ResultTask.tryPromise<number>(() => {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- Unknown failures can be arbitrary values.
+      throw cause
+    })
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Preserve arbitrary rejection values.
+    const rejected = ResultTask.tryPromise(() => Promise.reject(cause))
+    for (const task of [thrown, rejected]) {
+      const exit = await ResultTask.runExit(task)
+      deepEqual(exit, { _tag: 'Failure', cause: { _tag: 'Fail', error: cause } })
+      if (exit._tag === 'Failure' && exit.cause._tag === 'Fail')
+        strictEqual(exit.cause.error, cause)
+    }
+  })
+
+  it('keeps callback cancellation as Interrupt instead of an unknown failure', async () => {
+    const controller = new AbortController()
+    const task = ResultTask.tryPromise((signal) => {
+      controller.abort('stop')
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Abort reasons need not be Errors.
+      return Promise.reject(signal.reason)
+    })
+    deepEqual(await ResultTask.runExit(task, { signal: controller.signal }), {
+      _tag: 'Failure',
+      cause: { _tag: 'Interrupt', reason: 'stop' },
+    })
+    let started = false
+    await ResultTask.runExit(
+      ResultTask.tryPromise(async () => {
+        started = true
+      }),
+      { signal: controller.signal },
+    )
+    equal(started, false)
+  })
+
   it('is lazy and can be executed more than once', async () => {
     let executions = 0
     const task = ResultTask.tryPromise({
@@ -505,6 +558,27 @@ describe('ResultTask', () => {
     deepEqual(messages, ['started'])
   })
 
+  it('resolves missing services through a lazy resolver', async () => {
+    interface Logger {
+      readonly info: (message: string) => void
+    }
+
+    const Logger = ResultTask.service<Logger, 'Logger'>('Logger')
+    const messages: string[] = []
+    const task = ResultTask.gen(function* () {
+      const logger = yield* Logger
+      logger.info('resolved')
+      return true
+    })
+    const resolved = ResultTask.provideServiceResolver(task, {
+      Logger: () => ResultTask.succeed<Logger>({ info: (message) => messages.push(message) }),
+    })
+
+    expectTypeOf(resolved).toEqualTypeOf<ResultTask<boolean, never, never>>()
+    deepEqual(await ResultTask.runResult(resolved), { value: true })
+    deepEqual(messages, ['resolved'])
+  })
+
   it('provides all services by identifier and reports missing services as defects', async () => {
     interface Clock {
       readonly now: () => number
@@ -542,5 +616,35 @@ describe('ResultTask', () => {
       // @ts-expect-error A task with requirements cannot run with an incomplete environment.
       void ResultTask.runResult(task, {})
     }
+  })
+
+  it('is stack-safe for 10,000+ chained flatMap and map calls without call stack overflow', async () => {
+    let flatMapTask = ResultTask.succeed(0)
+    for (let i = 0; i < 10_000; i += 1) {
+      flatMapTask = flatMapTask.flatMap((x) => ResultTask.succeed(x + 1))
+    }
+    equal(await ResultTask.runPromise(flatMapTask), 10_000)
+
+    let mapTask = ResultTask.succeed(0)
+    for (let i = 0; i < 10_000; i += 1) {
+      mapTask = mapTask.map((x) => x + 1)
+    }
+    equal(await ResultTask.runPromise(mapTask), 10_000)
+
+    let mixedTask = ResultTask.succeed(0)
+    for (let i = 0; i < 5000; i += 1) {
+      mixedTask = mixedTask.map((x) => x + 1).flatMap((x) => ResultTask.succeed(x + 1))
+    }
+    equal(await ResultTask.runPromise(mixedTask), 10_000)
+
+    let recoveredTask = ResultTask.fail<'init-error'>('init-error').catchAll(() =>
+      ResultTask.succeed(0),
+    )
+    for (let i = 0; i < 5000; i += 1) {
+      recoveredTask = recoveredTask
+        .flatMap((x) => ResultTask.succeed(x + 1))
+        .catchAll(() => ResultTask.succeed(-1))
+    }
+    equal(await ResultTask.runPromise(recoveredTask), 5000)
   })
 })
