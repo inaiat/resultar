@@ -1,5 +1,19 @@
 # resultar
 
+## 3.7.0
+
+### Minor Changes
+
+- fcf0f14: Use typed lazy provider maps in provideServiceResolver, preserving provider errors and external
+  requirements. Add explicit resource scope ownership and task memoization for DI adapters.
+  Ensure throwing service providers still execute generator cleanup.
+- fcf0f14: Add ResultTask resource scopes with acquireRelease and scoped, LIFO asynchronous finalizers,
+  deferred release error inference, and cooperative interruption. runExit preserves sequential
+  execution and cleanup causes; runResult rejects composite causes with ResultTaskCauseError.
+  Keep ResultAsync.withResource behavior unchanged and document the application lifecycle pattern.
+  Add a lazy ResultTask service resolver for dependency-injection adapters.
+- fcf0f14: Add a lazy callback overload to ResultTask.tryPromise with unknown failures and the runtime AbortSignal. Keep the explicit error-mapping overload and simplify the Deno bootstrap to use the new API directly.
+
 ## 3.6.0
 
 ### Minor Changes

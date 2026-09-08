@@ -1,5 +1,16 @@
 # resultar-check
 
+## 3.1.0
+
+### Minor Changes
+
+- 28ec63c: Add five ResultTask and DI diagnostics: no-invalid-lifetime rejects longer-lived services capturing shorter-lived dependencies, no-unscoped-acquire-release requires acquireRelease workflows in ResultTask.gen to run under ResultTask.scoped, no-result-in-task-gen requires plain success returns, no-await-in-result-task-gen keeps gen bodies lazy with yield*, and no-throw-in-task-sync directs sync throws to ResultTask.try with a catch mapper. Suppression directives also match case-insensitively so sentence-case formatters cannot break them.
+
+### Patch Changes
+
+- fcf0f14: Recognize ResultTask.runExit as a safe await boundary in no-unsafe-await. Keep diagnostics for
+  runPromise and unrelated APIs named runExit. Discovered while adopting ResultTask scopes in a private consumer.
+
 ## 3.0.0
 
 ### Major Changes
