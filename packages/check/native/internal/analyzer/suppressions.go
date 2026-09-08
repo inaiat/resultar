@@ -30,6 +30,7 @@ func parseSuppressions(text string) []suppression {
 	lines := strings.Split(text, "\n")
 	result := make([]suppression, 0)
 	for index, line := range lines {
+		lowered := strings.ToLower(line)
 		for _, directive := range []struct {
 			name   string
 			offset int
@@ -37,8 +38,8 @@ func parseSuppressions(text string) []suppression {
 			{name: "resultar-check-disable-next-line", offset: 1},
 			{name: "resultar-check-disable-line", offset: 0},
 		} {
-			position := strings.Index(line, directive.name)
-			commentPosition := strings.Index(line, "//")
+			position := strings.Index(lowered, directive.name)
+			commentPosition := strings.Index(lowered, "//")
 			if position < 0 || commentPosition < 0 || position < commentPosition {
 				continue
 			}

@@ -11,6 +11,7 @@ import {
   type StrictResult,
   type StrictResultAsync,
 } from "resultar";
+import { createModule } from "resultar-di/advanced";
 
 interface User {
   readonly email: string;
@@ -203,3 +204,40 @@ export const runStartupTask = (
   task: () => Promise<void>,
 ): StrictResultAsync<void, StartupTaskError> =>
   tryResultAsync({ try: task, catch: (cause) => new StartupTaskError({ cause, label }) });
+
+// no-invalid-lifetime: longer-lived services only capture same-or-longer-lived
+// dependencies; request data flows through service methods instead.
+export const validLifetimeModule = createModule()
+  .singleton("config", [], () => ({ retries: 3 }))
+  .scoped("request", [], () => ({ id: "request" }))
+  .transient("operation", ["config"], ({ config }) => ({ id: "op", retries: config.retries }));
+
+// no-unscoped-acquire-release: wrap the acquiring workflow so releases run
+// before the scope closes.
+export const scopedAcquireRelease = (): ResultTask<User, FetchUserError> =>
+  ResultTask.scoped(
+    ResultTask.gen(function* () {
+      const resource = yield* ResultTask.acquireRelease({
+        acquire: loadUserTask("resource"),
+        release: () => ResultTask.succeed(undefined),
+      });
+
+      return resource;
+    }),
+  );
+
+// no-result-in-task-gen: return plain values; failures short-circuit via yield*.
+export const taskGenPlainReturn = (id: string): ResultTask<string, FetchUserError> =>
+  ResultTask.gen(function* () {
+    const user = yield* loadUserTask(id);
+
+    return user.email;
+  });
+
+// no-throw-in-task-sync: map synchronous throws with ResultTask.try so failures
+// stay in the typed error channel.
+export const typedSyncUser = (id: string): ResultTask<User, FetchUserError> =>
+  ResultTask.try({
+    try: () => ({ email: `${id}@example.com`, id }),
+    catch: (cause) => new FetchUserError({ cause, id }),
+  });

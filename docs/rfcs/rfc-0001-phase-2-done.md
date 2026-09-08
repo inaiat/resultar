@@ -1,38 +1,38 @@
-# Especificação e Pendências da Fase 2 — RFC 0001: ResultTask
+# Phase 2 Specification and Pending Items — RFC 0001: ResultTask
 
-- **Referência:** [rfc-0001-result-task-core.md](./rfc-0001-result-task-core.md)
-- **Data:** 2026-09-07
+- **Reference:** [rfc-0001-result-task-core.md](./rfc-0001-result-task-core.md)
+- **Date:** 2026-09-07
 - **Branch:** `feat/result-task-phase-2`
-- **Fase:** Fase 2 (Generator e Serviços)
-- **Status:** ✅ **Concluído**
+- **Phase:** Phase 2 (Generator and Services)
+- **Status:** ✅ **Done**
 
 ---
 
-## 1. Contexto e Objetivo
+## 1. Context and Objective
 
-O [RFC 0001](./rfc-0001-result-task-core.md) define a **Fase 2** como a expansão do modelo com generators lineares e injeção de dependências tipada:
+The [RFC 0001](./rfc-0001-result-task-core.md) defines **Phase 2** as the expansion of the model with linear generators and typed dependency injection:
 
-> ### Fase 2: generator e serviços
+> ### Phase 2: generator and services
 > - `ResultTask.gen`;
-> - contrato yieldable nominal;
+> - nominal yieldable contract;
 > - service tags;
-> - `service`, `provideService`, `provideServices` e `provideServiceResolver`;
-> - erros de serviço ausente como defeito de runtime;
-> - testes de inferência de requisitos compostos.
+> - `service`, `provideService`, `provideServices`, and `provideServiceResolver`;
+> - missing-service errors as runtime defects;
+> - composite-requirements inference tests.
 >
-> **Critério de saída:** um workflow de aplicação pode declarar e prover database, logger e clock sem capturar essas dependências por closure.
+> **Exit criterion:** an application workflow can declare and provide database, logger, and clock without capturing those dependencies via closure.
 
 ---
 
-## 2. Matriz de Requisitos da Fase 2
+## 2. Phase 2 Requirements Matrix
 
-| Item do RFC | Descrição | Status |
+| RFC Item | Description | Status |
 | :--- | :--- | :---: |
-| **1. Contrato Yieldable Nominal** | Símbolos nominais `ServiceTagTypeId` e `ResultTaskYieldTypeId` via `unique symbol`. | ✅ **Concluído** |
-| **2. Standalone Helpers** | `serviceTag` e `isServiceTag` expostos no pacote principal. | ✅ **Concluído** |
-| **3. Result Interop em `gen`** | Suporte a `yield* result` (`ok` e `err`) diretamente no generator, propagando o erro para `E`. | ✅ **Concluído** |
-| **4. MissingServiceError** | Classe de erro explícita tratada como causa `Die`, garantindo execução de `finally` em LIFO. | ✅ **Concluído** |
-| **5. Métodos de Instância de Provisão** | `task.provideService`, `task.provideServices`, `task.provideServiceResolver`. | ✅ **Concluído** |
-| **6. Dual-API Estático para `pipe`** | Sobrecargas data-first e curried para `provideService`, `provideServices` e `provideServiceResolver`. | ✅ **Concluído** |
-| **7. Inferência de Requisitos Compostos** | Acúmulo de $R$ em `yield*`, eliminação seletiva/total e liberação de `runResult(task)`. | ✅ **Concluído** |
-| **8. Suíte de Testes e Tipagem** | Testes completos cobrindo linearidade de generators, `finally`, e type tests em TypeScript. | ✅ **Concluído** |
+| **1. Nominal Yieldable Contract** | Nominal symbols `ServiceTagTypeId` and `ResultTaskYieldTypeId` via `unique symbol`. | ✅ **Done** |
+| **2. Standalone Helpers** | `serviceTag` and `isServiceTag` exposed in the main package. | ✅ **Done** |
+| **3. Result Interop in `gen`** | Supports `yield* result` (`ok` and `err`) directly in the generator, propagating the error into `E`. | ✅ **Done** |
+| **4. MissingServiceError** | Explicit error class treated as a `Die` cause, guaranteeing `finally` execution in LIFO order. | ✅ **Done** |
+| **5. Provision Instance Methods** | `task.provideService`, `task.provideServices`, `task.provideServiceResolver`. | ✅ **Done** |
+| **6. Static Dual API for `pipe`** | Data-first and curried overloads for `provideService`, `provideServices`, and `provideServiceResolver`. | ✅ **Done** |
+| **7. Composite Requirements Inference** | Accumulation of $R$ across `yield*`, selective/total elimination, and release of `runResult(task)`. | ✅ **Done** |
+| **8. Test and Typing Suite** | Full tests covering generator linearity, `finally`, and TypeScript type tests. | ✅ **Done** |

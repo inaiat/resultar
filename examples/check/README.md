@@ -45,13 +45,13 @@ The diagnostics catalog covers:
 - concrete error channels, safe type assertions, and typed catch mappers;
 - tagged-error construction and naming conventions;
 - Promise safety, raw `await`, and exact ignored-call paths;
-- `yield*` composition in both `safeTry` and `ResultTask.gen`.
+- `yield*` composition in both `safeTry` and `ResultTask.gen`;
+- DI lifetimes, `acquireRelease` scope ownership, plain `gen` returns, and typed `sync` failures.
 
 The smoke test builds the Resultar package, the `resultar-check` launcher, and the native binary for
 the current platform. It then verifies that:
 
-- the diagnostics catalog fails;
-- all 22 native rules report their exact expected finding counts;
+- all 27 native rules report their exact expected finding counts;
 - every configured severity is `error`;
 - TypeScript-Go reports no compiler diagnostics;
 - the clean fixture exits successfully.
@@ -59,3 +59,10 @@ the current platform. It then verifies that:
 Rule configuration lives in [`tsconfig.json`](tsconfig.json). The
 [`tsconfig.clean.json`](tsconfig.clean.json) project inherits the same configuration and changes only
 the included source file.
+
+## Limitations
+
+This is a diagnostics fixture, not application code: `src/index.ts` is intentionally invalid and
+must keep failing, while only `src/resultar-clean.ts` shows the recommended patterns. The catalog
+covers the 27 implemented native rules; it does not promise future rules, auto-fixes, or IDE
+integrations.

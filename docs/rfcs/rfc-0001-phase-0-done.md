@@ -1,77 +1,77 @@
-# Resolução das Pendências da Fase 0 — RFC 0001: ResultTask
+# Resolution of Phase 0 Pending Items — RFC 0001: ResultTask
 
-- **Referência:** [rfc-0001-result-task-core.md](./rfc-0001-result-task-core.md)
-- **Data:** 2026-09-07
+- **Reference:** [rfc-0001-result-task-core.md](./rfc-0001-result-task-core.md)
+- **Date:** 2026-09-07
 - **Branch:** `feat/result-task-phase-0`
-- **Fase:** Fase 0 (Contratos e Provas de Conceito)
-- **Status:** ✅ **Concluído e Validado** (Critérios de saída atendidos)
+- **Phase:** Phase 0 (Contracts and Proofs of Concept)
+- **Status:** ✅ **Done and Validated** (Exit criteria met)
 
 ---
 
-## 1. Contexto e Objetivo
+## 1. Context and Objective
 
-O [RFC 0001](./rfc-0001-result-task-core.md) definiu a seguinte especificação para a **Fase 0**:
+The [RFC 0001](./rfc-0001-result-task-core.md) defined the following specification for **Phase 0**:
 
-> ### Fase 0: contratos e provas de conceito
-> - adicionar testes de tipos para lazy evaluation e inferência de `A`, `E` e `R`;
-> - validar o desenho de `ResultTask.gen` com TypeScript 7;
-> - medir o custo de uma cadeia longa de `flatMap`;
-> - decidir nomes públicos antes de exportar pelo entrypoint principal;
-> - implementar inicialmente em um subpath experimental, se necessário.
+> ### Phase 0: contracts and proofs of concept
+> - add type tests for lazy evaluation and inference of `A`, `E`, and `R`;
+> - validate the `ResultTask.gen` design with TypeScript 7;
+> - measure the cost of a long `flatMap` chain;
+> - decide public names before exporting via the main entrypoint;
+> - initially implement in an experimental subpath, if necessary.
 >
-> **Critério de saída:** exemplos representativos compilam, lazy evaluation está provada por testes e a representação escolhida não causa stack overflow em chains longas.
+> **Exit criterion:** representative examples compile, lazy evaluation is proven by tests, and the chosen representation does not cause stack overflow on long chains.
 
-Na versão inicial 3.6.0, identificou-se que o critério de saída não estava 100% cumprido devido a um estouro de pilha (`RangeError: Maximum call stack size exceeded`) em cadeias a partir de ~3.500 `flatMap`s e ausência de benchmarks dedicados e `ResultTaskTypeId`.
+In the initial 3.6.0 version, it was identified that the exit criterion was not 100% met due to a stack overflow (`RangeError: Maximum call stack size exceeded`) in chains starting at ~3,500 `flatMap`s and the absence of dedicated benchmarks and `ResultTaskTypeId`.
 
-No branch `feat/result-task-phase-0`, todas as pendências foram endereçadas e validadas com sucesso.
+On the branch `feat/result-task-phase-0`, all pending items were addressed and successfully validated.
 
 ---
 
-## 2. Matriz de Status dos Requisitos da Fase 0
+## 2. Phase 0 Requirements Status Matrix
 
-| Item do RFC | Situação Atual | Status |
+| RFC Item | Current Situation | Status |
 | :--- | :--- | :---: |
-| **1. Testes de inferência `A`, `E`, `R`** | Cobertos em `tests/result-task-types.test.ts` e `tests/result-task.test.ts`. | ✅ **Concluído** |
-| **2. Stack Safety em chains de `flatMap`** | Trampoline iterativo com continuations stack implementado. Suporta 10.000+ iterações em ~2ms sem estouro de call stack. | ✅ **Concluído** |
-| **3. Medição de custo / benchmarks** | Benchmark `benchmarks/resultar-task-chains.ts` criado e validado (10 a 10.000 iterações, comparado com `ResultAsync`). | ✅ **Concluído** |
-| **4. TypeId nominal e variância** | `ResultTaskTypeId: unique symbol` exportado; declaração com anotações de variância `out A, out E, out R`. | ✅ **Concluído** |
-| **5. Desenho de `ResultTask.gen` (TS 7)** | Validação com TypeScript 7 e interoperabilidade documentada; integração direta com `Result` agendada para Fase 1. | ⏳ **Fase 1** |
-| **6. Decisão de nomes públicos** | Nome `ResultTask` consolidado e padronizado na API e documentação. | ✅ **Concluído** |
-| **7. Subpath experimental vs core** | Exposição no entrypoint principal com compatibilidade total e sem breaking changes. | ✅ **Concluído** |
+| **1. Inference tests for `A`, `E`, `R`** | Covered in `tests/result-task-types.test.ts` and `tests/result-task.test.ts`. | ✅ **Done** |
+| **2. Stack safety in `flatMap` chains** | Iterative trampoline with stack continuations implemented. Supports 10,000+ iterations in ~2ms without call stack overflow. | ✅ **Done** |
+| **3. Cost measurement / benchmarks** | Benchmark `benchmarks/resultar-task-chains.ts` created and validated (10 to 10,000 iterations, compared against `ResultAsync`). | ✅ **Done** |
+| **4. Nominal TypeId and variance** | `ResultTaskTypeId: unique symbol` exported; declaration with variance annotations `out A, out E, out R`. | ✅ **Done** |
+| **5. `ResultTask.gen` design (TS 7)** | Validation with TypeScript 7 and documented interoperability; direct integration with `Result` scheduled for Phase 1. | ⏳ **Phase 1** |
+| **6. Public names decision** | `ResultTask` name consolidated and standardized across the API and documentation. | ✅ **Done** |
+| **7. Experimental subpath vs core** | Exposed at the main entrypoint with full compatibility and no breaking changes. | ✅ **Done** |
 
 ---
 
-## 3. Detalhamento das Implementações
+## 3. Implementation Details
 
-### 3.1. Trampoline Iterativo e Stack Safety ($O(1)$ Call Stack)
+### 3.1. Iterative Trampoline and Stack Safety ($O(1)$ Call Stack)
 
-#### Causa Raiz Anterior
-Anteriormente, `flatMap`, `map` e `catchAll` envolviam recursivamente cada etapa em closures assíncronas `async (context) => await this.execute(context)`. Cadeias de mais de 3.500 nós estouravam a pilha síncrona do V8 antes que microtasks pudessem ser liberadas.
+#### Previous Root Cause
+Previously, `flatMap`, `map`, and `catchAll` recursively wrapped each step in async closures `async (context) => await this.execute(context)`. Chains of more than 3,500 nodes overflowed the V8 synchronous stack before microtasks could be released.
 
-#### Solução Implementada
-A classe `ResultTask` agora utiliza uma representação interna orientada a instruções (`TaskInstruction`):
-- `Succeed`, `Fail`, `Sync`, `Async` para os nós terminais.
-- `FlatMap`, `Map`, `CatchAll` para nós de composição.
+#### Implemented Solution
+The `ResultTask` class now uses an instruction-oriented internal representation (`TaskInstruction`):
+- `Succeed`, `Fail`, `Sync`, `Async` for terminal nodes.
+- `FlatMap`, `Map`, `CatchAll` for composition nodes.
 
-O runtime executa um loop iterativo (`runTaskLoop` com pilha explícita `TaskContinuation[]`):
-1. Desenrola os nós à esquerda de forma puramente iterativa sem aninhar frames na pilha do JavaScript.
-2. Mantém o consumo da call stack do motor V8 em $O(1)$.
-3. Ao finalizar um nó folha, desempilha a continuação através do helper modular `applyContinuation`.
+The runtime executes an iterative loop (`runTaskLoop` with an explicit `TaskContinuation[]` stack):
+1. Unwinds left-leaning nodes purely iteratively without nesting frames on the JavaScript stack.
+2. Keeps V8 engine call stack consumption at $O(1)$.
+3. Upon completing a leaf node, pops the continuation through the modular helper `applyContinuation`.
 
-#### Validação e Resultados
-- Teste de estresse adicionado em `packages/resultar/tests/result-task.test.ts`:
-  - 10.000 `flatMap`s encadeados completam sem erro de pilha.
-  - 10.000 `map`s encadeados completam sem erro de pilha.
-  - 5.000 `map` + `flatMap` misturados completam sem erro de pilha.
-  - 5.000 `catchAll` encadeados completam com recuperação íntegra.
+#### Validation and Results
+- Stress test added in `packages/resultar/tests/result-task.test.ts`:
+  - 10,000 chained `flatMap`s complete without stack errors.
+  - 10,000 chained `map`s complete without stack errors.
+  - 5,000 mixed `map` + `flatMap` complete without stack errors.
+  - 5,000 chained `catchAll`s complete with intact recovery.
 
 ---
 
-### 3.2. Suíte de Benchmarks de `ResultTask`
+### 3.2. `ResultTask` Benchmark Suite
 
-Adicionado o arquivo `benchmarks/resultar-task-chains.ts` e o comando `pnpm --filter resultar-benchmarks run bench:task` (também acessível via `pnpm --filter resultar run bench:task`).
+Added the file `benchmarks/resultar-task-chains.ts` and the command `pnpm --filter resultar-benchmarks run bench:task` (also accessible via `pnpm --filter resultar run bench:task`).
 
-#### Resultados Obtidos (Node.js v24, Apple Silicon):
+#### Results Obtained (Node.js v24, Apple Silicon):
 
 ```text
 === ResultTask Chain Benchmarks ===
@@ -101,18 +101,18 @@ Adicionado o arquivo `benchmarks/resultar-task-chains.ts` e o comando `pnpm --fi
 
 ---
 
-### 3.3. `ResultTaskTypeId` Nominal e Covariância Explícita
+### 3.3. Nominal `ResultTaskTypeId` and Explicit Covariance
 
-- Declarado e exportado `ResultTaskTypeId: unique symbol = Symbol.for('resultar/ResultTask')` no pacote `resultar`.
-- `ResultTask` recebe modificadores de variância `out A, out E = never, out R = never` garantindo covariância em canais de sucesso, erro e dependências de ambiente.
-- Declaration merging compatível com `--isolatedDeclarations` e TypeScript 7.
-- Testes de tipo dedicados em `tests/result-task-types.test.ts` verificam que `ResultTask<AdminUser>` estende perfeitamente `ResultTask<BaseUser>` e `ResultTask<never, 'narrow'>` estende `ResultTask<never, string>`.
+- Declared and exported `ResultTaskTypeId: unique symbol = Symbol.for('resultar/ResultTask')` in the `resultar` package.
+- `ResultTask` takes variance modifiers `out A, out E = never, out R = never`, guaranteeing covariance across success, error, and environment-dependency channels.
+- Declaration merging compatible with `--isolatedDeclarations` and TypeScript 7.
+- Dedicated type tests in `tests/result-task-types.test.ts` verify that `ResultTask<AdminUser>` cleanly extends `ResultTask<BaseUser>` and `ResultTask<never, 'narrow'>` extends `ResultTask<never, string>`.
 
 ---
 
-## 4. Conformidade e Qualidade
+## 4. Conformance and Quality
 
-- **Compilação (`vp pack`):** Gera tipos TypeScript com zero avisos sob `isolatedDeclarations` e `erasableSyntaxOnly`.
-- **Linter & Formatação (`vp check`):** 100% limpo, sem violações de profundidade, complexidade ciclomática ou operadores proibidos.
-- **Suíte de Testes (`vp test`):** 494 testes passando em 26 arquivos.
-- **Cobertura de Código:** >95% global no pacote `resultar`.
+- **Compilation (`vp pack`):** Generates TypeScript types with zero warnings under `isolatedDeclarations` and `erasableSyntaxOnly`.
+- **Linter & Formatting (`vp check`):** 100% clean, with no depth, cyclomatic complexity, or forbidden-operator violations.
+- **Test Suite (`vp test`):** 494 tests passing across 26 files.
+- **Code Coverage:** >95% global in the `resultar` package.

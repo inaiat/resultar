@@ -1,55 +1,55 @@
-# RFC 0002: Lifetimes explícitos e escopos de requisição (resultar-di)
+# RFC 0002: Explicit lifetimes and request scopes (resultar-di)
 
-- Status: implementado no `resultar-di`; adapter Hono e cache concorrente continuam fora do pacote.
-- Data: 2026-09-05.
-- Contexto: migração do Replis e exemplo Hono em `examples/hono`.
-- Referência: Awilix 13.0.5 instalado no Replis e documentação oficial consultada nesta data.
+- Status: implemented in `resultar-di`; Hono adapter and concurrent cache remain outside the package.
+- Date: 2026-09-05.
+- Context: private consumer migration and Hono example in `examples/hono`.
+- Reference: Awilix 13.0.5 installed in a private consumer with the official documentation consulted on this date.
 
-## Problema observado
+## Observed problem
 
-O registro síncrono deve comunicar diretamente quanto tempo uma instância é compartilhada.
-A API usa `singleton`, `scoped` e `transient`, cada um com nome, dependências e função de criação.
-Scopes filhos compartilham os singletons da raiz; execuções de `module.use` criam raízes independentes.
+Synchronous registration must directly communicate how long an instance is shared.
+The API uses `singleton`, `scoped`, and `transient`, each with a name, dependencies, and creation function.
+Child scopes share the root's singletons; `module.use` executions create independent roots.
 
-Outro problema era exigir `ResultTask.runResult` em cada rota do exemplo. Os métodos agora retornam
-`ResultAsync`, permitindo `await users.remove(id)`. Isso melhora a chamada HTTP, mas não cria um
-escopo de DI nem cancelamento automático. São decisões independentes.
+Another problem was requiring `ResultTask.runResult` on every route of the example. Methods now return
+`ResultAsync`, allowing `await users.remove(id)`. This improves the HTTP call, but does not create a
+DI scope or automatic cancellation. Those are independent decisions.
 
-## Comparação com Awilix
+## Comparison with Awilix
 
-| Funcionalidade Awilix                    | Situação no resultar-di                                           | Direção              |
+| Awilix feature                         | Status in resultar-di                                          | Direction                 |
 | ---------------------------------------- | ----------------------------------------------------------------- | -------------------- |
-| Valores, funções e classes               | `value`, `singleton`, `scoped`, `transient`; tokens via `Service` | Manter               |
-| Singleton, scoped e transient            | Métodos síncronos dedicados; `lifetime` em `task` e `resource`    | Implementado         |
-| Scopes filhos e registros locais         | `scope()` cria raiz; `scope.use()` cria filhos                    | Implementado         |
-| Strict mode para lifetimes incompatíveis | Validação em runtime com lifetimes                                | Implementado         |
-| Disposers                                | Recursos com finalização via ResultTask                           | Preservar            |
-| `aliasTo`, `build`, `hasRegistration`    | Sem equivalentes dedicados                                        | Avaliar por uso real |
-| `PROXY`, `CLASSIC`, injeções locais      | Lista explícita de dependências e closures                        | Manter explícito     |
-| `loadModules`                            | Sem descoberta por arquivos                                       | Adiar                |
+| Values, functions, and classes           | `value`, `singleton`, `scoped`, `transient`; tokens via `Service` | Keep                 |
+| Singleton, scoped, and transient         | Dedicated sync methods; `lifetime` in `task` and `resource`       | Implemented          |
+| Child scopes and local registrations     | `scope()` creates a root; `scope.use()` creates children          | Implemented          |
+| Strict mode for incompatible lifetimes   | Runtime validation with lifetimes                                 | Implemented          |
+| Disposers                                | Resources with finalization via ResultTask                        | Keep                  |
+| `aliasTo`, `build`, `hasRegistration`    | No dedicated equivalents                                          | Evaluate against real usage |
+| `PROXY`, `CLASSIC`, local injections     | Explicit dependency list and closures                             | Keep explicit        |
+| `loadModules`                            | No file-based discovery                                           | Defer                |
 
-Essas funcionalidades estão descritas na [documentação do Awilix](https://github.com/jeffijoe/awilix#table-of-contents).
-O [container](https://github.com/jeffijoe/awilix/blob/master/src/container.ts) mantém cache de singleton
-na raiz e cache scoped por scope; transients não entram no cache. O dispose percorre o cache local
-em paralelo e não fecha scopes filhos. No Resultar, manter finalização ordenada e causas compostas
-continua sendo um requisito, inclusive para recursos transients.
+These features are described in the [Awilix documentation](https://github.com/jeffijoe/awilix#table-of-contents).
+The [container](https://github.com/jeffijoe/awilix/blob/master/src/container.ts) keeps a singleton cache
+at the root and a scoped cache per scope; transients never enter the cache. Disposal walks the local cache
+in parallel and does not close child scopes. In Resultar, keeping ordered finalization and composite causes
+remains a requirement, including for transient resources.
 
-## Separar as três escolhas
+## Separating the three choices
 
-1. **Criação:** valor existente, função síncrona, inicialização task ou aquisição com release.
-2. **Lifetime:** singleton da aplicação, scoped por operação/requisição, transient por resolução.
-3. **Métodos:** `Result` síncrono, `ResultAsync` aguardável ou `ResultTask` lazy conforme o contrato.
+1. **Creation:** existing value, sync function, task initialization, or acquisition with release.
+2. **Lifetime:** application singleton, scoped per operation/request, transient per resolution.
+3. **Methods:** synchronous `Result`, awaitable `ResultAsync`, or lazy `ResultTask` depending on the contract.
 
-Uma factory pode criar um singleton. Um resource também pode ser singleton ou scoped. `release`
-não define quantas instâncias existirão; define como encerrar cada recurso adquirido.
+A factory can create a singleton. A resource can also be singleton or scoped. `release`
+does not define how many instances will exist; it defines how to shut down each acquired resource.
 
-`ResultTask` permanece lazy e não vira thenable. Serviços aguardáveis usam `ResultAsync`; operações
-de I/O desses serviços devem propagar cancelamento explicitamente quando necessário. As rotas
-aguardam operações antes de encerrar seu scope, sem disparar trabalho que fique sem dono.
+`ResultTask` stays lazy and never becomes a thenable. Awaitable services use `ResultAsync`; I/O
+operations of those services must propagate cancellation explicitly when needed. Routes
+await operations before closing their scope, without firing off orphaned work.
 
-## API implementada
+## Implemented API
 
-Exemplo executável:
+Executable example:
 
 ```ts
 createModule()
@@ -63,7 +63,7 @@ createModule()
   .transient("operation", [], createOperation);
 ```
 
-Para serviços com dependências próprias, o token de classe elimina a repetição da lista de nomes:
+For services with their own dependencies, the class token eliminates repetition of the name list:
 
 ```ts
 interface UsersService {
@@ -80,75 +80,75 @@ class Users extends Service<UsersService>()("users", {
 createModule().singleton(Cache).scoped(Users);
 ```
 
-`Service` preserva o identificador literal e o contrato do serviço. `yield* Cache` também aparece
-no requisito de tipos do `make`; ao registrar `Users`, o resolver do módulo satisfaz esse requisito
-por identificador, aplica a validação de lifetime e mantém a inferência do serviço disponível em
-`use`. O método (`singleton`, `scoped` ou `transient`) continua sendo a única escolha de escopo.
+`Service` preserves the literal identifier and the service contract. `yield* Cache` also appears
+in the `make` type requirement; when registering `Users`, the module resolver satisfies that requirement
+by identifier, applies lifetime validation, and keeps the service inference available in
+`use`. The method (`singleton`, `scoped`, or `transient`) remains the only scope choice.
 
-`singleton`, `scoped` e `transient` escolhem o lifetime no próprio método, sem quarto argumento.
-`task` e `resource` mantêm a opção `lifetime` e usam `scoped` por padrão. A função de criação
-continua sendo uma factory; o método de registro comunica como sua instância será compartilhada.
+`singleton`, `scoped`, and `transient` choose the lifetime in the method itself, with no fourth argument.
+`task` and `resource` keep the `lifetime` option and default to `scoped`. The creation
+function remains a factory; the registration method communicates how its instance will be shared.
 
-Uma raiz de aplicação é aberta com `const application = module.scope()`. Cada
-`application.use(...)` resolve um filho e o fecha ao terminar. O encerramento da raiz é explícito:
+An application root is opened with `const application = module.scope()`. Each
+`application.use(...)` resolves a child and closes it when done. Closing the root is explicit:
 `await ResultTask.runPromise(application.close())`.
 
-## Ownership e caches
+## Ownership and caches
 
-- O módulo é uma descrição imutável. Cada execução de `module.use` cria seu próprio runtime raiz;
-  o módulo não armazena instâncias singleton entre execuções.
-- Singletons pertencem à raiz e são compartilhados entre suas requisições. Aquisição e finalização
-  acontecem no scope da raiz, mesmo se a demanda vier de um filho.
-- Cada scope filho recebe definições herdadas e um cache scoped próprio. Entradas locais tipadas,
-  como usuário autenticado, tenant e requestId, ainda dependem de um adapter de framework.
-- Transients são criados em cada resolução/injeção. Isso não significa uma nova instância em cada
-  chamada de método. Cada aquisição com release pertence ao scope que a solicitou.
-- `value` e substituições por valor continuam sendo referências externas, sem cleanup automático.
-- Overrides de testes criam aplicações independentes. Overrides de requisição não podem alterar
-  singletons já construídos nem contaminar o cache da raiz.
-- Demandas concorrentes pelo mesmo singleton/scoped compartilham a aquisição em andamento.
-  Falhas permitem retry; cancelar um consumidor não cancela a inicialização de outro.
+- The module is an immutable description. Each `module.use` execution creates its own root runtime;
+  the module does not store singleton instances across executions.
+- Singletons belong to the root and are shared across its requests. Acquisition and finalization
+  happen in the root scope, even when demand comes from a child.
+- Each child scope receives inherited definitions and its own scoped cache. Typed local entries,
+  such as the authenticated user, tenant, and requestId, still depend on a framework adapter.
+- Transients are created on each resolution/injection. That does not mean a new instance on each
+  method call. Each acquisition with release belongs to the scope that requested it.
+- `value` and value overrides remain external references, with no automatic cleanup.
+- Test overrides create independent applications. Request overrides cannot change
+  already-built singletons nor contaminate the root cache.
+- Concurrent demands for the same singleton/scoped share the in-flight acquisition.
+  Failures allow retry; cancelling one consumer does not cancel another's initialization.
 
-## Validação de lifetimes
+## Lifetime validation
 
-Adotar validação estrita por padrão: um singleton não captura scoped/transient e um scoped não
-captura transient. A regra cobre cada par durante a resolução e falha com `Die(TypeError)` antes
-de entregar o serviço incompatível.
+Adopt strict validation by default: a singleton does not capture scoped/transient, and a scoped does not
+capture transient. The rule covers each pair during resolution and fails with `Die(TypeError)` before
+delivering the incompatible service.
 
-As dependências e os nomes são validados durante a composição; os lifetimes são validados em
-runtime para também proteger chamadas JavaScript. Isso impede que um singleton guarde o tenant da
-primeira requisição. O [strict mode do Awilix](https://github.com/jeffijoe/awilix#strict-mode) orienta essa proteção.
+Dependencies and names are validated during composition; lifetimes are validated at
+runtime to also protect JavaScript callers. This prevents a singleton from holding the first
+request's tenant. The [Awilix strict mode](https://github.com/jeffijoe/awilix#strict-mode) guides this protection.
 
-## Integração Hono
+## Hono integration
 
-Um adapter opcional mantém o runtime da aplicação e abre um filho por requisição. O caminho comum
-da rota continua sendo `await users.remove(id)`, com contratos pequenos e tipados. A integração
-não adiciona dependência obrigatória de Hono ao pacote base.
+An optional adapter keeps the application runtime and opens one child per request. The route's common
+path remains `await users.remove(id)`, with small typed contracts. The integration
+does not add a mandatory Hono dependency to the base package.
 
-Fechar a raiz encerra seus recursos singleton. O adapter deverá parar de aceitar requisições e
-aguardar os filhos antes de chamar `scope.close()`.
-Para streaming/SSE, retornar um `Response` não significa que o uso dos recursos terminou: o scope
-precisa acompanhar conclusão/cancelamento do corpo. Não implementar cleanup apenas no `finally`
-de um middleware e declarar suporte a streaming sem validar esse comportamento.
+Closing the root shuts down its singleton resources. The adapter should stop accepting requests and
+wait for children before calling `scope.close()`.
+For streaming/SSE, returning a `Response` does not mean resource usage has ended: the scope
+must track completion/cancellation of the body. Do not implement cleanup only in a middleware
+`finally`, and do not declare streaming support without validating this behavior.
 
-## Critérios de entrega
+## Delivery criteria
 
-- Duas requisições compartilham database singleton e recebem serviços scoped distintos. **Coberto pelo runtime.**
-- Dentro de uma requisição, consumidores compartilham o mesmo scoped; transients são distintos. **Coberto pelo runtime.**
-- Duas execuções da mesma aplicação não compartilham singleton por acidente. **Coberto pelo runtime.**
-- Contextos de tenants diferentes não se misturam, mesmo com requisições concorrentes.
-- Aquisição concorrente compartilha uma instância; falhas não deixam caches inutilizáveis.
-- Falha parcial, erro da rota e interrupção liberam cada recurso exatamente uma vez.
-- Um filho não encerra singleton da raiz. **Coberto pelo runtime.** O fechamento da raiz aguarda os filhos ativos.
-- Testes de tipos preservam erros de aquisição/release, entradas locais e requisitos externos.
+- Two requests share the singleton database and receive distinct scoped services. **Covered by the runtime.**
+- Within one request, consumers share the same scoped; transients are distinct. **Covered by the runtime.**
+- Two runs of the same application do not share a singleton by accident. **Covered by the runtime.**
+- Different tenant contexts do not mix, even with concurrent requests.
+- Concurrent acquisition shares one instance; failures do not leave caches unusable.
+- Partial failure, route error, and interruption release each resource exactly once.
+- A child does not shut down the root's singleton. **Covered by the runtime.** Closing the root waits for active children.
+- Type tests preserve acquisition/release errors, local entries, and external requirements.
 
-Aquisição concorrente compartilhada, retry, rollback parcial e espera pelos filhos estão implementados
-e cobertos por testes de regressão.
+Shared concurrent acquisition, retry, partial rollback, and waiting for children are implemented
+and covered by regression tests.
 
-O adapter Fetch foi implementado em `ServiceScope.fetch`, com testes de streaming, cancelamento,
-falha do corpo, resposta vazia e falha do handler. O exemplo Hono usa um filho por request.
-`withServices` fornece valores locais tipados e `merge` compõe módulos imutáveis sem colisões.
-`service` e `resource` criam tokens sem classes; o método de registro escolhe o lifetime.
-A inferência segue dependências selecionadas por até oito níveis; além disso usa uma união
-conservadora para limitar o trabalho do compilador. `close` preserva erros de cleanup.
-Aliases permanecem fora do escopo atual.
+The Fetch adapter was implemented in `ServiceScope.fetch`, with streaming, cancellation,
+body failure, empty response, and handler failure tests. The Hono example uses one child per request.
+`withServices` provides typed local values and `merge` composes immutable modules without collisions.
+`service` and `resource` create tokens without classes; the registration method chooses the lifetime.
+Inference follows selected dependencies up to eight levels; beyond that it uses a
+conservative union to limit compiler work. `close` preserves cleanup errors.
+Aliases remain out of scope.

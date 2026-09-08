@@ -9,8 +9,8 @@
     "smoke": "pnpm run build:deps && pnpm run check && node --import tsx scripts/smoke.ts"
   },
   "dependencies": {
-    "@hono/node-server": "2.0.9",
-    "hono": "4.12.30",
+    "@hono/node-server": "2.1.1",
+    "hono": "catalog:",
     "resultar": "workspace:*",
     "resultar-di": "workspace:*",
     "resultar-hono": "workspace:*"

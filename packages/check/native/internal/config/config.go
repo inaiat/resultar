@@ -48,6 +48,11 @@ type Options struct {
 	UnsafeResultTypeAssertion        Severity
 	YieldStarInSafeTry               Severity
 	YieldStarInResultTaskGen         Severity
+	NoInvalidLifetime                Severity
+	NoUnscopedAcquireRelease         Severity
+	NoResultInTaskGen                Severity
+	NoAwaitInResultTaskGen           Severity
+	NoThrowInTaskSync                Severity
 }
 
 // FileOverride applies diagnostic severities to files matching one of its
@@ -92,6 +97,11 @@ func Defaults() Options {
 		UnsafeResultTypeAssertion:        SeverityWarning,
 		YieldStarInSafeTry:               SeverityWarning,
 		YieldStarInResultTaskGen:         SeverityWarning,
+		NoInvalidLifetime:                SeverityWarning,
+		NoUnscopedAcquireRelease:         SeverityWarning,
+		NoResultInTaskGen:                SeverityWarning,
+		NoAwaitInResultTaskGen:           SeverityWarning,
+		NoThrowInTaskSync:                SeverityWarning,
 		FailOn:                           SeverityMessage,
 	}
 }
@@ -316,6 +326,21 @@ func applyPlugin(options *Options, plugin map[string]any) error {
 	if err := setSeverity(plugin, "yieldStarInResultTaskGen", &options.YieldStarInResultTaskGen); err != nil {
 		return err
 	}
+	if err := setSeverity(plugin, "noInvalidLifetime", &options.NoInvalidLifetime); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "noUnscopedAcquireRelease", &options.NoUnscopedAcquireRelease); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "noResultInTaskGen", &options.NoResultInTaskGen); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "noAwaitInResultTaskGen", &options.NoAwaitInResultTaskGen); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "noThrowInTaskSync", &options.NoThrowInTaskSync); err != nil {
+		return err
+	}
 	if value, ok := plugin["noDiscardMode"]; ok {
 		mode, ok := value.(string)
 		if !ok || (mode != "must-use" && mode != "direct") {
@@ -417,7 +442,9 @@ var ruleNames = map[string]struct{}{
 	"noawaitinsafetry": {}, "nodiscard": {}, "nopromiseinresultsuccess": {},
 	"notaggederrorconstructoroverride": {}, "nothrow": {}, "notrycatch": {},
 	"notrycatchinsafetry": {}, "nounknownresulterror": {}, "nouselessrecovery": {},
-	"nounsafeawait": {}, "preferandthen": {}, "prefercatchreason": {},
+	"nounsafeawait": {}, "noinvalidlifetime": {}, "nounscopedacquirerelease": {},
+	"noresultintaskgen": {}, "noawaitinresulttaskgen": {}, "nothrowintasksync": {},
+	"preferandthen": {}, "prefercatchreason": {},
 	"preferfirstsuccessof": {}, "prefermap": {}, "prefermaperr": {},
 	"preferresultforeach": {}, "prefertaggederror": {}, "taggederrornamematch": {},
 	"typedcatchmapper": {}, "unsaferesulttypeassertion": {}, "yieldstarinsafetry": {},
@@ -470,6 +497,16 @@ func setRuleSeverity(options *Options, name string, value Severity) error {
 		options.YieldStarInSafeTry = value
 	case "yieldstarinresulttaskgen":
 		options.YieldStarInResultTaskGen = value
+	case "noinvalidlifetime":
+		options.NoInvalidLifetime = value
+	case "nounscopedacquirerelease":
+		options.NoUnscopedAcquireRelease = value
+	case "noresultintaskgen":
+		options.NoResultInTaskGen = value
+	case "noawaitinresulttaskgen":
+		options.NoAwaitInResultTaskGen = value
+	case "nothrowintasksync":
+		options.NoThrowInTaskSync = value
 	default:
 		return fmt.Errorf("unknown diagnostic rule %q", name)
 	}

@@ -55,7 +55,7 @@
     "@vitest/coverage-v8": "catalog:",
     "@vitest/ui": "catalog:",
     "fallow": "catalog:",
-    "hono": "4.12.30",
+    "hono": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:",

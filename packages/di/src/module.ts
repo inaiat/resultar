@@ -59,6 +59,17 @@ type LiteralKeys<Keys extends readonly string[]> =
     : number extends Keys["length"]
       ? never
       : { readonly [Index in keyof Keys]: LiteralName<Keys[Index]> };
+type CheckDependencies<Services extends object, Keys extends readonly unknown[]> =
+  Exclude<Keys[number], KeysOf<Services> | undefined> extends never
+    ? unknown
+    : {
+        readonly unknownService: Exclude<
+          Keys[number],
+          KeysOf<Services> | undefined
+        > extends infer Dependency extends string
+          ? `Service "${Dependency}" is not registered; register it before listing it as a dependency`
+          : `Dependencies must be registered service names`;
+      };
 type SyncValue<A> = A extends PromiseLike<unknown> | ResultTask<unknown, unknown, unknown>
   ? never
   : A;
@@ -107,14 +118,16 @@ type DependencyParameter<
 
 type RegisterSync<Services extends object, E, R, G extends Graph, Primary extends boolean> = <
   const Name extends string,
-  const Keys extends readonly KeysOf<Services>[],
-  Create extends (services: Readonly<Pick<Services, Keys[number]>>) => unknown,
+  const Keys extends readonly string[],
+  Create extends (services: Readonly<Pick<Services, Keys[number] & keyof Services>>) => unknown,
 >(
   name: Name & NewName<Services, Name>,
-  dependencies: Keys & LiteralKeys<Keys>,
+  dependencies: Keys & LiteralKeys<Keys> & CheckDependencies<Services, Keys>,
   create: Create &
     DependencyParameter<Keys, Parameters<Create>> &
-    ((services: Readonly<Pick<Services, Keys[number]>>) => SyncValue<ReturnType<Create>>),
+    ((
+      services: Readonly<Pick<Services, Keys[number] & keyof Services>>,
+    ) => SyncValue<ReturnType<Create>>),
 ) => ModuleFor<
   Services & Readonly<Record<Name, ReturnType<Create>>>,
   E,
@@ -266,14 +279,16 @@ export interface ServiceModule<
   /** Initializes on demand with a ResultTask. Defaults to `scoped`. */
   readonly task: <
     const Name extends string,
-    const Keys extends readonly KeysOf<Services>[],
+    const Keys extends readonly string[],
     A,
     TaskError = never,
     TaskR = never,
   >(
     name: Name & NewName<Services, Name>,
-    dependencies: Keys & LiteralKeys<Keys>,
-    create: (services: Readonly<Pick<Services, Keys[number]>>) => ResultTask<A, TaskError, TaskR>,
+    dependencies: Keys & LiteralKeys<Keys> & CheckDependencies<Services, Keys>,
+    create: (
+      services: Readonly<Pick<Services, Keys[number] & keyof Services>>,
+    ) => ResultTask<A, TaskError, TaskR>,
     options?: ServiceRegistrationOptions,
   ) => ModuleFor<
     Services & Readonly<Record<Name, A>>,
@@ -286,7 +301,7 @@ export interface ServiceModule<
   /** Acquires on demand and registers release with the selected lifetime owner. */
   readonly resource: <
     const Name extends string,
-    const Keys extends readonly KeysOf<Services>[],
+    const Keys extends readonly string[],
     A,
     AcquireError = never,
     AcquireR = never,
@@ -294,15 +309,15 @@ export interface ServiceModule<
     ReleaseR = never,
   >(
     name: Name & NewName<Services, Name>,
-    dependencies: Keys & LiteralKeys<Keys>,
+    dependencies: Keys & LiteralKeys<Keys> & CheckDependencies<Services, Keys>,
     options: ServiceRegistrationOptions & {
       readonly acquire: (
-        services: Readonly<Pick<Services, Keys[number]>>,
+        services: Readonly<Pick<Services, Keys[number] & keyof Services>>,
       ) => ResultTask<A, AcquireError, AcquireR>;
       readonly release: (
         resource: A,
         exit: Exit<unknown, unknown>,
-        services: Readonly<Pick<Services, Keys[number]>>,
+        services: Readonly<Pick<Services, Keys[number] & keyof Services>>,
       ) => ResultTask<void, ReleaseError, ReleaseR>;
     },
   ) => ModuleFor<
