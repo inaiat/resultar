@@ -846,6 +846,12 @@ func (a *Analyzer) isSafeAwaitExpression(expression *ast.Node, ignoredCalls map[
 		if _, ok := ignoredCalls[path]; ok {
 			return true
 		}
+		if isResultTaskStaticCall(unwrapped.AsCallExpression().Expression, "runExit") {
+			arguments := unwrapped.AsCallExpression().Arguments.Nodes
+			if len(arguments) > 0 && everyUnionPart(a.checker.GetTypeAtLocation(arguments[0]), isResultTaskLikeType) {
+				return true
+			}
+		}
 		if expressionName(unwrapped.AsCallExpression().Expression) == "runPromise" {
 			arguments := unwrapped.AsCallExpression().Arguments.Nodes
 			if len(arguments) > 0 && everyUnionPart(a.checker.GetTypeAtLocation(arguments[0]), isResultAsyncLikeType) {
@@ -1358,4 +1364,250 @@ func isReturnValueContainer(parent, child *ast.Node) bool {
 		return conditional.WhenTrue == child || conditional.WhenFalse == child
 	}
 	return false
+}
+
+var diLifetimeRank = map[string]int{
+	"value": -1, "transient": 0, "scoped": 1, "singleton": 2,
+}
+
+type diRegistration struct {
+	name     string
+	lifetime string
+	deps     []*ast.Node
+	depNames []string
+}
+
+func diStringArgument(args []*ast.Node, index int) (string, bool) {
+	if index >= len(args) {
+		return "", false
+	}
+	node := unwrapExpression(args[index])
+	if node == nil || node.Kind != ast.KindStringLiteral {
+		return "", false
+	}
+	return node.AsStringLiteral().Text, true
+}
+
+func diDependencyLiterals(args []*ast.Node, index int) ([]*ast.Node, []string) {
+	if index >= len(args) {
+		return nil, nil
+	}
+	array := unwrapExpression(args[index])
+	if array == nil || array.Kind != ast.KindArrayLiteralExpression {
+		return nil, nil
+	}
+	nodes := make([]*ast.Node, 0)
+	names := make([]string, 0)
+	for _, element := range array.Elements() {
+		element = unwrapExpression(element)
+		if element == nil || element.Kind != ast.KindStringLiteral {
+			continue
+		}
+		nodes = append(nodes, element)
+		names = append(names, element.AsStringLiteral().Text)
+	}
+	return nodes, names
+}
+
+func diLifetimeOption(args []*ast.Node, index int) string {
+	if index >= len(args) {
+		return "scoped"
+	}
+	options := unwrapExpression(args[index])
+	if options == nil || options.Kind != ast.KindObjectLiteralExpression {
+		return "scoped"
+	}
+	for _, property := range options.AsObjectLiteralExpression().Properties.Nodes {
+		if property.Kind != ast.KindPropertyAssignment || property.Name() == nil || property.Name().Text() != "lifetime" {
+			continue
+		}
+		if value, ok := diStringArgument([]*ast.Node{property.AsPropertyAssignment().Initializer}, 0); ok {
+			if _, known := diLifetimeRank[value]; known {
+				return value
+			}
+		}
+	}
+	return "scoped"
+}
+
+func (a *Analyzer) noInvalidLifetime(file *ast.SourceFile) []Finding {
+	lifetimes := make(map[string]string)
+	registrations := make([]diRegistration, 0)
+	visit(file.AsNode(), func(node *ast.Node) {
+		method, _, _ := methodCall(node)
+		if method == "" {
+			return
+		}
+		args := node.AsCallExpression().Arguments.Nodes
+		switch method {
+		case "singleton", "scoped", "transient":
+			name, ok := diStringArgument(args, 0)
+			if !ok {
+				return
+			}
+			nodes, names := diDependencyLiterals(args, 1)
+			lifetimes[name] = method
+			registrations = append(registrations, diRegistration{name: name, lifetime: method, deps: nodes, depNames: names})
+		case "task":
+			name, ok := diStringArgument(args, 0)
+			if !ok {
+				return
+			}
+			lifetime := diLifetimeOption(args, 3)
+			nodes, names := diDependencyLiterals(args, 1)
+			lifetimes[name] = lifetime
+			registrations = append(registrations, diRegistration{name: name, lifetime: lifetime, deps: nodes, depNames: names})
+		case "resource":
+			name, ok := diStringArgument(args, 0)
+			if !ok {
+				return
+			}
+			lifetime := diLifetimeOption(args, 2)
+			nodes, names := diDependencyLiterals(args, 1)
+			lifetimes[name] = lifetime
+			registrations = append(registrations, diRegistration{name: name, lifetime: lifetime, deps: nodes, depNames: names})
+		case "value":
+			name, ok := diStringArgument(args, 0)
+			if !ok {
+				return
+			}
+			lifetimes[name] = "value"
+		}
+	})
+	findings := make([]Finding, 0)
+	for _, registration := range registrations {
+		requesterRank, ok := diLifetimeRank[registration.lifetime]
+		if !ok {
+			continue
+		}
+		for index, depName := range registration.depNames {
+			depLifetime, known := lifetimes[depName]
+			if !known || depLifetime == "value" {
+				continue
+			}
+			if depRank, ok := diLifetimeRank[depLifetime]; !ok || requesterRank <= depRank {
+				continue
+			}
+			findings = append(findings, newFinding(file, registration.deps[index], "no-invalid-lifetime", a.options.NoInvalidLifetime,
+				fmt.Sprintf("Lifetime violation: %s %q cannot depend on shorter-lived %s %q. Align their lifetimes or pass request data to a service method.", registration.lifetime, registration.name, depLifetime, depName), ""))
+		}
+	}
+	return findings
+}
+
+func acquiresScopeOwner(node *ast.Node) bool {
+	for parent := node.Parent; parent != nil; parent = parent.Parent {
+		if parent.Kind == ast.KindCallExpression {
+			call := parent.AsCallExpression()
+			if isResultTaskStaticCall(call.Expression, "scoped") {
+				return true
+			}
+			if method, _, _ := methodCall(parent); method == "task" || method == "resource" {
+				return true
+			}
+		}
+		if (parent.Kind == ast.KindPropertyAssignment || parent.Kind == ast.KindMethodDeclaration) && parent.Name() != nil {
+			switch parent.Name().Text() {
+			case "make", "acquire", "release":
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (a *Analyzer) noUnscopedAcquireRelease(file *ast.SourceFile) []Finding {
+	findings := make([]Finding, 0)
+	visit(file.AsNode(), func(node *ast.Node) {
+		body := resultTaskGenBody(node)
+		if body == nil {
+			return
+		}
+		visitFunctionBody(body, func(bodyNode *ast.Node) {
+			if bodyNode.Kind != ast.KindYieldExpression || bodyNode.AsYieldExpression().AsteriskToken == nil {
+				return
+			}
+			yielded := unwrapExpression(bodyNode.AsYieldExpression().Expression)
+			if yielded == nil || yielded.Kind != ast.KindCallExpression || !isResultTaskStaticCall(yielded.AsCallExpression().Expression, "acquireRelease") {
+				return
+			}
+			if acquiresScopeOwner(yielded) {
+				return
+			}
+			findings = append(findings, newFinding(file, yielded, "no-unscoped-acquire-release", a.options.NoUnscopedAcquireRelease,
+				"`acquireRelease` registers its release in the current scope. Ensure an enclosing `ResultTask.scoped(...)` closes it, or record the owning scope with a suppression comment.", ""))
+		})
+	})
+	return findings
+}
+
+func (a *Analyzer) noResultInTaskGen(file *ast.SourceFile) []Finding {
+	findings := make([]Finding, 0)
+	visit(file.AsNode(), func(node *ast.Node) {
+		body := resultTaskGenBody(node)
+		if body == nil {
+			return
+		}
+		visitFunctionBody(body, func(bodyNode *ast.Node) {
+			if bodyNode.Kind != ast.KindReturnStatement {
+				return
+			}
+			returned := bodyNode.AsReturnStatement().Expression
+			if returned == nil {
+				return
+			}
+			if !isOkConstructorCall(returned) && !isErrConstructorCall(returned) && !isResultLikeType(a.checker.GetTypeAtLocation(returned)) {
+				return
+			}
+			findings = append(findings, newFinding(file, returned, "no-result-in-task-gen", a.options.NoResultInTaskGen,
+				"Return the plain success value from `ResultTask.gen`; use `yield*` for tasks and services so failures short-circuit instead of nesting a Result in the success channel.", ""))
+		})
+	})
+	return findings
+}
+
+func (a *Analyzer) noAwaitInResultTaskGen(file *ast.SourceFile) []Finding {
+	findings := make([]Finding, 0)
+	visit(file.AsNode(), func(node *ast.Node) {
+		body := resultTaskGenBody(node)
+		if body == nil {
+			return
+		}
+		visitFunctionBody(body, func(bodyNode *ast.Node) {
+			if bodyNode.Kind == ast.KindAwaitExpression {
+				finding := newFinding(file, bodyNode, "no-await-in-result-task-gen", a.options.NoAwaitInResultTaskGen,
+					"Do not use `await` inside `ResultTask.gen`. Use `yield*` for tasks and services so composition stays lazy and typed.", "")
+				if isResultLikeType(a.checker.GetTypeAtLocation(bodyNode.Expression())) {
+					finding.Fixes = []Fix{replaceTokenFix(file, bodyNode, "Use yield* for this ResultTask value", "yield*")}
+				}
+				findings = append(findings, finding)
+			}
+		})
+	})
+	return findings
+}
+
+func (a *Analyzer) noThrowInTaskSync(file *ast.SourceFile) []Finding {
+	findings := make([]Finding, 0)
+	visit(file.AsNode(), func(node *ast.Node) {
+		if node.Kind != ast.KindCallExpression || !isResultTaskStaticCall(node.AsCallExpression().Expression, "sync") {
+			return
+		}
+		args := node.AsCallExpression().Arguments.Nodes
+		if len(args) == 0 {
+			return
+		}
+		callback := unwrapExpression(args[0])
+		if callback == nil || (callback.Kind != ast.KindArrowFunction && callback.Kind != ast.KindFunctionExpression) {
+			return
+		}
+		visitFunctionBody(callback, func(bodyNode *ast.Node) {
+			if bodyNode.Kind != ast.KindThrowStatement {
+				return
+			}
+			findings = append(findings, newFinding(file, bodyNode, "no-throw-in-task-sync", a.options.NoThrowInTaskSync,
+				"Throwing inside `ResultTask.sync` creates a defect (`Die`), not a typed failure. Use `ResultTask.try` with a catch mapper so failures stay in the typed error channel.", ""))
+		})
+	})
+	return findings
 }

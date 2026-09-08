@@ -6,6 +6,7 @@ const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const packages = [
   "packages/resultar",
+  "packages/di",
   "packages/request",
   "packages/request-typebox",
   "packages/request-zod",

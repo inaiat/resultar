@@ -2640,7 +2640,8 @@ recovery. Choose it when you want those pieces without adopting a full applicati
 Resultar keeps the scope narrow: explicit error values, typed expected failures, and composable
 recovery. It avoids APIs that would turn the package into an application framework.
 
-- No generator-based runtime DSL.
+- No Effect-style runtime DSL: no Layer, scheduler, or fiber runtime. (`Result.gen` and
+  `ResultTask.gen` are linear syntax over the existing model, not a separate runtime.)
 - No schedule engine in core.
 - No config, cache, request resolver, resource, fiber, or service runtime.
 - No inherited concurrency, standalone interruption hooks, detached background interruption, or
@@ -2659,10 +2660,12 @@ import {
   AbortError,
   Result,
   ResultAsync,
+  ResultTask,
   createTaggedError,
   err,
   errAsync,
   findCause,
+  fromCallback,
   fromPromise,
   fromSafePromise,
   fromThrowable,
@@ -2670,13 +2673,17 @@ import {
   isAbortError,
   isError,
   isRedacted,
+  isServiceTag,
   matchError,
   matchErrorPartial,
   ok,
   okAsync,
   redact,
   revealRedacted,
+  runPromise,
+  runSync,
   safeTry,
+  serviceTag,
   taggedEnum,
   tryResult,
   tryResultAsync,
@@ -2712,6 +2719,7 @@ The intended runtime aliases are:
 - `tryResultAsync` and `tryAsync` are the same async helper.
 - `tryCatch` and `tryCatchAsync` remain exported as backward-compatible aliases. Prefer
   `tryResult` and `tryResultAsync` in new code.
+- `Result.gen` is the canonical linear-workflow constructor; `safeTry` remains as its alias.
 
 Not part of the current API:
 

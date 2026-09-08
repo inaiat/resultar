@@ -9,6 +9,7 @@ const registry = "https://jsr.io";
 
 const packages = [
   "packages/resultar",
+  "packages/di",
   "packages/request",
   "packages/request-typebox",
   "packages/request-zod",

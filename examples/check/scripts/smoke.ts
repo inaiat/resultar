@@ -8,15 +8,20 @@ const require = createRequire(import.meta.url);
 const launcher = join(dirname(require.resolve("resultar-check/schema.json")), "dist", "cli.js");
 
 const expectedRules = [
+  "no-await-in-result-task-gen",
   "no-await-in-safe-try",
   "no-discard",
+  "no-invalid-lifetime",
   "no-promise-in-result-success",
+  "no-result-in-task-gen",
   "no-tagged-error-constructor-override",
   "no-throw",
+  "no-throw-in-task-sync",
   "no-try-catch",
   "no-try-catch-in-safe-try",
   "no-unsafe-await",
   "no-unknown-result-error",
+  "no-unscoped-acquire-release",
   "no-useless-recovery",
   "prefer-and-then",
   "prefer-catch-reason",
@@ -31,19 +36,21 @@ const expectedRules = [
   "yield-star-in-safe-try",
   "yield-star-in-result-task-gen",
 ] as const;
-
-type ExpectedRule = (typeof expectedRules)[number];
-
 const expectedCounts = {
+  "no-await-in-result-task-gen": 1,
   "no-await-in-safe-try": 1,
   "no-discard": 4,
+  "no-invalid-lifetime": 2,
   "no-promise-in-result-success": 2,
+  "no-result-in-task-gen": 2,
   "no-tagged-error-constructor-override": 1,
-  "no-throw": 3,
+  "no-throw": 4,
+  "no-throw-in-task-sync": 1,
   "no-try-catch": 2,
   "no-try-catch-in-safe-try": 1,
-  "no-unsafe-await": 5,
+  "no-unsafe-await": 6,
   "no-unknown-result-error": 2,
+  "no-unscoped-acquire-release": 1,
   "no-useless-recovery": 2,
   "prefer-and-then": 2,
   "prefer-catch-reason": 1,

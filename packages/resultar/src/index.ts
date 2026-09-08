@@ -76,11 +76,26 @@ export type {
 export { AbortError, isAbortError } from './abort-error.js'
 export { isRedacted, redact, revealRedacted } from './redacted.js'
 export type { Redacted } from './redacted.js'
-export { ResultTask } from './result-task.js'
+export {
+  isResultTask,
+  isServiceTag,
+  MissingServiceError,
+  ResultTask,
+  ResultTaskCauseError,
+  ResultTaskTypeId,
+  ResultTaskYieldTypeId,
+  serviceTag,
+  ServiceTagTypeId,
+} from './result-task.js'
 export type {
   Cause,
   Exit,
+  ResultTaskAcquireReleaseOptions,
+  ResultTaskMatchOptions,
   ResultTaskRunOptions,
+  ResultTaskScope,
+  ResultTaskScopeOwner,
+  ResultTaskServiceResolver,
   ResultTaskServices,
   ResultTaskTryOptions,
   ResultTaskTryPromiseOptions,

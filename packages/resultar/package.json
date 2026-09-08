@@ -1,6 +1,6 @@
 {
   "name": "resultar",
-  "version": "3.6.0",
+  "version": "3.7.0",
   "description": "Result pattern for TypeScript",
   "keywords": [
     "error-handling",
@@ -57,7 +57,8 @@
     "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts",
     "sync:jsr-version": "node scripts/sync-jsr-version.mjs && vp fmt jsr.json",
     "bench": "pnpm --filter resultar-benchmarks bench",
-    "bench:neverthrow": "pnpm --filter resultar-benchmarks bench:neverthrow"
+    "bench:neverthrow": "pnpm --filter resultar-benchmarks bench:neverthrow",
+    "bench:task": "pnpm --filter resultar-benchmarks run bench:task"
   },
   "devDependencies": {
     "@stryker-mutator/core": "catalog:",

@@ -33,6 +33,11 @@ The native backend implements these stable rule IDs and their tsconfig options:
 - `resultar/unsafe-result-type-assertion` (`unsafeResultTypeAssertion`)
 - `resultar/no-unsafe-await` (`noUnsafeAwait`, `noUnsafeAwaitMode`, `noUnsafeAwaitIgnoreCalls`)
 - `resultar/yield-star-in-result-task-gen` (`yieldStarInResultTaskGen`)
+- `resultar/no-invalid-lifetime` (`noInvalidLifetime`)
+- `resultar/no-unscoped-acquire-release` (`noUnscopedAcquireRelease`)
+- `resultar/no-result-in-task-gen` (`noResultInTaskGen`)
+- `resultar/no-await-in-result-task-gen` (`noAwaitInResultTaskGen`)
+- `resultar/no-throw-in-task-sync` (`noThrowInTaskSync`)
 - shared `ignoreFilePatterns`, `diagnosticSeverity`, `overrides`, and `failOn`
 
 ## Development

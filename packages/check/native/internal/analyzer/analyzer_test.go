@@ -139,6 +139,32 @@ throw new Error("reported too")
 	}
 }
 
+func TestCapitalizedSuppressions(t *testing.T) {
+	directory := writeFixture(t, `
+// Resultar-check-disable-next-line no-throw
+throw new Error("allowed here")
+throw new Error("reported too")
+`)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("unexpected TypeScript diagnostics: %v", diagnostics)
+	}
+	options := config.Defaults()
+	options.NoDiscard = config.SeverityOff
+	options.PreferTaggedError = config.SeverityOff
+	options.NoThrow = config.SeverityError
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].Line != 4 {
+		t.Fatalf("unexpected suppressed findings: %#v", findings)
+	}
+}
+
 func TestCompositionRuleParity(t *testing.T) {
 	directory := writeFixture(t, `
 type Result<T, E> = {
@@ -530,6 +556,46 @@ tryAsync(async () => {
 	}
 }
 
+func TestNoUnsafeAwaitAcceptsResultTaskRunExitOnly(t *testing.T) {
+	directory := writeFixture(t, `
+interface ResultTask<T, E = never> { readonly valueType: T; readonly errorType: E }
+declare const ResultTask: {
+  runExit<T, E>(task: ResultTask<T, E>): Promise<unknown>
+  runPromise<T, E>(task: ResultTask<T, E>): Promise<T>
+}
+declare const task: ResultTask<number, string>
+declare const other: { runExit(): Promise<void> }
+async function main() {
+  await ResultTask.runExit(task)
+  await ResultTask.runPromise(task)
+  await other.runExit()
+}
+`)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("unexpected TypeScript diagnostics: %v", diagnostics)
+	}
+	options := config.Defaults()
+	options.NoDiscard = config.SeverityOff
+	options.NoUnsafeAwait = config.SeverityWarning
+	options.NoUnsafeAwaitMode = "all"
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("unexpected runExit findings: %#v", findings)
+	}
+	for index, line := range []int{11, 12} {
+		if findings[index].Rule != "no-unsafe-await" || findings[index].Line != line {
+			t.Fatalf("unexpected finding: %#v", findings[index])
+		}
+	}
+}
+
 func TestNoUnsafeAwaitDoesNotTreatUnrelatedTryPromiseAsBoundary(t *testing.T) {
 	directory := writeFixture(t, `
 interface Client {
@@ -681,6 +747,127 @@ ResultTask.runExit(provided)
 	}
 	if len(findings) != 1 || findings[0].Rule != "no-discard" || findings[0].Line != 10 {
 		t.Fatalf("unexpected ResultTask no-discard findings: %#v", findings)
+	}
+}
+
+func TestNoInvalidLifetime(t *testing.T) {
+	directory := writeFixture(t, `
+declare const module: {
+  singleton(name: string, dependencies: readonly string[], create: () => unknown): unknown
+  scoped(name: string, dependencies: readonly string[], create: () => unknown): unknown
+  transient(name: string, dependencies: readonly string[], create: () => unknown): unknown
+  task(name: string, dependencies: readonly string[], create: () => unknown, options?: { readonly lifetime?: string }): unknown
+  resource(name: string, dependencies: readonly string[], options: { readonly lifetime?: string }): unknown
+  value(name: string, value: unknown): unknown
+}
+void module.value("config", {})
+void module.transient("operation", [], () => 1)
+void module.scoped("request", ["operation"], () => 1)
+void module.singleton("cache", [], () => 1)
+void module.singleton("application", ["cache", "config"], () => 1)
+void module.singleton("server", ["request"], () => 1)
+void module.task("snapshot", ["operation"], () => 1, { lifetime: "singleton" })
+void module.resource("connection", ["cache"], { lifetime: "scoped" })
+`)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("unexpected TypeScript diagnostics: %v", diagnostics)
+	}
+
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, config.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		rule string
+		line int
+	}{
+		{"no-invalid-lifetime", 12},
+		{"no-invalid-lifetime", 15},
+		{"no-invalid-lifetime", 16},
+	}
+	if len(findings) != len(want) {
+		t.Fatalf("got %d findings, want %d: %#v", len(findings), len(want), findings)
+	}
+	for index, expected := range want {
+		if findings[index].Rule != expected.rule || findings[index].Line != expected.line {
+			t.Errorf("finding %d = %s:%d, want %s:%d", index, findings[index].Rule, findings[index].Line, expected.rule, expected.line)
+		}
+	}
+}
+
+func TestResultTaskGenRules(t *testing.T) {
+	directory := writeFixture(t, `
+interface Result<T, E> { readonly value?: T; readonly error?: E }
+interface ResultTask<T, E = never, R = never> { [Symbol.iterator](): Generator<unknown, T, unknown> }
+declare function ok<T>(value: T): Result<T, never>
+declare function err<E>(error: E): Result<never, E>
+declare const ResultTask: {
+  gen<T>(body: () => Generator<unknown, T, unknown> | AsyncGenerator<unknown, T, unknown>): ResultTask<T>
+  sync<T>(evaluate: () => T): ResultTask<T>
+  scoped<T>(task: ResultTask<T, never, never>): ResultTask<T, never, never>
+  acquireRelease<T>(options: object): ResultTask<T, never, never>
+}
+declare function load(): ResultTask<number, string>
+void ResultTask.gen(function* () {
+  return ok(1)
+})
+void ResultTask.gen(function* () {
+  return err("offline")
+})
+void ResultTask.gen(async function* () {
+  await Promise.resolve(1)
+  return 1
+})
+void ResultTask.gen(function* () {
+  yield* ResultTask.acquireRelease({})
+  return 1
+})
+void ResultTask.scoped(ResultTask.gen(function* () {
+  yield* ResultTask.acquireRelease({})
+  return 1
+}))
+void ResultTask.sync(() => {
+  throw new Error("defect")
+})
+void ResultTask.gen(function* () {
+  return yield* load()
+})
+`)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("unexpected TypeScript diagnostics: %v", diagnostics)
+	}
+
+	options := config.Defaults()
+	options.PreferTaggedError = config.SeverityOff
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		rule string
+		line int
+	}{
+		{"no-result-in-task-gen", 14},
+		{"no-result-in-task-gen", 17},
+		{"no-await-in-result-task-gen", 20},
+		{"no-unscoped-acquire-release", 24},
+		{"no-throw-in-task-sync", 32},
+	}
+	if len(findings) != len(want) {
+		t.Fatalf("got %d findings, want %d: %#v", len(findings), len(want), findings)
+	}
+	for index, expected := range want {
+		if findings[index].Rule != expected.rule || findings[index].Line != expected.line {
+			t.Errorf("finding %d = %s:%d, want %s:%d", index, findings[index].Rule, findings[index].Line, expected.rule, expected.line)
+		}
 	}
 }
 

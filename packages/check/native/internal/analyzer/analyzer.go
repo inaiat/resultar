@@ -113,6 +113,21 @@ func (a *Analyzer) analyzeFile(file *ast.SourceFile) []Finding {
 	if a.options.NoUnsafeAwait != config.SeverityOff {
 		findings = append(findings, a.noUnsafeAwait(file)...)
 	}
+	if a.options.NoInvalidLifetime != config.SeverityOff {
+		findings = append(findings, a.noInvalidLifetime(file)...)
+	}
+	if a.options.NoUnscopedAcquireRelease != config.SeverityOff {
+		findings = append(findings, a.noUnscopedAcquireRelease(file)...)
+	}
+	if a.options.NoResultInTaskGen != config.SeverityOff {
+		findings = append(findings, a.noResultInTaskGen(file)...)
+	}
+	if a.options.NoAwaitInResultTaskGen != config.SeverityOff {
+		findings = append(findings, a.noAwaitInResultTaskGen(file)...)
+	}
+	if a.options.NoThrowInTaskSync != config.SeverityOff {
+		findings = append(findings, a.noThrowInTaskSync(file)...)
+	}
 	return findings
 }
 

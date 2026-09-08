@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "resultar": "workspace:*",
-    "resultar-check": "workspace:*",
     "resultar-request": "workspace:*",
     "resultar-request-typebox": "workspace:*",
     "resultar-request-zod": "workspace:*",
@@ -23,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "resultar-check": "workspace:*",
     "tsx": "catalog:",
     "typescript": "7.0.2"
   }

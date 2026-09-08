@@ -9,6 +9,7 @@ import {
   tryResult,
   type ResultAsync,
 } from "resultar";
+import { createModule } from "resultar-di/advanced";
 
 interface User {
   readonly email: string;
@@ -328,4 +329,59 @@ export const yieldStarInResultTaskGenExample = () =>
     yield loadUserTask("plain-yield");
 
     return { email: "unreachable@example.com", id: "unreachable" };
+  });
+
+// resultar/no-invalid-lifetime: a scoped service must not capture a transient
+// dependency, and a singleton must not capture scoped or transient ones. This
+// mirrors the runtime strict validation without executing the module.
+export const invalidLifetimeModule = createModule()
+  .transient("operation", [], () => ({ id: "operation" }))
+  .scoped("request", ["operation"], ({ operation }) => ({ id: operation.id }))
+  .singleton("server", ["request"], ({ request }) => ({ id: request.id }));
+
+// resultar/no-unscoped-acquire-release: acquireRelease registers its release in
+// the current scope. Wrap the workflow in ResultTask.scoped so releases run
+// before the scope closes.
+export const unscopedAcquireReleaseExample = () =>
+  ResultTask.gen(function* () {
+    yield* ResultTask.acquireRelease({
+      acquire: loadUserTask("unscoped"),
+      release: () => ResultTask.succeed(undefined),
+    });
+
+    return { email: "unreachable@example.com", id: "unreachable" };
+  });
+
+// resultar/no-result-in-task-gen: gen bodies return the plain success value.
+// Failures short-circuit through yield*; returning ok/err nests a Result in
+// the success channel.
+export const okInTaskGenExample = () =>
+  ResultTask.gen(function* () {
+    const user = yield* loadUserTask("nested-ok");
+
+    return ok(user);
+  });
+
+export const errInTaskGenExample = () =>
+  ResultTask.gen(function* () {
+    const user = yield* loadUserTask("nested-err");
+
+    return err(new FetchUserError({ cause: "offline", id: user.id }));
+  });
+
+// resultar/no-await-in-result-task-gen: gen workflows stay lazy. Compose tasks
+// and services with yield* instead of awaiting them.
+export const awaitInResultTaskGenExample = () =>
+  // @ts-expect-error async generator bodies defeat ResultTask laziness; use yield* in a sync generator.
+  ResultTask.gen(async function* () {
+    await fetchUser("await-in-gen");
+
+    return yield* loadUserTask("after-await");
+  });
+
+// resultar/no-throw-in-task-sync: throwing inside ResultTask.sync creates a
+// defect (Die), not a typed failure. Use ResultTask.try with a catch mapper.
+export const throwInTaskSyncExample = (): ResultTask<User, never> =>
+  ResultTask.sync((): User => {
+    throw new FetchUserError({ id: "sync-throw" });
   });

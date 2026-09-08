@@ -1,6 +1,6 @@
 ---
 name: resultar
-description: Build, review, migrate, test, and document TypeScript code using Resultar v3.5+, including Result, ResultAsync, StrictResult, createTaggedError, safeTry, request adapters, and resultar-check. Use when expected failures should become typed values, thrown or rejected work must be wrapped, Resultar pipelines or async policies need design, HTTP JSON needs TypeBox or Zod validation, Resultar diagnostics need configuration, or an existing Resultar codebase needs review or migration.
+description: Build, review, migrate, test, and document TypeScript code using Resultar v3.6+, including Result, ResultAsync, ResultTask, StrictResult, createTaggedError, Result.gen/safeTry, request adapters, and resultar-check. Use when expected failures should become typed values, thrown or rejected work must be wrapped, Resultar pipelines or async policies need design, HTTP JSON needs TypeBox or Zod validation, Resultar diagnostics need configuration, or an existing Resultar codebase needs review or migration.
 ---
 
 # Resultar Engineering
@@ -19,7 +19,7 @@ the final transport, job, CLI, or integration boundary.
    - `packages/resultar/README.md` and `DOCUMENTATION.md` for current semantics and examples.
    - `packages/check/README.md` for diagnostics.
    - `packages/request*/README.md` and `examples/request/` for request integrations.
-4. Adapt examples when the consumer uses an older Resultar version; do not silently emit v3.5 APIs
+4. Adapt examples when the consumer uses an older Resultar version; do not silently emit v3.6 APIs
    that are absent locally.
 
 ## Apply Opinionated Defaults
@@ -183,7 +183,7 @@ test, script, generated, or process-boundary exceptions.
 
 ## Load References Selectively
 
-- Read `references/api.md` for current v3.5 exports, collection helpers, and async policy semantics.
+- Read `references/api.md` for current v3.6 exports, collection helpers, and async policy semantics.
 - Read `references/patterns.md` for copyable implementation and migration patterns.
 - Read `references/integrations.md` for request adapters and the CLI/editor/lint workflow.
 - Read `references/review-checklist.md` for reviews, migrations, and final validation.

@@ -1,6 +1,6 @@
 type TaggedValue = { readonly _tag: string }
 
-const noTaggedHandlerMatch = Symbol('noTaggedHandlerMatch')
+const noTaggedHandlerMatch: unique symbol = Symbol('noTaggedHandlerMatch')
 
 export type TaggedHandlerCall<R> = typeof noTaggedHandlerMatch | { readonly value: R }
 

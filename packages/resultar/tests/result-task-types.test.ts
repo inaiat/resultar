@@ -1,7 +1,7 @@
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
 import type { Cause, Exit, Result, ResultTaskRunOptions, ResultTaskServices } from '../src/index.js'
-import { ResultTask } from '../src/index.js'
+import { ResultTask, ResultTaskTypeId } from '../src/index.js'
 
 describe('ResultTask public types', () => {
   it('infers constructor and execution boundary types', async () => {
@@ -152,5 +152,25 @@ describe('ResultTask public types', () => {
 
     inspectExit(success)
     inspectExit(failure)
+  })
+
+  it('preserves nominal ResultTaskTypeId and type covariance', () => {
+    type BaseUser = { readonly id: string }
+    type AdminUser = BaseUser & { readonly role: 'admin' }
+
+    const adminTask = ResultTask.succeed<AdminUser>({ id: 'u1', role: 'admin' })
+
+    expectTypeOf(adminTask[ResultTaskTypeId]).toEqualTypeOf<{
+      readonly success: (_: never) => AdminUser
+      readonly error: (_: never) => never
+      readonly requirements: (_: never) => never
+    }>()
+
+    // Covariance in success type A: AdminUser -> BaseUser
+    expectTypeOf(adminTask).toExtend<ResultTask<BaseUser>>()
+
+    // Covariance in error type E: 'narrow' -> string
+    const narrowErrorTask = ResultTask.fail<'narrow'>('narrow')
+    expectTypeOf(narrowErrorTask).toExtend<ResultTask<never, string>>()
   })
 })

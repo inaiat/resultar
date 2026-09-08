@@ -46,3 +46,10 @@ It shows:
 
 The smoke script checks the expected success and failure branches, including the server-backed fetch
 flow.
+
+## Limitations
+
+The fixture serves a single hard-coded `GET /accounts/team` payload on `127.0.0.1`; unknown
+routes return plain-text 404. The examples cover JSON request/response validation only — no
+streaming, RPC, or platform integrations — and the manual `src/server.ts` runner stops on
+`SIGINT`/`SIGTERM` without a drain phase.

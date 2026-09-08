@@ -9,6 +9,7 @@ If you are evaluating or using the main library, start with:
 - [resultar package README](packages/resultar/README.md)
 - [full Resultar guide](DOCUMENTATION.md)
 - [API map](DOCUMENTATION.md#api-map)
+- [AI/RAG map](llms.txt)
 
 ## Packages
 
@@ -17,8 +18,10 @@ If you are evaluating or using the main library, start with:
 | `resultar`                 | Core `Result<T, E>`, lazy `ResultTask<T, E, R>`, and `ResultAsync<T, E>` library with tagged errors, typed services, async policies, redaction, and strict aliases. | [package README](packages/resultar/README.md), [full guide](DOCUMENTATION.md) |
 | `resultar-check`           | Native TypeScript 7 compiler checks plus type-aware Resultar diagnostics.                                                                                           | [check README](packages/check/README.md)                                      |
 | `resultar-request`         | Fetch-first JSON request helper with Resultar errors, validation, retry, and error mapping.                                                                         | [request README](packages/request/README.md)                                  |
+| `resultar-di`              | Typed dependency composition, scoped resources, and overrides for ResultTask applications.                                                                          | [DI README](packages/di/README.md)                                            |
 | `resultar-request-typebox` | TypeBox adapter for `resultar-request`.                                                                                                                             | [TypeBox adapter README](packages/request-typebox/README.md)                  |
 | `resultar-request-zod`     | Zod adapter for `resultar-request`.                                                                                                                                 | [Zod adapter README](packages/request-zod/README.md)                          |
+| `resultar-hono`              | Typed Hono bindings with one DI scope per response and explicit shutdown.                                                  | [Hono README](packages/hono/README.md)                                          |
 
 ## Main Library
 
@@ -55,7 +58,7 @@ Use the full guide when you need a specific recipe:
 | Redacted error props           | [Redacted Error Props](DOCUMENTATION.md#redacted-error-props)                               |
 | Catching and recovering errors | [Catching And Recovering Errors](DOCUMENTATION.md#catching-and-recovering-errors)           |
 | Async wrapping                 | [Wrapping Throwing Or Rejecting Code](DOCUMENTATION.md#wrapping-throwing-or-rejecting-code) |
-| Lazy workflows                 | [ResultTask core RFC](packages/resultar/RESULT-TASK-CORE-RFC.md)                            |
+| Lazy workflows                 | [ResultTask core RFC](docs/rfcs/rfc-0001-result-task-core.md)                              |
 | Local recovery                 | [Recovering Tagged Errors Locally](DOCUMENTATION.md#recovering-tagged-errors-locally)       |
 | Async racing and timeouts      | [Concurrent Racing And Timeouts](DOCUMENTATION.md#concurrent-racing-and-timeouts)           |
 | Async retry policies           | [Retrying Async Work](DOCUMENTATION.md#retrying-async-work)                                 |
@@ -101,6 +104,7 @@ guide.
 | [examples/resultar](examples/resultar) | Core Resultar cookbook | Sync validation, `safeTry`, tagged errors, async resilience, and resource cleanup |
 | [examples/check](examples/check)       | Native diagnostics     | Exact findings for all 22 rules plus a zero-diagnostic clean project              |
 | [examples/request](examples/request)   | Request helpers        | Fetch-style JSON calls with TypeBox and Zod adapters                              |
+| [examples/hono](examples/hono)         | Hono + DI application  | Typed composition, scoped cache sharing, overrides, and HTTP shutdown (Node & Deno) |
 
 Run all example smokes with:
 
@@ -142,3 +146,10 @@ pnpm run release:jsr -- --dry-run
 
 The root package is private. Published package metadata and README content live in each package
 directory.
+
+
+### Hono integration
+
+[`resultar-hono`](packages/hono/README.md) connects typed DI services to ordinary Hono handlers,
+with one scope per response and explicit application shutdown. See the
+[runnable example](examples/hono/README.md); port and runtime configuration stay in the bootstrap.

@@ -1,0 +1,35 @@
+# Resultar
+
+> Typed, composable error handling for TypeScript: explicit `Result` values, lazy `ResultTask`
+> workflows with typed services and scopes, awaitable `ResultAsync`, tagged errors, and
+> compiler-backed diagnostics. Node.js 24+, ESM-only.
+
+## Start here
+
+- [Agent skill](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/SKILL.md): opinionated defaults and pointers for coding agents.
+- [Core package README](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): model, ResultTask, services, scopes, decision guide.
+- [Full guide](https://raw.githubusercontent.com/inaiat/resultar/main/DOCUMENTATION.md): complete API map and recipes.
+
+## Packages
+
+- [resultar-di](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/README.md): typed composition, lifetimes, overrides.
+- [resultar-di advanced](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/ADVANCED.md): class tokens, scope.fetch, low-level registration.
+- [resultar-hono](https://raw.githubusercontent.com/inaiat/resultar/main/packages/hono/README.md): Hono bindings, one scope per response, CloseError.
+- [resultar-request](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request/README.md) with [TypeBox](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request-typebox/README.md) and [Zod](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request-zod/README.md) adapters.
+- [resultar-check](https://raw.githubusercontent.com/inaiat/resultar/main/packages/check/README.md): native diagnostics, including the no-discard rule.
+
+## Examples
+
+- [Core cookbook](https://raw.githubusercontent.com/inaiat/resultar/main/examples/resultar/README.md) including the [application lifecycle](https://raw.githubusercontent.com/inaiat/resultar/main/examples/resultar/src/application-lifecycle.ts) (database, session, HTTP scope ordering).
+- [Hono app](https://raw.githubusercontent.com/inaiat/resultar/main/examples/hono/README.md), [request](https://raw.githubusercontent.com/inaiat/resultar/main/examples/request/README.md), [check](https://raw.githubusercontent.com/inaiat/resultar/main/examples/check/README.md).
+
+## Design records (history, not usage truth)
+
+- [RFC 0001](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0001-result-task-core.md): ResultTask architecture. Phases 0-2 done; Phase 3 partial (no fibers, race, timeout, or scheduler on ResultTask).
+- [RFC 0002](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0002-di-lifetimes-scopes.md): DI lifetimes and request scopes (implemented).
+- [RFC 0003](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0003-phase-3-remainder-and-validation.md): remaining work tracker.
+
+## Freshness rule
+
+Package READMEs and `packages/di/ADVANCED.md` override `DOCUMENTATION.md`; both override the
+skill; RFCs are design history. The installed `node_modules` types always win over any document.
