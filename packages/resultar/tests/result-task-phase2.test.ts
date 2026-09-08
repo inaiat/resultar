@@ -1,5 +1,6 @@
 import { deepEqual, equal } from 'node:assert'
-import { describe, expectTypeOf, it } from 'vite-plus/test'
+import type { ResultTaskScope } from '../src/index.js'
+import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
 import {
   err,
   isResultTask,
@@ -48,7 +49,32 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
       equal(isServiceTag(undefined), false)
       equal(isServiceTag({}), false)
       equal(isServiceTag({ _tag: 'ServiceTag' }), false)
-      equal(isServiceTag({ _tag: 'ServiceTag', identifier: 'Test' }), true)
+      equal(isServiceTag({ _tag: 'ServiceTag', identifier: 'Test' }), false)
+      equal(isServiceTag({ [ServiceTagTypeId]: ServiceTagTypeId, _tag: 'ServiceTag' }), false)
+
+      // Function/class-based token (as created by resultar-di Service/service)
+      const fnToken = Object.assign(() => 1, {
+        [ServiceTagTypeId]: ServiceTagTypeId,
+        _tag: 'ServiceTag' as const,
+        identifier: 'FnToken',
+        key: Symbol('FnToken'),
+        [Symbol.iterator]: Tag[Symbol.iterator].bind(Tag),
+      })
+      equal(isServiceTag(fnToken), true)
+    })
+
+    it('rejects forged yieldables without ResultTaskYieldTypeId in ResultTask.gen', async () => {
+      const forged = ResultTask.gen(function* () {
+        return yield { _tag: 'ResultTask', task: ResultTask.succeed(123) } as never
+      })
+      const exit = await ResultTask.runExit(forged)
+      equal(exit._tag, 'Failure')
+      if (exit._tag === 'Failure') {
+        equal(exit.cause._tag, 'Die')
+        if (exit.cause._tag === 'Die') {
+          equal((exit.cause.defect as Error).message, 'ResultTask.gen yielded an unsupported value')
+        }
+      }
     })
 
     it('identifies tasks using isResultTask', () => {
@@ -385,6 +411,257 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
         // @ts-expect-error Incomplete service environment fails compilation
         void ResultTask.runResult(taskNeedsA, { services: {} })
       }
+    })
+
+    it('accepts valid undefined service implementations across instance, data-first, and curried forms', async () => {
+      const OptionalTag = serviceTag<undefined, 'Optional'>('Optional')
+      const OptionalWorkflow = ResultTask.gen(function* () {
+        return yield* OptionalTag
+      })
+
+      // Instance form
+      const res1 = await ResultTask.runPromise(
+        OptionalWorkflow.provideService(OptionalTag, undefined),
+      )
+      equal(res1, undefined)
+
+      // Data-first form
+      const res2 = await ResultTask.runPromise(
+        ResultTask.provideService(OptionalWorkflow, OptionalTag, undefined),
+      )
+      equal(res2, undefined)
+
+      // Curried form
+      const res3 = await ResultTask.runPromise(
+        OptionalWorkflow.pipe(ResultTask.provideService(OptionalTag, undefined)),
+      )
+      equal(res3, undefined)
+
+      // Union with undefined
+      const UnionTag = serviceTag<string | undefined, 'UnionTag'>('UnionTag')
+      const UnionWorkflow = ResultTask.gen(function* () {
+        return yield* UnionTag
+      })
+      const res4 = await ResultTask.runPromise(UnionWorkflow.provideService(UnionTag, undefined))
+      equal(res4, undefined)
+
+      // Throws TypeError when service implementation is omitted
+      expect(() => {
+        // @ts-expect-error Omitted service argument
+        void OptionalWorkflow.provideService(OptionalTag)
+      }).toThrow('ResultTask.provideService requires a service implementation')
+
+      expect(() => {
+        // @ts-expect-error Omitted service argument data-first
+        void ResultTask.provideService(OptionalWorkflow, OptionalTag)
+      }).toThrow('ResultTask.provideService requires a service implementation')
+
+      expect(() => {
+        // @ts-expect-error Omitted service argument curried
+        void ResultTask.provideService(OptionalTag)
+      }).toThrow('ResultTask.provideService requires a service implementation')
+    })
+
+    it('reusable curried provideServices prevents requirement elimination when services are missing or incompatible', async () => {
+      const Clock = serviceTag<{ readonly now: () => number }, 'Clock'>('Clock')
+      const clockWorkflow = ResultTask.gen(function* () {
+        const c = yield* Clock
+        return c.now()
+      })
+
+      const provideMissing = ResultTask.provideServices({})
+      const provideWrong = ResultTask.provideServices({ Clock: 123 })
+      const provideCorrect = ResultTask.provideServices({ Clock: { now: () => 42 } })
+
+      const missing = clockWorkflow.pipe(provideMissing)
+      const correct = clockWorkflow.pipe(provideCorrect)
+
+      if (false) {
+        // @ts-expect-error Incompatible provider is rejected when applied to workflow
+        void clockWorkflow.pipe(provideWrong)
+
+        // @ts-expect-error Incompatible provider is rejected when directly in pipe
+        void clockWorkflow.pipe(ResultTask.provideServices({ Clock: 123 }))
+      }
+
+      // Type-level checks: missing must NOT have eliminated Clock; correct eliminates Clock
+      expectTypeOf(missing).toEqualTypeOf<ResultTask<number, never, typeof Clock>>()
+      expectTypeOf(correct).toEqualTypeOf<ResultTask<number, never, never>>()
+
+      // Completing a partial/empty provider with valid services at runtime works
+      const completedVal = await ResultTask.runPromise(missing, {
+        services: { Clock: { now: () => 42 } },
+      })
+      equal(completedVal, 42)
+
+      // Valid reusable provider executes successfully
+      const val = await ResultTask.runPromise(correct)
+      equal(val, 42)
+    })
+
+    it('reusable curried provideServices preserves scope requirements and unprovided services', async () => {
+      let released = false
+      const scopedTask = ResultTask.acquireRelease({
+        acquire: ResultTask.succeed('resource'),
+        release: () =>
+          ResultTask.sync(() => {
+            released = true
+          }),
+      })
+
+      const complexWorkflow = ResultTask.gen(function* () {
+        const r = yield* scopedTask
+        const a = yield* TagA
+        const b = yield* TagB
+        return `${r}:${a.a}:${b.b}`
+      })
+
+      // Provide only ServiceA via reusable provider
+      const provideOnlyA = ResultTask.provideServices({ ServiceA: { a: 10 } })
+      const partiallyProvided = complexWorkflow.pipe(provideOnlyA)
+
+      // ServiceB and Scope must be preserved
+      if (false) {
+        // @ts-expect-error ServiceB and Scope still required
+        void ResultTask.runPromise(partiallyProvided)
+      }
+
+      // Finish providing ServiceB and run in scope
+      const complete = partiallyProvided.pipe(ResultTask.provideServices({ ServiceB: { b: 'ok' } }))
+      const scopedRunnable = ResultTask.scoped(complete)
+      const res = await ResultTask.runPromise(scopedRunnable)
+      equal(res, 'resource:10:ok')
+      equal(released, true)
+    })
+
+    it('supports curried provideServiceResolver in pipe and validates contract requirements', async () => {
+      const Clock = serviceTag<{ readonly now: () => number }, 'Clock'>('Clock')
+      const workflow = ResultTask.gen(function* () {
+        const c = yield* Clock
+        return c.now()
+      })
+
+      // Curried in pipe
+      const resolved = workflow.pipe(
+        ResultTask.provideServiceResolver({ Clock: () => ResultTask.succeed({ now: () => 99 }) }),
+      )
+      expectTypeOf(resolved).toEqualTypeOf<ResultTask<number, never, never>>()
+      equal(await ResultTask.runPromise(resolved), 99)
+
+      // Reusable curried resolver
+      const resolverFn = ResultTask.provideServiceResolver({
+        Clock: () => ResultTask.succeed({ now: () => 100 }),
+      })
+      const reusableResolved = workflow.pipe(resolverFn)
+      expectTypeOf(reusableResolved).toEqualTypeOf<ResultTask<number, never, never>>()
+      equal(await ResultTask.runPromise(reusableResolved), 100)
+
+      // Reusable resolver with missing or wrong contract does not eliminate requirement
+      const missingResolver = ResultTask.provideServiceResolver({})
+      const unresolvedMissing = workflow.pipe(missingResolver)
+      expectTypeOf(unresolvedMissing).toEqualTypeOf<ResultTask<number, never, typeof Clock>>()
+
+      // Incompatible resolver contract is rejected at application time
+      const wrongResolver = ResultTask.provideServiceResolver({
+        Clock: () => ResultTask.succeed(123),
+      })
+      if (false) {
+        // @ts-expect-error Incompatible resolver contract is rejected when applied to workflow
+        void workflow.pipe(wrongResolver)
+
+        void workflow.pipe(
+          // @ts-expect-error Incompatible resolver contract is rejected directly in pipe
+          ResultTask.provideServiceResolver({ Clock: () => ResultTask.succeed(123) }),
+        )
+      }
+    })
+
+    it('infers typed failures and external requirements in curried provideServiceResolver (F2-R2)', async () => {
+      const Clock = serviceTag<{ readonly now: () => number }, 'Clock'>('Clock')
+      const workflow = ResultTask.gen(function* () {
+        const c = yield* Clock
+        return c.now()
+      })
+
+      // F2-R2: Curried resolver returning typed failure without explicit generics
+      const failingResolver = ResultTask.provideServiceResolver({
+        Clock: () => ResultTask.fail('offline' as const),
+      })
+      const failedResult = workflow.pipe(failingResolver)
+      expectTypeOf(failedResult).toEqualTypeOf<ResultTask<number, 'offline', never>>()
+      const exitFailed = await ResultTask.runExit(failedResult)
+      equal(exitFailed._tag, 'Failure')
+      if (exitFailed._tag === 'Failure') {
+        equal(exitFailed.cause._tag, 'Fail')
+        if (exitFailed.cause._tag === 'Fail') {
+          equal(exitFailed.cause.error, 'offline')
+        }
+      }
+
+      // F2-R2: Curried resolver depending on external services
+      const External = serviceTag<string, 'External'>('External')
+      const dependentResolver = ResultTask.provideServiceResolver({
+        Clock: () =>
+          ResultTask.gen(function* () {
+            const ext = yield* External
+            return { now: () => ext.length }
+          }),
+      })
+      const dependentResult = workflow.pipe(dependentResolver)
+      expectTypeOf(dependentResult).toEqualTypeOf<ResultTask<number, never, typeof External>>()
+      const extVal = await ResultTask.runPromise(dependentResult, {
+        services: { External: 'hello' },
+      })
+      equal(extVal, 5)
+    })
+
+    it('preserves scope requirements and combines multiple resolvers in curried provideServiceResolver (F2-R2)', async () => {
+      const Clock = serviceTag<{ readonly now: () => number }, 'Clock'>('Clock')
+      const External = serviceTag<string, 'External'>('External')
+      const TagX = serviceTag<number, 'TagX'>('TagX')
+      const multiWorkflow = ResultTask.gen(function* () {
+        const c = yield* Clock
+        const x = yield* TagX
+        return c.now() + x
+      })
+      const multiResolver = ResultTask.provideServiceResolver({
+        Clock: () => ResultTask.fail('clock-err' as const),
+        TagX: () =>
+          ResultTask.gen(function* () {
+            yield* External
+            return 10
+          }),
+      })
+      const multiResult = multiWorkflow.pipe(multiResolver)
+      expectTypeOf(multiResult).toEqualTypeOf<ResultTask<number, 'clock-err', typeof External>>()
+
+      // F2-R2: Preserves scope requirements from providers
+      let resourceClosed = false
+      const scopedProviderTask = ResultTask.acquireRelease({
+        acquire: ResultTask.succeed('db-conn'),
+        release: () =>
+          ResultTask.sync(() => {
+            resourceClosed = true
+          }),
+      })
+      const scopedResolver = ResultTask.provideServiceResolver({
+        Clock: () =>
+          ResultTask.gen(function* () {
+            yield* scopedProviderTask
+            return { now: () => 77 }
+          }),
+      })
+      const workflow = ResultTask.gen(function* () {
+        const c = yield* Clock
+        return c.now()
+      })
+      const scopedResult = workflow.pipe(scopedResolver)
+      void expectTypeOf(scopedResult).toEqualTypeOf<
+        ResultTask<number, never, ResultTaskScope<never>>
+      >
+      const closedVal = await ResultTask.runPromise(ResultTask.scoped(scopedResult))
+      equal(closedVal, 77)
+      equal(resourceClosed, true)
     })
   })
 })

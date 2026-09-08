@@ -26,7 +26,7 @@ describe('ResultTask resource scopes', () => {
       })
     const task = ResultTask.gen(function* () {
       yield* resource('database')
-      yield* resource('whatsapp')
+      yield* resource('session')
       return 'ready'
     })
     deepEqual(events, [])
@@ -35,12 +35,12 @@ describe('ResultTask resource scopes', () => {
     }
     deepEqual(events, [
       'open:database',
-      'open:whatsapp',
-      'close:whatsapp:Success',
+      'open:session',
+      'close:session:Success',
       'close:database:Success',
       'open:database',
-      'open:whatsapp',
-      'close:whatsapp:Success',
+      'open:session',
+      'close:session:Success',
       'close:database:Success',
     ])
   })
@@ -100,7 +100,7 @@ describe('ResultTask resource scopes', () => {
       })
     const task = ResultTask.gen(function* () {
       yield* resource('database-close')
-      yield* resource('whatsapp-close')
+      yield* resource('session-close')
       yield* ResultTask.fail('boot')
     })
     const expected = {
@@ -110,7 +110,7 @@ describe('ResultTask resource scopes', () => {
         left: {
           _tag: 'Sequential',
           left: { _tag: 'Fail', error: 'boot' },
-          right: { _tag: 'Fail', error: 'whatsapp-close' },
+          right: { _tag: 'Fail', error: 'session-close' },
         },
         right: { _tag: 'Fail', error: 'database-close' },
       },

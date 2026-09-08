@@ -31,13 +31,13 @@ const fixture = (failSchema = false, failDatabaseClose = false) => {
             }),
         }
       }),
-    connectWhatsApp: () =>
+    connectSession: () =>
       ResultTask.sync(() => {
-        events.push('connect WhatsApp')
+        events.push('connect session')
         return {
           close: () =>
             ResultTask.sync(() => {
-              events.push('close WhatsApp')
+              events.push('close session')
             }),
         }
       }),
@@ -69,16 +69,16 @@ const task = applicationLifecycle(live.factories)
 deepEqual(live.events, [])
 const running = ResultTask.runExit(task)
 await live.ready.promise
-deepEqual(live.events, ['connect database', 'schema', 'connect WhatsApp', 'serve'])
+deepEqual(live.events, ['connect database', 'schema', 'connect session', 'serve'])
 live.stop.resolve()
 deepEqual(await running, { _tag: 'Success', value: undefined })
 deepEqual(live.events, [
   'connect database',
   'schema',
-  'connect WhatsApp',
+  'connect session',
   'serve',
   'drain HTTP',
-  'close WhatsApp',
+  'close session',
   'close database',
 ])
 

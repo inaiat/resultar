@@ -16,7 +16,7 @@ describe("service composition", () => {
         events.push("health");
         return { check: () => database.url };
       })
-      .scoped("whatsapp", [], () => {
+      .scoped("session", [], () => {
         throw new Error("unselected service must not be created");
       });
     const task = services.use(["health"], ({ health }) => ResultTask.sync(health.check));
@@ -231,27 +231,27 @@ describe("scoped resources", () => {
             events.push("close database");
           }),
       })
-      .resource("whatsapp", ["database"], {
+      .resource("session", ["database"], {
         acquire: ({ database }) =>
           ResultTask.sync(() => {
             expect(database.open).toBe(true);
-            events.push("open whatsapp");
+            events.push("open session");
             return { connected: true };
           }),
-        release: (whatsapp, exit, { database }) =>
+        release: (session, exit, { database }) =>
           ResultTask.sync(() => {
             expect(database.open).toBe(true);
-            whatsapp.connected = false;
-            events.push(`close whatsapp: ${exit._tag}`);
+            session.connected = false;
+            events.push(`close session: ${exit._tag}`);
           }),
       });
 
   test("keeps resources alive through use and closes dependents before dependencies", async () => {
     const events: string[] = [];
     const task = createApplication(events)
-      .use(["database", "whatsapp"], ({ database, whatsapp }) =>
+      .use(["database", "session"], ({ database, session }) =>
         ResultTask.sync(() => {
-          expect(database.open && whatsapp.connected).toBe(true);
+          expect(database.open && session.connected).toBe(true);
           events.push("use");
           return "done";
         }),
@@ -263,9 +263,9 @@ describe("scoped resources", () => {
     expect(await ResultTask.runPromise(task)).toBe("done");
     expect(events).toEqual([
       "open database",
-      "open whatsapp",
+      "open session",
       "use",
-      "close whatsapp: Success",
+      "close session: Success",
       "close database",
       "after scope",
     ]);
@@ -274,7 +274,7 @@ describe("scoped resources", () => {
   test("rolls back acquired resources when a later acquisition fails", async () => {
     const events: string[] = [];
     const bootError = new Error("server failed");
-    const services = createApplication(events).resource("server", ["whatsapp"], {
+    const services = createApplication(events).resource("server", ["session"], {
       acquire: () => ResultTask.fail(bootError),
       release: () =>
         ResultTask.sync(() => {
@@ -287,8 +287,8 @@ describe("scoped resources", () => {
     expect(exit).toEqual({ _tag: "Failure", cause: { _tag: "Fail", error: bootError } });
     expect(events).toEqual([
       "open database",
-      "open whatsapp",
-      "close whatsapp: Failure",
+      "open session",
+      "close session: Failure",
       "close database",
     ]);
   });
@@ -296,21 +296,21 @@ describe("scoped resources", () => {
   test("cleans up when a factory throws during partial construction", async () => {
     const events: string[] = [];
     const defect = new Error("factory bug");
-    const services = createApplication(events).scoped("server", ["whatsapp"], ({ whatsapp }) => {
-      expect(whatsapp.connected).toBe(true);
+    const services = createApplication(events).scoped("server", ["session"], ({ session }) => {
+      expect(session.connected).toBe(true);
       throw defect;
     });
     expect(await ResultTask.runExit(services.use(["server"], () => ResultTask.succeed(1)))).toEqual(
       { _tag: "Failure", cause: { _tag: "Die", defect } },
     );
-    expect(events.slice(-2)).toEqual(["close whatsapp: Failure", "close database"]);
+    expect(events.slice(-2)).toEqual(["close session: Failure", "close database"]);
   });
 
   test("preserves use and release failures and still releases earlier resources", async () => {
     const events: string[] = [];
     const useError = { _tag: "UseError" };
     const releaseError = { _tag: "ReleaseError" };
-    const services = createApplication(events).resource("server", ["whatsapp"], {
+    const services = createApplication(events).resource("server", ["session"], {
       acquire: () => ResultTask.succeed(1),
       release: () => ResultTask.fail(releaseError),
     });
@@ -325,13 +325,13 @@ describe("scoped resources", () => {
         right: { _tag: "Fail", error: releaseError },
       },
     });
-    expect(events.slice(-2)).toEqual(["close whatsapp: Failure", "close database"]);
+    expect(events.slice(-2)).toEqual(["close session: Failure", "close database"]);
   });
 
   test("continues cleanup after a release callback throws", async () => {
     const events: string[] = [];
     const defect = new Error("release bug");
-    const services = createApplication(events).resource("server", ["whatsapp"], {
+    const services = createApplication(events).resource("server", ["session"], {
       acquire: () => ResultTask.succeed(1),
       release: () => {
         throw defect;
@@ -339,13 +339,13 @@ describe("scoped resources", () => {
     });
     const exit = await ResultTask.runExit(services.use(["server"], () => ResultTask.succeed(1)));
     expect(exit).toEqual({ _tag: "Failure", cause: { _tag: "Die", defect } });
-    expect(events.slice(-2)).toEqual(["close whatsapp: Success", "close database"]);
+    expect(events.slice(-2)).toEqual(["close session: Success", "close database"]);
   });
 
   test("interruption cleans up using a fresh signal", async () => {
     const controller = new AbortController();
     const events: string[] = [];
-    const services = createApplication(events).resource("server", ["whatsapp"], {
+    const services = createApplication(events).resource("server", ["session"], {
       acquire: () => ResultTask.succeed(1),
       release: () =>
         ResultTask.tryPromise({
@@ -364,30 +364,30 @@ describe("scoped resources", () => {
     );
     const exit = await ResultTask.runExit(task, { signal: controller.signal });
     expect(exit).toEqual({ _tag: "Failure", cause: { _tag: "Interrupt", reason: "stop" } });
-    expect(events.slice(-3)).toEqual(["close server", "close whatsapp: Failure", "close database"]);
+    expect(events.slice(-3)).toEqual(["close server", "close session: Failure", "close database"]);
   });
 
   test("does not acquire or release an overridden resource", async () => {
     const events: string[] = [];
-    const whatsapp = { connected: true };
-    const services = createApplication(events).override("whatsapp", whatsapp);
+    const session = { connected: true };
+    const services = createApplication(events).override("session", session);
     await ResultTask.runPromise(
-      services.use(["whatsapp"], (deps) => ResultTask.succeed(deps.whatsapp.connected)),
+      services.use(["session"], (deps) => ResultTask.succeed(deps.session.connected)),
     );
     expect(events).toEqual([]);
-    expect(whatsapp.connected).toBe(true);
+    expect(session.connected).toBe(true);
   });
 
   test("cleans up when the use callback throws before returning a task", async () => {
     const events: string[] = [];
     const defect = new Error("callback bug");
-    const task = createApplication(events).use(["whatsapp"], () => {
+    const task = createApplication(events).use(["session"], () => {
       throw defect;
     });
     expect(await ResultTask.runExit(task)).toEqual({
       _tag: "Failure",
       cause: { _tag: "Die", defect },
     });
-    expect(events.slice(-2)).toEqual(["close whatsapp: Failure", "close database"]);
+    expect(events.slice(-2)).toEqual(["close session: Failure", "close database"]);
   });
 });

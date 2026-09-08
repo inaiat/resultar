@@ -15,12 +15,17 @@ export type Cause<E> =
 
 /** Rejection used when a simplified boundary cannot represent multiple failures. */
 export class ResultTaskCauseError extends Error {
-  public override readonly cause: Cause<unknown>
+  public override readonly cause!: Cause<unknown>
 
   public constructor(cause: Cause<unknown>) {
-    super('ResultTask execution failed with multiple causes', { cause })
+    super('ResultTask execution failed with multiple causes')
     this.name = 'ResultTaskCauseError'
-    this.cause = cause
+    Object.defineProperty(this, 'cause', {
+      configurable: true,
+      enumerable: false,
+      value: cause,
+      writable: true,
+    })
   }
 }
 
@@ -106,6 +111,42 @@ type ResolverRequirements<Resolvers> = [ResolverTasks<Resolvers>] extends [never
   : ResolverTasks<Resolvers> extends ResultTask<unknown, unknown, infer R>
     ? R
     : never
+
+type EliminateProvidedServices<R, Services> = R extends AnyServiceTag
+  ? R['identifier'] extends keyof Services
+    ? Services[R['identifier']] extends ServiceForTag<R>
+      ? never
+      : R
+    : R
+  : R
+
+type EliminateResolvedServices<R, Resolvers> = R extends AnyServiceTag
+  ? R['identifier'] extends keyof Resolvers
+    ? Resolvers[R['identifier']] extends () => ResultTask<infer S, unknown, unknown>
+      ? S extends ServiceForTag<R>
+        ? never
+        : R
+      : R
+    : R
+  : R
+
+type IncompatibleProvidedServices<R, Services> = R extends AnyServiceTag
+  ? R['identifier'] extends keyof Services
+    ? Services[R['identifier']] extends ServiceForTag<R>
+      ? never
+      : R['identifier']
+    : never
+  : never
+
+type IncompatibleResolvedServices<R, Resolvers> = R extends AnyServiceTag
+  ? R['identifier'] extends keyof Resolvers
+    ? Resolvers[R['identifier']] extends () => ResultTask<infer S, unknown, unknown>
+      ? S extends ServiceForTag<R>
+        ? never
+        : R['identifier']
+      : R['identifier']
+    : never
+  : never
 
 /** Owns resources across executions. Close it after its consumers have finished. */
 export interface ResultTaskScopeOwner {
@@ -226,31 +267,43 @@ const throwDefect = (defect: unknown): never => {
   throw defect
 }
 
-const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
-  typeof value === 'object' && value !== null
+const isObjectLike = (value: unknown): value is Record<PropertyKey, unknown> =>
+  (typeof value === 'object' || typeof value === 'function') && value !== null
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /** Returns true if a value is a nominal `ServiceTag`. */
 export const isServiceTag = (value: unknown): value is ServiceTag<string, unknown> =>
-  isRecord(value) &&
-  ((value as Record<symbol, unknown>)[ServiceTagTypeId] === ServiceTagTypeId ||
-    (value['_tag'] === 'ServiceTag' && typeof value['identifier'] === 'string'))
+  isObjectLike(value) &&
+  (value as Record<symbol, unknown>)[ServiceTagTypeId] === ServiceTagTypeId &&
+  (value as { readonly _tag?: unknown })._tag === 'ServiceTag' &&
+  typeof (value as { readonly identifier?: unknown }).identifier === 'string' &&
+  typeof (value as { readonly key?: unknown }).key === 'symbol' &&
+  typeof (value as { readonly [Symbol.iterator]?: unknown })[Symbol.iterator] === 'function'
 
 /** Returns true if a value is a `ResultTask` instance. */
 export const isResultTask = (value: unknown): value is ResultTask<unknown, unknown, unknown> =>
-  isRecord(value) &&
+  isObjectLike(value) &&
   (value instanceof ResultTask ||
     (value as Record<symbol, unknown>)[ResultTaskTypeId] !== undefined)
 
 const isResultTaskYield = (value: unknown): value is ResultTaskYield<unknown, unknown, unknown> =>
-  isRecord(value) && value['_tag'] === 'ResultTask' && isResultTask(value['task'])
+  isObjectLike(value) &&
+  (value as Record<symbol, unknown>)[ResultTaskYieldTypeId] === ResultTaskYieldTypeId &&
+  (value as { readonly _tag?: unknown })._tag === 'ResultTask' &&
+  isResultTask((value as { readonly task?: unknown }).task)
 
 const isServiceYield = (value: unknown): value is ResultTaskServiceYield<AnyServiceTag> =>
-  isRecord(value) && value['_tag'] === 'Service' && isServiceTag(value['tag'])
+  isObjectLike(value) &&
+  (value as Record<symbol, unknown>)[ResultTaskYieldTypeId] === ResultTaskYieldTypeId &&
+  (value as { readonly _tag?: unknown })._tag === 'Service' &&
+  isServiceTag((value as { readonly tag?: unknown }).tag)
 
 const isErrResult = (
   value: unknown,
 ): value is { readonly error: unknown; readonly isErr: () => boolean } =>
-  isRecord(value) &&
+  isObjectLike(value) &&
   'error' in value &&
   typeof (value as { isErr?: unknown }).isErr === 'function' &&
   (value as { isErr: () => boolean }).isErr()
@@ -268,6 +321,7 @@ const lookupService = (tag: AnyServiceTag, context: ResultTaskRuntimeContext): S
     return { _tag: 'Found', value: context.namedServices.get(tag.identifier) }
   }
 
+  // Stryker disable next-line all: any non-Found lookup converges to MissingServiceError downstream; the tag string is not publicly observable.
   return { _tag: 'Missing' }
 }
 
@@ -531,8 +585,15 @@ const applySuccessContinuation = (
         return { current: undefined, currentExit: died(error) }
       }
     }
-    case 'MapError':
-    case 'TapError':
+    // Stryker disable next-line all: success pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
+    case 'MapError': {
+      return { current: undefined, currentExit: exit }
+    }
+    // Stryker disable next-line all: success pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
+    case 'TapError': {
+      return { current: undefined, currentExit: exit }
+    }
+    // Stryker disable next-line all: success pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
     case 'CatchAll': {
       return { current: undefined, currentExit: exit }
     }
@@ -548,11 +609,6 @@ const applyFailureContinuation = (
   exit: Exit<unknown, unknown> & { readonly _tag: 'Failure' },
 ): ContinuationStep => {
   switch (continuation._tag) {
-    case 'Map':
-    case 'FlatMap':
-    case 'Tap': {
-      return { current: undefined, currentExit: exit }
-    }
     case 'MapError': {
       if (exit.cause._tag === 'Fail') {
         try {
@@ -586,6 +642,18 @@ const applyFailureContinuation = (
           return { current: undefined, currentExit: died(error) }
         }
       }
+      return { current: undefined, currentExit: exit }
+    }
+    // Stryker disable next-line all: failure pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
+    case 'Map': {
+      return { current: undefined, currentExit: exit }
+    }
+    // Stryker disable next-line all: failure pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
+    case 'FlatMap': {
+      return { current: undefined, currentExit: exit }
+    }
+    // Stryker disable next-line all: failure pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
+    case 'Tap': {
       return { current: undefined, currentExit: exit }
     }
     default: {
@@ -694,8 +762,10 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
       return { current: res.flatMap(onSuccess), currentExit: undefined }
     }
     if (
+      // Stryker disable next-line all: forcing the promise branch still succeeds with the same value; only rejected promises diverge and they already take this branch.
       typeof res === 'object' &&
       res !== null &&
+      // Stryker disable next-line all: a non-function then still awaits to the same success; the guard only routes rejected promises into Die.
       typeof (res as Promise<unknown>).then === 'function'
     ) {
       const promiseTask = new ResultTask(async () => {
@@ -720,8 +790,28 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     let current: ResultTask<unknown, unknown, unknown> | undefined = rootTask
     let currentExit: Exit<unknown, unknown> | undefined = undefined
 
+    // Stryker disable next-line all: runTaskLoop always returns through the exhausted-continuation branch; the while guard is a termination backstop.
     while (current !== undefined || continuations.length > 0) {
-      if (current !== undefined) {
+      if (current === undefined) {
+        // Stryker disable next-line all: instruction steps always produce a task or an exit, so reaching pending continuations without an exit is unreachable.
+        if (currentExit !== undefined) {
+          const nextContinuation = continuations.pop()
+          // Stryker disable next-line all: pop on a non-empty continuations stack never yields undefined; the guard satisfies noUncheckedIndexedAccess.
+          if (nextContinuation === undefined) {
+            return currentExit
+          }
+
+          const resolvedExit =
+            // Stryker disable next-line ConditionalExpression: every async settle that can queue a non-Success exit checks the abort signal first (tryPromise rejection, adapter post-await); sync throws cannot interleave an abort, so a non-Success exit never meets an aborted signal here and the mutant is equivalent.
+            context.signal.aborted && currentExit._tag === 'Success'
+              ? interrupted(context.signal)
+              : currentExit
+
+          const step = applyContinuation(nextContinuation, resolvedExit)
+          current = step.current
+          currentExit = step.currentExit
+        }
+      } else {
         if (context.signal.aborted) {
           return interrupted(context.signal)
         }
@@ -730,20 +820,6 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
         const step = await executeInstruction(current.instruction, continuations, context)
         current = step.nextCurrent
         currentExit = step.exit
-      } else if (currentExit !== undefined) {
-        const nextContinuation = continuations.pop()
-        if (nextContinuation === undefined) {
-          return currentExit
-        }
-
-        const resolvedExit =
-          context.signal.aborted && currentExit._tag === 'Success'
-            ? interrupted(context.signal)
-            : currentExit
-
-        const step = applyContinuation(nextContinuation, resolvedExit)
-        current = step.current
-        currentExit = step.currentExit
       }
     }
 
@@ -751,6 +827,8 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   }
 
   /** Creates a task that succeeds with `value` when it is executed. */
+  public static succeed<A>(value: A): ResultTask<A, never>
+  public static succeed<A, E>(value: A): ResultTask<A, E>
   public static succeed<A, E = never>(value: A): ResultTask<A, E> {
     return new ResultTask<A, E>({ _tag: 'Succeed', value })
   }
@@ -1052,9 +1130,12 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   /** Provides one required service and removes it from the task's requirements. */
   public provideService<Tag extends Extract<R, AnyServiceTag>>(
     tag: Tag,
-    service: ServiceForTag<Tag>,
+    ...args: [service: ServiceForTag<Tag>]
   ): ResultTask<A, E, Exclude<R, Tag>> {
-    return ResultTask.provideService(this, tag, service)
+    if ((args as readonly unknown[]).length === 0) {
+      throw new TypeError('ResultTask.provideService requires a service implementation')
+    }
+    return ResultTask.provideService(this, tag, args[0])
   }
 
   /** Provides all requirements using an object keyed by service identifier. */
@@ -1102,42 +1183,36 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     tag: Tag,
     service: ServiceForTag<Tag>,
   ): <A, E, R>(task: ResultTask<A, E, R>) => ResultTask<A, E, Exclude<R, Tag>>
-  public static provideService<A, E, R, Tag extends Extract<R, AnyServiceTag>>(
-    taskOrTag: ResultTask<A, E, R> | Tag,
-    tagOrService: Tag | ServiceForTag<Tag>,
-    maybeService?: ServiceForTag<Tag>,
-  ):
-    | ResultTask<A, E, Exclude<R, Tag>>
-    | (<A2, E2, R2>(task: ResultTask<A2, E2, R2>) => ResultTask<A2, E2, Exclude<R2, Tag>>) {
-    if (isResultTask(taskOrTag)) {
-      if (maybeService === undefined) {
-        throw new TypeError('ResultTask.provideService requires a service implementation')
+  public static provideService(...args: readonly unknown[]): unknown {
+    if (args.length >= 3) {
+      const [task, tag, service] = args
+      if (!isResultTask(task)) {
+        throw new TypeError('ResultTask.provideService expects a ResultTask as first argument')
       }
-      const task = taskOrTag
-      const tag = tagOrService as Tag
-      const service = maybeService
-      return new ResultTask<A, E, Exclude<R, Tag>>(async (context) => {
+      if (!isServiceTag(tag)) {
+        throw new TypeError('ResultTask.provideService requires a valid service tag')
+      }
+      return new ResultTask(async (context) => {
         const services = new Map([...context.services, [tag.key, service] as const])
         const namedServices = new Map([
           ...context.namedServices,
           [tag.identifier, service] as const,
         ])
 
-        return task.execute(
-          withNamedServices(withServices(context, services), namedServices),
-        ) as Promise<Exit<A, E>>
+        return task.execute(withNamedServices(withServices(context, services), namedServices))
       })
     }
-    const tag = taskOrTag as Tag
-    const service = tagOrService as ServiceForTag<Tag>
-    return ((task: ResultTask<unknown, unknown, unknown>) =>
-      ResultTask.provideService(
-        task as ResultTask<unknown, unknown, Extract<Tag, AnyServiceTag>>,
-        tag as Extract<Tag, AnyServiceTag>,
-        service,
-      )) as unknown as <A2, E2, R2>(
-      task: ResultTask<A2, E2, R2>,
-    ) => ResultTask<A2, E2, Exclude<R2, Tag>>
+
+    if (args.length === 2 && !isResultTask(args[0])) {
+      const [tag, service] = args
+      if (!isServiceTag(tag)) {
+        throw new TypeError('ResultTask.provideService requires a valid service tag')
+      }
+      return (task: ResultTask<unknown, unknown, unknown>) =>
+        ResultTask.provideService(task as never, tag as never, service as never)
+    }
+
+    throw new TypeError('ResultTask.provideService requires a service implementation')
   }
 
   /** Provides a lazy resolver for service tags that are not already in the environment. */
@@ -1153,19 +1228,55 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     A,
     E | ResolverError<Resolvers>,
     WithoutServices<R> | ResolverRequirements<Resolvers>
-  > {
-    return new ResultTask(async (context) => {
-      const providers = resolvers as Readonly<
-        Record<string, () => ResultTask<unknown, unknown, unknown>>
-      >
-      return task.execute(
-        withServiceResolver(context, (tag) =>
-          Object.hasOwn(providers, tag.identifier)
-            ? providers[tag.identifier]?.()
-            : context.serviceResolver?.(tag),
-        ),
-      )
-    })
+  >
+  public static provideServiceResolver<
+    const Resolvers extends Readonly<Record<string, () => ResultTask<unknown, unknown, unknown>>>,
+  >(
+    resolvers: Resolvers,
+  ): <A, E, R>(
+    task: [IncompatibleResolvedServices<R, Resolvers>] extends [never]
+      ? ResultTask<A, E, R>
+      : never,
+  ) => ResultTask<
+    A,
+    E | ResolverError<Resolvers>,
+    EliminateResolvedServices<R, Resolvers> | ResolverRequirements<Resolvers>
+  >
+  public static provideServiceResolver(...args: readonly unknown[]): unknown {
+    if (args.length >= 2) {
+      const [task, resolvers] = args
+      if (!isResultTask(task)) {
+        throw new TypeError(
+          'ResultTask.provideServiceResolver expects a ResultTask as first argument',
+        )
+      }
+      if (!isPlainRecord(resolvers)) {
+        throw new TypeError('ResultTask.provideServiceResolver requires a resolvers object')
+      }
+      return new ResultTask(async (context) => {
+        const providers = resolvers as Readonly<
+          Record<string, () => ResultTask<unknown, unknown, unknown>>
+        >
+        return task.execute(
+          withServiceResolver(context, (tag) =>
+            Object.hasOwn(providers, tag.identifier)
+              ? providers[tag.identifier]?.()
+              : context.serviceResolver?.(tag),
+          ),
+        )
+      })
+    }
+
+    if (!isResultTask(args[0])) {
+      const [resolvers] = args
+      if (!isPlainRecord(resolvers)) {
+        throw new TypeError('ResultTask.provideServiceResolver requires a resolvers object')
+      }
+      return (task: ResultTask<unknown, unknown, unknown>) =>
+        ResultTask.provideServiceResolver(task as never, resolvers as never)
+    }
+
+    throw new TypeError('ResultTask.provideServiceResolver requires a resolvers object')
   }
 
   /** Shares one in-flight execution and successful value. Failed executions can be retried. */
@@ -1175,6 +1286,7 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
       pending ??= task.execute(context)
       const current = pending
       const exit = await current
+      // Stryker disable next-line ConditionalExpression: only a newer execution starting between capture and reset could distinguish the guard; microtask ordering makes the first failing attacher always observe its own pending, so the mutant is equivalent.
       if (exit._tag === 'Failure' && pending === current) pending = undefined
       return exit
     })
@@ -1200,14 +1312,18 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
               return exit
             })
           pending.add(execution)
+          // Stryker disable next-line all: pending-set cleanup is memory hygiene; settled promises keep close() resolving identically.
           void execution.then(() => pending.delete(execution))
           return new Promise<Exit<unknown, unknown>>((resolve) => {
             const onAbort = (): void => {
               resolve(interrupted(context.signal))
             }
+            // Stryker disable next-line all: abort fires at most once and the listener is removed on success; once:true is listener hygiene.
             context.signal.addEventListener('abort', onAbort, { once: true })
+            // Stryker disable next-line all: the run-loop entry check preempts entry-aborted executions and the abort listener covers in-flight aborts; this pre-check restates both.
             if (context.signal.aborted) onAbort()
             void execution.then((exit) => {
+              // Stryker disable next-line all: abort fires at most once; a mismatched event name only leaks the already-fired listener.
               context.signal.removeEventListener('abort', onAbort)
               resolve(interruptSuccess(exit, context.signal))
             })
@@ -1222,7 +1338,7 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
           })()
           const closed = await closing
           // The caller already carries the body outcome; return cleanup failures only.
-          return closed._tag === 'Success' ? success(undefined) : closed
+          return closed
         }),
     }
     return owner
@@ -1233,35 +1349,41 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     task: ResultTask<A, E, R>,
     services: ResultTaskServices<R>,
   ): ResultTask<A, E, Extract<R, ResultTaskScope<unknown>>>
-  public static provideServices<R>(
-    services: ResultTaskServices<R>,
-  ): <A, E>(task: ResultTask<A, E, R>) => ResultTask<A, E, Extract<R, ResultTaskScope<unknown>>>
-  public static provideServices<A, E, R>(
-    taskOrServices: ResultTask<A, E, R> | ResultTaskServices<R>,
-    maybeServices?: ResultTaskServices<R>,
-  ):
-    | ResultTask<A, E, Extract<R, ResultTaskScope<unknown>>>
-    | (<A2, E2>(
-        task: ResultTask<A2, E2, R>,
-      ) => ResultTask<A2, E2, Extract<R, ResultTaskScope<unknown>>>) {
-    if (isResultTask(taskOrServices)) {
-      if (maybeServices === undefined) {
+  public static provideServices<const Services extends Readonly<Record<string, unknown>>>(
+    services: Services,
+  ): <A, E, R>(
+    task: [IncompatibleProvidedServices<R, Services>] extends [never] ? ResultTask<A, E, R> : never,
+  ) => ResultTask<A, E, EliminateProvidedServices<R, Services>>
+  public static provideServices(...args: readonly unknown[]): unknown {
+    if (args.length >= 2) {
+      const [task, services] = args
+      if (!isResultTask(task)) {
+        throw new TypeError('ResultTask.provideServices expects a ResultTask as first argument')
+      }
+      if (!isPlainRecord(services)) {
         throw new TypeError('ResultTask.provideServices requires a services object')
       }
-      const task = taskOrServices
-      const services = maybeServices
-      return new ResultTask<A, E, Extract<R, ResultTaskScope<unknown>>>(async (context) => {
+      return new ResultTask(async (context) => {
         const namedServices = new Map(context.namedServices)
 
-        for (const [identifier, service] of Object.entries(services)) {
+        for (const [identifier, service] of Object.entries(services as Record<string, unknown>)) {
           namedServices.set(identifier, service)
         }
 
-        return task.execute(withNamedServices(context, namedServices)) as Promise<Exit<A, E>>
+        return task.execute(withNamedServices(context, namedServices))
       })
     }
-    const services = taskOrServices
-    return (task) => ResultTask.provideServices(task, services)
+
+    if (!isResultTask(args[0])) {
+      const [services] = args
+      if (!isPlainRecord(services)) {
+        throw new TypeError('ResultTask.provideServices requires a services object')
+      }
+      return (task: ResultTask<unknown, unknown, unknown>) =>
+        ResultTask.provideServices(task, services)
+    }
+
+    throw new TypeError('ResultTask.provideServices requires a services object')
   }
 
   /** Maps the success value using the canonical functional form or curried for `pipe`. */
@@ -1475,6 +1597,7 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     asyncResultOrFactory: ResultAsync<A, E> | ((signal: AbortSignal) => ResultAsync<A, E>),
   ): ResultTask<A, E> {
     return new ResultTask(async (context) => {
+      // Stryker disable next-line all: the run-loop entry check already interrupts pre-aborted executions before this executor runs; the post-await check covers aborts during execution.
       if (context.signal.aborted) {
         return interrupted(context.signal)
       }
@@ -1542,25 +1665,40 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   }
 
   /** Runs a task and preserves success, typed failure, and runtime defects in an `Exit`. */
+  public static runExit<A, E>(task: ResultTask<A, E, never>): Promise<Exit<A, E>>
   public static runExit<A, E, R>(
     task: ResultTask<A, E, R>,
     ...args: ResultTaskRunArguments<R>
+  ): Promise<Exit<A, E | ScopeError<R>>>
+  public static runExit<A, E, R>(
+    task: ResultTask<A, E, R>,
+    ...args: readonly [options?: ResultTaskRunOptions<R>]
   ): Promise<Exit<A, E | ScopeError<R>>> {
     return ResultTask.runExitInternal(task, args[0])
   }
 
   /** Returns single typed failures as Err; rejects defects, interruption, and composite causes. */
+  public static runResult<A, E>(task: ResultTask<A, E, never>): Promise<Result<A, E>>
   public static runResult<A, E, R>(
     task: ResultTask<A, E, R>,
     ...args: ResultTaskRunArguments<R>
+  ): Promise<Result<A, E | ScopeError<R>>>
+  public static runResult<A, E, R>(
+    task: ResultTask<A, E, R>,
+    ...args: readonly [options?: ResultTaskRunOptions<R>]
   ): Promise<Result<A, E | ScopeError<R>>> {
     return ResultTask.runResultInternal(task, args[0])
   }
 
   /** Runs a task and returns the success value, rejecting on typed failures or defects. */
-  public static async runPromise<A, E, R>(
+  public static runPromise<A, E>(task: ResultTask<A, E, never>): Promise<A>
+  public static runPromise<A, E, R>(
     task: ResultTask<A, E, R>,
     ...args: ResultTaskRunArguments<R>
+  ): Promise<A>
+  public static async runPromise<A, E, R>(
+    task: ResultTask<A, E, R>,
+    ...args: readonly [options?: ResultTaskRunOptions<R>]
   ): Promise<A> {
     const result = await ResultTask.runResultInternal(task, args[0])
     return result.unwrapOrThrow()

@@ -7,7 +7,7 @@ interface Database {
   readonly health: () => ResultTask<string>;
   readonly close: () => ResultTask<void>;
 }
-interface WhatsApp {
+interface Session {
   readonly close: () => ResultTask<void>;
 }
 interface Health {
@@ -33,14 +33,14 @@ const applicationModule = (events: string[]) => {
           }),
       };
     });
-  const connectWhatsApp = (database: Database): ResultTask<WhatsApp> =>
+  const connectSession = (database: Database): ResultTask<Session> =>
     database.health().map((health) => {
       expect(health).toBe("healthy");
-      events.push("whatsapp");
+      events.push("session");
       return {
         close: () =>
           ResultTask.sync(() => {
-            events.push("close whatsapp");
+            events.push("close session");
           }),
       };
     });
@@ -51,7 +51,7 @@ const applicationModule = (events: string[]) => {
     health,
   }: {
     readonly health: Health;
-    readonly whatsapp: WhatsApp;
+    readonly session: Session;
   }): ResultTask<Server> =>
     health.check().map((status) => {
       expect(status).toBe("healthy");
@@ -75,11 +75,11 @@ const applicationModule = (events: string[]) => {
       release: (database) => database.close(),
     })
     .scoped("health", ["database"], createHealthUseCase)
-    .resource("whatsapp", ["database"], {
-      acquire: ({ database }) => connectWhatsApp(database),
-      release: (whatsapp) => whatsapp.close(),
+    .resource("session", ["database"], {
+      acquire: ({ database }) => connectSession(database),
+      release: (session) => session.close(),
     })
-    .resource("server", ["health", "whatsapp"], {
+    .resource("server", ["health", "session"], {
       acquire: serve,
       release: (server) => server.close(),
     });
@@ -92,11 +92,11 @@ test("runs an application through one lifetime", async () => {
   expect(await ResultTask.runExit(program)).toEqual({ _tag: "Success", value: undefined });
   expect(events).toEqual([
     "database: memory",
-    "whatsapp",
+    "session",
     "server",
     "wait",
     "close server",
-    "close whatsapp",
+    "close session",
     "close database",
   ]);
 });

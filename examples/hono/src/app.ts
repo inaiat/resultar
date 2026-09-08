@@ -1,7 +1,7 @@
 import { createHonoApp } from "resultar-hono";
 import { createServices } from "./services.ts";
 
-// O pacote infere context.env e mantém os recursos vivos até finalizar a resposta.
+// The package infers context.env and keeps resources alive until the response finishes.
 export const createApplication = (services = createServices()) =>
   createHonoApp({ services, bindings: ["health", "users"] }, (app) => {
     app.get("/health", async (c) => {

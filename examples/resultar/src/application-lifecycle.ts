@@ -5,9 +5,9 @@ export class DatabaseLifecycleError extends createTaggedError({
   message: 'Database $operation failed',
 }) {}
 
-export class WhatsAppLifecycleError extends createTaggedError({
-  name: 'WhatsAppLifecycleError',
-  message: 'WhatsApp $operation failed',
+export class SessionLifecycleError extends createTaggedError({
+  name: 'SessionLifecycleError',
+  message: 'Session $operation failed',
 }) {}
 
 export class HttpLifecycleError extends createTaggedError({
@@ -20,8 +20,8 @@ export interface DatabaseConnection {
   readonly close: () => ResultTask<void, DatabaseLifecycleError>
 }
 
-export interface WhatsAppConnection {
-  readonly close: () => ResultTask<void, WhatsAppLifecycleError>
+export interface SessionConnection {
+  readonly close: () => ResultTask<void, SessionLifecycleError>
 }
 
 export interface HttpServer {
@@ -31,12 +31,12 @@ export interface HttpServer {
 
 export interface ApplicationFactories {
   readonly connectDatabase: () => ResultTask<DatabaseConnection, DatabaseLifecycleError>
-  readonly connectWhatsApp: (
+  readonly connectSession: (
     database: DatabaseConnection,
-  ) => ResultTask<WhatsAppConnection, WhatsAppLifecycleError>
+  ) => ResultTask<SessionConnection, SessionLifecycleError>
   readonly serve: (services: {
     readonly database: DatabaseConnection
-    readonly whatsApp: WhatsAppConnection
+    readonly session: SessionConnection
   }) => ResultTask<HttpServer, HttpLifecycleError>
   readonly waitForShutdown: () => ResultTask<void, HttpLifecycleError>
 }
@@ -50,12 +50,12 @@ export const applicationLifecycle = (factories: ApplicationFactories) =>
         release: (connection) => connection.close(),
       })
       yield* database.ensureSchema()
-      const whatsApp = yield* ResultTask.acquireRelease({
-        acquire: factories.connectWhatsApp(database),
+      const session = yield* ResultTask.acquireRelease({
+        acquire: factories.connectSession(database),
         release: (connection) => connection.close(),
       })
       yield* ResultTask.acquireRelease({
-        acquire: factories.serve({ database, whatsApp }),
+        acquire: factories.serve({ database, session }),
         release: (server) => server.stopAndDrain(),
       })
       yield* factories.waitForShutdown()

@@ -69,10 +69,15 @@
           "default": "error",
           "description": "Disallow await expressions inside safeTry bodies; use yield* for Resultar values."
         },
+        "noAwaitInResultTaskGen": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Disallow await expressions inside ResultTask.gen bodies; use yield* for tasks and services."
+        },
         "noDiscard": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "error",
-          "description": "Require Result and ResultAsync values to be handled or explicitly discarded."
+          "description": "Require Result, ResultAsync, and ResultTask values to be handled or explicitly discarded."
         },
         "noPromiseInResultSuccess": {
           "$ref": "#/definitions/ruleSeverity",
@@ -85,6 +90,16 @@
           "default": "must-use",
           "description": "Controls no-discard analysis. must-use tracks assigned Resultar values until consumed; direct only reports discarded expressions."
         },
+        "noInvalidLifetime": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Reject dependency lifetimes a longer-lived service cannot capture, such as a singleton depending on a scoped or transient service."
+        },
+        "noResultInTaskGen": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Require ResultTask.gen bodies to return plain success values instead of nested ok/err Results."
+        },
         "noTaggedErrorConstructorOverride": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",
@@ -94,6 +109,11 @@
           "$ref": "#/definitions/ruleSeverity",
           "default": "off",
           "description": "Disallow throw statements so expected failures stay in Resultar error channels."
+        },
+        "noThrowInTaskSync": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Disallow throw statements inside ResultTask.sync callbacks; use ResultTask.try with a catch mapper."
         },
         "noTryCatch": {
           "$ref": "#/definitions/ruleSeverity",
@@ -126,6 +146,11 @@
           "$ref": "#/definitions/ruleSeverity",
           "default": "suggestion",
           "description": "Discourage unknown or any in Resultar error channels; prefer a concrete error type or typed catch mapper."
+        },
+        "noUnscopedAcquireRelease": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Require acquireRelease workflows inside ResultTask.gen to run under ResultTask.scoped."
         },
         "noUselessRecovery": {
           "$ref": "#/definitions/ruleSeverity",
