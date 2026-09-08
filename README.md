@@ -9,6 +9,7 @@ If you are evaluating or using the main library, start with:
 - [resultar package README](packages/resultar/README.md)
 - [full Resultar guide](DOCUMENTATION.md)
 - [API map](DOCUMENTATION.md#api-map)
+- [AI/RAG map](llms.txt)
 
 ## Packages
 
@@ -20,6 +21,7 @@ If you are evaluating or using the main library, start with:
 | `resultar-di`              | Typed dependency composition, scoped resources, and overrides for ResultTask applications.                                                                          | [DI README](packages/di/README.md)                                            |
 | `resultar-request-typebox` | TypeBox adapter for `resultar-request`.                                                                                                                             | [TypeBox adapter README](packages/request-typebox/README.md)                  |
 | `resultar-request-zod`     | Zod adapter for `resultar-request`.                                                                                                                                 | [Zod adapter README](packages/request-zod/README.md)                          |
+| `resultar-hono`              | Typed Hono bindings with one DI scope per response and explicit shutdown.                                                  | [Hono README](packages/hono/README.md)                                          |
 
 ## Main Library
 
@@ -149,5 +151,5 @@ directory.
 ### Hono integration
 
 [`resultar-hono`](packages/hono/README.md) connects typed DI services to ordinary Hono handlers,
-with one scope per response and explicit application shutdown. See the runnable
+with one scope per response and explicit application shutdown. See the
 [runnable example](examples/hono/README.md); port and runtime configuration stay in the bootstrap.

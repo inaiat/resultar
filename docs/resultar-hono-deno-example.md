@@ -1,16 +1,16 @@
-# Exemplo Deno com resultar-hono
+# Deno example with resultar-hono
 
-O exemplo executável está em [examples/hono](../examples/hono/README.md).
+The runnable example lives in [examples/hono](../examples/hono/README.md).
 
-- [Aplicação e rotas](../examples/hono/src/app.ts): bindings inferidos pelo resultar-hono.
-- [Serviços](../examples/hono/src/services.ts): cache singleton e serviços scoped.
-- [Bootstrap Deno](../examples/hono/src/main.deno.ts): instanciação e inicialização direta com Deno.serve.
+- [Application and routes](../examples/hono/src/app.ts): bindings inferred by resultar-hono.
+- [Services](../examples/hono/src/services.ts): singleton cache and scoped services.
+- [Deno bootstrap](../examples/hono/src/main.deno.ts): direct instantiation and startup with Deno.serve.
 
-O bootstrap instancia a aplicação e passa `app.fetch` diretamente para `Deno.serve`,
-sem necessidade de cerimônia de infraestrutura. A integração com Resultar DI e o escopo
-de ciclo de vida por requisição permanecem encapsulados na aplicação Hono.
+The bootstrap instantiates the application and passes `app.fetch` directly to `Deno.serve`,
+with no infrastructure ceremony required. Integration with Resultar DI and the per-request
+lifecycle scope stay encapsulated in the Hono application.
 
-Para executar, após instalar as dependências na raiz do monorepo:
+To run it, after installing dependencies at the monorepo root:
 
 ```sh
 pnpm --filter resultar-hono-example build:deps
@@ -18,7 +18,7 @@ cd examples/hono
 deno task start
 ```
 
-Configure PORT e HOST no ambiente. O padrão é http://127.0.0.1:3000.
-Ctrl+C inicia o encerramento gracioso. Não há deadline automático para streams persistentes.
+Set PORT and HOST in the environment. The default is http://127.0.0.1:3000.
+Ctrl+C starts graceful shutdown. There is no automatic deadline for persistent streams.
 
-Referência: [encerramento gracioso no Deno](https://docs.deno.com/examples/http_server_graceful_shutdown/).
+Reference: [graceful shutdown in Deno](https://docs.deno.com/examples/http_server_graceful_shutdown/).

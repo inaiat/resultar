@@ -19,13 +19,14 @@ const app = createHonoApp(
   },
 );
 
-try {
-  const response = await app.request('/');
-  console.log(await response.text());
-} finally {
-  const closed = await app.close();
-  closed.match(() => {}, (error) => console.error(error));
-}
+const response = await app.request('/');
+console.log(await response.text());
+
+const closed = await app.close();
+closed.match(
+  () => console.log('closed'),
+  (error) => console.error(error),
+);
 ```
 
 The callback receives a real Hono instance and configures it synchronously once. Bindings are
@@ -41,6 +42,10 @@ and `notFound` on the supplied Hono instance as usual.
   and repeated calls return the same promise; requests after close are rejected. Defects or
   composite causes that cannot be represented by Result may reject with ResultTaskCauseError,
   following `ResultTask.runResult` semantics.
+
+The application type is `HonoApplication<CloseError>`. `createHonoApp` instantiates it as
+`HonoApplication<ServiceScopeError<R>>`: handle the `close()` `Err` case for typed release
+failures.
 
 Services are acquired on demand. Singleton providers live until root close; scoped providers live
 until their response is consumed, canceled or fails. A returned Response does not mean its body
@@ -58,10 +63,21 @@ Pass `app.fetch` to the server chosen by your application. Port, hostname, TLS, 
 signals, deadlines and server shutdown remain in the bootstrap. Stop/drain the server first,
 then await `app.close()`. No `/node`, `/deno` or `/bun` adapters are provided.
 
-See the [complete Deno example](../../examples/hono/README.md) with workspace dependencies and
-no experimental module-resolution flags. Node and Deno have been exercised; Bun has not been
-validated. The runtime uses web APIs and does not import Node APIs.
+See the [complete example](../../examples/hono/README.md) with workspace dependencies and
+no experimental module-resolution flags.
 
-This first API accepts Request only. It does not forward runtime bindings or ExecutionContext,
+| Runtime | Status |
+| --- | --- |
+| Node.js 24 | Exercised (example via `@hono/node-server`) |
+| Deno | Exercised (`Deno.serve` with `app.fetch`) |
+| Bun | Not validated |
+
+The runtime uses web APIs and does not import Node APIs.
+
+## Limitations
+
+This adapter accepts `Request` only. It does not forward runtime bindings or `ExecutionContext`,
 guarantee Hono RPC schemas, support WebSocket upgrades, or infer authenticated request-local DI
-values. Use the existing lower-level integration when those features are needed.
+values — typed local entries such as the authenticated user still depend on a framework adapter.
+Selection is per request, not per route. Use the existing lower-level integration when those
+features are needed.

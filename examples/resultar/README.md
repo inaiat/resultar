@@ -18,7 +18,8 @@ pnpm --filter resultar-example start
 ```
 
 The `check` script runs `resultar-check`. The Resultar rule set is
-configured in `tsconfig.json`.
+configured in `tsconfig.json`. The `smoke` script runs both `scripts/smoke.ts` (the cookbook
+branches) and `scripts/lifecycle-smoke.ts` (the `ResultTask` application-lifecycle fixture).
 
 ## Samples
 
@@ -39,9 +40,13 @@ configured in `tsconfig.json`.
   `timeout`, retry policies, race variants, custom race handling, and abort detection.
 - [`src/resource-cleanup.ts`](src/resource-cleanup.ts): `ResultAsync.withResource` with release
   assertions for success and failure paths.
+- [`src/application-lifecycle.ts`](src/application-lifecycle.ts): a `ResultTask.scoped` server
+  lifetime (database, session, HTTP serve/drain) with boot rollback on failure. It is not
+  re-exported from `src/index.ts`; it is exercised directly by `scripts/lifecycle-smoke.ts`.
 
-The smoke script checks the expected `Ok` and `Err` branches so this example stays executable as the
-library evolves.
+The `src/index.ts` barrel re-exports every sample except `application-lifecycle.ts` and runs
+them together via `runCookbook`. The smoke scripts check the expected `Ok` and `Err` branches
+so this example stays executable as the library evolves.
 
 ## Resultar 3.6 Additions
 
@@ -68,3 +73,10 @@ const result = await ResultTask.runResult(task)
 See the [ResultTask package guide](../../packages/resultar/README.md#lazy-workflows-with-resulttask)
 and the [core RFC](../../docs/rfcs/rfc-0001-result-task-core.md) for the complete API and the
 planned runtime phases.
+
+## Limitations
+
+This is a cookbook of `Result`/`ResultAsync`/`ResultTask` patterns, not a platform: there is no
+`Stream`, STM, cache, cluster, or RPC coverage, and DI lifetimes, Hono request scopes, and HTTP
+client validation live in their own packages (`resultar-di`, `resultar-hono`,
+`resultar-request-*`) with their own examples.

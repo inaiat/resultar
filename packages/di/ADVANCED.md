@@ -182,47 +182,51 @@ const services = createModule()
     release: (database) => database.close(),
   })
   .scoped("health", ["database"], ({ database }) => createHealthUseCase({ database }))
-  .resource("whatsapp", ["database"], {
-    acquire: ({ database }) => connectWhatsApp(database),
-    release: (whatsapp) => whatsapp.close(),
+  .resource("session", ["database"], {
+    acquire: ({ database }) => connectSession(database),
+    release: (session) => session.close(),
   })
-  .resource("server", ["health", "whatsapp"], {
-    acquire: ({ health, whatsapp }) => serve({ health, whatsapp }),
+  .resource("server", ["health", "session"], {
+    acquire: ({ health, session }) => serve({ health, session }),
     release: (server) => server.close(),
   });
 
-// connectDatabase, connectWhatsApp, serve, close, and waitForShutdown return ResultTask.
+// connectDatabase, connectSession, serve, close, and waitForShutdown return ResultTask.
 // createHealthUseCase is an ordinary synchronous factory.
 const program = services.use(["server"], ({ server }) => server.waitForShutdown());
 const exit = await ResultTask.runExit(program);
 ```
 
-Nothing is acquired until `program` runs. Shutdown releases server, WhatsApp, then database.
+Nothing is acquired until `program` runs. Shutdown releases server, session, then database.
 A failure during construction releases resources already acquired. A failed release does not skip
 earlier finalizers; `runExit` retains execution and release causes.
 
 The server adapter must implement graceful HTTP draining in its release task. This package does
-not install process signal handlers or implement HTTP/WhatsApp shutdown behavior.
+not install process signal handlers or implement HTTP/session shutdown behavior.
 
 ## API
 
-| Operation                                            | Purpose                                                                      |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `value(name, value)`                                 | Register an externally owned value; no automatic release                     |
-| `singleton(name, dependencies, create)`              | Create a synchronous service once per root                                   |
-| `scoped(name, dependencies, create)`                 | Create a synchronous service once per child scope                            |
-| `transient(name, dependencies, create)`              | Create a synchronous service on every resolution                             |
-| `singleton(ServiceToken)`                            | Register a class-shaped service once per root                                |
-| `scoped(ServiceToken)`                               | Register a class-shaped service once per child scope                         |
-| `transient(ServiceToken)`                            | Register a class-shaped service on every resolution                          |
-| `task(name, dependencies, create)`                   | Initialize using a lazy ResultTask, including an existing scoped acquisition |
-| `resource(name, dependencies, { acquire, release })` | Acquire with a ResultTask and register release in the same scope             |
-| `override(name, value)`                              | Return a new module with a type-checked, externally owned replacement        |
-| `use(dependencies, callback)`                        | Select a graph and keep it alive through the callback's ResultTask           |
-| `scope()`                                            | Open a long-lived root; each `scope.use` call gets a child scope             |
-
-`release(resource, exit, dependencies)` receives the original scope outcome and the same dependencies
-used during acquisition. Use it for cleanup that depends on whether the application succeeded.
+| Operation                                                                                             | Purpose                                                                      |
+| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `value(name, value)`                                                                                  | Register an externally owned value; no automatic release                     |
+| `singleton(name, dependencies, create)`                                                               | Create a synchronous service once per root                                   |
+| `scoped(name, dependencies, create)`                                                                  | Create a synchronous service once per child scope                            |
+| `transient(name, dependencies, create)`                                                               | Create a synchronous service on every resolution                             |
+| `singleton(ServiceToken)`                                                                             | Register a class-shaped service once per root                                |
+| `scoped(ServiceToken)`                                                                                | Register a class-shaped service once per child scope                         |
+| `transient(ServiceToken)`                                                                             | Register a class-shaped service on every resolution                          |
+| `task(name, dependencies, create)`                                                                    | Initialize using a lazy ResultTask, including an existing scoped acquisition |
+| `resource(name, dependencies, { acquire, release })`                                                  | Acquire with a ResultTask and register release in the same scope             |
+| `override(name, value)`                                                                               | Return a new module with a type-checked, externally owned replacement        |
+| `use(dependencies, callback)`                                                                         | Select a graph and keep it alive through the callback's ResultTask           |
+| `scope()`                                                                                             | Open a long-lived root; each `scope.use` call gets a child scope             |
+| `merge(module)`                                                                                       | Combine immutable modules; duplicate names are rejected                      |
+| `http(dependencies, handle)`                                                                          | Fetch application task: one owned root, a fresh child scope per response     |
+| `scope.withServices(values)`                                                                          | Supply typed locals a child may resolve; cannot overwrite registrations      |
+| `scope.fetch(dependencies, handle)`                                                                   | Fetch handler whose child stays open through response-body consumption       |
+| `scope.close()`                                                                                       | Release root singletons; waits for active children, then runs finalizers     |
+| `release(resource, exit, dependencies)` receives the original scope outcome and the same dependencies |
+| used during acquisition. Use it for cleanup that depends on whether the application succeeded.        |
 
 Pass `{ lifetime: 'singleton' }`, `{ lifetime: 'scoped' }`, or `{ lifetime: 'transient' }` as the
 last argument to `task`, or alongside `acquire` and `release` for `resource`.
@@ -241,9 +245,25 @@ const result = await ResultTask.runResult(testing.use(["health"], ({ health }) =
 ```
 
 Only health and its selected dependencies are resolved. Database acquisition is replaced entirely;
-WhatsApp and the HTTP server are not created. Downstream factories receive the replacement. The
+session and the HTTP server are not created. Downstream factories receive the replacement. The
 original module remains available for other tests. Callers own the lifetime of injected values.
 
 An override must implement the complete registered service contract. For small mocks, declare
 small application-facing interfaces at factory and resource boundaries. DI cannot make a broad
 service interface narrow automatically.
+
+## Limitations
+
+- No service aliases: there is no `aliasTo` equivalent, and no `hasRegistration`/`build`
+  inspection helpers. Select services by their registered names.
+- No file-based discovery: there is no `loadModules` equivalent. Register every service explicitly.
+- No Bun-runtime validation: supported behavior is validated on Node.js; Bun-specific behavior is
+  out of scope.
+- No unvalidated streaming: streaming/SSE scopes are supported only through the validated
+  `fetch`/`http` body lifecycle. Do not roll cleanup-only-`finally` middleware and call it streaming
+  support.
+- Inference is conservative past eight dependency levels: `use`/`fetch` error and requirement
+  inference traverses selected dependencies up to eight levels, then falls back to a module-wide
+  union to bound compiler work.
+- Request locals need a per-framework adapter: `withServices` supplies the typed local values, but
+  extracting the tenant/request from an incoming request is wired per framework.

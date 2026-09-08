@@ -1,4 +1,4 @@
-# Resultar v3.5+ API Guide
+# Resultar v3.6+ API Guide
 
 Use this reference after checking the version installed by the consuming project. The local package
 types and source are authoritative when they differ from this guide.
@@ -14,11 +14,12 @@ types and source are authoritative when they differ from this guide.
 - [Async Policies](#async-policies)
 - [Collections And Control Flow](#collections-and-control-flow)
 - [`safeTry`](#safetry)
+- [ResultTask (Lazy Workflows)](#resulttask-lazy-workflows)
 - [Observation And Cleanup](#observation-and-cleanup)
 
 ## Package Baseline
 
-Resultar v3.5 is an ESM package targeting Node.js 24+. The repository currently uses TypeScript 7.
+Resultar v3.6 is an ESM package targeting Node.js 24+. The repository currently uses TypeScript 7.
 Do not infer consumer requirements from memory: inspect `package.json`, the lockfile, and exported
 types first.
 
@@ -30,7 +31,7 @@ import type { StrictResult, StrictResultAsync } from "resultar";
 ```
 
 `tryCatch` and `tryCatchAsync` remain compatibility aliases. Prefer `tryResult` and
-`tryResultAsync` in new v3.5+ code.
+`tryResultAsync` in new v3.6+ code.
 
 ## Core Types And Constructors
 
@@ -205,6 +206,31 @@ const workflow = safeTry(async function* () {
 
 Use `yield*` for `Result` and `ResultAsync`. Wrap raw promises before yielding. Avoid raw `await`,
 `try/catch`, and legacy `safeUnwrap()` inside the generator.
+
+## ResultTask (Lazy Workflows)
+
+`ResultTask<A, E, R>` is a lazy, reusable description of work: building one starts nothing, and
+each `run*` call executes it again. Never substitute `ResultAsync` (already-started) where
+laziness matters.
+
+- Build: `succeed`, `fail`, `fromResult`, `sync`, `try`, `tryPromise` (`try`/`tryPromise` map
+  external throws into `E`; `sync` treats them as defects).
+- Compose lazily: `map`, `flatMap`, `catchAll`, `tap`, `gen` with `yield*` (also accepts
+  `yield* result`: `Ok` unwraps, `Err` short-circuits into `E`).
+- Provide services: `yield* Tag`, then `provideService` / `provideServices` /
+  `provideServiceResolver` (data-first and curried); missing or incompatible providers are
+  compile-time errors, never runtime surprises.
+- Resources: `acquireRelease` + `scoped`; LIFO awaited finalizers run on every exit; deferred
+  release errors live in `R` until `scoped` folds them into `E`; `catchAll` recovers a release
+  failure only after `scoped`.
+- Boundaries: `runExit` preserves `Success`/`Fail`/`Die`/`Interrupt`/`Sequential`; `runResult`
+  returns one `Err` and rejects the rest (`AbortError` for interrupts, `ResultTaskCauseError`
+  for composites); `runPromise` unwraps or rejects. Cancellation is cooperative: no fibers,
+  `race`, `timeout`, or scheduler exist on `ResultTask` yet — use the `ResultAsync` helpers.
+
+`Result.gen` is the canonical name for linear Result workflows; `safeTry` remains as its alias.
+For lazy `ResultTask` workflows with typed services and scopes, see `packages/resultar/README.md`
+(Lazy Workflows With ResultTask) and `docs/rfcs/rfc-0001-result-task-core.md`.
 
 ## Observation And Cleanup
 

@@ -1,27 +1,29 @@
 # Hono + Resultar DI
 
-Uma aplicação de exemplo demonstrando injeção de dependências com [Resultar DI](../../packages/di/README.md) e rotas tipadas com [resultar-hono](../../packages/hono/README.md).
+An example application combining dependency injection with
+[Resultar DI](../../packages/di/README.md) and typed routes with
+[resultar-hono](../../packages/hono/README.md).
 
-- [Serviços](src/services.ts): composição tipada com `singleton` e `scoped`.
-- [Aplicação](src/app.ts): rotas Hono com bindings inferidos via `createHonoApp`.
-- [Bootstrap](src/main.ts): execução no Node via `@hono/node-server`.
+- [Services](src/services.ts): typed composition with `singleton` and `scoped`.
+- [Application](src/app.ts): Hono routes with inferred bindings via `createHonoApp`.
+- [Bootstrap](src/main.ts): runs on Node via `@hono/node-server`.
 
 ---
 
-## Execução
+## Run
 
-Na raiz do monorepo:
+From the monorepo root:
 
 ```sh
 pnpm install
 pnpm --filter resultar-hono-example build:deps
 ```
 
-### Iniciar aplicação
+### Start the application
 
 ```sh
 pnpm --filter resultar-hono-example start
-# ou dentro de examples/hono:
+# or inside examples/hono:
 pnpm start
 ```
 
@@ -29,7 +31,7 @@ pnpm start
 
 ## Endpoints
 
-Por padrão, a aplicação escuta em `http://127.0.0.1:3000`:
+By default the application listens on `http://127.0.0.1:3000`:
 
 ```sh
 curl http://127.0.0.1:3000/health
@@ -45,25 +47,44 @@ curl http://127.0.0.1:3000/health
 # {"status":"ok","users":0}
 ```
 
-PORT e HOST podem ser configurados via variáveis de ambiente.
+`PORT` and `HOST` can be configured via environment variables.
 
 ---
 
-## Composição e Ciclo de Vida
+## Composition and lifecycle
 
-- `Cache` é **singleton** (uma única instância compartilhada durante toda a vida da aplicação).
-- `Users` e `Health` são **scoped** (uma nova instância criada isoladamente para cada requisição HTTP).
-- `createHonoApp` mantém um escopo de DI aberto até que a resposta (inclusive streaming de corpo) seja completamente consumida ou cancelada.
-- O bootstrap instancia a aplicação e entrega `app.fetch` diretamente ao runtime (`Deno.serve` ou `@hono/node-server`), sem necessidade de tokens artificiais de router ou infraestrutura complexa.
+- `Cache` is a **singleton** (one shared `Map` instance for the whole application lifetime,
+  preloaded with user `1` / `Ada`).
+- `Users` and `Health` are **scoped** (a fresh instance resolved for each HTTP request).
+  `Users.find` and `Users.remove` return `ResultAsync`; `Health.check` returns the current
+  user count.
+- `createHonoApp` keeps one DI root and opens a child scope per request, holding scoped
+  resources until the response body is fully consumed or canceled.
+- The bootstrap passes `app.fetch` directly to `@hono/node-server`; port and hostname come
+  from `PORT` and `HOST`. Server shutdown stays in the bootstrap: stop the server first,
+  then await `app.close()`.
 
 ---
 
-## Validação
+## Validation
 
 ```sh
-# Verificação de tipos e regras Resultar Check:
+# Type and Resultar Check rules:
 pnpm run check
 
-# Smoke test (executa requisições via app.request):
+# Smoke test (drives the routes via app.request):
 pnpm run smoke
 ```
+
+The smoke script (`scripts/smoke.ts`) exercises `GET /health`, `DELETE /users/:id`,
+`GET /users/:id` after deletion, and the updated `GET /health`, then closes the application.
+
+---
+
+## Limitations
+
+The `Cache` is an in-memory `Map`, not a real database. The example wires no authenticated
+request-local values — typed local entries such as the authenticated user still depend on a
+framework adapter. It serves through `@hono/node-server` only (see the
+[package README](../../packages/hono/README.md) for passing `app.fetch` to other servers;
+Bun has not been validated). Binding selection is per request, not per route.

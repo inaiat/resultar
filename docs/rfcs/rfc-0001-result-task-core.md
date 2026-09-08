@@ -1,13 +1,13 @@
-# RFC 0001: ResultTask e a próxima arquitetura do core
+# RFC 0001: ResultTask and the next core architecture
 
 - Status: Draft
-- Data: 2026-09-01
-- Escopo: pacote `resultar`
-- Compatibilidade pretendida: evolução incremental antes de uma eventual major
+- Date: 2026-09-01
+- Scope: `resultar` package
+- Intended compatibility: incremental evolution before an eventual major
 
-## Resumo
+## Summary
 
-Este RFC propõe separar os três conceitos que hoje estão parcialmente sobrepostos no core:
+This RFC proposes separating the three concepts that are currently partially overlapping in the core:
 
 ```ts
 Result<A, E> // resultado síncrono já calculado
@@ -15,66 +15,66 @@ ResultTask<A, E, R> // descrição lazy de um programa
 ResultAsync<A, E> // PromiseLike<Result<A, E>> para compatibilidade
 ```
 
-`Result` continua sendo o tipo de dado pequeno e direto que identifica o projeto. A nova abstração
-`ResultTask` passa a concentrar execução assíncrona, cancelamento, concorrência, retry, timeout,
-recursos e dependências. `ResultAsync` permanece disponível durante a migração e pode, com o tempo,
-ser implementado como uma fachada de execução de `ResultTask`.
+`Result` remains the small, direct data type that identifies the project. The new abstraction
+`ResultTask` takes over async execution, cancellation, concurrency, retry, timeout,
+resources, and dependencies. `ResultAsync` remains available during the migration and may, over time,
+be implemented as a `ResultTask` execution facade.
 
-A inspiração principal vem do Effect v4: programas são valores lazy; execução pertence a um
-runtime; recursos vivem em escopos; concorrência é estruturada; dependências são explícitas; e a
-ergonomia de `yield*` não implica que tipos distintos sejam estruturalmente intercambiáveis.
+The main inspiration comes from Effect v4: programs are lazy values; execution belongs to a
+runtime; resources live in scopes; concurrency is structured; dependencies are explicit; and
+`yield*` ergonomics does not imply that distinct types are structurally interchangeable.
 
-O objetivo não é transformar Resultar em uma implementação reduzida do Effect. O objetivo é adotar
-as ideias que resolvem limitações concretas do core atual sem perder a API simples de Resultar.
+The goal is not to turn Resultar into a reduced implementation of Effect. The goal is to adopt
+the ideas that solve concrete limitations of the current core without losing Resultar's simple API.
 
-## Motivação
+## Motivation
 
-Hoje `ResultAsync<A, E>` armazena diretamente uma `Promise<Result<A, E>>`. Em muitos construtores a
-Promise começa a executar antes de qualquer chamada explícita de runtime. Os combinadores são
-implementados encadeando `then`, `catch`, `Promise.all` e controladores de abort locais.
+Today `ResultAsync<A, E>` directly stores a `Promise<Result<A, E>>`. In many constructors the
+Promise starts executing before any explicit runtime call. Combinators are
+implemented by chaining `then`, `catch`, `Promise.all`, and local abort controllers.
 
-Esse modelo funciona bem para composição simples, mas cria limites conforme o pacote ganha
-operações de produção:
+This model works well for simple composition, but creates limits as the package gains
+production operations:
 
-- uma instância não representa um programa reutilizável, mas uma execução já iniciada;
-- cancelamento é cooperativo e específico de cada helper;
-- `race`, `timeout`, retry, callbacks e recursos têm protocolos próprios;
-- não existe um escopo único que conheça todos os finalizers e tarefas filhas;
-- não existe um ponto central para clock, scheduler, logs, métricas ou tracing;
-- falha esperada, interrupção e defeito de implementação não têm uma representação comum;
-- `Result` e `ResultAsync` repetem uma parte relevante de tipos e combinadores;
-- o arquivo assíncrono concentra modelo, execução, concorrência, resource safety e API pública.
+- an instance does not represent a reusable program, but an already-started execution;
+- cancellation is cooperative and specific to each helper;
+- `race`, `timeout`, retry, callbacks, and resources each have their own protocols;
+- there is no single scope that knows all finalizers and child tasks;
+- there is no central place for clock, scheduler, logs, metrics, or tracing;
+- expected failure, interruption, and implementation defects have no common representation;
+- `Result` and `ResultAsync` repeat a relevant share of types and combinators;
+- the async file concentrates model, execution, concurrency, resource safety, and public API.
 
-Adicionar mais helpers diretamente a `ResultAsync` aumenta essa complexidade sem resolver a causa:
-a Promise é simultaneamente a descrição e a execução.
+Adding more helpers directly to `ResultAsync` increases this complexity without fixing the cause:
+the Promise is simultaneously the description and the execution.
 
-## Objetivos
+## Goals
 
-1. Preservar `Result<A, E>` como valor explícito, pequeno e independente de runtime.
-2. Introduzir uma representação lazy para workflows síncronos e assíncronos.
-3. Tornar cancelamento, timeout, concorrência e cleanup propriedades do runtime.
-4. Permitir dependências tipadas sem exigir um container de DI global.
-5. Manter falhas esperadas no canal `E` e distinguir interrupções e defeitos.
-6. Manter `yield*` como uma ergonomia segura para código linear.
-7. Migrar sem quebrar imediatamente usuários de `ResultAsync`.
-8. Reduzir duplicação e tornar o core internamente modular.
+1. Preserve `Result<A, E>` as an explicit value, small and runtime-independent.
+2. Introduce a lazy representation for sync and async workflows.
+3. Make cancellation, timeout, concurrency, and cleanup properties of the runtime.
+4. Allow typed dependencies without requiring a global DI container.
+5. Keep expected failures in the `E` channel and distinguish interruptions and defects.
+6. Keep `yield*` as safe ergonomics for linear code.
+7. Migrate without immediately breaking `ResultAsync` users.
+8. Reduce duplication and make the core internally modular.
 
-## Não objetivos
+## Non-goals
 
-- Implementar `Stream`, STM, cache, cluster, RPC ou uma plataforma completa.
-- Reproduzir toda a API do Effect.
-- Exigir serviços/contexto para usos simples.
-- Adicionar um runtime global implícito.
-- Remover `ResultAsync` na primeira entrega.
-- Mudar o significado de `Ok`, `Err` ou dos tagged errors existentes.
-- Capturar automaticamente bugs de programação como falhas esperadas em `E`.
+- Implement `Stream`, STM, cache, cluster, RPC, or a full platform.
+- Reproduce the entire Effect API.
+- Require services/context for simple uses.
+- Add an implicit global runtime.
+- Remove `ResultAsync` in the first delivery.
+- Change the meaning of `Ok`, `Err`, or the existing tagged errors.
+- Automatically capture programming bugs as expected failures in `E`.
 
-## Princípios de desenho
+## Design principles
 
-### Result é dado; ResultTask é programa
+### Result is data; ResultTask is program
 
-Construir um `Result` calcula ou recebe um valor imediatamente. Construir um `ResultTask` apenas
-descreve trabalho. O trabalho começa somente em uma operação explícita de execução.
+Building a `Result` computes or receives a value immediately. Building a `ResultTask` only
+describes work. Work starts only on an explicit execution operation.
 
 ```ts
 const result = parsePort(input)
@@ -89,36 +89,36 @@ const task = ResultTask.tryPromise({
 const resolved = await ResultTask.runResult(task)
 ```
 
-### O caminho simples continua simples
+### The simple path stays simple
 
-Nenhum serviço ou runtime customizado deve ser necessário para:
+No custom service or runtime should be needed for:
 
 ```ts
 const task = ResultTask.succeed(1).map((value) => value + 1)
 const result = await ResultTask.runResult(task)
 ```
 
-### Políticas são valores
+### Policies are values
 
-Retry, backoff, jitter e repetição devem ser descritos por valores reutilizáveis em vez de grandes
-objetos de opções acoplados a uma única operação.
+Retry, backoff, jitter, and repetition should be described by reusable values instead of large
+option objects coupled to a single operation.
 
-### Recursos pertencem a escopos
+### Resources belong to scopes
 
-Aquisição e release devem ser registrados no mesmo contexto de execução. O runtime deve executar
-finalizers em sucesso, falha, defeito, interrupção ou timeout.
+Acquisition and release must be recorded in the same execution context. The runtime must run
+finalizers on success, failure, defect, interruption, or timeout.
 
-### Tipos diferentes continuam diferentes
+### Different types stay different
 
-`Result`, `ResultAsync`, `ResultTask`, `Fiber` e referências de serviço podem suportar `yield*`, mas
-não devem ser estruturalmente aceitos como se fossem o mesmo tipo. Cada conversão fora de um
-generator deve ser explícita.
+`Result`, `ResultAsync`, `ResultTask`, `Fiber`, and service references may support `yield*`, but
+must not be structurally accepted as if they were the same type. Every conversion outside a
+generator must be explicit.
 
-## API pública proposta
+## Proposed public API
 
-Os nomes abaixo são uma direção de API, não uma lista congelada para a primeira implementação.
+The names below are an API direction, not a frozen list for the first implementation.
 
-### Modelo
+### Model
 
 ```ts
 declare const ResultTaskTypeId: unique symbol
@@ -134,12 +134,12 @@ export interface ResultTask<out A, out E = never, out R = never> extends Pipeabl
 }
 ```
 
-`A` é o valor de sucesso, `E` é uma falha esperada e `R` representa requisitos da execução.
+`A` is the success value, `E` is an expected failure, and `R` represents execution requirements.
 
-O construtor real e a função interna de execução não fazem parte da interface pública. Isso permite
-alterar a representação do programa sem quebrar consumidores.
+The actual constructor and the internal execution function are not part of the public interface. This allows
+changing the program representation without breaking consumers.
 
-### Construtores mínimos
+### Minimal constructors
 
 ```ts
 ResultTask.succeed<A>(value: A): ResultTask<A>
@@ -158,10 +158,10 @@ ResultTask.tryPromise<A, E>(options: {
 }): ResultTask<A, E>
 ```
 
-`sync` é usado para computações que não devem lançar. Se lançar, isso é um defeito. `try` e
-`tryPromise` são boundaries explícitos que convertem causas externas para `E`.
+`sync` is used for computations that must not throw. If one throws, that is a defect. `try` and
+`tryPromise` are explicit boundaries that convert external causes into `E`.
 
-### Composição
+### Composition
 
 ```ts
 ResultTask.map(task, f)
@@ -176,8 +176,8 @@ ResultTask.match(task, handlers)
 ResultTask.as(task, value)
 ```
 
-A API deve suportar `pipe`. Métodos de instância podem existir por ergonomia, mas a implementação
-canônica deve viver em funções de módulo para reduzir duplicação e facilitar tree shaking.
+The API must support `pipe`. Instance methods may exist for ergonomics, but the canonical
+implementation must live in module functions to reduce duplication and ease tree shaking.
 
 ### Generator
 
@@ -192,19 +192,19 @@ const createAccount = (input: Input) =>
   })
 ```
 
-O retorno normal do generator deve ser o valor `A`, não `ok(A)`. Falhas produzidas por tasks
-interrompem o generator e são acumuladas no tipo `E`.
+The normal generator return must be the `A` value, not `ok(A)`. Failures produced by tasks
+interrupt the generator and accumulate in the `E` type.
 
-Compatibilidade com o estilo atual pode ser oferecida durante a migração, mas a forma acima deve ser
-a API recomendada para `ResultTask.gen`.
+Compatibility with the current style may be offered during the migration, but the form above must be
+the recommended API for `ResultTask.gen`.
 
-Para manter a mesma linguagem entre os modelos eager e lazy, `Result.gen` é um alias exato de
-`safeTry`. O nome legado continua disponível, mas novos exemplos de workflows `Result` podem usar
-`Result.gen` ao lado de `ResultTask.gen`. A semântica permanece diferente: `Result.gen` executa o
-generator imediatamente e retorna `Result` ou `ResultAsync`, enquanto `ResultTask.gen` cria uma
-descrição lazy e retorna o valor de sucesso quando executada.
+To keep the same language between the eager and lazy models, `Result.gen` is an exact alias of
+`safeTry`. The legacy name remains available, but new examples of `Result` workflows may use
+`Result.gen` alongside `ResultTask.gen`. The semantics remain different: `Result.gen` runs the
+generator immediately and returns `Result` or `ResultAsync`, while `ResultTask.gen` creates a
+lazy description and returns the success value when executed.
 
-### Execução
+### Execution
 
 ```ts
 ResultTask.runResult(task): Promise<Result<A, E>>
@@ -214,15 +214,15 @@ ResultTask.runPromise(task): Promise<A>
 ResultTask.runFork(task): Fiber<A, E>
 ```
 
-Sem requisitos `R`, `services` é opcional. Se `R` não for `never`, TypeScript deve exigir os serviços
-restantes.
+Without `R` requirements, `services` is optional. If `R` is not `never`, TypeScript must require the remaining
+services.
 
-`runResult` é o boundary padrão de Resultar. `runPromise` rejeita em `Err`, interrupção ou defeito e
-é destinado a integração com APIs Promise. `runExit` preserva toda a informação da execução.
+`runResult` is Resultar's default boundary. `runPromise` rejects on `Err`, interruption, or defect and
+is intended for integration with Promise APIs. `runExit` preserves all execution information.
 
-### Serviços e contexto
+### Services and context
 
-A primeira versão deve usar tokens leves, sem um sistema de Layer completo:
+The first version must use lightweight tokens, without a full Layer system:
 
 ```ts
 interface ServiceTag<Identifier, Service> {
@@ -240,43 +240,43 @@ const program: ResultTask<User, DatabaseError, typeof Database> = ResultTask.gen
 const runnable = ResultTask.provideService(program, Database, databaseLive)
 ```
 
-Adapters de composição podem resolver tags sob demanda com `ResultTask.provideServiceResolver`.
-O adapter fornece um mapa tipado de identificadores para providers lazy. Cada provider devolve
-um `ResultTask` compatível com o contrato. Seus erros e requisitos externos são preservados,
-assim como os requisitos de scope. `makeScope()` permite ownership entre execuções e
-`memoize()` compartilha inicialização pendente, com retry após falha.
+Composition adapters may resolve tags on demand with `ResultTask.provideServiceResolver`.
+The adapter provides a typed map from identifiers to lazy providers. Each provider returns
+a `ResultTask` compatible with the contract. Its errors and external requirements are preserved,
+as are scope requirements. `makeScope()` allows ownership across executions and
+`memoize()` shares pending initialization, with retry after failure.
 
-Requisitos devem compor sem criar dependência de um singleton global. Uma API de `Layer` só deve
-ser considerada depois que casos reais demonstrarem a necessidade de construir grafos de serviços
-com ciclo de vida próprio.
+Requirements must compose without depending on a global singleton. A `Layer` API should only
+be considered after real cases demonstrate the need to build service graphs
+with their own lifecycle.
 
-**DX em pacote separado (atualizado em 2026-09-05):** a migração do Replis motivou
-[`resultar-di`](../../packages/di/README.md), um pacote opcional de composição sobre as APIs públicas do core.
-A API principal define tokens com `service(name, dependencies, factory)` para criação síncrona,
-`service(name, task)` para inicialização com ResultTask e `resource(name, { acquire, release })`
-para recursos. As dependências são um objeto tipado de tokens ou requisitos declarados via
-`yield*`; o registro dos tokens no módulo não exige ordem de dependências.
+**DX in a separate package (updated on 2026-09-05):** a private consumer migration motivated
+[`resultar-di`](../../packages/di/README.md), an optional composition package over the core's public APIs.
+The main API defines tokens with `service(name, dependencies, factory)` for sync creation,
+`service(name, task)` for initialization with ResultTask, and `resource(name, { acquire, release })`
+for resources. Dependencies are a typed object of tokens or requirements declared via
+`yield*`; registering tokens in the module requires no dependency order.
 
-`createModule` registra esses tokens com `.singleton`, `.scoped` ou `.transient`: respectivamente,
-uma instância por raiz, uma por scope filho ou uma por resolução. `.value` fornece valores já
-criados e de ownership externo. `merge` combina módulos e `override` substitui serviços com
-verificação de contrato. Tokens em classes (`Service`), overloads com nomes e listas de dependências
-e os métodos de registro `.task`/`.resource` ficam em `resultar-di/advanced`, fora do autocomplete
-principal.
+`createModule` registers these tokens with `.singleton`, `.scoped`, or `.transient`: respectively,
+one instance per root, one per child scope, or one per resolution. `.value` provides already-created
+values under external ownership. `merge` combines modules and `override` replaces services with
+contract checking. Class-based tokens (`Service`), overloads with names and dependency lists,
+and the `.task`/`.resource` registration methods live in `resultar-di/advanced`, outside the main
+autocomplete.
 
-`use` no módulo executa uma raiz isolada e aguarda sua finalização; `scope()` mantém uma raiz entre
-execuções, com um filho por `use` e fechamento explícito por `close()`. `withServices` fornece valores
-locais. Os adapters `http`/`fetch` mantêm o scope da resposta aberto até o consumo ou cancelamento
-do corpo. A seleção infere os erros e requisitos das dependências alcançáveis, incluindo requisitos
-do callback de `use`; para limitar o custo do compilador, a análise usa a união conservadora do grafo
-ao atingir oito etapas de expansão. Essa aproximação de tipos não faz executar serviços não selecionados.
+`use` on the module runs an isolated root and awaits its completion; `scope()` keeps a root alive across
+executions, with one child per `use` and explicit closing via `close()`. `withServices` provides local
+values. The `http`/`fetch` adapters keep the response scope open until the body is consumed or cancelled.
+Selection infers the errors and requirements of reachable dependencies, including the requirements
+of the `use` callback; to limit compiler cost, analysis uses the conservative union of the graph
+once it reaches eight expansion steps. This type approximation does not execute unselected services.
 
-O core mantém `ServiceTag`, provisionamento e resolução de requisitos, ownership de recursos,
-memoização de tarefas, finalização, interrupção e causas. Registros, lifetimes, cache de serviços,
-validação do grafo e integração HTTP pertencem a `resultar-di`. O core não depende desse pacote,
-e a composição usa o runtime existente de ResultTask, sem adicionar um `Layer` ao core.
+The core keeps `ServiceTag`, requirement provisioning and resolution, resource ownership,
+task memoization, finalization, interruption, and causes. Registries, lifetimes, service caches,
+graph validation, and HTTP integration belong to `resultar-di`. The core does not depend on that package,
+and composition uses the existing ResultTask runtime, without adding a `Layer` to the core.
 
-### Scope e recursos
+### Scope and resources
 
 ```ts
 const connection = ResultTask.acquireRelease({
@@ -295,51 +295,51 @@ const query = ResultTask.scoped(
 )
 ```
 
-Regras:
+Rules:
 
-- finalizers executam em ordem LIFO;
-- cada finalizer executa no máximo uma vez;
-- interrupção não deve impedir cleanup;
-- o `Exit` da região fica disponível ao finalizer;
-- falha no release não deve ser silenciosamente descartada em `runExit`;
-- `runResult` deve aplicar uma política documentada quando use e release falham juntos.
+- finalizers run in LIFO order;
+- each finalizer runs at most once;
+- interruption must not prevent cleanup;
+- the region's `Exit` is available to the finalizer;
+- release failure must not be silently discarded in `runExit`;
+- `runResult` must apply a documented policy when use and release fail together.
 
-### Recorte implementado: recursos (2026-09-05)
+### Implemented slice: resources (2026-09-05)
 
-A implementação incremental da Fase 3 inclui scope raiz por execução, `scoped`, `acquireRelease`,
-finalizers LIFO aguardados e protegidos do sinal de interrupção, e `Cause.Sequential`/`Interrupt`.
-Não inclui fibers, race, timeout, scheduler ou `Cause.Parallel`; a Fase 3 permanece parcial.
+The incremental Phase 3 implementation includes a root scope per execution, `scoped`, `acquireRelease`,
+awaited LIFO finalizers shielded from the interruption signal, and `Cause.Sequential`/`Interrupt`.
+It does not include fibers, race, timeout, scheduler, or `Cause.Parallel`; Phase 3 remains partial.
 
-Decisões do recorte:
+Decisions in this slice:
 
-- `acquireRelease` acumula erros de release em `ResultTaskScope<ReleaseError>`, um requisito nominal
-  em `R`. O erro não pode ficar apenas em `E`: `catchAll` poderia removê-lo antes de o finalizer rodar.
-- `scoped` remove os requisitos de scope e incorpora seus erros em `E`. Os boundaries `run*` fornecem
-  o scope raiz automaticamente e incorporam seus erros na saída. Serviços continuam obrigatórios
-  quando houver service tags em `R`; prover serviços não remove os requisitos de scope.
-- Todos os finalizers recebem o mesmo `Exit` do corpo da região. Falhas de cleanup são anexadas em
-  ordem de execução como `Sequential`; os demais finalizers continuam rodando.
-- `runResult` retorna um único `Fail` como `Err`, rejeita `Die` com o defeito original, `Interrupt`
-  com `AbortError` e `Sequential` com `ResultTaskCauseError`. O campo `cause` preserva a árvore.
-  Essa é a política escolhida neste recorte para a questão em aberto nº 6, sem alargar todo `E`
-  com um tipo agregado ou descartar uma das falhas.
-- `catchAll` recupera somente `Fail` simples. Uma causa composta é preservada dentro de
-  `Die(ResultTaskCauseError)`: isso evita que variantes removidas de `E` reapareçam em `runExit`.
-  Recuperar após `scoped` permite tratar uma falha isolada de release.
-- Release captura os serviços disponíveis na aquisição e roda com um sinal novo, não abortado.
-  Recursos adquiridos pelo próprio release pertencem a um scope privado de cleanup.
-- Cancelamento permanece cooperativo: o runtime aguarda operações em andamento, registra a
-  liberação de aquisições que terminarem durante abort e só então fecha o scope. Não há promessa
-  de término para uma operação ou finalizer que nunca resolve.
-- `ResultAsync.withResource` e o comportamento de substituição de falhas em `finally` de generators
-  permanecem compatíveis. A preservação de causas combinadas pertence às novas APIs de scope.
+- `acquireRelease` accumulates release errors in `ResultTaskScope<ReleaseError>`, a nominal requirement
+  in `R`. The error cannot live only in `E`: `catchAll` could remove it before the finalizer runs.
+- `scoped` removes scope requirements and folds their errors into `E`. The `run*` boundaries provide
+  the root scope automatically and fold its errors into the output. Services remain required
+  when service tags are present in `R`; providing services does not remove scope requirements.
+- All finalizers receive the same `Exit` of the region body. Cleanup failures are appended in
+  execution order as `Sequential`; the remaining finalizers keep running.
+- `runResult` returns a single `Fail` as `Err`, rejects `Die` with the original defect, `Interrupt`
+  with `AbortError`, and `Sequential` with `ResultTaskCauseError`. The `cause` field preserves the tree.
+  This is the policy chosen in this slice for open question no. 6, without widening all of `E`
+  with an aggregate type or dropping one of the failures.
+- `catchAll` recovers only simple `Fail`. A composite cause is preserved inside
+  `Die(ResultTaskCauseError)`: this prevents removed variants of `E` from reappearing in `runExit`.
+  Recovering after `scoped` allows handling an isolated release failure.
+- Release captures the services available at acquisition time and runs with a fresh, non-aborted signal.
+  Resources acquired by the release itself belong to a private cleanup scope.
+- Cancellation remains cooperative: the runtime awaits in-flight operations, records the
+  release of acquisitions that finish during abort, and only then closes the scope. There is no promise
+  of termination for an operation or finalizer that never settles.
+- `ResultAsync.withResource` and the failure-replacement behavior of generator `finally` blocks
+  remain compatible. Preserving combined causes belongs to the new scope APIs.
 
-O exemplo `examples/resultar/src/application-lifecycle.ts` valida composição explícita, rollback de
-boot e encerramento HTTP → WhatsApp → banco com factories que retornam `ResultTask` e erros tipados.
-O `replis-api` foi integrado ao build local, mantendo os use cases em `StrictResultAsync`. O piloto
-cobre rollback, SSE, cancelamento e o adapter Node HTTP com portas locais reais. A validação com
-SurrealDB e sessões WhatsApp reais ainda está pendente. O scope deve abranger toda a vida do servidor,
-e não apenas sua criação. Isso não requer `Layer` ou um container novo.
+The `examples/resultar/src/application-lifecycle.ts` example validates explicit composition, boot rollback,
+and HTTP → session → database shutdown with factories returning `ResultTask` and typed errors.
+A private consumer API was integrated into the local build, keeping the use cases in `StrictResultAsync`.
+The pilot covers rollback, SSE, cancellation, and the Node HTTP adapter with real local ports.
+Validation against live database and session providers is still pending. The scope must cover the whole server lifetime,
+not just its creation. This does not require `Layer` or a new container.
 
 ### Schedule
 
@@ -349,7 +349,7 @@ const policy = Schedule.exponentialBackoff(100).jittered().compose(Schedule.recu
 const resilient = ResultTask.retry(loadUser, policy)
 ```
 
-Entrega mínima:
+Minimum delivery:
 
 ```ts
 Schedule.recurs(times)
@@ -359,9 +359,9 @@ Schedule.jittered(schedule)
 Schedule.whileInput(schedule, predicate)
 ```
 
-`Clock` deve ser injetável pelo runtime para que retry e timeout sejam determinísticos em testes.
+`Clock` must be injectable by the runtime so retry and timeout are deterministic in tests.
 
-### Concorrência estruturada
+### Structured concurrency
 
 ```ts
 const fiber = yield * ResultTask.forkChild(task)
@@ -369,17 +369,17 @@ const value = yield * Fiber.join(fiber)
 yield * Fiber.interrupt(fiber)
 ```
 
-Regras:
+Rules:
 
-- fibers filhas pertencem ao scope pai;
-- encerrar o scope interrompe filhos ainda ativos;
-- `race` interrompe perdedores e aguarda seus finalizers;
-- `timeout` é um race especializado;
-- `all` e `forEach` recebem uma política uniforme de concorrência;
-- o runtime não promete cancelamento preemptivo de código JavaScript síncrono;
-- integração externa continua dependendo de `AbortSignal` cooperativo.
+- child fibers belong to the parent scope;
+- closing the scope interrupts still-active children;
+- `race` interrupts losers and awaits their finalizers;
+- `timeout` is a specialized race;
+- `all` and `forEach` take a uniform concurrency policy;
+- the runtime does not promise preemptive cancellation of sync JavaScript code;
+- external integration still depends on cooperative `AbortSignal`.
 
-API inicial:
+Initial API:
 
 ```ts
 ResultTask.all(input, { concurrency, mode })
@@ -389,12 +389,12 @@ ResultTask.timeout(task, duration, onTimeout)
 ResultTask.forkChild(task)
 ```
 
-`mode` deve distinguir pelo menos fail-fast de validação acumulada. A API atual de
-`combineWithAllErrors` pode ser expressa sobre essa distinção.
+`mode` must distinguish at least fail-fast from accumulated validation. The current
+`combineWithAllErrors` API can be expressed over this distinction.
 
-## Modelo de saída e erros
+## Exit and error model
 
-Falhas esperadas continuam em `E`. O runtime precisa distinguir outros dois estados:
+Expected failures stay in `E`. The runtime needs to distinguish two other states:
 
 ```ts
 export type Cause<E> =
@@ -409,25 +409,25 @@ export type Exit<A, E> =
   | { readonly _tag: 'Failure'; readonly cause: Cause<E> }
 ```
 
-Esse modelo não precisa aparecer no fluxo cotidiano. Ele existe para preservar informação em
-cleanup, concorrência e observabilidade.
+This model does not need to show up in everyday flow. It exists to preserve information in
+cleanup, concurrency, and observability.
 
-Conversão padrão:
+Default conversion:
 
-- `Fail<E>` vira `Err<E>` em `runResult`;
-- `Die` rejeita a Promise de `runResult`;
-- `Interrupt` rejeita com `AbortError` em `runResult`;
-- `runExit` nunca rejeita por estados modelados pelo runtime;
-- múltiplas causas permanecem disponíveis em `runExit`.
+- `Fail<E>` becomes `Err<E>` in `runResult`;
+- `Die` rejects the `runResult` Promise;
+- `Interrupt` rejects with `AbortError` in `runResult`;
+- `runExit` never rejects for states modeled by the runtime;
+- multiple causes remain available in `runExit`.
 
-Uma alternativa seria incluir `AbortError` automaticamente no tipo `E`. Este RFC não recomenda
-essa direção: interrupção é uma propriedade da execução e não uma falha de domínio de toda função.
-Boundaries que desejarem modelar cancelamento como domínio podem usar um combinador explícito.
+One alternative would be to include `AbortError` automatically in the `E` type. This RFC does not recommend
+that direction: interruption is a property of execution, not a domain failure of every function.
+Boundaries that want to model cancellation as domain state may use an explicit combinator.
 
-## Representação interna inicial
+## Initial internal representation
 
-A primeira implementação não precisa começar com um bytecode ou interpretador complexo. Uma
-função lazy sobre um contexto de runtime é suficiente:
+The first implementation does not need to start with bytecode or a complex interpreter. A
+lazy function over a runtime context is enough:
 
 ```ts
 interface RuntimeContext<R> {
@@ -441,45 +441,45 @@ interface RuntimeContext<R> {
 type TaskExecutor<A, E, R> = (context: RuntimeContext<R>) => Promise<Exit<A, E>>
 ```
 
-Cada combinador cria um novo executor sem iniciar a execução. Se profiling mostrar custo excessivo
-de Promises ou recursão, a representação pode evoluir para instruções interpretadas sem alterar a
-interface pública.
+Each combinator creates a new executor without starting execution. If profiling shows excessive
+Promise or recursion cost, the representation may evolve into interpreted instructions without changing the
+public interface.
 
-O runtime deve ser o único componente autorizado a:
+The runtime must be the only component allowed to:
 
-- criar o `AbortController` raiz;
-- abrir e fechar o scope raiz;
-- criar fibers;
-- registrar finalizers;
-- consultar clock e scheduler;
-- transformar `Exit` no tipo pedido pelo boundary.
+- create the root `AbortController`;
+- open and close the root scope;
+- create fibers;
+- register finalizers;
+- query clock and scheduler;
+- transform `Exit` into the type requested by the boundary.
 
-## Relação com Result
+## Relationship with Result
 
-`Result` continua eager, sem contexto e sem cancelamento. Ele deve permanecer apropriado para
-parsing, validação e regras de domínio puras.
+`Result` stays eager, context-free, and without cancellation. It must remain appropriate for
+parsing, validation, and pure domain rules.
 
-Conversões explícitas:
+Explicit conversions:
 
 ```ts
 ResultTask.fromResult(result)
 ResultTask.runSync(task) // somente se o tipo provar que a task é síncrona; opcional
 ```
 
-Não é necessário mover todos os helpers de `Result` para `ResultTask`. Helpers de collections,
-matching e tagged errors podem compartilhar primitivas internas, preservando APIs adequadas a cada
-abstração.
+There is no need to move every `Result` helper to `ResultTask`. Collection helpers,
+matching, and tagged errors may share internal primitives while keeping APIs suited to each
+abstraction.
 
-## Relação com ResultAsync
+## Relationship with ResultAsync
 
-`ResultAsync` permanece eager e awaitable durante a migração. Isso preserva o comportamento de:
+`ResultAsync` stays eager and awaitable during the migration. This preserves the behavior of:
 
 ```ts
 const resultAsync = tryResultAsync(() => request())
 const result = await resultAsync
 ```
 
-Novas conversões propostas:
+New proposed conversions:
 
 ```ts
 ResultTask.fromResultAsync(resultAsync) // captura uma execução já iniciada
@@ -487,29 +487,29 @@ ResultTask.toResultAsync(task) // inicia imediatamente usando runtime padrão
 ResultAsync.fromTask(task) // alias de compatibilidade
 ```
 
-`ResultAsync` não deve ser usado como representação interna de `ResultTask`, porque isso removeria
-a propriedade lazy. O sentido correto é `ResultTask -> execução -> ResultAsync`.
+`ResultAsync` must not be used as the internal representation of `ResultTask`, because that would remove
+the lazy property. The correct direction is `ResultTask -> execução -> ResultAsync`.
 
-### Matriz de compatibilidade
+### Compatibility matrix
 
-| API atual                  | Curto prazo  | API recomendada nova                                   |
+| Current API                | Short term   | New recommended API                                |
 | -------------------------- | ------------ | ------------------------------------------------------ |
-| `ok`, `err`, `Result`      | manter       | sem mudança                                            |
-| `okAsync`, `errAsync`      | manter       | `ResultTask.succeed`, `ResultTask.fail` para programas |
-| `tryResultAsync`           | manter eager | `ResultTask.tryPromise`                                |
-| `ResultAsync.retry`        | manter       | `ResultTask.retry` + `Schedule`                        |
-| `ResultAsync.timeout`      | manter       | `ResultTask.timeout`                                   |
-| `ResultAsync.race*`        | manter       | `ResultTask.race` e fibers estruturadas                |
-| `ResultAsync.withResource` | manter       | `acquireRelease` + `scoped`                            |
-| `safeTry` assíncrono       | manter       | `ResultTask.gen`                                       |
-| `runPromise(ResultAsync)`  | manter       | overload ou nome explícito para `ResultTask`           |
+| `ok`, `err`, `Result`      | keep         | no change                                            |
+| `okAsync`, `errAsync`      | keep         | `ResultTask.succeed`, `ResultTask.fail` for programs |
+| `tryResultAsync`           | keep eager   | `ResultTask.tryPromise`                                |
+| `ResultAsync.retry`        | keep         | `ResultTask.retry` + `Schedule`                        |
+| `ResultAsync.timeout`      | keep         | `ResultTask.timeout`                                   |
+| `ResultAsync.race*`        | keep         | `ResultTask.race` and structured fibers                |
+| `ResultAsync.withResource` | keep         | `acquireRelease` + `scoped`                            |
+| async `safeTry`            | keep         | `ResultTask.gen`                                       |
+| `runPromise(ResultAsync)`  | keep         | overload or explicit name for `ResultTask`           |
 
-Nenhuma função atual deve mudar silenciosamente de eager para lazy dentro da mesma major. Essa
-mudança seria observável mesmo quando os tipos continuassem compilando.
+No current function may silently change from eager to lazy within the same major. That
+change would be observable even when the types keep compiling.
 
-## Organização de módulos
+## Module organization
 
-Estrutura de destino sugerida:
+Suggested target structure:
 
 ```text
 packages/resultar/src/
@@ -543,206 +543,206 @@ packages/resultar/src/
     type-utils.ts
 ```
 
-Essa estrutura é um destino, não um pré-requisito para começar. A primeira implementação pode
-entrar em `src/task/` e reutilizar o core atual por imports. Mover arquivos existentes deve ocorrer
-separadamente, depois que a API nova estiver estável, para manter diffs revisáveis.
+This structure is a destination, not a prerequisite for starting. The first implementation may
+land in `src/task/` and reuse the current core via imports. Moving existing files must happen
+separately, after the new API is stable, to keep diffs reviewable.
 
-## Estratégia de implementação
+## Implementation strategy
 
-### Fase 0: contratos e provas de conceito (Concluída)
+### Phase 0: contracts and proofs of concept (Done)
 
-- [x] adicionar testes de tipos para lazy evaluation e inferência de `A`, `E` e `R`;
-- [x] validar o desenho de `ResultTask.gen` com TypeScript 7;
-- [x] medir o custo de uma cadeia longa de `flatMap` (benchmarks adicionados em `benchmarks/resultar-task-chains.ts`);
-- [x] decidir nomes públicos antes de exportar pelo entrypoint principal (consolidado como `ResultTask`);
-- [x] implementar inicialmente em um subpath experimental, se necessário (disponibilizado na raiz com retrocompatibilidade total).
+- [x] add type tests for lazy evaluation and `A`, `E`, and `R` inference;
+- [x] validate the `ResultTask.gen` design with TypeScript 7;
+- [x] measure the cost of a long `flatMap` chain (benchmarks added in `benchmarks/resultar-task-chains.ts`);
+- [x] decide public names before exporting through the main entrypoint (consolidated as `ResultTask`);
+- [x] implement initially behind an experimental subpath if needed (available at the root with full backward compatibility).
 
-Critério de saída: exemplos representativos compilam, lazy evaluation está provada por testes e a representação por trampoline iterativo não causa stack overflow em chains longas (validado até 10.000+ iterações). Detalhes em [`rfc-0001-fase-0-pendencias.md`](./rfc-0001-fase-0-pendencias.md).
+Exit criterion: representative examples compile, lazy evaluation is proven by tests, and the iterative-trampoline representation does not stack-overflow on long chains (validated up to 10,000+ iterations). Details in [`rfc-0001-phase-0-done.md`](./rfc-0001-phase-0-done.md).
 
-### Fase 1: núcleo lazy
+### Phase 1: lazy core
 
-- `ResultTask<A, E, R>` e TypeId nominal;
+- `ResultTask<A, E, R>` and nominal TypeId;
 - `succeed`, `fail`, `fromResult`, `sync`, `try`, `tryPromise`;
 - `map`, `mapError`, `flatMap`, `catchAll`, `tap`;
 - `runExit`, `runResult`, `runPromise`;
-- `Exit` e `Cause` mínimos;
-- adapters para `Result` e `ResultAsync`.
+- minimal `Exit` and `Cause`;
+- adapters for `Result` and `ResultAsync`.
 
-Critério de saída: workflows sequenciais substituem `ResultAsync.andThen` sem perder inferência e
-sem iniciar operações durante a construção.
+Exit criterion: sequential workflows replace `ResultAsync.andThen` without losing inference and
+without starting operations during construction.
 
-### Fase 2: generator e serviços
+### Phase 2: generator and services
 
 - `ResultTask.gen`;
-- contrato yieldable nominal;
+- nominal yieldable contract;
 - service tags;
-- `service`, `provideService`, `provideServices` e `provideServiceResolver`;
-- erros de serviço ausente como defeito de runtime;
-- testes de inferência de requisitos compostos.
+- `service`, `provideService`, `provideServices`, and `provideServiceResolver`;
+- missing-service errors as runtime defects;
+- inference tests for composite requirements.
 
-Critério de saída: um workflow de aplicação pode declarar e prover database, logger e clock sem
-capturar essas dependências por closure.
+Exit criterion: an application workflow can declare and provide database, logger, and clock without
+capturing those dependencies via closure.
 
-### Fase 3: scope e interrupção
+### Phase 3: scope and interruption
 
-- scope raiz e scopes filhos;
-- registro LIFO de finalizers;
-- `acquireRelease` e `scoped`;
-- propagação de `AbortSignal`;
-- `Fiber`, `forkChild`, `join` e `interrupt`;
-- `race` e `timeout` sobre fibers.
+- root scope and child scopes;
+- LIFO finalizer registration;
+- `acquireRelease` and `scoped`;
+- `AbortSignal` propagation;
+- `Fiber`, `forkChild`, `join`, and `interrupt`;
+- `race` and `timeout` over fibers.
 
-Critério de saída: nenhum loser de race ou timeout continua sem dono, e finalizers executam em todos
-os estados de saída.
+Exit criterion: no race or timeout loser is left ownerless, and finalizers run in all
+exit states.
 
-### Fase 4: schedule e collections
+### Phase 4: schedule and collections
 
-- `Schedule` mínimo;
-- retry sobre schedule e clock injetável;
-- `all`, `forEach` e validação acumulada;
-- limites uniformes de concorrência;
-- interrupção fail-fast com cleanup dos itens ativos.
+- minimal `Schedule`;
+- retry over schedule and injectable clock;
+- `all`, `forEach`, and accumulated validation;
+- uniform concurrency limits;
+- fail-fast interruption with cleanup of active items.
 
-Critério de saída: helpers atuais de produção têm equivalentes sobre as mesmas primitivas de
-runtime, sem protocolos de cancelamento independentes.
+Exit criterion: current production helpers have equivalents over the same runtime primitives,
+without independent cancellation protocols.
 
-### Fase 5: integração e estabilização
+### Phase 5: integration and stabilization
 
-- documentação e cookbook;
-- benchmarks contra `ResultAsync` e Effect v4;
-- migração dos pacotes `resultar-request-*` como consumidores piloto;
-- subpath estável ou export pelo pacote principal;
-- deprecações somente quando houver caminho mecânico de migração;
-- decisão sobre a próxima major.
+- documentation and cookbook;
+- benchmarks against `ResultAsync` and Effect v4;
+- migration of the `resultar-request-*` packages as pilot consumers;
+- stable subpath or export through the main package;
+- deprecations only when there is a mechanical migration path;
+- decision on the next major.
 
-Critério de saída: pelo menos um consumidor real usa `ResultTask`; API, performance e mensagens de
-erro foram validadas fora de testes unitários.
+Exit criterion: at least one real consumer uses `ResultTask`; API, performance, and error
+messages have been validated outside unit tests.
 
-## Estratégia de testes
+## Test strategy
 
-### Semântica
+### Semantics
 
-- construir uma task não executa efeitos;
-- cada chamada de `run*` executa novamente a task;
-- `map` e `flatMap` preservam short-circuit;
-- `catchTag` remove corretamente variantes de `E`;
-- defeitos não aparecem como `Err<E>` por acidente.
+- building a task does not run effects;
+- each `run*` call runs the task again;
+- `map` and `flatMap` preserve short-circuiting;
+- `catchTag` correctly removes `E` variants;
+- defects do not show up as `Err<E>` by accident.
 
-### Interrupção e concorrência
+### Interruption and concurrency
 
-- timeout interrompe a task e aguarda finalizers;
-- race interrompe todos os losers;
-- interrupção do pai alcança filhos;
-- concorrência limitada nunca excede o limite;
-- fail-fast para de iniciar novos itens;
-- validação acumulada preserva ordem determinística dos erros.
+- timeout interrupts the task and awaits finalizers;
+- race interrupts all losers;
+- parent interruption reaches children;
+- bounded concurrency never exceeds the limit;
+- fail-fast stops starting new items;
+- accumulated validation preserves deterministic error order.
 
-### Recursos
+### Resources
 
-- release em sucesso, `Err`, defeito e interrupção;
-- release exatamente uma vez;
-- ordem LIFO;
-- múltiplas causas preservadas;
-- finalizer assíncrono concluído antes de `runExit` resolver.
+- release on success, `Err`, defect, and interruption;
+- release exactly once;
+- LIFO order;
+- multiple causes preserved;
+- async finalizer completed before `runExit` resolves.
 
-### Tipos
+### Types
 
-- união de erros em `flatMap`;
-- remoção de tagged errors em recovery;
-- requisitos acumulados e removidos por `provideService`;
-- `never` não degrada inferência;
-- `yield*` não torna `ResultTask` estruturalmente compatível com outros yieldables;
-- record e tuple inference em `all`.
+- error union in `flatMap`;
+- tagged-error removal on recovery;
+- requirements accumulated and removed by `provideService`;
+- `never` does not degrade inference;
+- `yield*` does not make `ResultTask` structurally compatible with other yieldables;
+- record and tuple inference in `all`.
 
-### Compatibilidade
+### Compatibility
 
-- API pública atual continua coberta pelo guard test;
-- `ResultAsync` continua awaitable e eager;
-- adapters não executam uma task mais de uma vez;
-- pacotes request continuam com as assinaturas existentes.
+- current public API stays covered by the guard test;
+- `ResultAsync` stays awaitable and eager;
+- adapters do not run a task more than once;
+- request packages keep their existing signatures.
 
-## Performance e limites
+## Performance and limits
 
-Os benchmarks precisam observar:
+Benchmarks need to cover:
 
-- construção de tasks sem execução;
-- chains de 10, 100 e 10.000 `map`/`flatMap`;
-- execução sequencial;
-- `all` com concorrência 1, limitada e unbounded;
-- custo de `ResultTask.gen`;
-- custo de scope/finalizer;
-- memória retida após interrupção;
-- comparação com `ResultAsync` atual, Promise manual e Effect v4.
+- building tasks without execution;
+- chains of 10, 100, and 10,000 `map`/`flatMap`;
+- sequential execution;
+- `all` with concurrency 1, bounded, and unbounded;
+- `ResultTask.gen` cost;
+- scope/finalizer cost;
+- memory retained after interruption;
+- comparison with current `ResultAsync`, manual Promise, and Effect v4.
 
-Metas iniciais:
+Initial goals:
 
-- nenhuma operação deve iniciar durante construção;
-- chains longas não podem estourar a stack;
-- overhead deve ser documentado, não escondido;
-- o caminho de `Result` puro não deve pagar pelo runtime;
-- tree shaking deve permitir usar `Result` sem incluir todo o módulo de task.
+- no operation may start during construction;
+- long chains must not overflow the stack;
+- overhead must be documented, not hidden;
+- the pure-`Result` path must not pay for the runtime;
+- tree shaking must allow using `Result` without including the whole task module.
 
-## Riscos
+## Risks
 
-### Escopo grande demais
+### Scope too large
 
-Context, fibers, cause, scope e schedule juntos podem transformar uma melhoria do core em uma
-reescrita longa. A mitigação é publicar por fases, começando pelo núcleo lazy e validando cada nova
-primitiva com um consumidor real.
+Context, fibers, cause, scope, and schedule together can turn a core improvement into a
+long rewrite. The mitigation is to ship by phases, starting from the lazy core and validating each new
+primitive with a real consumer.
 
-### Confusão entre ResultAsync e ResultTask
+### Confusion between ResultAsync and ResultTask
 
-Durante a transição haverá duas abstrações assíncronas. A documentação deve usar uma regra clara:
+During the transition there will be two async abstractions. The documentation must use a clear rule:
 
-- recebeu ou precisa expor uma Promise já iniciada: `ResultAsync`;
-- está descrevendo um workflow reutilizável: `ResultTask`.
+- received or need to expose an already-started Promise: `ResultAsync`;
+- describing a reusable workflow: `ResultTask`.
 
-### Complexidade de tipos
+### Type complexity
 
-Adicionar `R`, generator inference e tagged recovery pode aumentar tempo de compilação. Benchmarks
-de TypeScript e fixtures de inferência precisam fazer parte da Fase 0.
+Adding `R`, generator inference, and tagged recovery may increase compile times. TypeScript
+benchmarks and inference fixtures need to be part of Phase 0.
 
-### API inspirada demais no Effect
+### API too inspired by Effect
 
-Copiar nomes e conceitos sem uma necessidade concreta dilui a identidade do Resultar. Cada módulo
-novo deve responder a um problema já presente no core ou em consumidores reais.
+Copying names and concepts without concrete need dilutes Resultar's identity. Each new
+module must answer a problem already present in the core or in real consumers.
 
-### Semântica de defeitos e interrupção
+### Defect and interruption semantics
 
-Converter tudo para `Err` parece simples, mas perde a distinção entre domínio, bug e cancelamento.
-Por outro lado, expor `Cause` em toda API deixaria o caminho comum pesado. `Exit` deve permanecer um
-boundary avançado, enquanto `runResult` oferece a experiência cotidiana.
+Converting everything to `Err` looks simple, but loses the distinction between domain, bug, and cancellation.
+On the other hand, exposing `Cause` in every API would make the common path heavy. `Exit` must remain an
+advanced boundary, while `runResult` offers the everyday experience.
 
-## Questões em aberto e decisões consolidadas
+## Open questions and consolidated decisions
 
-1. **O nome final deve ser `ResultTask`, `TaskResult` ou outro?**
-   - **Decisão:** `ResultTask`. Mantém a identidade com `Result` e paralelismo com `ResultAsync`.
-2. `R` deve representar service tags em união ou um shape de serviços em interseção?
-3. **O primeiro release deve usar um subpath como `resultar/task`?**
-   - **Decisão:** Exposto diretamente no entrypoint raiz `resultar`, sem breaking changes e mantendo a ergonomia unificada do pacote.
-4. Métodos de instância serão parte da API canônica ou apenas funções pipeable?
-5. `runResult` deve rejeitar em interrupção ou retornar um `Err<AbortError>` explícito?
-6. Como representar simultaneamente falha de use e falha de release no boundary simplificado?
-7. `ResultTask.gen` deve aceitar `Result` diretamente via `yield*` ou exigir `fromResult`?
-8. `Schedule` entra no core ou em um subpath/package opcional?
-9. Qual parte do runtime deve ser pública para testes e integração de tracing?
+1. **Should the final name be `ResultTask`, `TaskResult`, or another?**
+   - **Decision:** `ResultTask`. Keeps the identity with `Result` and parallelism with `ResultAsync`.
+2. Should `R` represent service tags in a union or a service shape in an intersection?
+3. **Should the first release use a subpath like `resultar/task`?**
+   - **Decision:** Exposed directly on the `resultar` root entrypoint, with no breaking changes and keeping the package's unified ergonomics.
+4. Will instance methods be part of the canonical API or only pipeable functions?
+5. Should `runResult` reject on interruption or return an explicit `Err<AbortError>`?
+6. How to represent use failure and release failure together at the simplified boundary?
+7. Should `ResultTask.gen` accept `Result` directly via `yield*` or require `fromResult`?
+8. Does `Schedule` belong in the core or in an optional subpath/package?
+9. Which part of the runtime should be public for tests and tracing integration?
 
-## Decisões preliminares recomendadas
+## Recommended preliminary decisions
 
-- usar `ResultTask` como nome de trabalho;
-- manter `Result` sem terceiro parâmetro;
-- não alterar eager/lazy silenciosamente dentro da major atual;
-- expor primeiro por `resultar/task` ou export experimental equivalente;
-- usar TypeId nominal e um contrato yieldable estreito;
-- começar com executor lazy por função e manter a representação privada;
-- incluir `Exit`/`Cause` no runtime, mas não no caminho cotidiano;
-- tratar `AbortSignal`, `Scope` e `Clock` como capacidades fundamentais;
-- adiar `Layer` até existir evidência de uso real;
-- migrar um pacote request como prova antes de estabilizar a API.
+- use `ResultTask` as the working name;
+- keep `Result` without a third parameter;
+- do not silently change eager/lazy within the current major;
+- expose first via `resultar/task` or an equivalent experimental export;
+- use a nominal TypeId and a narrow yieldable contract;
+- start with a lazy function executor and keep the representation private;
+- include `Exit`/`Cause` in the runtime, but not in the everyday path;
+- treat `AbortSignal`, `Scope`, and `Clock` as fundamental capabilities;
+- defer `Layer` until there is evidence of real use;
+- migrate one request package as proof before stabilizing the API.
 
-## Primeiro slice implementável
+## First implementable slice
 
-O menor pull request que valida a arquitetura deve conter somente:
+The smallest pull request that validates the architecture must contain only:
 
 ```ts
 ResultTask<A, E>
@@ -757,24 +757,24 @@ ResultTask.runResult
 ResultTask.runExit
 ```
 
-Além disso:
+In addition:
 
-- TypeId nominal;
-- lazy evaluation testada;
-- execução repetível testada;
-- `Exit` mínimo com `Success`, `Fail` e `Die`;
-- nenhum serviço, fiber, schedule ou scope ainda;
-- benchmark simples contra `ResultAsync` atual;
-- export experimental, sem deprecações.
+- nominal TypeId;
+- tested lazy evaluation;
+- tested repeatable execution;
+- minimal `Exit` with `Success`, `Fail`, and `Die`;
+- no services, fibers, schedules, or scopes yet;
+- simple benchmark against current `ResultAsync`;
+- experimental export, no deprecations.
 
-Esse slice responde à pergunta arquitetural principal — separar descrição de execução melhora o
-core? — antes de comprometer o projeto com todo o runtime.
+This slice answers the main architectural question — does separating description from execution improve the
+core? — before committing the project to the whole runtime.
 
-## Referências
+## References
 
-- [Effect v4: `Effect` como descrição lazy de um workflow](https://github.com/Effect-TS/effect/blob/main/packages/effect/src/Effect.ts)
-- [Effect v4: migração para o trait `Yieldable`](https://github.com/Effect-TS/effect/blob/main/migration/yieldable.md)
-- [Effect v4: guia geral de migração](https://github.com/Effect-TS/effect/blob/main/MIGRATION.md)
-- Implementação atual de `Result`: `packages/resultar/src/result.ts`
-- Implementação atual de `ResultAsync`: `packages/resultar/src/result-async.ts`
-- Roadmap atual: `packages/resultar/TASKS.md`
+- [Effect v4: `Effect` as a lazy description of a workflow](https://github.com/Effect-TS/effect/blob/main/packages/effect/src/Effect.ts)
+- [Effect v4: migration to the `Yieldable` trait](https://github.com/Effect-TS/effect/blob/main/migration/yieldable.md)
+- [Effect v4: general migration guide](https://github.com/Effect-TS/effect/blob/main/MIGRATION.md)
+- Current `Result` implementation: `packages/resultar/src/result.ts`
+- Current `ResultAsync` implementation: `packages/resultar/src/result-async.ts`
+- Current roadmap: `./rfc-0003-phase-3-remainder-and-validation.md` (open items plus archived Done appendix; replaced `packages/resultar/TASKS.md`, removed 2026-09-07).

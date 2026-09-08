@@ -36,6 +36,12 @@
       "prompt": "Review a Resultar pull request that adds domain workflows, request examples, and README guidance. Find stale or unsafe guidance such as thrown expected errors, discarded Results, map returning Result, broad JSON response types, incorrect request-adapter types, hand-written async policies, and lint-only validation claims. Propose focused fixes and a verification plan without touching unrelated changes.",
       "expected_output": "Checks installed package/source truth, reports concrete review findings, recommends tagged explicit errors and correct combinators, preserves TypeBox Static and Zod z.output types, prefers built-in async policies, requires CLI then language-server then optional lint validation, includes runtime/type/example checks, and preserves unrelated workspace edits.",
       "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "Design a lazy ResultTask workflow that reads config from a typed service, fetches a user over a cancellable transport, holds a database connection in a resource scope, and runs at an explicit boundary. Explain what stays lazy, how release failures surface, and which boundary preserves composite causes.",
+      "expected_output": "Builds with tryPromise/gen without starting work; declares the service tag and provides it at runResult/runExit; owns the connection with acquireRelease plus scoped; states that deferred release errors fold into E at scoped, catchAll recovers them only after scoped, runExit preserves Sequential while runResult rejects composites, and cancellation is cooperative with no fibers on ResultTask.",
+      "files": []
     }
   ]
 }

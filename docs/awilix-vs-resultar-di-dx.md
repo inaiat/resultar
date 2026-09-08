@@ -1,68 +1,71 @@
-# Revisão de DX: Awilix e resultar-di
+# DX review: Awilix and resultar-di
 
-Data: 2026-09-05. Escopo: implementação local após introduzir Service e registros por classe.
+> **Superseded (2026-09-05):** the P1 findings below were resolved by [RFC 0002](./rfcs/rfc-0002-di-lifetimes-scopes.md)
+> (Implemented). Kept as a historical record of one private-consumer migration review.
 
-## Veredito
+Date: 2026-09-05. Scope: local implementation after introducing Service and per-class registrations.
 
-O resultar-di tem uma boa direção de API, mas ainda não supera o Awilix no conjunto.
-Os métodos de lifetime são claros; dependências com yield* têm navegação de símbolos no editor.
-O custo total de criar um serviço ainda inclui contrato, token, make e adaptação da factory.
-Além disso, há falhas demonstráveis de tipos, ownership e concorrência.
+## Verdict
 
-A afirmação anterior de que os checks e smokes passavam era correta, mas esses testes não
-demonstravam todas as garantias anunciadas. Passar os testes existentes não basta para declarar
-o runtime pronto.
+resultar-di has a good API direction but does not yet beat Awilix overall.
+The lifetime methods are clear; dependencies with yield* have symbol navigation in the editor.
+The total cost of creating a service still includes contract, token, make, and factory adaptation.
+Moreover, there are demonstrable type, ownership, and concurrency failures.
 
-## Referência de comparação
+The earlier claim that checks and smokes passed was correct, but those tests did not
+demonstrate every advertised guarantee. Passing the existing tests is not enough to declare
+the runtime ready.
 
-Foi inspecionado main:replis-api/src/infrastructure/container/app-container.ts no repositório
-local do Replis. Ele já usa InferCradleFromResolvers, PROXY, strict, factories singleton e
-disposers. Portanto, inferir os tipos dos serviços registrados não é uma vantagem exclusiva nossa.
+## Comparison baseline
 
-O Awilix documenta funções e classes comuns, scopes com registros locais, injeções locais,
-aliases e inferência do cradle. Esses recursos reduzem o custo de adoção de código existente.
-Fonte: [documentação oficial](https://github.com/jeffijoe/awilix#readme).
+The app container of a private consumer (using InferCradleFromResolvers, PROXY, strict,
+singleton factories, and disposers) was inspected. It already uses those Awilix features.
+Therefore, inferring the types of registered services is not an exclusive advantage of ours.
 
-Sua implementação também verifica ciclos e mantém a pilha de resolução para erros de dependência
-e lifetime. Fonte: [container.ts](https://github.com/jeffijoe/awilix/blob/master/src/container.ts).
+Awilix documents common functions and classes, scopes with local registrations, local
+injections, aliases, and cradle inference. Those features lower the cost of adopting existing code.
+Source: [official documentation](https://github.com/jeffijoe/awilix#readme).
 
-## Comparação prática
+Its implementation also checks cycles and keeps the resolution stack for dependency
+and lifetime errors. Source: [container.ts](https://github.com/jeffijoe/awilix/blob/master/src/container.ts).
 
-| Situação | Avaliação do resultar-di |
+## Practical comparison
+
+| Situation | resultar-di assessment |
 | --- | --- |
-| Ler o lifetime no registro | Bom: singleton(Token), scoped(Token), transient(Token). |
-| Identificar dependências no serviço | Bom: yield* Token oferece referência direta ao símbolo. |
-| Adicionar uma factory já existente | Mais cerimônia: lista explícita ou wrapper Service com make. |
-| Separar contrato e implementação | Possível, mas o token atual junta contrato e implementação padrão. |
-| Testar com mocks | override por nome é tipado, mas ainda falta uso consistente de tokens. |
-| Executar serviço numa rota | await users.remove(id) é simples, mas vem de ResultAsync e também funciona com outro DI. |
-| Abrir scope por request | Falta adapter e API para valores locais de tenant/requestId/usuário. |
-| Garantir singleton e cleanup | Ainda insuficiente: reproduções abaixo. |
-| Inspecionar erros no grafo | Faltam erros específicos, caminho de resolução e detecção de ciclos. |
-| Validar requisitos antes de executar | Parcial: a remoção atual compara nomes sem validar contratos. |
+| Read the lifetime in the registration | Good: singleton(Token), scoped(Token), transient(Token). |
+| Identify dependencies in the service | Good: yield* Token offers a direct reference to the symbol. |
+| Add an already existing factory | More ceremony: explicit list or Service wrapper with make. |
+| Separate contract and implementation | Possible, but the current token joins contract and default implementation. |
+| Test with mocks | Per-name override is typed, but consistent token usage is still missing. |
+| Run a service in a route | await users.remove(id) is simple, but it comes from ResultAsync and also works with another DI. |
+| Open a scope per request | Missing adapter and API for local tenant/requestId/user values. |
+| Guarantee singleton and cleanup | Still insufficient: reproductions below. |
+| Inspect graph errors | Missing specific errors, resolution path, and cycle detection. |
+| Validate requirements before running | Partial: the current removal compares names without validating contracts. |
 
-## Problemas reproduzidos
+## Reproduced problems
 
-Foi executado um fixture temporário com imports do código local de DI e do build atual do core.
-O fixture completo passou com TypeScript strict, sem casts para esconder erros de tipos.
-Os resultados abaixo são de execução real; não foram inferidos apenas pela leitura.
+A temporary fixture was run with imports from the local DI code and the current core build.
+The full fixture passed with strict TypeScript, with no casts hiding type errors.
+The results below come from real execution; they were not inferred from reading alone.
 
-### P1 — Nome igual pode satisfazer contrato incompatível
+### P1 — Equal names can satisfy an incompatible contract
 
-Se Cache exige read(): string e Users faz yield* Cache, isto compila:
+If Cache requires read(): string and Users does yield* Cache, this compiles:
 
     createModule().value("cache", 123).scoped(Users)
 
-A chamada do método termina em TypeError: cache.read is not a function.
-RegisteredServiceRequirements remove a tag verificando apenas o identificador.
-Correção necessária: conferir o contrato e a identidade escolhida para tokens, incluindo
-registros por valor, overrides e composição de módulos.
+The method call ends in TypeError: cache.read is not a function.
+RegisteredServiceRequirements removes the tag by checking only the identifier.
+Fix needed: check the contract and the chosen identity for tokens, including
+value registrations, overrides, and module composition.
 
-Local: packages/di/src/module.ts, RegisteredServiceRequirements e registro de classes.
+Location: packages/di/src/module.ts, RegisteredServiceRequirements and class registration.
 
-### P1 — use remove requisito sem fornecer o serviço ao callback
+### P1 — use removes a requirement without providing the service to the callback
 
-Isto compila sem exigir services na execução:
+This compiles without requiring services at execution time:
 
     createModule().singleton(Cache).use([], () =>
       ResultTask.gen(function* () {
@@ -70,112 +73,112 @@ Isto compila sem exigir services na execução:
       })
     )
 
-Resultado: MissingServiceError: Missing ResultTask service: cache.
-O resolver só envolve make do token; o callback de use não recebe esse contexto.
-Correção necessária: fornecer os requisitos prometidos ou mantê-los no tipo do callback.
-A mesma análise deve cobrir task, resource e finalizers, não apenas registros de classe.
+Result: MissingServiceError: Missing ResultTask service: cache.
+The resolver only wraps the token's make; the use callback does not receive that context.
+Fix needed: provide the promised requirements or keep them in the callback type.
+The same analysis must cover task, resource, and finalizers, not just class registrations.
 
-Local: packages/di/src/module.ts, UseTask e makeScope.
+Location: packages/di/src/module.ts, UseTask and makeScope.
 
-### P1 — Singleton com acquireRelease é encerrado pelo primeiro filho
+### P1 — Singleton with acquireRelease is closed by the first child
 
-Foi registrado um Database singleton cujo make usa ResultTask.acquireRelease.
-O release muda open para false.
+A singleton Database was registered whose make uses ResultTask.acquireRelease.
+The release flips open to false.
 
-Resultado observado:
+Observed result:
 
-    primeiro use: open=true; releases após terminar=1
-    segundo use: open=false; releases=1
+    first use: open=true; releases after finish=1
+    second use: open=false; releases=1
 
-A instância fica no cache da raiz, mas o finalizer pertence ao scope de execução do primeiro uso.
-Correção necessária: unificar o dono do cache e dos finalizers. A restrição documental de usar
-resource separado não protege uma API que aceita esse make sem erro.
+The instance stays in the root cache, but the finalizer belongs to the first use's execution scope.
+Fix needed: unify the owner of the cache and the finalizers. The documented restriction to use a
+separate resource does not protect an API that accepts this make without error.
 
-Local: packages/di/src/module.ts, RuntimeScope.resolve e registerLifetime.
+Location: packages/di/src/module.ts, RuntimeScope.resolve and registerLifetime.
 
-### P1 — Demandas concorrentes criam dois singletons
+### P1 — Concurrent demands create two singletons
 
-Dois runPromise executaram scope.use simultaneamente sobre o mesmo root e token assíncrono.
+Two runPromise runs executed scope.use simultaneously over the same root and async token.
 
-Resultado observado:
+Observed result:
 
-    IDs retornados=[1, 2]; construções=2
+    returned IDs=[1, 2]; constructions=2
 
-O cache só é preenchido após a criação. Isso também expõe factories síncronas ao intervalo
-assíncrono da resolução de tasks.
-Correção necessária: compartilhar inicialização em andamento, definir retry após falha e
-cancelamento dos consumidores, e testar shutdown durante aquisição.
+The cache is only filled after creation. This also exposes synchronous factories to the async
+gap of task resolution.
+Fix needed: share in-flight initialization, define retry after failure and
+consumer cancellation, and test shutdown during acquisition.
 
-Local: packages/di/src/module.ts, RuntimeScope.resolve.
+Location: packages/di/src/module.ts, RuntimeScope.resolve.
 
-### P1 — Resolver apaga erros e requisitos próprios
+### P1 — Resolver drops errors and its own requirements
 
-Um resolver que retorna ResultTask.fail("resolver-failure") produz um workflow atribuível a:
+A resolver returning ResultTask.fail("resolver-failure") produces a workflow assignable to:
 
     ResultTask<string, never, never>
 
-Resultado real: Failure(Fail("resolver-failure")).
-provideServiceResolver preserva E da task original e ignora E/R da task retornada pelo resolver.
-Correção necessária: preservar erros, requisitos e releases do resolver, e validar o valor
-devolvido para cada tag. A API pública atual aceita valores sem relação com o contrato pedido.
+Actual result: Failure(Fail("resolver-failure")).
+provideServiceResolver preserves E of the original task and ignores E/R of the task returned by the resolver.
+Fix needed: preserve the resolver's errors, requirements, and releases, and validate the returned
+value for each tag. The current public API accepts values unrelated to the requested contract.
 
-Local: packages/resultar/src/result-task.ts, ResultTaskServiceResolver e provideServiceResolver.
+Location: packages/resultar/src/result-task.ts, ResultTaskServiceResolver and provideServiceResolver.
 
-### P1 — Defeito durante release interrompe os finalizers restantes
+### P1 — Defect during release interrupts the remaining finalizers
 
-Dois resources foram adquiridos. O release do segundo retorna ResultTask.sync que lança Error.
+Two resources were acquired. The second one's release returns a ResultTask.sync that throws Error.
 
-Resultado observado:
+Observed result:
 
     eventos=["second release"]
 
-O release do primeiro não executa. RuntimeScope.close usa catchAll, que não captura Die.
-Correção necessária: drenar todos os finalizers preservando Fail/Die/Interrupt e causas compostas,
-usando a semântica do core. Capturar apenas a criação da task de release não resolve.
+The first one's release does not run. RuntimeScope.close uses catchAll, which does not capture Die.
+Fix needed: drain all finalizers while preserving Fail/Die/Interrupt and composite causes,
+using core semantics. Capturing only the creation of the release task does not fix it.
 
-Local: packages/di/src/module.ts, RuntimeScope.close.
+Location: packages/di/src/module.ts, RuntimeScope.close.
 
-## Outras lacunas identificadas por inspeção
+## Other gaps found by inspection
 
-- RuntimeScope.resolve não mantém caminho de resolução nem detecta ciclos. Os tokens agora
-  permitem grafos que não dependem da ordem de registro, tornando essa proteção necessária.
-- close altera o estado do root e retira finalizers ao construir a task, antes de executá-la.
-  Isso contraria a expectativa de laziness e merece teste específico.
-- ServiceClass declara new() retornando o contrato, mas ServiceBase só possui membros estáticos.
-  A API deve distinguir um token de uma classe de implementação; o construtor atual promete mais
-  do que entrega.
-- O exemplo Hono abre um filho para a vida do servidor. Ele demonstra scopes, mas não isolamento
-  por request. O adapter precisa cobrir tenant, concorrência, erros e conclusão/cancelamento de SSE.
-- A união de requisitos e erros é conservadora para o módulo inteiro. Um grafo pequeno selecionado
-  pode exigir ambientes de serviços não utilizados, dificultando testes isolados.
+- RuntimeScope.resolve keeps no resolution path and detects no cycles. Tokens now
+  allow graphs that do not depend on registration order, making this protection necessary.
+- close mutates root state and removes finalizers when building the task, before running it.
+  This contradicts the laziness expectation and deserves a dedicated test.
+- ServiceClass declares new() returning the contract, but ServiceBase only has static members.
+  The API should distinguish a token from an implementation class; the current constructor promises more
+  than it delivers.
+- The Hono example opens one child for the server's lifetime. It demonstrates scopes but not per-request
+  isolation. The adapter needs to cover tenant, concurrency, errors, and SSE completion/cancellation.
+- The requirements and errors union is conservative for the whole module. A small selected graph
+  may require environments of unused services, complicating isolated tests.
 
-## Ordem recomendada para superar a DX atual
+## Recommended order to surpass current DX
 
-1. Corrigir os seis casos reproduzidos e adicionar regressões de tipos e runtime.
-2. Tornar tokens consistentes em registro, seleção, override e valores fornecidos externamente.
-   Escolher uma política explícita de identidade; nomes iguais não devem esconder contratos errados.
-3. Reduzir cerimônia: inferir o contrato a partir de make para serviços simples e oferecer um caminho
-   curto para factories existentes. Manter contrato explícito quando ele ajuda mocks e implementações.
-   Classes devem ser uma opção, sem exigir classe vazia em todo serviço.
-4. Adicionar erros com o caminho de dependências e validação de ciclos. Não prometer inspeção
-   completa de um grafo dinâmico de generators sem executar o código ou produzir metadados.
-5. Criar adapter Hono com scope por request e entradas locais tipadas; adaptar ResultAsync na borda
-   preservando await no método de domínio.
-6. Adicionar composição de módulos e testes de inferência em grafos maiores. Avaliar aliases depois
-   que uma aplicação demonstrar necessidade.
+1. Fix the six reproduced cases and add type and runtime regressions.
+2. Make tokens consistent across registration, selection, override, and externally provided values.
+   Choose an explicit identity policy; equal names must not hide wrong contracts.
+3. Reduce ceremony: infer the contract from make for simple services and offer a short
+   path for existing factories. Keep an explicit contract when it helps mocks and implementations.
+   Classes should be an option, without requiring an empty class in every service.
+4. Add errors with the dependency path and cycle validation. Do not promise full
+   inspection of a dynamic generator graph without running the code or producing metadata.
+5. Create a Hono adapter with per-request scope and typed local inputs; adapt ResultAsync at the edge
+   while keeping await in the domain method.
+6. Add module composition and inference tests on larger graphs. Evaluate aliases after
+   an application demonstrates the need.
 
-Exemplo de direção proposta, ainda não implementada:
+Example of proposed direction, not yet implemented:
 
     const root = createModule().singleton(Cache).scoped(Users).scope()
     const result = await root.use(Users, users => users.find("1"))
     const testing = module.override(Users, fakeUsers)
 
-Esse formato exigiria seleção por token e suporte explícito a ResultAsync no callback e na borda
-de execução. Não basta tornar o callback async; seu scope deve durar até a operação terminar.
+That shape would require token-based selection and explicit ResultAsync support in the callback and at the
+execution edge. Merely making the callback async is not enough; its scope must last until the operation finishes.
 
-## Critério de sucesso
+## Success criterion
 
-Superar a DX significa adicionar um serviço com pouco código, receber erros úteis antes da
-produção e confiar que o lifetime declarado corresponde ao comportamento real.
-O próximo investimento deve ser a correção dessas garantias, seguido de menos cerimônia e
-integração por request. O registro mais curto, sozinho, não demonstra superioridade.
+Surpassing the DX means adding a service with little code, receiving useful errors before
+production, and trusting that the declared lifetime matches real behavior.
+The next investment should be fixing these guarantees, followed by less ceremony and
+per-request integration. The shorter registration alone does not demonstrate superiority.

@@ -1,22 +1,26 @@
-# Plano: resultar-hono
+# Plan: resultar-hono
 
-Status: API inicial implementada em `packages/hono`, com exemplo em `examples/hono`.
-O texto abaixo registra o plano original; a referência de uso atual é o [README do pacote](../packages/hono/README.md).
-A migração do Replis e a validação de Bun não fazem parte desta entrega.
+Status: Initial API implemented in `packages/hono`, with an example in `examples/hono`.
+The text below records the original plan; the current usage reference is the [package README](../packages/hono/README.md).
+Migrating private consumers and validating Bun are not part of this delivery.
 
-## Objetivo e limites
+> **Implemented:** `resultar-hono` ships in `packages/hono` with the example in `examples/hono`.
+> The current usage reference is the [package README](../packages/hono/README.md); the plan below
+> is the original record.
 
-Reduzir a integração repetitiva entre Hono e resultar-di: inferir os serviços disponíveis nos
-handlers, manter uma raiz por aplicação e um scope por resposta, e expor fechamento explícito.
-O pacote será `resultar-hono`, em `packages/hono`, com um único entry point.
-Não haverá `/node`, `/bun` ou `/deno`, abertura de portas, listeners de sinais ou abstração de servidor.
+## Goal and limits
 
-`resultar` mantém tarefas e finalização; `resultar-di` mantém resolução, lifetimes e o adapter Fetch;
-`resultar-hono` conecta esse adapter ao Hono. Não copiar `runScopedResponse` para o novo pacote.
-Usar Hono como peer dependency, respeitando as versões efetivamente verificadas nos testes.
-A ausência de imports Node é um requisito; suporte declarado a runtimes depende de execução dos testes.
+Reduce repetitive integration between Hono and resultar-di: infer the services available in
+handlers, keep one root per application and one scope per response, and expose explicit closing.
+The package will be `resultar-hono`, in `packages/hono`, with a single entry point.
+There will be no `/node`, `/bun`, or `/deno`, no port opening, signal listeners, or server abstraction.
 
-## API proposta
+`resultar` keeps tasks and finalization; `resultar-di` keeps resolution, lifetimes, and the Fetch adapter;
+`resultar-hono` connects that adapter to Hono. Do not copy `runScopedResponse` into the new package.
+Use Hono as a peer dependency, respecting the versions actually verified in tests.
+The absence of Node imports is a requirement; declared runtime support depends on running the tests.
+
+## Proposed API
 
 ```ts
 createHonoApp({ services, bindings }, (app) => {
@@ -25,26 +29,26 @@ createHonoApp({ services, bindings }, (app) => {
 });
 ```
 
-O resultado é uma aplicação com:
+The result is an application with:
 
-- `fetch(request): Promise<Response>`: ponto de entrada para o servidor.
-- `request(input, init?): Promise<Response>`: conveniência para testes, passando pelo mesmo scope.
-- `close(): Promise<Result<void, CloseError>>`: fecha a raiz e preserva falhas de cleanup.
+- `fetch(request): Promise<Response>`: entry point for the server.
+- `request(input, init?): Promise<Response>`: test convenience, going through the same scope.
+- `close(): Promise<Result<void, CloseError>>`: closes the root and preserves cleanup failures.
 
-`CloseError` acima é uma variável de tipo derivada dos finalizers do módulo, não um novo erro genérico.
-Se a tipagem atual de `scope.close()` não permitir preservar esse canal no wrapper, resolver isso
-antes de estabilizar a assinatura; não substituir por `any` ou descartar a falha.
-A API assíncrona pode ser usada com `await`, sem exigir `runResult` no bootstrap do consumidor.
+`CloseError` above is a type variable derived from the module's finalizers, not a new generic error.
+If the current `scope.close()` typing does not allow preserving that channel in the wrapper, resolve that
+before stabilizing the signature; do not substitute `any` or drop the failure.
+The async API can be used with `await`, without requiring `runResult` in the consumer's bootstrap.
 
-O callback configura um Hono comum uma única vez. Isso evita duplicar todos os métodos do Hono
-em um builder próprio ou alterar seu método fetch. O wrapper fornece o único ponto de execução
-público, para impedir que uma chamada de teste contorne os scopes acidentalmente.
-Registrar o módulo não instancia seus serviços. A raiz será criada após a configuração das rotas;
-a inicialização dos providers continua sob demanda.
+The callback configures an ordinary Hono app exactly once. This avoids duplicating every Hono method
+in a custom builder or changing its fetch method. The wrapper provides the only public execution
+point, so a test call cannot accidentally bypass scopes.
+Registering the module does not instantiate its services. The root will be created after route setup;
+provider initialization stays on demand.
 
-## Exemplo proposto
+## Proposed example
 
-Reutilizando `createServices` do exemplo atual, com Cache singleton e Users/Health scoped:
+Reusing `createServices` from the current example, with singleton Cache and scoped Users/Health:
 
 ```ts
 // app.ts — proposta, ainda não executável até existir resultar-hono.
@@ -71,10 +75,10 @@ export const createApplication = (services = createServices()) =>
   });
 ```
 
-Sem escrever `Hono<{ Bindings: ... }>` nem repetir os contratos dos serviços. Uma chave inválida
-em `bindings` ou um acesso a um serviço não selecionado deve falhar no TypeScript.
-`services-module.ts` conterá apenas a composição já existente; não haverá tokens App/Server
-para ligar o router aos bindings.
+Without writing `Hono<{ Bindings: ... }>` or repeating the service contracts. An invalid key
+in `bindings` or access to an unselected service must fail in TypeScript.
+`services-module.ts` will contain only the existing composition; there will be no App/Server tokens
+to wire the router to the bindings.
 
 ```ts
 // Teste da aplicação — proposta.
@@ -94,63 +98,63 @@ try {
 }
 ```
 
-O servidor escolhido pelo consumidor recebe `app.fetch`. O ciclo de encerramento continua no
-bootstrap: parar novas conexões, drenar ou cancelar respostas ativas e aguardar `app.close()`.
-Não fechar a aplicação logo após chamar a função que começa a escutar a porta.
-O exemplo Node conservará seu adaptador de servidor e tratamento de sinais fora do pacote.
+The consumer-chosen server receives `app.fetch`. The shutdown cycle stays in
+bootstrap: stop new connections, drain or cancel active responses, and await `app.close()`.
+Do not close the application right after calling the function that starts listening on the port.
+The Node example will keep its server adapter and signal handling outside the package.
 
-## Semântica e decisões
+## Semantics and decisions
 
-1. Um router e uma raiz DI por aplicação; um scope filho por resposta. `request` e `fetch`
-   percorrem exatamente a mesma integração, incluindo overrides e finalização.
-2. O scope permanece vivo até consumo, cancelamento ou falha do corpo. Um middleware com
-   `finally` depois de `await next()` não basta para streaming. Reutilizar `ServiceScope.fetch`.
-3. `close` é idempotente, aguarda os consumidores conforme o contrato do DI e rejeita novas
-   execuções após fechamento. Respostas sem consumo podem impedir o encerramento: o consumidor
-   precisa consumir/cancelar os corpos, ou interromper a requisição.
-4. Erros de domínio continuam em `result.match` no handler. `app.onError` trata erros que chegam
-   ao Hono. Falhas de resolução anteriores ao router continuam rejeitando `fetch` com sua causa;
-   erros de cleanup posteriores aos headers afetam o stream, sem tentar trocar seu status HTTP.
-   Não criar mapeamento automático de erros de domínio para status.
-5. Dependências externas não satisfeitas devem impedir a construção do adapter por tipos,
-   conforme o contrato do DI. Valores específicos de requisição, como tenant autenticado,
-   não serão inferidos de headers ou de middleware: isso exige uma API própria posterior.
-6. V1 recebe somente Request e usa `c.env` para serviços selecionados. Bindings nativos externos,
-   ExecutionContext/waitUntil, WebSocket e Hono RPC não são garantidos por esta primeira API.
-   Não anunciar substituição completa de `Hono.fetch(request, env, executionCtx)`.
-   Se esses usos forem necessários no Replis, revisar o contrato antes de migrá-los.
-7. Os serviços selecionados são resolvidos para cada requisição, inclusive 404. Não prometer
-   resolução por rota; selecionar por rota é trabalho futuro, apenas se houver necessidade real.
+1. One router and one DI root per application; one child scope per response. `request` and `fetch`
+   go through exactly the same integration, including overrides and finalization.
+2. The scope stays alive until the body is consumed, cancelled, or fails. A middleware with
+   `finally` after `await next()` is not enough for streaming. Reuse `ServiceScope.fetch`.
+3. `close` is idempotent, waits for consumers per the DI contract, and rejects new
+   executions after closing. Unconsumed responses can block shutdown: the consumer
+   must consume/cancel bodies, or abort the request.
+4. Domain errors stay in `result.match` in the handler. `app.onError` handles errors reaching
+   Hono. Resolution failures before the router keep rejecting `fetch` with their cause;
+   cleanup errors after the headers affect the stream, without trying to swap its HTTP status.
+   Do not create automatic mapping from domain errors to statuses.
+5. Unsatisfied external dependencies must block adapter construction by types,
+   per the DI contract. Per-request values such as the authenticated tenant
+   will not be inferred from headers or middleware: that requires a later, dedicated API.
+6. V1 receives only Request and uses `c.env` for selected services. External native bindings,
+   ExecutionContext/waitUntil, WebSocket, and Hono RPC are not guaranteed by this first API.
+   Do not advertise a full replacement for `Hono.fetch(request, env, executionCtx)`.
+   If those uses are needed by a private consumer, revisit the contract before migrating them.
+7. Selected services are resolved for every request, including 404s. Do not promise
+   per-route resolution; per-route selection is future work, only if a real need arises.
 
-## Etapas de implementação
+## Implementation steps
 
-1. Provar os tipos com o módulo atual: inferência de bindings, preservação de erros de fechamento,
-   rejeição de dependências externas ausentes, overrides e módulos combinados. Extrair helpers de
-   tipos públicos do DI apenas se necessário, sem expor Graph ou detalhes do runtime ao consumidor.
-2. Criar `packages/hono` com manifesto, exports ESM, build, README e dependências seguindo o
-   padrão dos pacotes existentes. Implementar configuração do router, delegação para `scope.fetch`,
-   conveniência request e fechamento com resultado tipado.
-3. Verificar sucesso, 404, falhas de provider e handler, resposta sem corpo, streaming, cancelamento,
-   abort, cleanup com falha, concorrência, fechamento repetido e chamadas após close. Comparar
-   instâncias para provar singleton compartilhado e scoped isolado entre requisições.
-4. Migrar o exemplo DI, preservando as rotas e o adaptador Node, removendo a ligação manual
-   `services.http(...router.fetch...)` e os tokens que existiam apenas para essa ligação.
-   Validar as requisições reais, interrupção e rollback de startup já cobertos pelo exemplo.
-5. Validar o Replis com link local e executar check/build/testes antes de decidir migrá-lo.
-   Conferir os bindings já usados, streaming e a ordem de fechamento do servidor e da raiz.
-6. Verificar o pacote empacotado em consumidor isolado e executar a suíte Fetch nos runtimes
-   disponíveis. Documentar explicitamente os ambientes ainda não verificados.
+1. Prove the types with the current module: bindings inference, close-error preservation,
+   rejection of missing external dependencies, overrides, and combined modules. Extract public
+   type helpers from DI only if needed, without exposing Graph or runtime internals to the consumer.
+2. Create `packages/hono` with manifest, ESM exports, build, README, and dependencies following the
+   existing packages' pattern. Implement router setup, delegation to `scope.fetch`,
+   request convenience, and closing with a typed result.
+3. Verify success, 404, provider and handler failures, bodiless responses, streaming, cancellation,
+   abort, failing cleanup, concurrency, repeated close, and calls after close. Compare
+   instances to prove shared singleton and request-isolated scoped services.
+4. Migrate the DI example, preserving routes and the Node adapter, removing the manual wiring
+   `services.http(...router.fetch...)` and the tokens that existed only for that wiring.
+   Validate the real requests, interruption, and startup rollback already covered by the example.
+5. Validate a private consumer with a local link and run checks/build/tests before deciding to migrate it.
+   Check the bindings already in use, streaming, and the server/root close order.
+6. Verify the packaged bundle in an isolated consumer and run the Fetch suite on the available
+   runtimes. Explicitly document environments not yet verified.
 
-## Critérios de conclusão
+## Completion criteria
 
-O exemplo deve declarar DI e rotas sem repetir os tipos dos bindings, sem montar manualmente um
-adapter Fetch e sem tokens artificiais para router/servidor. O bootstrap deve continuar mostrando
-quem fecha a aplicação. Testes devem demonstrar que essa redução de código preserva isolamento,
-streaming e finalização. Não criar outra API de rotas, runtime de DI ou adaptador de servidor.
+The example must declare DI and routes without repeating binding types, without manually assembling a
+Fetch adapter, and without artificial tokens for router/server. Bootstrap must keep showing
+who closes the application. Tests must demonstrate that this code reduction preserves isolation,
+streaming, and finalization. Do not create another routes API, DI runtime, or server adapter.
 
-## Referências
+## References
 
-- [Hono App: fetch e request](https://hono.dev/docs/api/hono)
-- [Hono Context: bindings e env](https://hono.dev/docs/api/context)
-- [DI e integração Fetch existentes](../packages/di/README.md)
-- [Implementação do ciclo de resposta](../packages/di/src/fetch.ts)
+- [Hono App: fetch and request](https://hono.dev/docs/api/hono)
+- [Hono Context: bindings and env](https://hono.dev/docs/api/context)
+- [DI and existing Fetch integration](../packages/di/README.md)
+- [Response lifecycle implementation](../packages/di/src/fetch.ts)

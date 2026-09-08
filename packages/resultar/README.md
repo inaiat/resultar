@@ -54,6 +54,7 @@ and optional TypeScript-backed diagnostics.
 - [HTTP Request Packages](#http-request-packages)
 - [API Decision Guide](#api-decision-guide)
 - [More Documentation](#more-documentation)
+- [Limitations](#limitations)
 
 ## Install
 
@@ -419,12 +420,13 @@ operation. Mapping, chaining, recovery, service provision, and generator composi
 | Create an immediate success or failure | `succeed`, `fail`, `fromResult` |
 | Defer synchronous work | `sync`, `try` |
 | Defer promise-producing work | `tryPromise` |
-| Transform or chain | `map`, `flatMap`, `andThen` |
+| Transform, observe, or chain | `map`, `mapError`, `flatMap`, `andThen`, `tap`, `tapError`, `as`, `match` |
 | Recover typed failures | `catchAll` |
 | Write a linear lazy workflow | `gen` with `yield*` |
 | Declare and provide dependencies | `service`, `provideService`, `provideServices`, `provideServiceResolver` |
 | Own resources and await cleanup | `acquireRelease`, `scoped` |
 | Execute at the application boundary | `runExit`, `runResult`, `runPromise` |
+| Bridge to started promises | `fromResultAsync`, `toResultAsync`, `ResultAsync.fromTask` |
 
 ```ts
 import { ResultTask } from 'resultar'
@@ -530,8 +532,11 @@ await ResultTask.runResult(readyWithAll)
 Infrastructure such as a dependency-injection adapter can resolve service tags lazily with
 `provideServiceResolver(task, { Logger: () => loggerTask })`. Each required identifier has a
 typed lazy provider. Provider errors and external requirements remain in the resulting task type;
-resource-scope requirements also remain visible. Missing providers and incompatible values are
-compile-time errors.
+resource-scope requirements also remain visible. All three providers (`provideService`,
+`provideServices`, `provideServiceResolver`) support data-first and curried (`.pipe`) forms.
+A provider whose value is incompatible with the required service contract is rejected at compile
+time, including through a reused curried provider; partial providers keep the remaining
+requirements until they are satisfied at the boundary.
 
 Adapters can use `ResultTask.makeScope()` to own resources across executions. Run tasks with
 `owner.use(task)` and execute `owner.close()` after consumers finish. Failed uses roll back their
@@ -553,6 +558,9 @@ const program = ResultTask.gen(function* () {
 
 Generator `finally` retains its existing replacement policy if its cleanup fails. Use resource
 scopes below when both the body and cleanup failure must be preserved.
+
+Generators also accept `yield* result` for plain `Result` values: `Ok` unwraps its value and
+`Err` short-circuits into `E`.
 
 ### Resource scopes and application lifecycle
 
@@ -604,22 +612,25 @@ the run pending; there is no preemptive cancellation, scheduler, or `Fiber` runt
 
 For application composition, keep ordinary factories and existing `StrictResultAsync` use cases.
 Use service tags only when a program needs requirements supplied at execution. Put the **whole server
-lifetime** inside the resource scope: acquire database, WhatsApp, then HTTP; wait for shutdown; drain
-HTTP, close WhatsApp, then close database. Returning a server from a completed scope would return
+lifetime** inside the resource scope: acquire database, session, then HTTP; wait for shutdown; drain
+HTTP, close session, then close database. Returning a server from a completed scope would return
 already-released resources. TypeScript does not enforce resource reference lifetimes.
 
 See the runnable [application lifecycle example](../../examples/resultar/src/application-lifecycle.ts)
 and its [smoke test](../../examples/resultar/scripts/lifecycle-smoke.ts). Run `pnpm run example:resultar`
 from the workspace root. Its factory and resource contracts return `ResultTask` with database,
-WhatsApp, and HTTP error types. Drivers expose Promises only inside `ResultTask.tryPromise` adapters,
+session, and HTTP error types. Drivers expose Promises only inside `ResultTask.tryPromise` adapters,
 which receive the runtime signal without threading it through every application interface.
 Concrete adapters must clean up partial acquisitions before returning a
 failure and implement request draining, SSE termination, and suitable deadlines.
 
 `ResultAsync.withResource` keeps its existing best-effort release behavior. Existing `ResultAsync`
 instances have already started; wrapping one does not make it lazy or automatically cancelable.
-Invoke existing operations inside a task boundary when execution must be deferred. In this slice,
-interop remains explicit; the RFC's `fromResultAsync`/`toResultAsync` adapters are not added.
+Use `ResultTask.fromResultAsync` to run a `ResultAsync` inside a task boundary: pass a
+`(signal) => ResultAsync` factory to defer creation until execution, or an existing instance to
+capture an already-started execution. Use `ResultTask.toResultAsync(task)` — or the
+`ResultAsync.fromTask(task)` alias — to start a requirement-free task immediately on the default
+runtime and consume it as `ResultAsync`.
 
 ## Production Async Policies
 
@@ -931,8 +942,9 @@ service needs.
 | Write linear Result code | `Result.gen` (`safeTry` compatibility alias) |
 | Describe reusable lazy work | `ResultTask.succeed`, `sync`, `try`, `tryPromise` |
 | Compose or recover lazy work | `ResultTask.map`, `flatMap`, `andThen`, `catchAll`, `gen` |
-| Require or bind typed services | `ResultTask.service`, `provideService`, `provideServices` |
+| Require or bind typed services | `ResultTask.service`, `provideService`, `provideServices`, `provideServiceResolver` |
 | Execute lazy work explicitly | `ResultTask.runExit`, `runResult`, `runPromise` |
+| Bridge to started promises | `ResultTask.fromResultAsync`, `toResultAsync`, `ResultAsync.fromTask` |
 | Handle a final boundary | `match`, `matchTags`, `matchTagsPartial` |
 | Combine independent results | `zip`, `combine`, `combineWithAllErrors` |
 | Try ordered fallback candidates | `firstSuccessOf` |
@@ -964,6 +976,26 @@ reasons, disposable results, and compatibility APIs.
 - [Artigo sobre tratamento de erros type-safe](https://github.com/inaiat/resultar/blob/main/articles/pt/type-safe.md)
 
 Resultar is also published on [JSR as `@inaiat/resultar`](https://jsr.io/@inaiat/resultar).
+
+## Limitations
+
+ResultTask implements the RFC 0001 lazy core, generator with services, and resource scopes. The
+following are explicitly out of scope for this slice:
+
+- No `Stream`, STM, caching, clustering, RPC, or platform layer; this is not a full Effect API port.
+- No implicit global runtime: every `run*` call creates its own root scope and signal, and simple
+  tasks need no services or configuration.
+- No fibers or structured concurrency yet: `forkChild`/`join`/`interrupt`, task `race`/`timeout`,
+  and uniform `all`/`forEach` over the task runtime are still Phase 3. The `Cause` model covers
+  `Fail`, `Die`, `Interrupt`, and `Sequential`; `Parallel` is reserved for that future work. Use the
+  `ResultAsync` race, timeout, retry, and concurrency helpers in the meantime — they keep their own
+  eager, per-helper protocols.
+- No `Schedule`, schedule-based retry, or injectable clock yet (Phase 4).
+- No `Layer` system in the core: service graphs with their own lifecycle belong to the optional
+  `resultar-di` package, and the core does not depend on it.
+- `ResultAsync` stays eager and awaitable. `fromResultAsync` on an existing instance captures an
+  already-started execution; only the factory form defers creation.
+- Validated on Node.js 24+ only; other runtimes such as Bun are unvalidated.
 
 ## License
 

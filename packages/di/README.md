@@ -23,7 +23,7 @@ resources. All three register with the same `.singleton`, `.scoped`, or `.transi
 
 ```ts
 import { ResultTask } from 'resultar'
-import { createModule, service, resource } from 'resultar-di'
+import { createModule, service } from 'resultar-di'
 
 const Cache = service('cache', ResultTask.sync(() => new Map<string, string>()))
 const Tenant = ResultTask.service<string, 'tenant'>('tenant')
@@ -86,6 +86,17 @@ Consumers must read or cancel response bodies, including in tests. An unconsumed
 scope active and can delay root shutdown. WebSocket upgrade responses are outside this adapter's
 Response-body lifecycle. See the runnable [Hono example](../../examples/hono/README.md).
 
+### Which request scope to use
+
+- `scope.fetch(keys, handler)`: per-response child scope over a `ServiceScope` you own and close.
+- `services.http(keys, handler)`: same per-response scope, but the application root is acquired in
+  the surrounding `ResultTask` scope and closed automatically on shutdown.
+- `createHonoApp` (`resultar-hono`): Hono adapter over `scope.fetch` with inferred bindings, a
+  `request()` test helper, and typed `close()`.
+
+Prefer `createHonoApp` for Hono routes and `http()` for long-lived services inside a `ResultTask`
+lifetime. Every variant keeps the child open until the response body ends, errors, or is canceled.
+
 ## One router, managed HTTP lifetime
 
 Build the router once and pass request services through Hono bindings. `http()` acquires its
@@ -93,8 +104,14 @@ application root in the surrounding ResultTask scope, opens a child for each res
 the root automatically during shutdown:
 
 ```ts
+import { createModule, service } from 'resultar-di'
+
+const services = createModule()
+  .singleton(Cache)
+  .scoped(Users)
+  .value('tenant', 'acme')
 const router = createHttpApp() // Hono router, built once
-const App = service('app', services.http(['users', 'health'], (bindings, request) =>
+const App = service('app', services.http(['users'], (bindings, request) =>
   router.fetch(request, bindings),
 ))
 const application = createModule().singleton(App)
@@ -132,8 +149,9 @@ named registration; those are alternatives, not prerequisites for the main API.
   requirements remain visible to the runtime boundary.
 - `use` and `fetch` infer errors and external requirements from selected services, transitive
   dependencies, and callback tokens. Type traversal falls back to a conservative module union
-  after eight dependency levels to bound compiler work. Explicitly widened module types are also conservative. Overrides remove the replaced
-  provider metadata, including initialization errors, cleanup errors, and external requirements.
+  after eight dependency levels to bound compiler work. Explicitly widened module types are also
+  conservative. Overrides remove the replaced provider metadata, including initialization errors,
+  cleanup errors, and external requirements.
 - `close()` retains declared cleanup error types and needs no fresh service environment: finalizers
   retain the environment from acquisition. Its error union is conservative across registrations.
 
@@ -157,8 +175,24 @@ uses public core APIs and creates no separate cancellation or finalizer runtime.
 continue using explicit composition or core service tags without adopting this package.
 
 For a runnable Hono application, see [`examples/hono`](../../examples/hono/README.md). It demonstrates
-`value`, shared factories without release, and typed service overrides.
-The small application fixture in `tests/application.test.ts` and the public package smoke in
-`scripts/smoke-package.ts` also cover composition without an HTTP framework.
+`value`, shared factories without release, and typed service overrides. The small application fixture
+in `tests/application.test.ts` and the public package smoke in `scripts/smoke-package.ts` also cover
+composition without an HTTP framework.
+
+## Limitations
+
+- No service aliases: there is no `aliasTo` equivalent, and no `hasRegistration`/`build`
+  inspection helpers. Select services by their registered names.
+- No file-based discovery: there is no `loadModules` equivalent. Register every service explicitly.
+- No Bun-runtime validation: supported behavior is validated on Node.js; Bun-specific behavior is
+  out of scope.
+- No unvalidated streaming: streaming/SSE scopes are supported only through the validated
+  `fetch`/`http` body lifecycle. Do not roll cleanup-only-`finally` middleware and call it streaming
+  support.
+- Inference is conservative past eight dependency levels: `use`/`fetch` error and requirement
+  inference traverses selected dependencies up to eight levels, then falls back to a module-wide
+  union to bound compiler work.
+- Request locals need a per-framework adapter: `withServices` supplies the typed local values, but
+  extracting the tenant/request from an incoming request is wired per framework.
 
 Run `pnpm --filter resultar-di test:scale` to compile generated graphs of 50, 100 and 200 services, plus a chain of 12 services. The script checks the built public declarations and prints compiler time and memory.

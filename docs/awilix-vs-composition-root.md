@@ -1,112 +1,112 @@
-# Awilix vs composition root Resultar
+# Awilix vs Resultar composition root
 
 - Status: Note
-- Data: 2026-09-05
-- Escopo: DX de substituição de Awilix em consumidores Resultar
-- Caso: `replis-api` (`createAppContainer` → `createAppServices`)
+- Date: 2026-09-05
+- Scope: DX of replacing Awilix in Resultar consumers
+- Case: a private consumer API (`createAppContainer` → `createAppServices`)
 
-Revisão após RFC 0001: a substituição do container continua sem exigir API de DI. O lifecycle,
-porém, é um caso concreto para `ResultTask.acquireRelease` + `scoped`, agora implementados como
-recorte da Fase 3. O exemplo de lifecycle está em `examples/resultar/src/application-lifecycle.ts`;
-a adoção pelos adapters reais do Replis ainda está pendente.
+Review after RFC 0001: replacing the container still requires no DI API. Lifecycle,
+however, is a concrete case for `ResultTask.acquireRelease` + `scoped`, now implemented as
+a slice of Phase 3. The lifecycle example lives in `examples/resultar/src/application-lifecycle.ts`;
+adoption by the real private adapters is still pending.
 
-## Resumo
+## Summary
 
-Awilix e Resultar resolvem problemas diferentes. Awilix é um container de DI. Resultar é o canal
-de erro tipado. No `replis-api` o Awilix não injetava classes nem criava scope por request: ele
-só montava factories singleton e chamava dois disposers.
+Awilix and Resultar solve different problems. Awilix is a DI container. Resultar is the
+typed error channel. In that API, Awilix did not inject classes or create a scope per request: it
+only assembled singleton factories and called two disposers.
 
-A troca correta nesse grafo não é `ResultTask.service` em cada use case. É um composition root
-explícito (`createAppServices`) que o Hono lê na borda HTTP. Resultar já cobria o restante
+The correct swap in this graph is not `ResultTask.service` in each use case. It is an explicit
+composition root (`createAppServices`) that Hono reads at the HTTP edge. Resultar already covered the rest
 (`StrictResultAsync`, tagged errors, `safeTry`, `runPromise`).
 
-Veredito depois da migração:
+Verdict after the migration:
 
-- caminho de produção: DX **melhor ou igual**;
-- caminho de teste HTTP: DX **pior**, até estreitar o tipo que o Hono exige;
-- Resultar **não** precisa de API nova para esta troca;
-- não vale recriar Awilix, Layer ou lifetimes no core.
+- production path: DX **better or equal**;
+- HTTP test path: DX **worse**, until the type Hono requires is narrowed;
+- Resultar does **not** need a new API for this swap;
+- recreating Awilix, Layer, or lifetimes in core is not worth it.
 
-## O que o Awilix fazia no Replis
+## What Awilix did in that consumer
 
-Três grupos de registro:
+Three registration groups:
 
-| Grupo | Exemplos | Papel |
+| Group | Examples | Role |
 | --- | --- | --- |
-| Valores | `appConfig`, `logger` | `asValue` — já existiam fora do container |
-| Infra | `surrealClient`, repos, jwt, hasher, S3, realtime, WhatsApp, schema | `asFunction(...).singleton()` |
-| App | 12 use cases + helpers de boot | factories que liam o cradle via PROXY |
+| Values | `appConfig`, `logger` | `asValue` — already existed outside the container |
+| Infra | `dbClient`, repos, jwt, hasher, S3, realtime, session, schema | `asFunction(...).singleton()` |
+| App | 12 use cases + boot helpers | factories that read the cradle via PROXY |
 
-Os únicos ciclos de vida reais eram os disposers de `surrealClient` e `whatsAppClient`. Tudo o
-mais era “chame a factory uma vez e cacheie”. As rotas não resolviam nada: faziam
-`c.get("container").cradle.authUseCase.loginTenant(...)`. Os testes montavam um container mínimo
-com `asValue`.
+The only real lifecycles were the disposers of `dbClient` and `sessionClient`. Everything else
+was "call the factory once and cache it". The routes resolved nothing: they did
+`c.get("container").cradle.authUseCase.loginTenant(...)`. The tests assembled a minimal container
+with `asValue`.
 
-As factories já recebiam um objeto nomeado (`{ surrealClient }`, `ArenaUseCaseDependencies`). O
-PROXY só preenchia essas chaves pelo nome do parâmetro.
+The factories already received a named object (`{ dbClient }`, `ArenaUseCaseDependencies`). The
+PROXY only filled those keys from the parameter name.
 
-## Comparativo de DX
+## DX comparison
 
-| Tarefa | Awilix | Composition root |
+| Task | Awilix | Composition root |
 | --- | --- | --- |
-| Entender o grafo | Nomes no PROXY; a ordem é implícita | `createAppServices` mostra a ordem |
-| Adicionar um singleton | `asFunction(createX).singleton()` e o nome do parâmetro tem que bater | Chamar a factory e devolver no objeto |
-| Dependência faltando | Falha em runtime (`strict`) | Falha no compile na factory tipada |
-| Rota HTTP | `c.get("container").cradle.authUseCase` | `c.get("app").authUseCase` |
-| Dispose | `.disposer()` escondido | `services.dispose()` visível, em Resultar |
-| Teste de rota | Mini-container + `asValue({} as never)` nos stubs | `as unknown as AppServices` |
-| Auto-load de pastas | Disponível, não usado aqui | Não existe; o arquivo único basta |
-| Lifetimes | `SINGLETON` / `SCOPED` / `TRANSIENT` | Tudo é singleton de processo; scope é o objeto passado na borda |
+| Understand the graph | Names in PROXY; order is implicit | `createAppServices` shows the order |
+| Add a singleton | `asFunction(createX).singleton()` and the parameter name has to match | Call the factory and return it in the object |
+| Missing dependency | Runtime failure (`strict`) | Compile failure in the typed factory |
+| HTTP route | `c.get("container").cradle.authUseCase` | `c.get("app").authUseCase` |
+| Dispose | Hidden `.disposer()` | Visible `services.dispose()`, in Resultar |
+| Route test | Minimal container + `asValue({} as never)` in stubs | `as unknown as AppServices` |
+| Folder auto-load | Available, not used here | Does not exist; the single file is enough |
+| Lifetimes | `SINGLETON` / `SCOPED` / `TRANSIENT` | Everything is a process singleton; scope is the object passed at the edge |
 
-O Awilix ganhava cerimônia na hora de registrar o 21º serviço (uma linha). Em troca o TypeScript
-não via o grafo, e um parâmetro com o nome errado só quebrava em runtime.
+Awilix saved ceremony when registering the 21st service (one line). In return TypeScript
+could not see the graph, and a misnamed parameter only broke at runtime.
 
-O composition root ganha grafo visível, dep faltando como erro de tipo, dispose Resultar e uma
-dependência a menos. Adicionar o 21º serviço é uma linha a mais, explícita.
+The composition root gains a visible graph, a missing dep as a type error, Resultar dispose, and one
+fewer dependency. Adding the 21st service is one more line, explicit.
 
-O que **não** mudou — e já era o DX Resultar:
+What **did not** change — and was already Resultar DX:
 
-- use cases devolvendo `StrictResultAsync`;
-- tagged errors na borda HTTP;
-- `sendResult` com `.match`;
-- boot com `safeTry` / `tryResultAsync`.
+- use cases returning `StrictResultAsync`;
+- tagged errors at the HTTP edge;
+- `sendResult` with `.match`;
+- boot with `safeTry` / `tryResultAsync`.
 
-## Onde o DX melhorou
+## Where DX improved
 
-### Grafo visível
+### Visible graph
 
-`createAppServices` constrói na ordem: cliente Surreal, repositórios, jwt/hasher/storage,
-realtime, schema, evento WhatsApp, cliente WhatsApp, use cases. Quem entra no arquivo vê o
-acoplamento. No Awilix isso estava espalhado em nomes de registro.
+`createAppServices` builds in order: database client, repositories, jwt/hasher/storage,
+realtime, schema, session events, session client, use cases. Anyone opening the file sees the
+coupling. In Awilix that was scattered across registration names.
 
-### Dependência faltando é tipo
+### A missing dependency is a type
 
-`createJwtService({ appConfig })` e `createHealthUseCase({ databaseHealthRepository })` já eram
-tipados. Sem PROXY, a chamada no composition root é o ponto em que o compilador recusa um grafo
-incompleto. O Awilix `strict` só reclamava ao resolver.
+`createJwtService({ appConfig })` and `createHealthUseCase({ databaseHealthRepository })` were already
+typed. Without PROXY, the call in the composition root is the point where the compiler rejects an incomplete
+graph. Awilix `strict` only complained at resolution time.
 
-`arenaDeps` torna explícito o que o PROXY escondia: quase todos os use cases recebem o mesmo
-bag `ArenaUseCaseDependencies`, não um construtor mínimo.
+`arenaDeps` makes explicit what PROXY hid: almost every use case receives the same
+`ArenaUseCaseDependencies` bag, not a minimal constructor.
 
-### Dispose alinhado ao resto do app
+### Dispose aligned with the rest of the app
 
-O shutdown deixa de ser `container.dispose()` genérico. `services.dispose()` fecha WhatsApp e
-depois Surreal, os dois mesmo se o primeiro falhar, e devolve `StrictResultAsync<void, AppLifecycleError>`.
+Shutdown stops being a generic `container.dispose()`. `services.dispose()` closes the session client and
+then the database, both even if the first fails, and returns `StrictResultAsync<void, AppLifecycleError>`.
 
-### Rotas um pouco mais curtas
+### Slightly shorter routes
 
 ```ts
 c.get("container").cradle.authUseCase.loginTenant(body)
 c.get("app").authUseCase.loginTenant(body)
 ```
 
-O padrão continua um service locator no contexto Hono. Só perdeu um nível (`.cradle`).
+The pattern is still a service locator in the Hono context. It just lost one level (`.cradle`).
 
-## Onde o DX piorou
+## Where DX regressed
 
-### Teste de rota perdeu o tipo
+### Route tests lost the type
 
-Este é o único regressão que deve ser tratada como problema, não como gosto:
+This is the one regression that should be treated as a problem, not a matter of taste:
 
 ```ts
 const createTestApp = (
@@ -120,46 +120,46 @@ const createTestApp = (
   }) as unknown as AppServices
 ```
 
-O Awilix também pedia stubs (`as never` em `surrealClient` e afins), mas o que o teste
-*registrava* continuava tipado. Agora o teste afirma que os serviços omitidos existem. O parâmetro
-`healthUseCase` continua tipado: uma assinatura incompatível de `check` é rejeitada. A assertion
-esconde a ausência dos outros serviços exigidos pela aplicação completa.
+Awilix also required stubs (`as never` on `dbClient` and friends), but what the test
+*registered* stayed typed. Now the test asserts that the omitted services exist. The
+`healthUseCase` parameter stays typed: an incompatible `check` signature is rejected. The assertion
+hides the absence of the other services required by the full application.
 
-### O Hono carrega o processo inteiro
+### Hono carries the whole process
 
-`createHonoApp(services: AppServices)` exige `surrealClient`, `schemaBootstrap`,
-`connectSurrealClient` e `dispose`. Nenhuma rota usa isso. SSE só precisa de `realtimeEventBus`.
-Auth só de `authUseCase` e `appConfig`. O cradle tinha o mesmo problema; a troca não corrigiu.
+`createHonoApp(services: AppServices)` requires `dbClient`, `schemaBootstrap`,
+`connectDbClient`, and `dispose`. No route uses those. SSE only needs `realtimeEventBus`.
+Auth only needs `authUseCase` and `appConfig`. The cradle had the same problem; the swap did not fix it.
 
-### Nome `app` colide com o Hono
+### The `app` name collides with Hono
 
-`registerArenaTenantChatRoutes = (app) => { ... c.get("app") }` mistura o Hono app com o
-composition root. `services` seria o nome certo da variável de contexto.
+`registerArenaTenantChatRoutes = (app) => { ... c.get("app") }` mixes the Hono app with the
+composition root. `services` would be the right name for the context variable.
 
-### A pasta ainda se chama `container`
+### The folder is still called `container`
 
-Quem entra no repositório procura Awilix. O arquivo agora é `app-services.ts`.
+Anyone entering the repository looks for Awilix. The file is now `app-services.ts`.
 
-## O que não deve ser feito
+## What should not be done
 
-- Não voltar o Awilix. O composition root é o modelo certo para um grafo de singletons de
-  processo.
-- Não colocar `ResultTask.service` em cada use case agora. Os use cases já fecham sobre
-  `arenaDeps` e devolvem `StrictResultAsync`. Tags não melhoram a rota HTTP.
-- Não fazer auto-load de pasta. Um arquivo com ~20 factories é legível. Auto-wire por nome era a
-  parte ruim do Awilix.
-- Não adicionar `Layer`, lifetimes ou um runtime de scope no Resultar por causa deste app. O RFC
-  0001 adia `Layer` até existir evidência de uso real. Dois disposers não são essa evidência.
+- Do not bring Awilix back. The composition root is the right model for a graph of process
+  singletons.
+- Do not put `ResultTask.service` in each use case now. The use cases already close over
+  `arenaDeps` and return `StrictResultAsync`. Tags do not improve the HTTP route.
+- Do not add folder auto-load. One file with ~20 factories is readable. Auto-wiring by name was the
+  bad part of Awilix.
+- Do not add `Layer`, lifetimes, or a scope runtime to Resultar because of this app. RFC
+  0001 defers `Layer` until there is evidence of real usage. Two disposers are not that evidence.
 
-`ResultTask.service` / `provideServices` / `runResult` já existem na 3.6 e bastam se um programa
-quiser que o tipo impeça execução sem `Database` ou `Clock`. Isso é um segundo passo, não o
-substituto do container HTTP.
+`ResultTask.service` / `provideServices` / `runResult` already exist in 3.6 and suffice if a program
+wants the type to forbid execution without `Database` or `Clock`. That is a second step, not the
+HTTP container replacement.
 
-## Melhorias recomendadas no consumidor
+## Recommended improvements in the consumer
 
-Ordem de valor:
+In order of value:
 
-1. **Superfície HTTP tipada**, sem o bag de infraestrutura.
+1. **Typed HTTP surface**, without the infrastructure bag.
 
    ```ts
    export type AppHttpServices = Pick<
@@ -170,18 +170,18 @@ Ordem de valor:
      | "healthUseCase"
      | "chatUseCase"
      | "realtimeEventBus"
-     // só o que rota e middleware lêem
+   // only what routes and middleware read
    >
 
-   export const createHonoApp = (services: AppHttpServices): ReplisHonoApp => { /* ... */ }
+   export const createHonoApp = (services: AppHttpServices): ConsumerHonoApp => { /* ... */ }
    ```
 
-   Esse `Pick` reduz o contrato, mas ainda exige todos os campos selecionados. Para testar apenas
-   `/health`, extrair uma factory de rotas com dependências mínimas; testes da aplicação completa
-   precisam de uma fixture completa e tipada de `AppHttpServices`.
+   This `Pick` shrinks the contract but still requires every selected field. To test only
+   `/health`, extract a route factory with minimal dependencies; tests of the full application
+   need a complete, typed `AppHttpServices` fixture.
 
-2. **Factory de rota e fixture de teste** no lugar da assertion. Exemplo de API proposta para
-   uma rota isolada, após extrair `createHealthRoutes`:
+2. **Route factory and test fixture** instead of the assertion. Example of a proposed API for
+   an isolated route, after extracting `createHealthRoutes`:
 
    ```ts
    createHealthRoutes({
@@ -192,45 +192,45 @@ Ordem de valor:
    })
    ```
 
-3. **Rename mecânico:** pasta `container` → `composition` (ou `app-services.ts` na raiz de
-   `infrastructure`), e `c.get("app")` → `c.get("services")`.
+3. **Mechanical rename:** `container` folder → `composition` (or `app-services.ts` at the root of
+   `infrastructure`), and `c.get("app")` → `c.get("services")`.
 
-Opcional e de baixo valor: `const servicesOf = (c) => c.get("services")` nas rotas. O ruído hoje
-é `c.get("app").chatUseCase`, não a falta de um DI.
+Optional and low value: `const servicesOf = (c) => c.get("services")` in routes. The noise today
+is `c.get("app").chatUseCase`, not the lack of a DI.
 
-## Implicações para o Resultar
+## Implications for Resultar
 
-Nenhuma API de DI é necessária para substituir Awilix neste formato. A melhoria de recursos é uma
-frente distinta: `acquireRelease` + `scoped` preservam falhas de execução e release, conforme a
-RFC 0001. A ordem HTTP → WhatsApp → banco e o controle de tarefas de restauração continuam sendo
-responsabilidade da composição da aplicação; o recorte atual ainda não implementa fibers.
+No DI API is needed to replace Awilix in this shape. The resource-management improvement is a
+separate front: `acquireRelease` + `scoped` preserve execution and release failures, per
+RFC 0001. The HTTP → session → database order and control of restore tasks remain
+the application composition's responsibility; the current slice does not implement fibers yet.
 
-O que o core já oferece e o consumidor deve usar:
+What core already offers and the consumer should use:
 
-- `Result` / `StrictResult` para validação e regras puras;
-- `ResultAsync` / `StrictResultAsync` para I/O e use cases que já fecham sobre deps;
-- `createTaggedError` na borda;
-- `tryResultAsync` / `safeTry` no boot e no dispose;
-- `ResultTask` só quando o programa precisa declarar requisitos `R` e recebê-los na execução.
+- `Result` / `StrictResult` for validation and pure rules;
+- `ResultAsync` / `StrictResultAsync` for I/O and use cases that already close over deps;
+- `createTaggedError` at the edge;
+- `tryResultAsync` / `safeTry` in boot and dispose;
+- `ResultTask` only when the program needs to declare `R` requirements and receive them at execution time.
 
-O que continua de fora do core, de propósito:
+What stays out of core, on purpose:
 
-- container global;
-- auto-wire por nome de parâmetro;
+- global container;
+- auto-wiring by parameter name;
 - lifetimes;
 - `Layer`.
 
-A evidência deste consumidor confirma a decisão do RFC 0001: tokens de serviço leves no
-`ResultTask`, composition root na aplicação, sem DI runtime.
+The evidence from this consumer confirms the RFC 0001 decision: lightweight service tokens in
+`ResultTask`, composition root in the application, no runtime DI.
 
-## Conclusão
+## Conclusion
 
-Para escrever feature de domínio, o DX está melhor: grafo visível, dep faltando é tipo, dispose é
-Resultar, uma dependência a menos.
+For writing domain features, DX is better: visible graph, a missing dep is a type, dispose is
+Resultar, one fewer dependency.
 
-Para escrever teste HTTP, o DX está pior até estreitar o tipo do Hono. Sem isso, a troca ficou
-correta na arquitetura e frouxa na borda de teste — o mesmo service locator de antes, com um
-cast mais feio.
+For writing HTTP tests, DX is worse until the Hono type is narrowed. Without that, the swap is
+architecturally correct and loose at the test edge — the same service locator as before, with an
+uglier cast.
 
-Melhorar (1) e (2) no consumidor. O rename é higiene. O resto do Awilix não faz falta neste
-projeto, e não deve ser reintroduzido no Resultar.
+Improve (1) and (2) in the consumer. The rename is hygiene. The rest of Awilix is not missed in this
+project, and should not be reintroduced into Resultar.

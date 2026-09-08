@@ -1,29 +1,32 @@
 # Requests for Comments (RFCs) — Resultar
 
-Este diretório centraliza as propostas arquiteturais, decisões de design e especificações técnicas do ecossistema **Resultar**.
+This directory centralizes the architectural proposals, design decisions, and technical specifications of the **Resultar** ecosystem.
 
 ---
 
-## Índice de RFCs
+## RFC Index
 
-| RFC | Título | Pacote Alvo | Status | Data |
+| RFC | Title | Target Package | Status | Date |
 | :---: | :--- | :---: | :---: | :---: |
-| [**RFC 0001**](./rfc-0001-result-task-core.md) | **ResultTask e a próxima arquitetura do core** | `resultar` | **Em Andamento (Fases 0, 1 e 2 Concluídas)** | 2026-09-04 |
-| [**RFC 0002**](./rfc-0002-di-lifetimes-scopes.md) | **Lifetimes explícitos e escopos de requisição** | `resultar-di` | **Implementado** | 2026-09-05 |
+| [**RFC 0001**](./rfc-0001-result-task-core.md) | **ResultTask and the next core architecture** | `resultar` | **In Progress (Phases 0, 1, and 2 Done)** | 2026-09-04 |
+| [**RFC 0002**](./rfc-0002-di-lifetimes-scopes.md) | **Explicit lifetimes and request scopes** | `resultar-di` | **Implemented** | 2026-09-05 |
+| [**RFC 0003**](./rfc-0003-phase-3-remainder-and-validation.md) | **Phase 3 remainder, live lifecycle validation, and dependency health** | `resultar` | **Draft** | 2026-09-07 |
 
 ---
 
-## Documentos de Acompanhamento e Adendos
+## Tracking Documents and Addenda
 
-- [**Resolução das Pendências da Fase 0 — RFC 0001**](./rfc-0001-fase-0-pendencias.md): Registro da resolução do estouro de stack via trampoline iterativo, benchmarks de 10k cadeias e tipagem nominal `ResultTaskTypeId`.
-- [**Especificação e Pendências da Fase 1 — RFC 0001**](./rfc-0001-fase-1-pendencias.md): Especificação dos combinadores lazy (`mapError`, `tap`, `tapError`, `match`, `as`), interoperabilidade com `ResultAsync` e pipelines funcionais.
-- [**Especificação e Pendências da Fase 2 — RFC 0001**](./rfc-0001-fase-2-pendencias.md): Especificação de `ResultTask.gen`, contrato yieldable nominal, service tags e resolução de requisitos $R$.
+- [**Resolution of Phase 0 Items — RFC 0001 (Done)**](./rfc-0001-phase-0-done.md): Record of resolving the stack overflow via iterative trampoline, 10k-chain benchmarks, and nominal `ResultTaskTypeId` typing.
+- [**Phase 1 Specification and Completed Items — RFC 0001 (Done)**](./rfc-0001-phase-1-done.md): Specification of the lazy combinators (`mapError`, `tap`, `tapError`, `match`, `as`), interoperability with `ResultAsync`, and functional pipelines.
+- [**Phase 2 Specification and Completed Items — RFC 0001 (Done)**](./rfc-0001-phase-2-done.md): Specification of `ResultTask.gen`, the nominal yieldable contract, service tags, and resolution of $R$ requirements.
+
+- [**Phase 2 Review — RFC 0001**](./rfc-0001-phase-2-review.md): Confirmed fixes and resolution of tasks F2-R1 (incompatible provider rejection) and F2-R2 (full inference of the curried resolver).
 
 ---
 
-## Ciclo de Vida de um RFC
+## RFC Lifecycle
 
-1. **Proposta (Draft):** Criação do documento descrevendo motivação, API proposta, análise de alternativas e plano de transição.
-2. **Revisão e Prova de Conceito (Fase 0):** Provas de conceito mínimas, stack-safety, benchmarks preliminares e validação de tipos com TypeScript.
-3. **Implementação (In Progress):** Execução das fases incrementais descritas no plano de entrega.
-4. **Concluído (Implemented):** Incorporado na release oficial e integrado à documentação pública dos pacotes.
+1. **Proposal (Draft):** Creation of the document describing motivation, proposed API, alternatives analysis, and transition plan.
+2. **Review and Proof of Concept (Phase 0):** Minimal proofs of concept, stack safety, preliminary benchmarks, and type validation with TypeScript.
+3. **Implementation (In Progress):** Execution of the incremental phases described in the delivery plan.
+4. **Done (Implemented):** Incorporated into the official release and integrated into the packages' public documentation.
