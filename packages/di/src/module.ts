@@ -191,6 +191,8 @@ export interface ServiceScope<
   G extends Graph = Graph,
 > {
   readonly use: UseTask<Services, E, R, G>;
+  /** Runs an application callback that can resolve only singleton services. */
+  readonly useSingletons: UseTask<Services, E, R, G>;
   /** Fetch-compatible handler. Its child remains open through response-body consumption. */
   readonly fetch: <const Keys extends readonly KeysOf<Services>[]>(
     dependencies: Keys & LiteralKeys<Keys>,
@@ -654,11 +656,12 @@ const isServiceClass = (
   );
 };
 
-const makeScope = <Services extends object, E, R, G extends Graph>(
-  runtime: RuntimeScope,
-  locals: RuntimeServices = {},
-): ServiceScope<Services, E, R, G> => ({
-  use: ((dependencies: readonly string[], use: (services: RuntimeServices) => RuntimeTask) => {
+const scopedUse =
+  (runtime: RuntimeScope, locals: RuntimeServices, requestedBy?: ServiceLifetime) =>
+  (
+    dependencies: readonly string[],
+    use: (services: RuntimeServices) => RuntimeTask,
+  ): RuntimeTask => {
     runtime.validate(dependencies.filter((key) => !Object.hasOwn(locals, key)));
     const task = ResultTask.gen(function* runScopedUse() {
       const child = runtime.child(locals);
@@ -667,14 +670,26 @@ const makeScope = <Services extends object, E, R, G extends Graph>(
         release: (_resource, exit) => child.close(exit),
       }).flatMap(() =>
         ResultTask.gen(function* resolveAndUse() {
-          const services = yield* child.resolveMany(dependencies);
-          return yield* child.bind(use(services));
+          const services = yield* child.resolveMany(dependencies, requestedBy);
+          return yield* child.bind(use(services), requestedBy);
         }),
       );
       return yield* owned;
     });
-    return ResultTask.scoped(task) as never;
-  }) as ServiceScope<Services, E, R, G>["use"],
+    return ResultTask.scoped(task);
+  };
+
+const makeScope = <Services extends object, E, R, G extends Graph>(
+  runtime: RuntimeScope,
+  locals: RuntimeServices = {},
+): ServiceScope<Services, E, R, G> => ({
+  use: scopedUse(runtime, locals) as ServiceScope<Services, E, R, G>["use"],
+  useSingletons: scopedUse(runtime, locals, "singleton") as ServiceScope<
+    Services,
+    E,
+    R,
+    G
+  >["useSingletons"],
   fetch: (dependencies, handle) => (request) =>
     runScopedResponse(request, (respond) => {
       const scope = makeScope(runtime, locals);

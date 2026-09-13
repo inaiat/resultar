@@ -3,6 +3,9 @@ import { ResultTask, type Result } from "resultar";
 import type { ServiceModule } from "resultar-di";
 import type { HttpServiceSelection, ServiceGraph, ServiceScopeError } from "resultar-di/advanced";
 
+export { createHonoServices } from "./middleware.js";
+export type { HonoServices } from "./middleware.js";
+
 export interface HonoApplication<CloseError = never> {
   readonly fetch: (request: Request) => Promise<Response>;
   readonly request: (input: string | Request, init?: RequestInit) => Promise<Response>;

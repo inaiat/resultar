@@ -26,7 +26,8 @@ try {
   const file = join(directory, "consumer.mts");
   writeFileSync(
     file,
-    `import { createHonoApp } from "resultar-hono";
+    `import { createHonoApp, createHonoServices } from "resultar-hono";
+import { Hono } from "hono";
 import { createModule } from "resultar-di";
 const app = createHonoApp({ services: createModule().value("answer", 42), bindings: ["answer"] }, (router) => {
  router.get("/", (c) => c.text(String(c.env.answer)));
@@ -35,6 +36,12 @@ try {
  const response = await app.request("/");
  if (await response.text() !== "42") throw new Error("Unexpected packed response");
 } finally { const closed = await app.close(); if (closed.isErr()) throw closed.error; }
+const di = createHonoServices(createModule().value("answer", 42));
+const native = new Hono<{Bindings: {suffix: string}}>().get("/", di.middleware(["answer"]), (c) => c.text(String(c.var.services.answer) + c.env.suffix));
+try {
+ const response = await native.request("/", undefined, {suffix: "!"});
+ if (await response.text() !== "42!") throw new Error("Native Hono bindings were replaced");
+} finally { const closed = await di.close(); if (closed.isErr()) throw closed.error; }
 `,
   );
   execFileSync(

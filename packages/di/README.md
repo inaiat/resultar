@@ -160,6 +160,12 @@ server you intend to use later. TypeScript cannot enforce that a resource never 
 For an application, keep the serving-and-waiting task inside `use`. There is intentionally no public
 `resolve()` or `build()` that returns a live graph with a separate manual `dispose()` obligation.
 
+`scope.useSingletons(keys, callback)` is the application-only variant of `use`. It remains lazy,
+shares the same root cache, and rejects scoped/transient selections and callback tokens at runtime.
+It also rejects request locals. Keep the application callback alive for the serving lifetime;
+`close()` waits for it before releasing singleton resources. This is how
+[`resultar-fastify`](../fastify/README.md) initializes `app.services` without another container.
+
 Cancellation is cooperative and follows ResultTask semantics. An uncooperative SDK can delay
 shutdown. Initialization within a graph is sequential; the package does not implement parallel startup
 or a global runtime.

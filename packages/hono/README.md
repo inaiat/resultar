@@ -1,5 +1,41 @@
 # resultar-hono
 
+## Add services to an existing Hono router
+
+`createHonoServices` supplies per-route middleware over the same `resultar-di` request scopes.
+It preserves `c.env`, execution context and native route/RPC response inference:
+
+```ts
+import { Hono } from 'hono'
+import { createModule } from 'resultar-di'
+import { createHonoServices } from 'resultar-hono'
+
+const di = createHonoServices(createModule().value('answer', 42))
+const app = new Hono<{ Bindings: { suffix: string } }>()
+  .get('/public', c => c.text('public'))
+  .get('/answer', di.middleware(['answer']), c =>
+    c.json({ answer: c.var.services.answer, suffix: c.env.suffix }),
+  )
+
+export default app
+// On shutdown, after consuming/canceling active responses:
+// const closed = await di.close()
+```
+
+Only matching middleware selects and initializes services. Its scope stays open through response
+body consumption, failure or cancellation, using `scope.fetch`; it does not close in a middleware
+`finally`. `close()` is idempotent, retains typed root cleanup errors and rejects new scoped requests.
+
+Use `middleware(keys, { locals: (c: Context<AppEnvironment>) => ({ tenant: c.var.tenant }) })`
+after authentication to supply request locals. Sync and async callbacks are supported. Registered
+names cannot be overwritten, and a singleton cannot capture locals. Install one services middleware
+per request; all selected services should be listed in that middleware. No global Hono variable
+augmentation is installed. For `app.use`, declare the application's variables explicitly according
+to Hono's normal typing rules; inline route middleware infers `c.var.services` automatically.
+
+`createHonoApp` below retains its existing `c.env` bindings and application-wide selection behavior.
+For the corresponding native Fastify plugin, see [`resultar-fastify`](../fastify/README.md).
+
 Typed Hono service bindings and one DI scope per response. Configure ordinary Hono routes;
 reuse Resultar DI for service resolution, streaming ownership and cleanup.
 

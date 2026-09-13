@@ -18,7 +18,7 @@
     "release:publish": "vp run check:full && vp run build && vp run smoke:package && vp run release:npm && vp run release:jsr",
     "smoke:package": "pnpm -r --filter './packages/*' run smoke:package",
     "sync:jsr-version": "node scripts/sync-jsr-versions.mjs && vp fmt packages/di/jsr.json packages/resultar/jsr.json packages/request/jsr.json packages/request-typebox/jsr.json packages/request-zod/jsr.json",
-    "test:examples": "pnpm run example:check && pnpm run example:resultar && pnpm run example:request && pnpm run example:hono",
+    "test:examples": "pnpm run example:check && pnpm run example:resultar && pnpm run example:request && pnpm run example:hono && pnpm run example:fastify",
     "test": "pnpm -r --filter './packages/*' run test",
     "test:watch": "pnpm -r --filter './packages/*' run test:watch",
     "test:ui": "pnpm -r --filter './packages/*' run test:ui",
@@ -31,7 +31,8 @@
     "version:packages": "changeset version && pnpm run sync:jsr-version",
     "example:hono": "pnpm --filter resultar-hono-example smoke",
     "test:agents": "pnpm run build && pnpm --filter resultar-check native:build:current && node scripts/eval-agents.mjs --self-test && node --test scripts/test-agent-runner.mjs",
-    "eval:agents": "node scripts/eval-agents.mjs"
+    "eval:agents": "node scripts/eval-agents.mjs",
+    "example:fastify": "pnpm --filter resultar-fastify-example smoke"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.2"

@@ -42,7 +42,7 @@ work, typed service requirements, or owned resource lifetimes. Preserve existing
 contracts; converting an already-started Promise or ResultAsync cannot undo its execution.
 `ResultTask.runResult` can reject on defects, interruption, and composite causes. Use `runExit`
 when the boundary must inspect every exit without rejection. See [API details](references/api.md).
-For DI and Hono, read [services and HTTP scopes](references/services.md).
+For DI, Hono and Fastify, read [services and HTTP scopes](references/services.md).
 
 ## Apply Opinionated Defaults
 

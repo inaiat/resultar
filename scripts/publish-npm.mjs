@@ -16,6 +16,7 @@ const packages = [
   "packages/resultar",
   "packages/di",
   "packages/hono",
+  "packages/fastify",
   "packages/check",
   "packages/request",
   "packages/request-typebox",

@@ -22,6 +22,7 @@ If you are evaluating or using the main library, start with:
 | `resultar-request-typebox` | TypeBox adapter for `resultar-request`.                                                                                                                             | [TypeBox adapter README](packages/request-typebox/README.md)                  |
 | `resultar-request-zod`     | Zod adapter for `resultar-request`.                                                                                                                                 | [Zod adapter README](packages/request-zod/README.md)                          |
 | `resultar-hono`              | Typed Hono bindings with one DI scope per response and explicit shutdown.                                                  | [Hono README](packages/hono/README.md)                                          |
+| `resultar-fastify`           | Native Fastify application/request services, cancellation and resource scopes.                                           | [Fastify README](packages/fastify/README.md)                                    |
 
 ## Main Library
 
@@ -105,6 +106,7 @@ guide.
 | [examples/check](examples/check)       | Native diagnostics     | Exact findings for all supported rules plus a zero-diagnostic clean project              |
 | [examples/request](examples/request)   | Request helpers        | Fetch-style JSON calls with TypeBox and Zod adapters                              |
 | [examples/hono](examples/hono)         | Hono + DI application  | Typed composition, scoped cache sharing, overrides, and HTTP shutdown (Node & Deno) |
+| [examples/fastify](examples/fastify)   | Native Fastify + DI    | Plain services, TypeBox routes, inferred request services and explicit HTTP mapping |
 
 Run all example smokes with:
 
@@ -154,6 +156,16 @@ directory.
 [`resultar-hono`](packages/hono/README.md) connects typed DI services to ordinary Hono handlers,
 with one scope per response and explicit application shutdown. See the
 [runnable example](examples/hono/README.md); port and runtime configuration stay in the bootstrap.
+
+For an existing Hono router, use `createHonoServices(module).middleware(keys)` to infer
+`c.var.services` per route while preserving runtime bindings and RPC types.
+
+### Fastify integration
+
+[`resultar-fastify`](packages/fastify/README.md) registers native application and request services
+over the same DI scopes. Keep ordinary async handlers and explicit `reply.code().send()` mappings;
+the plugin manages resource ownership through streamed replies and shutdown. The
+[Fastify example](examples/fastify/README.md) includes a plain service factory and TypeBox routes.
 
 ### Coding-agent validation
 
