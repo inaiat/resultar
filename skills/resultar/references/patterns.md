@@ -55,7 +55,7 @@ const createUser = (input: CreateUserInput): StrictResultAsync<User, CreateUserE
 
 ```ts
 const createUser = (input: CreateUserInput): StrictResultAsync<User, CreateUserError> =>
-  safeTry(async function* () {
+  Result.gen(async function* () {
     const email = yield* validateEmail(input.email);
     yield* ensureEmailAvailable(email);
     const user = yield* saveUser({ ...input, email });
@@ -206,7 +206,9 @@ const observed = loadProfile(userId)
   .log((profile, error) => logger.info({ error, profile }, "profile result"));
 ```
 
-These callbacks are best-effort and cannot change the result. Use `andThen` or `orElse` when a
+These `ResultAsync` callbacks are best-effort and cannot change the result.
+`ResultTask.tap` and `tapError` instead propagate returned task failures and turn callback
+throws or rejected Promises into defects. Use `andThen` or `orElse` when a
 logging, auditing, publishing, or cleanup failure must affect control flow.
 
 ## Migrate Incrementally

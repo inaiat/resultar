@@ -557,119 +557,6 @@ interface ContinuationStep {
   readonly currentExit: Exit<unknown, unknown> | undefined
 }
 
-// fallow-ignore-next-line complexity
-const applySuccessContinuation = (
-  continuation: TaskContinuation,
-  exit: Exit<unknown, unknown> & { readonly _tag: 'Success' },
-): ContinuationStep => {
-  switch (continuation._tag) {
-    case 'Map': {
-      try {
-        return { current: undefined, currentExit: success(continuation.f(exit.value)) }
-      } catch (error) {
-        return { current: undefined, currentExit: died(error) }
-      }
-    }
-    case 'FlatMap': {
-      try {
-        return { current: continuation.f(exit.value), currentExit: undefined }
-      } catch (error) {
-        return { current: undefined, currentExit: died(error) }
-      }
-    }
-    case 'Tap': {
-      try {
-        const res = continuation.f(exit.value)
-        return ResultTask.toTapContinuationStep(res, () => ResultTask.succeed(exit.value), exit)
-      } catch (error) {
-        return { current: undefined, currentExit: died(error) }
-      }
-    }
-    // Stryker disable next-line all: success pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
-    case 'MapError': {
-      return { current: undefined, currentExit: exit }
-    }
-    // Stryker disable next-line all: success pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
-    case 'TapError': {
-      return { current: undefined, currentExit: exit }
-    }
-    // Stryker disable next-line all: success pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
-    case 'CatchAll': {
-      return { current: undefined, currentExit: exit }
-    }
-    default: {
-      return { current: undefined, currentExit: exit }
-    }
-  }
-}
-
-// fallow-ignore-next-line complexity
-const applyFailureContinuation = (
-  continuation: TaskContinuation,
-  exit: Exit<unknown, unknown> & { readonly _tag: 'Failure' },
-): ContinuationStep => {
-  switch (continuation._tag) {
-    case 'MapError': {
-      if (exit.cause._tag === 'Fail') {
-        try {
-          return { current: undefined, currentExit: failed(continuation.f(exit.cause.error)) }
-        } catch (error) {
-          return { current: undefined, currentExit: died(error) }
-        }
-      }
-      return { current: undefined, currentExit: exit }
-    }
-    case 'TapError': {
-      if (exit.cause._tag === 'Fail') {
-        try {
-          const failError = exit.cause.error
-          const res = continuation.f(failError)
-          return ResultTask.toTapContinuationStep(res, () => ResultTask.fail(failError), exit)
-        } catch (error) {
-          return { current: undefined, currentExit: died(error) }
-        }
-      }
-      return { current: undefined, currentExit: exit }
-    }
-    case 'CatchAll': {
-      if (exit.cause._tag === 'Sequential') {
-        return { current: undefined, currentExit: died(new ResultTaskCauseError(exit.cause)) }
-      }
-      if (exit.cause._tag === 'Fail') {
-        try {
-          return { current: continuation.f(exit.cause.error), currentExit: undefined }
-        } catch (error) {
-          return { current: undefined, currentExit: died(error) }
-        }
-      }
-      return { current: undefined, currentExit: exit }
-    }
-    // Stryker disable next-line all: failure pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
-    case 'Map': {
-      return { current: undefined, currentExit: exit }
-    }
-    // Stryker disable next-line all: failure pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
-    case 'FlatMap': {
-      return { current: undefined, currentExit: exit }
-    }
-    // Stryker disable next-line all: failure pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
-    case 'Tap': {
-      return { current: undefined, currentExit: exit }
-    }
-    default: {
-      return { current: undefined, currentExit: exit }
-    }
-  }
-}
-
-const applyContinuation = (
-  continuation: TaskContinuation,
-  exit: Exit<unknown, unknown>,
-): ContinuationStep =>
-  exit._tag === 'Success'
-    ? applySuccessContinuation(continuation, exit)
-    : applyFailureContinuation(continuation, exit)
-
 interface InstructionStep {
   readonly nextCurrent: ResultTask<unknown, unknown, unknown> | undefined
   readonly exit: Exit<unknown, unknown> | undefined
@@ -752,8 +639,112 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     this.execute = (context) => ResultTask.runTaskLoop(this, context)
   }
 
-  /** @internal */
-  public static toTapContinuationStep(
+  // fallow-ignore-next-line complexity
+  static #applySuccessContinuation(
+    continuation: TaskContinuation,
+    exit: Exit<unknown, unknown> & { readonly _tag: 'Success' },
+  ): ContinuationStep {
+    switch (continuation._tag) {
+      case 'Map': {
+        try {
+          return { current: undefined, currentExit: success(continuation.f(exit.value)) }
+        } catch (error) {
+          return { current: undefined, currentExit: died(error) }
+        }
+      }
+      case 'FlatMap': {
+        try {
+          return { current: continuation.f(exit.value), currentExit: undefined }
+        } catch (error) {
+          return { current: undefined, currentExit: died(error) }
+        }
+      }
+      case 'Tap': {
+        try {
+          const res = continuation.f(exit.value)
+          return ResultTask.#toTapContinuationStep(res, () => ResultTask.succeed(exit.value), exit)
+        } catch (error) {
+          return { current: undefined, currentExit: died(error) }
+        }
+      }
+      // Stryker disable next-line all: success pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
+      case 'MapError': {
+        return { current: undefined, currentExit: exit }
+      }
+      // Stryker disable next-line all: success pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
+      case 'TapError': {
+        return { current: undefined, currentExit: exit }
+      }
+      // Stryker disable next-line all: success pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
+      case 'CatchAll': {
+        return { current: undefined, currentExit: exit }
+      }
+      default: {
+        return { current: undefined, currentExit: exit }
+      }
+    }
+  }
+
+  // fallow-ignore-next-line complexity
+  static #applyFailureContinuation(
+    continuation: TaskContinuation,
+    exit: Exit<unknown, unknown> & { readonly _tag: 'Failure' },
+  ): ContinuationStep {
+    switch (continuation._tag) {
+      case 'MapError': {
+        if (exit.cause._tag === 'Fail') {
+          try {
+            return { current: undefined, currentExit: failed(continuation.f(exit.cause.error)) }
+          } catch (error) {
+            return { current: undefined, currentExit: died(error) }
+          }
+        }
+        return { current: undefined, currentExit: exit }
+      }
+      case 'TapError': {
+        if (exit.cause._tag === 'Fail') {
+          try {
+            const failError = exit.cause.error
+            const res = continuation.f(failError)
+            return ResultTask.#toTapContinuationStep(res, () => ResultTask.fail(failError), exit)
+          } catch (error) {
+            return { current: undefined, currentExit: died(error) }
+          }
+        }
+        return { current: undefined, currentExit: exit }
+      }
+      case 'CatchAll': {
+        if (exit.cause._tag === 'Sequential') {
+          return { current: undefined, currentExit: died(new ResultTaskCauseError(exit.cause)) }
+        }
+        if (exit.cause._tag === 'Fail') {
+          try {
+            return { current: continuation.f(exit.cause.error), currentExit: undefined }
+          } catch (error) {
+            return { current: undefined, currentExit: died(error) }
+          }
+        }
+        return { current: undefined, currentExit: exit }
+      }
+      // Stryker disable next-line all: failure pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
+      case 'Map': {
+        return { current: undefined, currentExit: exit }
+      }
+      // Stryker disable next-line all: failure pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
+      case 'FlatMap': {
+        return { current: undefined, currentExit: exit }
+      }
+      // Stryker disable next-line all: failure pass-through duplicates default by contract; explicit arms keep the switch exhaustive.
+      case 'Tap': {
+        return { current: undefined, currentExit: exit }
+      }
+      default: {
+        return { current: undefined, currentExit: exit }
+      }
+    }
+  }
+
+  static #toTapContinuationStep(
     res: unknown,
     onSuccess: () => ResultTask<unknown, unknown, unknown>,
     passThroughExit: Exit<unknown, unknown>,
@@ -801,13 +792,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
             return currentExit
           }
 
-          const resolvedExit =
+          const resolvedExit: Exit<unknown, unknown> =
             // Stryker disable next-line ConditionalExpression: every async settle that can queue a non-Success exit checks the abort signal first (tryPromise rejection, adapter post-await); sync throws cannot interleave an abort, so a non-Success exit never meets an aborted signal here and the mutant is equivalent.
             context.signal.aborted && currentExit._tag === 'Success'
               ? interrupted(context.signal)
               : currentExit
 
-          const step = applyContinuation(nextContinuation, resolvedExit)
+          const step: ContinuationStep =
+            resolvedExit._tag === 'Success'
+              ? ResultTask.#applySuccessContinuation(nextContinuation, resolvedExit)
+              : ResultTask.#applyFailureContinuation(nextContinuation, resolvedExit)
           current = step.current
           currentExit = step.currentExit
         }

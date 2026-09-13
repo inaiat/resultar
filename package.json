@@ -29,10 +29,12 @@
     "bench:neverthrow": "pnpm --filter resultar-benchmarks bench:neverthrow",
     "bench:stable": "pnpm --filter resultar-benchmarks bench:stable",
     "version:packages": "changeset version && pnpm run sync:jsr-version",
-    "example:hono": "pnpm --filter resultar-hono-example smoke"
+    "example:hono": "pnpm --filter resultar-hono-example smoke",
+    "test:agents": "pnpm run build && pnpm --filter resultar-check native:build:current && node scripts/eval-agents.mjs --self-test && node --test scripts/test-agent-runner.mjs",
+    "eval:agents": "node scripts/eval-agents.mjs"
   },
   "devDependencies": {
-    "@changesets/cli": "^3.0.1"
+    "@changesets/cli": "^3.0.2"
   },
   "packageManager": "pnpm@11.24.0"
 }

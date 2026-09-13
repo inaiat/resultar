@@ -229,12 +229,13 @@ Read `packages/check/README.md` for all rules, severities, modes, and command-li
 
 When an agent encounters a diagnostic, fix the architecture first:
 
-- handle or explicitly discard a returned Resultar value;
+- handle, compose, return, or intentionally discard a returned Resultar value; a discard does not
+  run a lazy task and must not be applied just to silence diagnostics;
 - replace nested `Result` from `map` with `andThen`;
 - replace error-only recovery with `mapErr`;
 - replace project-wide `try/catch` with `tryResult` or `tryResultAsync` when `noTryCatch` is enabled;
 - wrap raw promise awaits in Resultar contexts;
-- use `yield*` and avoid `try/catch` inside `safeTry`;
+- use `yield*` and avoid `try/catch` inside `Result.gen` / `safeTry`;
 - preserve the inferred error channel instead of asserting it away.
 
 ## Discover Repository Commands
@@ -250,6 +251,7 @@ pnpm test
 pnpm analyze
 pnpm smoke:package
 pnpm test:examples
+pnpm test:agents
 ```
 
 Run the narrowest useful command while iterating, then the complete relevant validation set before

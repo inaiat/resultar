@@ -1,4 +1,4 @@
-# Resultar v3.6+ API Guide
+# Resultar v3.7+ API Guide
 
 Use this reference after checking the version installed by the consuming project. The local package
 types and source are authoritative when they differ from this guide.
@@ -19,7 +19,7 @@ types and source are authoritative when they differ from this guide.
 
 ## Package Baseline
 
-Resultar v3.6 is an ESM package targeting Node.js 24+. The repository currently uses TypeScript 7.
+Resultar v3.7 is an ESM package targeting Node.js 24+. The repository currently uses TypeScript 7.
 Do not infer consumer requirements from memory: inspect `package.json`, the lockfile, and exported
 types first.
 
@@ -31,7 +31,7 @@ import type { StrictResult, StrictResultAsync } from "resultar";
 ```
 
 `tryCatch` and `tryCatchAsync` remain compatibility aliases. Prefer `tryResult` and
-`tryResultAsync` in new v3.6+ code.
+`tryResultAsync` in new v3.7+ code.
 
 ## Core Types And Constructors
 
@@ -234,10 +234,16 @@ For lazy `ResultTask` workflows with typed services and scopes, see `packages/re
 
 ## Observation And Cleanup
 
-`tap`, `tapError`, and `log` preserve the original result. Callback throws and rejected callback
+On `Result` and `ResultAsync`, `tap`, `tapError`, and `log` preserve the original result. Callback throws and rejected callback
 promises are intentionally ignored, so use them only for best-effort logging, metrics, tracing, and
 observation. Use `andThen`, `orElse`, or a Resultar boundary when side-effect failure must alter the
 workflow.
 
 `toDisposable` and `toAsyncDisposable` integrate with Node.js `using` / `await using`; their
 cleanup callbacks are also best-effort. Prefer `withResource` for acquire/use/release workflows.
+
+On `ResultTask`, `tap` and `tapError` are lazy effectful composition. Returned task errors and
+requirements join the workflow type. A thrown callback or rejected Promise becomes `Die`;
+a returned `ResultTask.fail(error)` becomes a typed failure. Use an explicitly recovered task
+when observation must be best-effort. `runExit` preserves these exits; `runResult` can reject.
+Do not substitute `ResultAsync.withResource` for awaited ResultTask resource ownership.

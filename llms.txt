@@ -4,6 +4,13 @@
 > workflows with typed services and scopes, awaitable `ResultAsync`, tagged errors, and
 > compiler-backed diagnostics. Node.js 24+, ESM-only.
 
+## Installed version first
+
+For an npm installation, read `node_modules/resultar/dist/llms.txt` and
+`node_modules/resultar/dist/agent/SKILL.md`. These files ship with the installed version, along
+with a compiled workflow recipe and `versions.json` for companion-package compatibility.
+The links below follow development on `main`; they are not a substitute for versioned local types.
+
 ## Start here
 
 - [Agent skill](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/SKILL.md): opinionated defaults and pointers for coding agents.

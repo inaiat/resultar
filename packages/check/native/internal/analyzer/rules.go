@@ -62,7 +62,10 @@ func (a *Analyzer) noDiscard(file *ast.SourceFile) []Finding {
 			fmt.Sprintf("Ignored %s value. Handle it or explicitly discard it with `void`.", typeName),
 			typeName,
 		)
-		finding.Fixes = []Fix{insertFix(file, expression, "Explicitly discard this Resultar value", "void ")}
+		fix := insertFix(file, expression, "Intentionally discard this Resultar value", "void ")
+		fix.Kind = FixIntentionalDiscard
+		fix.Description = "Discarding does not handle errors or execute a lazy ResultTask. Return, compose, or run the task when its work is required."
+		finding.Fixes = []Fix{fix}
 		findings = append(findings, finding)
 	})
 	if a.options.NoDiscardMode != "must-use" {
@@ -135,7 +138,7 @@ func (a *Analyzer) markTrackedResultUses(file *ast.SourceFile, tracked []*tracke
 			if node == result.identifier || symbol != result.symbol {
 				continue
 			}
-			if isHandledReference(node) {
+			if a.isHandledReference(node) {
 				result.handled = true
 			}
 			if a.isInsideDiscardedResultExpression(node) {
@@ -187,7 +190,7 @@ func (a *Analyzer) noPromiseInResultSuccess(file *ast.SourceFile) []Finding {
 			}
 			return
 		}
-		if (expressionName(call.Expression) != "ok" && !isResultTaskStaticCall(call.Expression, "succeed")) || len(call.Arguments.Nodes) == 0 {
+		if (expressionName(call.Expression) != "ok" && !a.isResultTaskStaticCall(call.Expression, "succeed")) || len(call.Arguments.Nodes) == 0 {
 			return
 		}
 		resultType := a.checker.GetTypeAtLocation(node)
@@ -340,7 +343,7 @@ func (a *Analyzer) preferMap(file *ast.SourceFile) []Finding {
 			return
 		}
 		for _, expression := range returned {
-			if !isOkConstructorCall(expression) {
+			if !a.isOkConstructorCall(expression) {
 				return
 			}
 		}
@@ -396,7 +399,7 @@ func (a *Analyzer) preferResultForEach(file *ast.SourceFile) []Finding {
 			return
 		}
 		call := node.AsCallExpression()
-		namespace := resultarStaticNamespace(call.Expression, "combine")
+		namespace := a.resultarStaticNamespace(call.Expression, "combine")
 		if namespace == "" || len(call.Arguments.Nodes) != 1 {
 			return
 		}
@@ -459,7 +462,7 @@ func (a *Analyzer) noTryCatch(file *ast.SourceFile) []Finding {
 func (a *Analyzer) yieldStarInSafeTry(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		body := safeTryBody(node)
+		body := a.safeTryBody(node)
 		if body == nil {
 			return
 		}
@@ -483,7 +486,7 @@ func (a *Analyzer) yieldStarInSafeTry(file *ast.SourceFile) []Finding {
 func (a *Analyzer) yieldStarInResultTaskGen(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		body := resultTaskGenBody(node)
+		body := a.resultTaskGenBody(node)
 		if body == nil {
 			return
 		}
@@ -503,7 +506,7 @@ func (a *Analyzer) yieldStarInResultTaskGen(file *ast.SourceFile) []Finding {
 func (a *Analyzer) noAwaitInSafeTry(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		body := safeTryBody(node)
+		body := a.safeTryBody(node)
 		if body == nil {
 			return
 		}
@@ -524,7 +527,7 @@ func (a *Analyzer) noAwaitInSafeTry(file *ast.SourceFile) []Finding {
 func (a *Analyzer) noTryCatchInSafeTry(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		body := safeTryBody(node)
+		body := a.safeTryBody(node)
 		if body == nil {
 			return
 		}
@@ -681,12 +684,12 @@ func (a *Analyzer) noUnsafeAwait(file *ast.SourceFile) []Finding {
 	boundaryBodies := make(map[*ast.Node]struct{})
 	contextBodies := make(map[*ast.Node]struct{})
 	visit(file.AsNode(), func(node *ast.Node) {
-		if body := resultarAwaitBoundaryBody(node); body != nil {
+		if body := a.resultarAwaitBoundaryBody(node); body != nil {
 			boundaryBodies[body] = struct{}{}
 			contextBodies[body] = struct{}{}
 			return
 		}
-		if body := safeTryBody(node); body != nil {
+		if body := a.safeTryBody(node); body != nil {
 			contextBodies[body] = struct{}{}
 		}
 	})
@@ -728,16 +731,16 @@ func (a *Analyzer) noUnsafeAwait(file *ast.SourceFile) []Finding {
 	return findings
 }
 
-func resultarAwaitBoundaryBody(node *ast.Node) *ast.Node {
+func (a *Analyzer) resultarAwaitBoundaryBody(node *ast.Node) *ast.Node {
 	if node == nil || node.Kind != ast.KindCallExpression {
 		return nil
 	}
 	call := node.AsCallExpression()
-	name := expressionName(call.Expression)
+	name := a.canonicalExpressionName(call.Expression)
 	if _, ok := asyncAwaitBoundaryCallNames[name]; !ok || len(call.Arguments.Nodes) == 0 {
 		return nil
 	}
-	if name == "tryPromise" && !isResultTaskStaticCall(call.Expression, "tryPromise") {
+	if name == "tryPromise" && !a.isResultTaskStaticCall(call.Expression, "tryPromise") {
 		return nil
 	}
 	return inspectableCallbackOrObjectTry(call.Arguments.Nodes[0])
@@ -846,7 +849,7 @@ func (a *Analyzer) isSafeAwaitExpression(expression *ast.Node, ignoredCalls map[
 		if _, ok := ignoredCalls[path]; ok {
 			return true
 		}
-		if isResultTaskStaticCall(unwrapped.AsCallExpression().Expression, "runExit") {
+		if a.isResultTaskStaticCall(unwrapped.AsCallExpression().Expression, "runExit") {
 			arguments := unwrapped.AsCallExpression().Arguments.Nodes
 			if len(arguments) > 0 && everyUnionPart(a.checker.GetTypeAtLocation(arguments[0]), isResultTaskLikeType) {
 				return true
@@ -922,14 +925,14 @@ func isErrConstructorCall(expression *ast.Node) bool {
 	return expression != nil && expression.Kind == ast.KindCallExpression && expressionName(expression.AsCallExpression().Expression) == "err"
 }
 
-func isOkConstructorCall(expression *ast.Node) bool {
+func (a *Analyzer) isOkConstructorCall(expression *ast.Node) bool {
 	expression = unwrapExpression(expression)
 	if expression == nil || expression.Kind != ast.KindCallExpression {
 		return false
 	}
 	name := expressionName(expression.AsCallExpression().Expression)
 	return name == "ok" || name == "okAsync" || name == "unit" || name == "unitAsync" ||
-		isResultTaskStaticCall(expression.AsCallExpression().Expression, "succeed")
+		a.isResultTaskStaticCall(expression.AsCallExpression().Expression, "succeed")
 }
 
 func isFunctionLikeNode(node *ast.Node) bool {
@@ -996,21 +999,41 @@ func callPath(expression *ast.Node) string {
 	return parent + "." + expression.Name().Text()
 }
 
-func isResultTaskStaticCall(expression *ast.Node, method string) bool {
-	path := callPath(expression)
-	target := "ResultTask." + method
-	return path == target || strings.HasSuffix(path, "."+target)
+// Resolve the imported symbol, including aliases and barrel reexports. Looking only at
+// source spelling lets the same API silently bypass rules when an import is renamed.
+func (a *Analyzer) canonicalExpressionName(expression *ast.Node) string {
+	expression = unwrapExpression(expression)
+	if expression == nil {
+		return ""
+	}
+	symbol := a.checker.GetSymbolAtLocation(expression)
+	if symbol != nil {
+		if symbol.Flags&ast.SymbolFlagsAlias != 0 {
+			symbol = a.checker.GetAliasedSymbol(symbol)
+		}
+		if symbol != nil {
+			return symbol.Name
+		}
+	}
+	return expressionName(expression)
 }
 
-func resultarStaticNamespace(expression *ast.Node, methodName string) string {
-	path := callPath(expression)
-	result := "Result." + methodName
-	resultAsync := "ResultAsync." + methodName
-	if path == result || strings.HasSuffix(path, "."+result) {
-		return "Result"
+func (a *Analyzer) staticNamespace(expression *ast.Node, method string) string {
+	expression = unwrapExpression(expression)
+	if expression == nil || expression.Kind != ast.KindPropertyAccessExpression || expressionName(expression) != method {
+		return ""
 	}
-	if path == resultAsync || strings.HasSuffix(path, "."+resultAsync) {
-		return "ResultAsync"
+	return a.canonicalExpressionName(expression.AsPropertyAccessExpression().Expression)
+}
+
+func (a *Analyzer) isResultTaskStaticCall(expression *ast.Node, method string) bool {
+	return a.staticNamespace(expression, method) == "ResultTask"
+}
+
+func (a *Analyzer) resultarStaticNamespace(expression *ast.Node, methodName string) string {
+	namespace := a.staticNamespace(expression, methodName)
+	if namespace == "Result" || namespace == "ResultAsync" {
+		return namespace
 	}
 	return ""
 }
@@ -1037,12 +1060,12 @@ func isReasonTagAccess(node *ast.Node) bool {
 	return reason != nil && reason.Kind == ast.KindPropertyAccessExpression && reason.Name() != nil && reason.Name().Text() == "reason"
 }
 
-func safeTryBody(node *ast.Node) *ast.Node {
+func (a *Analyzer) safeTryBody(node *ast.Node) *ast.Node {
 	if node == nil || node.Kind != ast.KindCallExpression {
 		return nil
 	}
 	call := node.AsCallExpression()
-	if expressionName(call.Expression) != "safeTry" || len(call.Arguments.Nodes) == 0 {
+	if (a.canonicalExpressionName(call.Expression) != "safeTry" && a.staticNamespace(call.Expression, "gen") != "Result") || len(call.Arguments.Nodes) == 0 {
 		return nil
 	}
 	first := unwrapExpression(call.Arguments.Nodes[0])
@@ -1073,12 +1096,12 @@ func safeTryBody(node *ast.Node) *ast.Node {
 	return nil
 }
 
-func resultTaskGenBody(node *ast.Node) *ast.Node {
+func (a *Analyzer) resultTaskGenBody(node *ast.Node) *ast.Node {
 	if node == nil || node.Kind != ast.KindCallExpression {
 		return nil
 	}
 	call := node.AsCallExpression()
-	if !isResultTaskStaticCall(call.Expression, "gen") || len(call.Arguments.Nodes) == 0 {
+	if !a.isResultTaskStaticCall(call.Expression, "gen") || len(call.Arguments.Nodes) == 0 {
 		return nil
 	}
 	body := unwrapExpression(call.Arguments.Nodes[0])
@@ -1254,7 +1277,7 @@ func referenceChainRoot(identifier *ast.Node) (*ast.Node, *ast.Node) {
 	return current, nil
 }
 
-func isHandledReference(identifier *ast.Node) bool {
+func (a *Analyzer) isHandledReference(identifier *ast.Node) bool {
 	root, parent := referenceChainRoot(identifier)
 	if parent != nil && parent.Kind == ast.KindReturnStatement && parent.AsReturnStatement().Expression == root {
 		return true
@@ -1268,7 +1291,7 @@ func isHandledReference(identifier *ast.Node) bool {
 	if isConsumedByReceiverChain(identifier) {
 		return true
 	}
-	if isConsumedByResultTaskStaticCall(identifier) {
+	if a.isConsumedByResultTaskStaticCall(identifier) {
 		return true
 	}
 
@@ -1284,7 +1307,7 @@ func isHandledReference(identifier *ast.Node) bool {
 	return false
 }
 
-func isConsumedByResultTaskStaticCall(identifier *ast.Node) bool {
+func (a *Analyzer) isConsumedByResultTaskStaticCall(identifier *ast.Node) bool {
 	current := identifier
 	for parent := current.Parent; parent != nil; parent = current.Parent {
 		if isWrapperParent(parent, current) || (parent.Kind == ast.KindAwaitExpression && parent.Expression() == current) {
@@ -1297,7 +1320,7 @@ func isConsumedByResultTaskStaticCall(identifier *ast.Node) bool {
 		}
 		if parent.Kind == ast.KindCallExpression {
 			call := parent.AsCallExpression()
-			if len(call.Arguments.Nodes) > 0 && call.Arguments.Nodes[0] == current && isResultTaskStaticConsumerCall(call.Expression) {
+			if len(call.Arguments.Nodes) > 0 && call.Arguments.Nodes[0] == current && a.isResultTaskStaticConsumerCall(call.Expression) {
 				return true
 			}
 			if call.Expression == current {
@@ -1310,9 +1333,9 @@ func isConsumedByResultTaskStaticCall(identifier *ast.Node) bool {
 	return false
 }
 
-func isResultTaskStaticConsumerCall(expression *ast.Node) bool {
+func (a *Analyzer) isResultTaskStaticConsumerCall(expression *ast.Node) bool {
 	for method := range resultTaskStaticConsumerMethods {
-		if isResultTaskStaticCall(expression, method) {
+		if a.isResultTaskStaticCall(expression, method) {
 			return true
 		}
 	}
@@ -1495,11 +1518,11 @@ func (a *Analyzer) noInvalidLifetime(file *ast.SourceFile) []Finding {
 	return findings
 }
 
-func acquiresScopeOwner(node *ast.Node) bool {
+func (a *Analyzer) acquiresScopeOwner(node *ast.Node) bool {
 	for parent := node.Parent; parent != nil; parent = parent.Parent {
 		if parent.Kind == ast.KindCallExpression {
 			call := parent.AsCallExpression()
-			if isResultTaskStaticCall(call.Expression, "scoped") {
+			if a.isResultTaskStaticCall(call.Expression, "scoped") {
 				return true
 			}
 			if method, _, _ := methodCall(parent); method == "task" || method == "resource" {
@@ -1519,7 +1542,7 @@ func acquiresScopeOwner(node *ast.Node) bool {
 func (a *Analyzer) noUnscopedAcquireRelease(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		body := resultTaskGenBody(node)
+		body := a.resultTaskGenBody(node)
 		if body == nil {
 			return
 		}
@@ -1528,10 +1551,10 @@ func (a *Analyzer) noUnscopedAcquireRelease(file *ast.SourceFile) []Finding {
 				return
 			}
 			yielded := unwrapExpression(bodyNode.AsYieldExpression().Expression)
-			if yielded == nil || yielded.Kind != ast.KindCallExpression || !isResultTaskStaticCall(yielded.AsCallExpression().Expression, "acquireRelease") {
+			if yielded == nil || yielded.Kind != ast.KindCallExpression || !a.isResultTaskStaticCall(yielded.AsCallExpression().Expression, "acquireRelease") {
 				return
 			}
-			if acquiresScopeOwner(yielded) {
+			if a.acquiresScopeOwner(yielded) {
 				return
 			}
 			findings = append(findings, newFinding(file, yielded, "no-unscoped-acquire-release", a.options.NoUnscopedAcquireRelease,
@@ -1544,7 +1567,7 @@ func (a *Analyzer) noUnscopedAcquireRelease(file *ast.SourceFile) []Finding {
 func (a *Analyzer) noResultInTaskGen(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		body := resultTaskGenBody(node)
+		body := a.resultTaskGenBody(node)
 		if body == nil {
 			return
 		}
@@ -1556,7 +1579,7 @@ func (a *Analyzer) noResultInTaskGen(file *ast.SourceFile) []Finding {
 			if returned == nil {
 				return
 			}
-			if !isOkConstructorCall(returned) && !isErrConstructorCall(returned) && !isResultLikeType(a.checker.GetTypeAtLocation(returned)) {
+			if !a.isOkConstructorCall(returned) && !isErrConstructorCall(returned) && !isResultLikeType(a.checker.GetTypeAtLocation(returned)) {
 				return
 			}
 			findings = append(findings, newFinding(file, returned, "no-result-in-task-gen", a.options.NoResultInTaskGen,
@@ -1569,7 +1592,7 @@ func (a *Analyzer) noResultInTaskGen(file *ast.SourceFile) []Finding {
 func (a *Analyzer) noAwaitInResultTaskGen(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		body := resultTaskGenBody(node)
+		body := a.resultTaskGenBody(node)
 		if body == nil {
 			return
 		}
@@ -1590,7 +1613,7 @@ func (a *Analyzer) noAwaitInResultTaskGen(file *ast.SourceFile) []Finding {
 func (a *Analyzer) noThrowInTaskSync(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		if node.Kind != ast.KindCallExpression || !isResultTaskStaticCall(node.AsCallExpression().Expression, "sync") {
+		if node.Kind != ast.KindCallExpression || !a.isResultTaskStaticCall(node.AsCallExpression().Expression, "sync") {
 			return
 		}
 		args := node.AsCallExpression().Arguments.Nodes

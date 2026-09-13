@@ -5,7 +5,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/microsoft/typescript-go/resultar-check/internal/analyzer"
 	"github.com/microsoft/typescript-go/resultar-check/internal/output"
 )
 
@@ -17,6 +19,24 @@ func TestReadLSPMessage(t *testing.T) {
 	}
 	if message.Method != "initialize" || string(message.ID) != "7" {
 		t.Fatalf("unexpected message: %#v", message)
+	}
+}
+
+func TestCodeActionsPreserveDiscardIntent(t *testing.T) {
+	server := lspServer{}
+	server.setDiagnosticCache([]output.Diagnostic{{
+		File: "/tmp/fixture.ts", Line: 1, Column: 1, Length: 6,
+		Rule: "no-discard", Fixes: []analyzer.Fix{{
+			Title: "Intentionally discard", Kind: analyzer.FixIntentionalDiscard,
+			Description: "Does not execute a lazy task", Edits: []analyzer.TextEdit{{NewText: "void "}},
+		}},
+	}}, time.Time{})
+	actions, err := server.codeActions("file:///tmp/fixture.ts", lspRange{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 1 || actions[0].Data.Kind != analyzer.FixIntentionalDiscard || actions[0].Data.Description == "" {
+		t.Fatalf("fix intent lost in LSP action: %#v", actions)
 	}
 }
 

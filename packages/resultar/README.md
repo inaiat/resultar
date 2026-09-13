@@ -962,6 +962,16 @@ The
 covers overloads, aliases, callback semantics, collection helpers, conditional helpers, tagged
 reasons, disposable results, and compatibility APIs.
 
+## Coding agents
+
+Each npm build includes `dist/llms.txt`, `dist/agent/SKILL.md`, focused references, a compiled
+core workflow example, and `dist/agent/versions.json`. Start from these installed files so the
+guide matches the package version. Companion package READMEs take precedence when their installed
+versions differ from the recorded companion versions. The online `main` guide tracks development.
+
+The guide distinguishes `Result.gen` from `ResultTask.gen`, immediate from lazy execution,
+observation from effectful `tap`, and `runResult` from the non-rejecting `runExit` boundary.
+
 ## More Documentation
 
 - [Full Resultar guide](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md)

@@ -21,6 +21,14 @@ import type {
 import * as resultar from '../src/index.js'
 
 describe('public API', () => {
+  it('keeps continuation helpers private at runtime and in types', () => {
+    equal('toTapContinuationStep' in resultar.ResultTask, false)
+    if (false) {
+      // @ts-expect-error Continuation instructions are implementation details.
+      void resultar.ResultTask.toTapContinuationStep
+    }
+  })
+
   it('exports the intended runtime entrypoint surface', () => {
     deepEqual(Object.keys(resultar).toSorted(), [
       'AbortError',

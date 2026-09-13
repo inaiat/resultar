@@ -71,6 +71,12 @@ type lspCodeAction struct {
 	Title string           `json:"title"`
 	Kind  string           `json:"kind"`
 	Edit  lspWorkspaceEdit `json:"edit"`
+	Data  lspFixData       `json:"data"`
+}
+
+type lspFixData struct {
+	Kind        analyzer.FixKind `json:"kind"`
+	Description string           `json:"description,omitempty"`
 }
 
 type lspWorkspaceEdit struct {
@@ -346,7 +352,7 @@ func (s *lspServer) codeActions(uri string, requested lspRange) ([]lspCodeAction
 				}
 				edits = append(edits, lspTextEdit{Range: lspRange{Start: start, End: end}, NewText: edit.NewText})
 			}
-			actions = append(actions, lspCodeAction{Title: fix.Title, Kind: "quickfix", Edit: lspWorkspaceEdit{Changes: map[string][]lspTextEdit{uri: edits}}})
+			actions = append(actions, lspCodeAction{Title: fix.Title, Kind: "quickfix", Edit: lspWorkspaceEdit{Changes: map[string][]lspTextEdit{uri: edits}}, Data: lspFixData{Kind: fix.Kind, Description: fix.Description}})
 		}
 	}
 	return actions, nil

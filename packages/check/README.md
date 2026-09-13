@@ -8,7 +8,7 @@ a small Node launcher and selects the matching Go binary for the current platfor
 
 ## Highlights
 
-- 22 type-aware rules for `Result`, `ResultAsync`, `ResultTask`, tagged errors, and safe generators;
+- Type-aware rules for `Result`, `ResultAsync`, `ResultTask`, tagged errors, and safe generators;
 - TypeScript compiler and Resultar diagnostics from one `tsconfig.json` project pass;
 - human, JSON Lines, SARIF 2.1.0, and JUnit output for local development and CI;
 - per-rule severities, file overrides, line suppressions, and configurable failure policy;
@@ -120,6 +120,12 @@ The same findings can feed local development, scripts, and CI systems:
 `--json` emits one JSON object per line. SARIF and JUnit emit one complete document. Use
 `--fail-on warning`, for example, to keep suggestions visible while failing CI only on warnings and
 errors.
+
+JSONL `fixes` include `kind: "correction"` or `kind: "intentional-discard"`. The latter is
+an explicit decision to ignore a value, not an error-handling or execution repair: `void task`
+does not run a lazy ResultTask. Each discard suggestion includes an explanation. LSP code actions
+preserve these fields in `data.kind` and `data.description`. Recheck compilation and behavior
+after applying a correction; a local edit can require follow-up changes in the surrounding code.
 
 ## Editor And LSP Setup
 
@@ -258,6 +264,10 @@ not suppressed by Resultar comments.
 Rules understand both method and static composition forms where applicable. ResultTask-aware checks
 cover ignored tasks, unknown or narrowed error channels, nested tasks returned from `map`, Promises
 stored in task successes, useless `catchAll`, and generator composition.
+
+Generator rules also cover `Result.gen`. Static ResultTask and Result namespace recognition and
+generator recognition resolve imported symbols, including renamed imports, namespace imports,
+and barrel reexports. Rule IDs retain the `safe-try` spelling for both `safeTry` and `Result.gen`.
 
 ## Migrating To Version 3
 

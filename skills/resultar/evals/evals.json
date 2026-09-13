@@ -43,5 +43,7 @@
       "expected_output": "Builds with tryPromise/gen without starting work; declares the service tag and provides it at runResult/runExit; owns the connection with acquireRelease plus scoped; states that deferred release errors fold into E at scoped, catchAll recovers them only after scoped, runExit preserves Sequential while runResult rejects composites, and cancellation is cooperative with no fibers on ResultTask.",
       "files": []
     }
-  ]
+  ],
+  "executable_contracts": "cases.mjs",
+  "runner": "../../../scripts/eval-agents.mjs"
 }

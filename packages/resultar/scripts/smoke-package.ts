@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -13,6 +13,12 @@ const requiredFiles = [
   'README.md',
   'dist/index.d.ts',
   'dist/index.js',
+  'dist/llms.txt',
+  'dist/agent/SKILL.md',
+  'dist/agent/versions.json',
+  'dist/agent/references/api.md',
+  'dist/agent/references/services.md',
+  'dist/agent/examples/workflow.mjs',
   'package.json',
 ] as const
 
@@ -127,7 +133,7 @@ for (const file of requiredFiles) {
 }
 
 const allowedPackedFile =
-  /^(?:LICENSE|README\.md|package\.json|dist\/[^/]+\.(?:js|d\.ts|js\.map))$/u
+  /^(?:LICENSE|README\.md|package\.json|dist\/[^/]+\.(?:js|d\.ts|js\.map|txt)|dist\/agent\/(?:SKILL\.md|versions\.json|agents\/openai\.yaml|references\/[a-z-]+\.md|examples\/workflow\.(?:mts|mjs)))$/u
 const unexpectedFiles = packedFiles.filter((file) => !allowedPackedFile.test(file))
 
 if (unexpectedFiles.length > 0) {
@@ -135,3 +141,24 @@ if (unexpectedFiles.length > 0) {
 }
 
 process.stdout.write(`Package smoke passed with ${packedFiles.length} packed files.\n`)
+
+const declarations = readFileSync(path.join(rootDir, 'dist/index.d.ts'), 'utf8')
+if (declarations.includes('toTapContinuationStep')) {
+  throw new Error('Internal continuation helper leaked into public declarations')
+}
+
+execFileSync(
+  process.execPath,
+  [
+    '--input-type=module',
+    '-e',
+    `import assert from 'node:assert/strict';
+import {ResultTask} from './dist/index.js';
+import {account, welcome} from './dist/agent/examples/workflow.mjs';
+assert.equal(account('invalid').isErr(), true);
+const result = await ResultTask.runResult(welcome(' ADA@EXAMPLE.COM '), {services: {greeting: 'Hello'}});
+assert.equal(result.isOk(), true);
+assert.equal(result.value, 'Hello, ada@example.com');`,
+  ],
+  { cwd: rootDir, stdio: 'inherit' },
+)

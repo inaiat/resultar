@@ -20,9 +20,18 @@ type Finding struct {
 }
 
 type Fix struct {
-	Title string     `json:"title"`
-	Edits []TextEdit `json:"edits"`
+	Title       string     `json:"title"`
+	Kind        FixKind    `json:"kind"`
+	Description string     `json:"description,omitempty"`
+	Edits       []TextEdit `json:"edits"`
 }
+
+type FixKind string
+
+const (
+	FixCorrection         FixKind = "correction"
+	FixIntentionalDiscard FixKind = "intentional-discard"
+)
 
 type TextEdit struct {
 	Start   int    `json:"start"`
@@ -48,15 +57,15 @@ func newFinding(file *ast.SourceFile, node *ast.Node, rule string, severity conf
 
 func renameFix(file *ast.SourceFile, node *ast.Node, title, newText string) Fix {
 	range_ := scanner.GetRangeOfTokenAtPosition(file, node.Pos()).WithEnd(node.End())
-	return Fix{Title: title, Edits: []TextEdit{{Start: range_.Pos(), Length: range_.Len(), NewText: newText}}}
+	return Fix{Title: title, Kind: FixCorrection, Edits: []TextEdit{{Start: range_.Pos(), Length: range_.Len(), NewText: newText}}}
 }
 
 func insertFix(file *ast.SourceFile, node *ast.Node, title, newText string) Fix {
 	position := scanner.GetRangeOfTokenAtPosition(file, node.Pos()).Pos()
-	return Fix{Title: title, Edits: []TextEdit{{Start: position, NewText: newText}}}
+	return Fix{Title: title, Kind: FixCorrection, Edits: []TextEdit{{Start: position, NewText: newText}}}
 }
 
 func replaceTokenFix(file *ast.SourceFile, node *ast.Node, title, newText string) Fix {
 	range_ := scanner.GetRangeOfTokenAtPosition(file, node.Pos())
-	return Fix{Title: title, Edits: []TextEdit{{Start: range_.Pos(), Length: range_.Len(), NewText: newText}}}
+	return Fix{Title: title, Kind: FixCorrection, Edits: []TextEdit{{Start: range_.Pos(), Length: range_.Len(), NewText: newText}}}
 }

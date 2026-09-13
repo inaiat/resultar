@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/microsoft/typescript-go/resultar-check/internal/analyzer"
 )
 
 func TestWriteJSONLines(t *testing.T) {
@@ -19,6 +21,24 @@ func TestWriteJSONLines(t *testing.T) {
 	}
 	if diagnostic.Rule != "no-throw" || diagnostic.Message != "avoid throw" {
 		t.Fatalf("unexpected diagnostic: %#v", diagnostic)
+	}
+}
+
+func TestJSONPreservesFixIntent(t *testing.T) {
+	var buffer bytes.Buffer
+	finding := analyzer.Finding{Rule: "no-discard", Fixes: []analyzer.Fix{{
+		Title: "Intentionally discard", Kind: analyzer.FixIntentionalDiscard,
+		Description: "Does not execute a lazy task", Edits: []analyzer.TextEdit{{NewText: "void "}},
+	}}}
+	if err := Write(&buffer, []Diagnostic{FromFinding(finding)}, FormatJSON, "."); err != nil {
+		t.Fatal(err)
+	}
+	var diagnostic Diagnostic
+	if err := json.Unmarshal(buffer.Bytes(), &diagnostic); err != nil {
+		t.Fatal(err)
+	}
+	if len(diagnostic.Fixes) != 1 || diagnostic.Fixes[0].Kind != analyzer.FixIntentionalDiscard || diagnostic.Fixes[0].Description == "" {
+		t.Fatalf("fix intent lost in JSONL: %#v", diagnostic)
 	}
 }
 

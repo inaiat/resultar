@@ -57,6 +57,9 @@ func TestPilotRuleParity(t *testing.T) {
 	if len(findings[0].Fixes) != 1 || findings[0].Fixes[0].Edits[0].NewText != "void " {
 		t.Fatalf("no-discard direct finding should offer an explicit void fix: %#v", findings[0].Fixes)
 	}
+	if findings[0].Fixes[0].Kind != FixIntentionalDiscard || findings[0].Fixes[0].Description == "" {
+		t.Fatalf("discard must be classified as an intentional decision: %#v", findings[0].Fixes)
+	}
 	for index, expected := range want {
 		if findings[index].Rule != expected.rule || findings[index].Line != expected.line {
 			t.Errorf("finding %d = %s:%d, want %s:%d", index, findings[index].Rule, findings[index].Line, expected.rule, expected.line)
@@ -234,6 +237,9 @@ void fromThrowable({ try: () => 1, catch: () => new Error("mapped") })
 	}
 	if len(findings[0].Fixes) != 1 || findings[0].Fixes[0].Edits[0].NewText != "mapErr" {
 		t.Fatalf("expected mapErr quick fix, got %#v", findings[0].Fixes)
+	}
+	if findings[0].Fixes[0].Kind != FixCorrection {
+		t.Fatalf("composition fix must be classified as a correction: %#v", findings[0].Fixes)
 	}
 	if len(findings[1].Fixes) != 1 || findings[1].Fixes[0].Edits[0].NewText != "andThen" {
 		t.Fatalf("expected andThen quick fix, got %#v", findings[1].Fixes)

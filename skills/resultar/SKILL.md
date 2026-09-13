@@ -1,6 +1,9 @@
 ---
 name: resultar
-description: Build, review, migrate, test, and document TypeScript code using Resultar v3.6+, including Result, ResultAsync, ResultTask, StrictResult, createTaggedError, Result.gen/safeTry, request adapters, and resultar-check. Use when expected failures should become typed values, thrown or rejected work must be wrapped, Resultar pipelines or async policies need design, HTTP JSON needs TypeBox or Zod validation, Resultar diagnostics need configuration, or an existing Resultar codebase needs review or migration.
+description: Build, review, migrate, test, and document TypeScript code using Resultar v3.7+, including Result, ResultAsync, ResultTask, StrictResult, createTaggedError, Result.gen/safeTry, request adapters, and resultar-check. Use when expected failures should become typed values, thrown or rejected work must be wrapped, Resultar pipelines or async policies need design, HTTP JSON needs TypeBox or Zod validation, Resultar diagnostics need configuration, or an existing Resultar codebase needs review or migration.
+metadata:
+  tags: [typescript, error-handling]
+  domains: [foundation]
 ---
 
 # Resultar Engineering
@@ -13,14 +16,33 @@ the final transport, job, CLI, or integration boundary.
 
 1. Inspect the consuming project's `package.json`, lockfile, Resultar version, module format, and
    TypeScript version before proposing code.
-2. Prefer the installed package types and local source over remembered APIs.
+2. Prefer the installed package types and local source over remembered APIs. The core package
+   ships this guide at `node_modules/resultar/dist/agent/SKILL.md`; check its `versions.json` before
+   using companion-package recipes. Online `main` documentation may describe a newer release.
 3. In the Resultar repository, use these sources in order:
    - `packages/resultar/src/index.ts` for public exports.
    - `packages/resultar/README.md` and `DOCUMENTATION.md` for current semantics and examples.
    - `packages/check/README.md` for diagnostics.
    - `packages/request*/README.md` and `examples/request/` for request integrations.
-4. Adapt examples when the consumer uses an older Resultar version; do not silently emit v3.6 APIs
+4. Adapt examples when the consumer uses an older Resultar version; do not silently emit APIs
    that are absent locally.
+
+## Choose The Execution Model
+
+| Contract | `Result` / `Result.gen` | `ResultAsync` | `ResultTask` |
+| --- | --- | --- | --- |
+| Execution | Sync values; `Result.gen` also accepts async generators | Starts immediately | Building/composing starts nothing; each `run*` executes again |
+| Generator return | `return ok(value)`; `yield*` short-circuits failures | Compose through `Result.gen` with `yield*` | `return value`; compose tasks, services and Results with `yield*` |
+| Error transform / recovery | `mapErr` / `orElse` | `mapErr` / `orElse` | `mapError` / `catchAll` |
+| `tap` / `tapError` failure | Ignored observation failure | Ignored observation failure | Returned task failures join `E`; throws/rejected Promises become `Die` |
+| Cleanup | Disposal callbacks are best-effort | `withResource` release is best-effort | `acquireRelease` + `scoped` await release and preserve failures |
+
+Use `ResultAsync` for existing Promise-shaped use cases. Choose `ResultTask` for reusable lazy
+work, typed service requirements, or owned resource lifetimes. Preserve existing eager/lazy
+contracts; converting an already-started Promise or ResultAsync cannot undo its execution.
+`ResultTask.runResult` can reject on defects, interruption, and composite causes. Use `runExit`
+when the boundary must inspect every exit without rejection. See [API details](references/api.md).
+For DI and Hono, read [services and HTTP scopes](references/services.md).
 
 ## Apply Opinionated Defaults
 
@@ -103,14 +125,15 @@ Prefer lazy Resultar policies over ad hoc timers or `Promise.race`:
 - Use `withResource` when successful acquisition must always trigger best-effort release.
 - Pass the provided abort signal into the underlying client; cancellation is cooperative.
 
-Use `tap`, `tapError`, and `log` only for best-effort observation. Use `andThen`, `orElse`, or a
+On `Result` and `ResultAsync`, use `tap`, `tapError`, and `log` for best-effort observation.
+`ResultTask.tap` and `tapError` participate in failure handling; they do not swallow failures. Use `andThen`, `orElse`, or a
 Resultar wrapper when callback failure must change control flow.
 
-## Use `safeTry` For Linear Flows
+## Use `Result.gen` For Linear Result Flows
 
 ```ts
 const createUser = (input: CreateUserInput): StrictResultAsync<User, CreateUserError> =>
-  safeTry(async function* () {
+  Result.gen(async function* () {
     const email = yield* validateEmail(input.email);
     const available = yield* ensureEmailAvailable(email);
     const user = yield* insertUser({ ...input, email: available });
@@ -119,6 +142,7 @@ const createUser = (input: CreateUserInput): StrictResultAsync<User, CreateUserE
   });
 ```
 
+- `safeTry` is the top-level alias of `Result.gen`; both have the same rules.
 - Use `yield*` for both `Result` and `ResultAsync` values.
 - Wrap raw promises before yielding them.
 - Do not use raw `await` or broad `try/catch` inside a Resultar `safeTry` workflow.
@@ -158,6 +182,10 @@ Read `references/integrations.md` before implementing request adapters or diagno
 4. Run the repository's native formatting, build, tests, analysis, package smoke, and example
    workflows when available.
 
+JSONL fixes distinguish `correction` from `intentional-discard`; LSP actions carry the same
+classification in `data.kind`. Do not apply a discard just to silence the checker: `void task`
+does not execute a lazy task or handle its errors. Corrections still need compilation and tests.
+
 Treat stable `resultar/*` rule IDs as architecture feedback. Fix the typed boundary or composition
 problem instead of suppressing diagnostics broadly. Use narrow ignore patterns only for deliberate
 test, script, generated, or process-boundary exceptions.
@@ -175,7 +203,7 @@ test, script, generated, or process-boundary exceptions.
 ## Review Before Finishing
 
 - Run the project's Resultar CLI check after edits.
-- Confirm no Result or ResultAsync value is silently discarded.
+- Confirm no Result, ResultAsync, or ResultTask value is silently discarded.
 - Confirm mapped errors preserve `cause` and useful metadata.
 - Confirm boundary handlers cover the actual error union.
 - Confirm request validation derives the downstream type instead of widening it.
@@ -183,7 +211,7 @@ test, script, generated, or process-boundary exceptions.
 
 ## Load References Selectively
 
-- Read `references/api.md` for current v3.6 exports, collection helpers, and async policy semantics.
+- Read `references/api.md` for current exports, collection helpers, and async policy semantics.
 - Read `references/patterns.md` for copyable implementation and migration patterns.
 - Read `references/integrations.md` for request adapters and the CLI/editor/lint workflow.
 - Read `references/review-checklist.md` for reviews, migrations, and final validation.

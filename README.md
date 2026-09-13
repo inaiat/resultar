@@ -85,7 +85,7 @@ pnpm add -D resultar-check
 `resultar-check` defaults to `tsconfig.json` and runs TypeScript with no emit.
 
 Version 3 is native-only: a small Node launcher selects a platform package, then the TypeScript-Go
-binary performs compiler diagnostics and all 22 Resultar rules in one project pass. It also exposes:
+binary performs compiler diagnostics and all Resultar rules in one project pass. It also exposes:
 
 - human, JSON Lines, SARIF 2.1.0, and JUnit output;
 - configurable severities, file overrides, suppressions, and CI `failOn` policy;
@@ -102,7 +102,7 @@ guide.
 | Example                                | Surface                | What it validates                                                                 |
 | -------------------------------------- | ---------------------- | --------------------------------------------------------------------------------- |
 | [examples/resultar](examples/resultar) | Core Resultar cookbook | Sync validation, `safeTry`, tagged errors, async resilience, and resource cleanup |
-| [examples/check](examples/check)       | Native diagnostics     | Exact findings for all 22 rules plus a zero-diagnostic clean project              |
+| [examples/check](examples/check)       | Native diagnostics     | Exact findings for all supported rules plus a zero-diagnostic clean project              |
 | [examples/request](examples/request)   | Request helpers        | Fetch-style JSON calls with TypeBox and Zod adapters                              |
 | [examples/hono](examples/hono)         | Hono + DI application  | Typed composition, scoped cache sharing, overrides, and HTTP shutdown (Node & Deno) |
 
@@ -110,6 +110,7 @@ Run all example smokes with:
 
 ```sh
 pnpm test:examples
+pnpm test:agents
 ```
 
 ## Development
@@ -153,3 +154,9 @@ directory.
 [`resultar-hono`](packages/hono/README.md) connects typed DI services to ordinary Hono handlers,
 with one scope per response and explicit application shutdown. See the
 [runnable example](examples/hono/README.md); port and runtime configuration stay in the bootstrap.
+
+### Coding-agent validation
+
+Run `pnpm test:agents` to verify executable coding contracts and their deliberately broken variants
+without model calls. See [the evaluation guide](skills/resultar/evals/README.md) to grade generated
+submissions or compare model runs with and without the bundled skill.

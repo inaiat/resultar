@@ -12,7 +12,7 @@ validation. Report only issues supported by the installed Resultar version and r
 
 ## Failure Model
 
-- Expected failures return `Result` or `ResultAsync`; programmer defects may still throw.
+- Expected failures return `Result`, `ResultAsync`, or `ResultTask`; programmer defects may still throw.
 - Application and integration boundaries prefer `StrictResult` / `StrictResultAsync`.
 - Tagged errors have stable names, useful metadata, inferred template props, and preserved causes.
 - Error unions remain concrete instead of widening early to `Error`, `unknown`, or a string.
@@ -27,7 +27,7 @@ validation. Report only issues supported by the installed Resultar version and r
 - `andThen` composes fallible steps; `asyncAndThen` is used for the sync-to-async bridge.
 - `orElse` recovers the whole error channel; `catchTag` / `catchTags` recover selected domain cases.
 - `safeTry` uses `yield*` for Resultar values and contains no raw `await` or broad `try/catch`.
-- Returned `Result` and `ResultAsync` values are handled or explicitly discarded by supported policy.
+- Returned `Result`, `ResultAsync`, and `ResultTask` values are handled or explicitly discarded by supported policy.
 - Type assertions do not narrow away possible errors.
 
 ## Async Boundaries And Policy
@@ -70,8 +70,9 @@ validation. Report only issues supported by the installed Resultar version and r
 
 ## Observability And Cleanup
 
-- `tap`, `tapError`, and `log` are used only for best-effort observation.
-- Callback failure in observation helpers is not expected to change the result.
+- `Result` / `ResultAsync` observation failures are best-effort; `ResultTask.tap` / `tapError`
+  can introduce typed failures or defects.
+- Resource cleanup and observation use the semantics of the concrete execution model.
 - Audits, publishes, or cleanup that must succeed use `andThen`, `orElse`, or another Resultar
   boundary.
 - Logs expose stable tags and safe context without leaking redacted values.
@@ -86,6 +87,9 @@ validation. Report only issues supported by the installed Resultar version and r
 - Documentation examples compile or have a matching runnable example.
 - Core request, TypeBox, and Zod docs link to one another as alternatives/adapters.
 - API names, package links, and version claims match current source.
+- `Result.gen` returns a Result; `ResultTask.gen` returns a plain success value.
+- `runResult` rejection paths and deferred release errors are handled at the owning boundary.
+- An intentional-discard fix is not mistaken for executing or handling a lazy task.
 
 ## Validation Order
 

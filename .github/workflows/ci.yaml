@@ -49,6 +49,9 @@ jobs:
       - name: Example smoke tests
         run: vp run test:examples
 
+      - name: Agent evaluation graders
+        run: vp run test:agents
+
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: validate
