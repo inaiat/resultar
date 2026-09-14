@@ -89,6 +89,11 @@ Completion, client disconnect and transport failure release each child once. `re
 propagates native disconnect/handler-timeout cancellation to acquisition; pass the same signal to
 your own clients and `ResultTask.run*` calls. Cancellation is cooperative.
 
+Fastify 5.12 can emit a generic abort when a fully received request body closes. The adapter
+ignores that input-completion signal so JSON uploads retain their scopes through the response.
+Response close/error events still handle client disconnects after upload; explicit native
+timeout reasons remain cancellation signals. This does not change Fastify's own `request.signal`.
+
 `onError` alone does not close services: the native error handler may still need them. Provider
 failures go to Fastify's configured error handler with a Resultar cause attached. Cleanup failures
 after the response is sent are logged through `request.log`. `app.close()` waits for request scopes

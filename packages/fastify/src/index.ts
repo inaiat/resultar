@@ -111,7 +111,14 @@ function finishRequest(state: RequestState): ResultAsync<void, never> {
 
 function attachRequest(request: FastifyRequest, reply: FastifyReply): RequestState {
   const controller = new AbortController();
-  const abort = () => controller.abort(request.signal.reason);
+  const abort = () => {
+    const reason: unknown = request.signal.reason;
+    // Fastify 5.12 emits a generic abort on IncomingMessage.close, including a fully
+    // received body. The response close/error listeners own disconnects after upload.
+    if (request.raw.complete && reason instanceof DOMException && reason.name === "AbortError")
+      return;
+    controller.abort(reason);
+  };
   const disconnect = () => {
     if (!reply.raw.writableFinished) controller.abort(new Error("Response connection closed"));
   };
