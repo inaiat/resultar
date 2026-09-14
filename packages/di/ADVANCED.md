@@ -267,3 +267,26 @@ service interface narrow automatically.
   union to bound compiler work.
 - Request locals need a per-framework adapter: `withServices` supplies the typed local values, but
   extracting the tenant/request from an incoming request is wired per framework.
+
+## Framework service facades
+
+Framework adapters that must preserve synchronous property access can use `withProvider`,
+`inspectModule` and `useServiceAccess` from `resultar-di/advanced`. They use the same DI runtime;
+there is no separate resolver or cache. Ordinary application code should prefer typed service
+selections.
+
+`withProvider(module, name, provider)` returns a new module and replaces that name without acquiring
+it. A provider is an external `{ value }`, a `{ task, lifetime }`, or a synchronous
+`{ create: access => value, release?, lifetime }`. Lifetime defaults to `singleton` for these
+adapter providers. `release(value, exit)` returns a ResultTask and belongs to the native owner.
+`allowTransientDependencies` is an explicit opt-in for traditional factory-container semantics;
+token dependencies continue to enforce lifetime ordering.
+
+`inspectModule(module)` returns immutable name/lifetime metadata. `useServiceAccess(scope, callback,
+{ initialize, application })` holds a request child scope until its ResultTask callback finishes.
+Application access uses the root; its caller must close the root after ending the callback.
+`initialize` eagerly resolves only its named services. The access object exposes `get`, `has`,
+`keys`, `use` and `close`. `get` returns a Result, resolves factories synchronously, and reads
+previously initialized task providers. It reports an error when an asynchronous provider has not
+been initialized. Factories stay lazy, scoped values are cached per child and transient reads
+acquire a fresh value each time. Root access rejects request-scoped services.

@@ -1,4 +1,5 @@
-export { createModule } from "./module.js";
+export { createModule, inspectModule, withProvider, useServiceAccess } from "./module.js";
+export { ServiceAccessError, type ServiceAccess, type ServiceProvider } from "./access.js";
 export { Service } from "./service.js";
 export type { ServiceClass } from "./service.js";
 export type {

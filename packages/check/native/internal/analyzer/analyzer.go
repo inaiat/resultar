@@ -59,6 +59,9 @@ func (a *Analyzer) analyzeFile(file *ast.SourceFile) []Finding {
 	if a.options.PreferMapErr != config.SeverityOff {
 		findings = append(findings, a.preferMapErr(file)...)
 	}
+	if a.options.PreferResultAsync != config.SeverityOff {
+		findings = append(findings, a.preferResultAsync(file)...)
+	}
 	if a.options.PreferAndThen != config.SeverityOff {
 		findings = append(findings, a.preferAndThen(file)...)
 	}

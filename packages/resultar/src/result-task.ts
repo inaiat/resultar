@@ -151,6 +151,10 @@ type IncompatibleResolvedServices<R, Resolvers> = R extends AnyServiceTag
 /** Owns resources across executions. Close it after its consumers have finished. */
 export interface ResultTaskScopeOwner {
   readonly use: <A, E, R>(task: ResultTask<A, E, R>) => ResultTask<A, E, R>
+  /** Registers an already-acquired resource's release synchronously, in registration order. */
+  readonly addFinalizer: (
+    release: (exit: Exit<unknown, unknown>) => ResultTask<void, unknown>,
+  ) => void
   readonly close: (exit?: Exit<unknown, unknown>) => ResultTask<void, unknown>
 }
 
@@ -1293,6 +1297,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     const pending = new Set<Promise<Exit<unknown, unknown>>>()
     let closing: Promise<Exit<unknown, unknown>> | undefined = undefined
     const owner: ResultTaskScopeOwner = {
+      addFinalizer: (release) => {
+        if (closing !== undefined) throw new Error('Cannot acquire into a closing ResultTask scope')
+        scope.add((exit) =>
+          ResultTask.runExit(
+            ResultTask.gen(function* () {
+              yield* release(exit)
+            }),
+          ),
+        )
+      },
       use: (task) =>
         new ResultTask(async (context) => {
           if (closing !== undefined)

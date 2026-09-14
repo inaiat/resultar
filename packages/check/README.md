@@ -253,6 +253,7 @@ not suppressed by Resultar comments.
 | `prefer-first-success-of` | `preferFirstSuccessOf` | `warning` | Replaces long independent fallback chains with ordered candidates |
 | `prefer-map` | `preferMap` | `warning` | Replaces fallible chaining that only wraps a plain success value |
 | `prefer-map-err` | `preferMapErr` | `warning` | Replaces recovery that only transforms an error into another error |
+| `prefer-result-async` | `preferResultAsync` | `warning` | Reports `Promise<Result>` and `Promise<StrictResult>` contracts and inferred function returns; mode `all` also reports raw Promise contracts |
 | `prefer-result-for-each` | `preferResultForEach` | `warning` | Replaces map-then-combine allocation with Resultar collection helpers |
 | `prefer-tagged-error` | `preferTaggedError` | `warning` | Encourages stable tagged domain errors over plain `Error` values |
 | `tagged-error-name-match` | `taggedErrorNameMatch` | `warning` | Keeps the generated runtime tag equal to the TypeScript class name |
@@ -268,6 +269,40 @@ stored in task successes, useless `catchAll`, and generator composition.
 Generator rules also cover `Result.gen`. Static ResultTask and Result namespace recognition and
 generator recognition resolve imported symbols, including renamed imports, namespace imports,
 and barrel reexports. Rule IDs retain the `safe-try` spelling for both `safeTry` and `Result.gen`.
+
+`prefer-result-async` checks type references (including aliases, interface properties and methods)
+and inferred function returns. `preferResultAsyncMode` controls its scope:
+
+- `result` (default): reports `Promise<Result>` and `Promise<StrictResult>`. Ordinary promises and
+  unrelated types named `Result` remain valid.
+- `all`: also reports raw `Promise<T>` contracts such as a repository returning
+  `Promise<User | undefined>`, including Promise members of unions and intersections. Removing an
+  annotation does not bypass the rule: inferred Promise-returning functions are checked too.
+
+Both modes leave `ResultAsync`, `StrictResultAsync`, `ResultTask`, `PromiseLike` interoperability
+contracts and unrelated types named `Promise` alone. The rule provides migration guidance instead
+of an annotation-only fix: an `async` function still returns a native Promise even when its body
+returns a `ResultAsync`.
+
+Return the composed operation directly and capture external failures where they originate:
+
+```ts
+import { tryResultAsync, type StrictResultAsync } from 'resultar'
+
+const load = (): StrictResultAsync<User, LoadError> =>
+  tryResultAsync(fetchUser, cause => new LoadError({ cause }))
+```
+
+Set `"preferResultAsync": "error"` to enforce the convention. To require typed async results for
+repositories and services even when their current contract has no Result, also set
+`"preferResultAsyncMode": "all"`, as in the Fastify example. Map driver failures in the repository
+adapter and compose that result in the service instead of wrapping the repository again.
+
+Deliberate native execution or interoperability boundaries can use a line suppression for this
+rule, or a file severity override for dedicated boundary files. This includes Fastify's native
+bootstrap/handler contracts and Promise-returning driver callbacks passed to conversion helpers;
+the rule does not automatically exempt callbacks. Keep suppressions at the conversion boundary,
+with the reason documented, so application contracts stay checked.
 
 ## Migrating To Version 3
 

@@ -547,7 +547,7 @@ tryAsync(async () => {
 		message string
 	}{
 		{18, "Wrap this awaited Promise in tryAsync, tryResultAsync, tryCatchAsync, or fromThrowableAsync so rejections stay in the Resultar error channel."},
-		{19, "Do not unwrap a Resultar async value inside a raw Promise boundary. Return ResultAsync or Promise<Result> so failures stay in the Resultar error channel."},
+		{19, "Do not unwrap a Resultar async value inside a raw Promise boundary. Return ResultAsync or StrictResultAsync so failures stay in the Resultar error channel."},
 		{23, "Wrap this awaited Promise in tryAsync, tryResultAsync, tryCatchAsync, or fromThrowableAsync so rejections stay in the Resultar error channel."},
 		{33, "Wrap this awaited Promise in tryAsync, tryResultAsync, tryCatchAsync, or fromThrowableAsync so rejections stay in the Resultar error channel."},
 	}

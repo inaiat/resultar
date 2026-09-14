@@ -50,6 +50,13 @@ For DI, Hono and Fastify, read [services and HTTP scopes](references/services.md
   fallible work.
 - Prefer `StrictResult<T, E extends Error>` and `StrictResultAsync<T, E extends Error>` at
   application, service, HTTP, job, queue, CLI, and integration boundaries.
+- Return `ResultAsync` / `StrictResultAsync` directly from async services and repositories instead
+  of `Promise<T>`, `Promise<Result>` or `Promise<StrictResult>`. Map external driver failures to
+  typed errors in the repository adapter; services compose that result directly. Remove the
+  function's `async` wrapper; changing only its return annotation cannot change the runtime value.
+- Use `preferResultAsync: "error"` with `preferResultAsyncMode: "all"` to enforce these application
+  contracts. Document local rule suppressions for native framework/driver callbacks that require
+  Promise interoperability.
 - Prefer `createTaggedError` for expected domain and application failures that need stable identity,
   metadata, causes, serialization, or exhaustive handling.
 - Keep error unions specific. Let composition widen them naturally; do not collapse them to `Error`

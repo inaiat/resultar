@@ -711,7 +711,7 @@ func (a *Analyzer) noUnsafeAwait(file *ast.SourceFile) []Finding {
 			expression := node.Expression()
 			if a.isResultarChannelAwaitExpression(expression) && !currentContext {
 				findings = append(findings, newFinding(file, node, "no-unsafe-await", a.options.NoUnsafeAwait,
-					"Do not unwrap a Resultar async value inside a raw Promise boundary. Return ResultAsync or Promise<Result> so failures stay in the Resultar error channel.", ""))
+					"Do not unwrap a Resultar async value inside a raw Promise boundary. Return ResultAsync or StrictResultAsync so failures stay in the Resultar error channel.", ""))
 			} else if !a.isSafeAwaitExpression(expression, ignoredCalls) {
 				findings = append(findings, newFinding(file, node, "no-unsafe-await", a.options.NoUnsafeAwait,
 					"Wrap this awaited Promise in tryAsync, tryResultAsync, tryCatchAsync, or fromThrowableAsync so rejections stay in the Resultar error channel.", ""))

@@ -1,6 +1,8 @@
 import { Type } from "typebox";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 
+// Fastify's plugin callback uses its native async lifecycle contract.
+// resultar-check-disable-next-line prefer-result-async
 export const usersRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get(
     "/users/:id",
@@ -14,6 +16,8 @@ export const usersRoutes: FastifyPluginAsyncTypebox = async (app) => {
         },
       },
     },
+    // Fastify awaits the HTTP reply after the Resultar channel has been matched.
+    // resultar-check-disable-next-line prefer-result-async
     async (request, reply) => {
       const result = await request.services.users.findById(request.params.id);
       return result.matchTags((user) => reply.code(200).send(user), {

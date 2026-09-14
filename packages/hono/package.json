@@ -1,6 +1,6 @@
 {
   "name": "resultar-hono",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Typed Hono bindings and request resource scopes for Resultar DI.",
   "keywords": [
     "dependency-injection",

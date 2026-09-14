@@ -41,6 +41,8 @@ type Options struct {
 	PreferFirstSuccessOf             Severity
 	PreferMap                        Severity
 	PreferMapErr                     Severity
+	PreferResultAsync                Severity
+	PreferResultAsyncMode            string
 	PreferResultForEach              Severity
 	PreferTaggedError                Severity
 	TaggedErrorNameMatch             Severity
@@ -90,6 +92,8 @@ func Defaults() Options {
 		PreferFirstSuccessOf:             SeverityWarning,
 		PreferMap:                        SeverityWarning,
 		PreferMapErr:                     SeverityWarning,
+		PreferResultAsync:                SeverityWarning,
+		PreferResultAsyncMode:            "result",
 		PreferResultForEach:              SeverityWarning,
 		PreferTaggedError:                SeverityWarning,
 		TaggedErrorNameMatch:             SeverityWarning,
@@ -305,6 +309,16 @@ func applyPlugin(options *Options, plugin map[string]any) error {
 	if err := setSeverity(plugin, "preferMapErr", &options.PreferMapErr); err != nil {
 		return err
 	}
+	if err := setSeverity(plugin, "preferResultAsync", &options.PreferResultAsync); err != nil {
+		return err
+	}
+	if value, ok := plugin["preferResultAsyncMode"]; ok {
+		mode, ok := value.(string)
+		if !ok || (mode != "result" && mode != "all") {
+			return fmt.Errorf("preferResultAsyncMode must be \"result\" or \"all\"")
+		}
+		options.PreferResultAsyncMode = mode
+	}
 	if err := setSeverity(plugin, "preferResultForEach", &options.PreferResultForEach); err != nil {
 		return err
 	}
@@ -446,7 +460,7 @@ var ruleNames = map[string]struct{}{
 	"noresultintaskgen": {}, "noawaitinresulttaskgen": {}, "nothrowintasksync": {},
 	"preferandthen": {}, "prefercatchreason": {},
 	"preferfirstsuccessof": {}, "prefermap": {}, "prefermaperr": {},
-	"preferresultforeach": {}, "prefertaggederror": {}, "taggederrornamematch": {},
+	"preferresultasync": {}, "preferresultforeach": {}, "prefertaggederror": {}, "taggederrornamematch": {},
 	"typedcatchmapper": {}, "unsaferesulttypeassertion": {}, "yieldstarinsafetry": {},
 	"yieldstarinresulttaskgen": {},
 }
@@ -483,6 +497,8 @@ func setRuleSeverity(options *Options, name string, value Severity) error {
 		options.PreferMap = value
 	case "prefermaperr":
 		options.PreferMapErr = value
+	case "preferresultasync":
+		options.PreferResultAsync = value
 	case "preferresultforeach":
 		options.PreferResultForEach = value
 	case "prefertaggederror":

@@ -15,6 +15,7 @@ The native backend implements these stable rule IDs and their tsconfig options:
 - `resultar/no-promise-in-result-success` (`noPromiseInResultSuccess`)
 - `resultar/no-unknown-result-error` (`noUnknownResultError`)
 - `resultar/prefer-map-err` (`preferMapErr`)
+- `resultar/prefer-result-async` (`preferResultAsync`, `preferResultAsyncMode`: `result` or `all`)
 - `resultar/prefer-and-then` (`preferAndThen`)
 - `resultar/typed-catch-mapper` (`typedCatchMapper`)
 - `resultar/prefer-map` (`preferMap`)
