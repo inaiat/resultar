@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -32,6 +33,8 @@ func TestLoadJSONCPluginOptions(t *testing.T) {
 		"preferFirstSuccessOf": "suggestion",
 		"preferMap": "message",
 		"preferMapErr": "off",
+		"preferResultAsync": "error",
+		"preferResultAsyncMode": "all",
 		"preferResultForEach": "suggestion",
 		"preferTaggedError": "message",
 		"taggedErrorNameMatch": "error",
@@ -69,8 +72,11 @@ func TestLoadJSONCPluginOptions(t *testing.T) {
 		t.Fatalf("unexpected structural rule options: %#v", options)
 	}
 	if options.PreferAndThen != SeverityError || options.PreferFirstSuccessOf != SeveritySuggestion ||
-		options.PreferMap != SeverityMessage || options.PreferMapErr != SeverityOff || options.TypedCatchMapper != SeverityError {
+		options.PreferMap != SeverityMessage || options.PreferMapErr != SeverityOff || options.TypedCatchMapper != SeverityError || options.PreferResultAsync != SeverityError {
 		t.Fatalf("unexpected composition rule options: %#v", options)
+	}
+	if options.PreferResultAsyncMode != "all" {
+		t.Fatalf("unexpected async contract mode: %q", options.PreferResultAsyncMode)
 	}
 	if options.PreferCatchReason != SeverityError || options.PreferResultForEach != SeveritySuggestion ||
 		options.YieldStarInSafeTry != SeverityOff || options.YieldStarInResultTaskGen != SeveritySuggestion {
@@ -127,6 +133,61 @@ func TestLoadInheritedPluginOptions(t *testing.T) {
 	}
 	if options.ShouldInspect(filepath.Join(directory, "src", "generated.ts"), directory) {
 		t.Fatal("expected inherited string ignoreFilePatterns to match")
+	}
+}
+
+func TestPreferResultAsyncDiagnosticNamesAndOverrides(t *testing.T) {
+	for _, name := range []string{"preferResultAsync", "prefer-result-async", "resultar/prefer-result-async"} {
+		t.Run(name, func(t *testing.T) {
+			directory := t.TempDir()
+			path := filepath.Join(directory, "tsconfig.json")
+			contents := `{"compilerOptions":{"plugins":[{
+  "name":"resultar-check",
+  "preferResultAsyncMode":"all",
+  "diagnosticSeverity":{"` + name + `":"error"},
+  "overrides":[{"include":"native.ts","options":{"diagnosticSeverity":{"` + name + `":"off"}}}]
+}]}}`
+			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			options, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if options.PreferResultAsync != SeverityError {
+				t.Fatalf("rule severity = %q, want error", options.PreferResultAsync)
+			}
+			if options.ForFile(filepath.Join(directory, "native.ts"), directory).PreferResultAsync != SeverityOff {
+				t.Fatal("native boundary override did not disable the rule")
+			}
+			serviceOptions := options.ForFile(filepath.Join(directory, "service.ts"), directory)
+			if serviceOptions.PreferResultAsync != SeverityError || serviceOptions.PreferResultAsyncMode != "all" {
+				t.Fatal("native boundary override affected service.ts")
+			}
+		})
+	}
+}
+
+func TestPreferResultAsyncMode(t *testing.T) {
+	if Defaults().PreferResultAsyncMode != "result" {
+		t.Fatal("default mode must preserve Promise<Result> scope")
+	}
+	for _, value := range []string{`"result"`, `"all"`, `"invalid"`, `null`, `true`, `1`, `{}`} {
+		t.Run(value, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "tsconfig.json")
+			contents := `{"compilerOptions":{"plugins":[{"name":"resultar-check","preferResultAsyncMode":` + value + `}]}}`
+			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			options, err := Load(path)
+			if value == `"result"` || value == `"all"` {
+				if err != nil || options.PreferResultAsyncMode != strings.Trim(value, `"`) {
+					t.Fatalf("valid mode: %v, options: %#v", err, options)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "preferResultAsyncMode") {
+				t.Fatalf("expected mode-specific validation error, got %v", err)
+			}
+		})
 	}
 }
 

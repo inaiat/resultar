@@ -140,11 +140,9 @@ export const loadUserWithResultTask = (id: string): ResultTask<User, FetchUserEr
     return yield* loadUserTask(id);
   });
 
-// ResultTask.runResult is an explicit execution boundary that preserves the
-// Result error channel for the caller.
-export const runUserTaskAtResultBoundary = (
-  id: string,
-): Promise<Result<User, FetchUserError>> => ResultTask.runResult(loadUserTask(id));
+// prefer-result-async: execute once and keep the returned operation composable.
+export const runUserTaskAtResultBoundary = (id: string): StrictResultAsync<User, FetchUserError> =>
+  loadUserTask(id).toResultAsync();
 
 // noUnsafeAwaitIgnoreCalls: project-level escape hatches are exact. The full
 // TypeScript checker can allow this call by configuring "startServer".

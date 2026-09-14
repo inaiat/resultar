@@ -1,5 +1,6 @@
-import { ResultTask, type Exit, type ResultTaskScope, type ServiceTag } from "resultar";
+import { ResultTask, tryResult, type Exit, type ResultTaskScope, type ServiceTag } from "resultar";
 
+import { ServiceAccessError, type ServiceAccess, type ServiceProvider } from "./access.js";
 import { runScopedResponse } from "./fetch.js";
 import type { ServiceClass } from "./service.js";
 
@@ -384,6 +385,10 @@ interface Definition {
   readonly dependencies: readonly string[];
   readonly lifetime: ServiceLifetime;
   readonly create: (services: RuntimeServices, owner: RuntimeScope) => RuntimeTask;
+  readonly synchronousFactory?: boolean;
+  readonly synchronous?: (access: ServiceAccess) => unknown;
+  readonly release?: (value: unknown, exit: Exit<unknown, unknown>) => RuntimeTask<void>;
+  readonly allowTransientDependencies?: boolean;
 }
 type Definitions = ReadonlyMap<string, Definition>;
 
@@ -405,7 +410,8 @@ const makeDefinition = (
   dependencies: readonly string[],
   create: Definition["create"],
   lifetime: ServiceLifetime = "scoped",
-): Definition => ({ dependencies, create, lifetime });
+  synchronous?: Definition["synchronous"],
+): Definition => ({ dependencies, create, lifetime, synchronous });
 
 const die = (cause: unknown): RuntimeTask<never> =>
   ResultTask.sync(() => {
@@ -440,7 +446,12 @@ class RuntimeScope {
       this.root.localNames.add(name);
       definitions.set(
         name,
-        makeDefinition([], () => ResultTask.succeed(value), "scoped"),
+        makeDefinition(
+          [],
+          () => ResultTask.succeed(value),
+          "scoped",
+          () => value,
+        ),
       );
     }
     const child = new RuntimeScope(definitions, this);
@@ -495,6 +506,14 @@ class RuntimeScope {
     path: readonly Resolution[],
   ): RuntimeTask {
     const definition = this.definitions.get(key);
+    if (definition?.synchronousFactory === true)
+      return ResultTask.sync(() =>
+        this.get(
+          key,
+          requestedBy,
+          path.map((node) => node.name),
+        ).unwrapOrThrow(),
+      );
     if (definition === undefined)
       return die(
         new TypeError(
@@ -561,6 +580,97 @@ class RuntimeScope {
     if (lifetime === "singleton") return this.root;
     if (lifetime === "scoped") return this;
     return undefined;
+  }
+
+  public get(
+    key: string,
+    requestedBy?: ServiceLifetime,
+    path: readonly string[] = [],
+    allowTransientDependencies = false,
+  ) {
+    return tryResult(
+      () => {
+        if (this.closed || this.root.closed)
+          throw new ServiceAccessError("closed", key, "Cannot resolve from a closed service scope");
+        const definition = this.definitions.get(key);
+        if (definition === undefined)
+          throw new ServiceAccessError(
+            "missing",
+            key,
+            "Service is not registered in the container",
+          );
+        if (
+          requestedBy !== undefined &&
+          lifetimeRank[requestedBy] > lifetimeRank[definition.lifetime] &&
+          !(allowTransientDependencies && definition.lifetime === "transient")
+        )
+          throw new ServiceAccessError("lifetime", key, "Cannot capture a shorter-lived service");
+        const owner = this.ownerFor(definition.lifetime);
+        if (owner !== undefined && owner.cache.has(key)) return owner.cache.get(key);
+        if (path.includes(key))
+          throw new ServiceAccessError(
+            "cycle",
+            key,
+            `Circular dependency detected: ${[...path, key].join(" -> ")}`,
+          );
+        if (definition.synchronous === undefined)
+          throw new ServiceAccessError(
+            "asynchronous",
+            key,
+            "Initialization is asynchronous; declare this dependency with yield* in a Resultar service",
+          );
+        const scope = owner ?? this;
+        const value = definition.synchronous(
+          scope.access(definition.lifetime, [...path, key], definition.allowTransientDependencies),
+        );
+        if (definition.release !== undefined) {
+          const release = definition.release;
+          scope.resources.addFinalizer((exit) => release(value, exit));
+        }
+        owner?.cache.set(key, value);
+        return value;
+      },
+      (cause) => (cause instanceof Error ? cause : new Error(String(cause), { cause })),
+    );
+  }
+
+  public access(
+    requestedBy?: ServiceLifetime,
+    path: readonly string[] = [],
+    allowTransientDependencies = false,
+    application = false,
+  ): ServiceAccess {
+    return {
+      keys: Object.freeze([...this.definitions.keys()]),
+      has: (name) => this.definitions.has(name),
+      get: (name) => {
+        if (
+          (application || this.parent === undefined) &&
+          this.definitions.get(name)?.lifetime === "scoped"
+        )
+          return tryResult(
+            () => {
+              throw new ServiceAccessError(
+                "lifetime",
+                name,
+                "Cannot resolve a scoped service from the application",
+              );
+            },
+            (error) => error as Error,
+          );
+        return this.get(name, requestedBy, path, allowTransientDependencies);
+      },
+      use: <A, E, R>(
+        keys: readonly string[],
+        callback: (services: RuntimeServices) => ResultTask<A, E, R>,
+      ) =>
+        ResultTask.scoped(
+          this.resolveMany(keys, application ? "singleton" : requestedBy).flatMap((services) =>
+            this.bind(callback(services), application ? "singleton" : requestedBy),
+          ),
+        ) as ResultTask<A, unknown, R>,
+      close: () => this.close({ _tag: "Success", value: undefined }),
+    };
   }
 
   public resolveMany(
@@ -679,47 +789,57 @@ const scopedUse =
     return ResultTask.scoped(task);
   };
 
+const scopeRuntimes = new WeakMap<
+  object,
+  { readonly runtime: RuntimeScope; readonly locals: RuntimeServices }
+>();
+
 const makeScope = <Services extends object, E, R, G extends Graph>(
   runtime: RuntimeScope,
   locals: RuntimeServices = {},
-): ServiceScope<Services, E, R, G> => ({
-  use: scopedUse(runtime, locals) as ServiceScope<Services, E, R, G>["use"],
-  useSingletons: scopedUse(runtime, locals, "singleton") as ServiceScope<
-    Services,
-    E,
-    R,
-    G
-  >["useSingletons"],
-  fetch: (dependencies, handle) => (request) =>
-    runScopedResponse(request, (respond) => {
-      const scope = makeScope(runtime, locals);
-      const use = scope.use as unknown as (
-        keys: readonly string[],
-        callback: (services: RuntimeServices) => RuntimeTask<void>,
-      ) => RuntimeTask<void>;
-      return use(dependencies, (services) =>
-        ResultTask.tryPromise({
-          try: async () => {
-            const response = await handle(services as Parameters<typeof handle>[0], request);
-            if (request.signal.aborted) await response.body?.cancel(request.signal.reason);
-            return response;
-          },
-          catch: (error) => error,
-        }).flatMap((response) => respond(response)),
-      );
-    }),
-  close: () =>
-    runtime.close({ _tag: "Success", value: globalThis.undefined }) as unknown as ResultTask<
-      void,
-      ScopeError<R>
-    >,
-  withServices: (values) => {
-    for (const key of Object.keys(values)) {
-      if (Object.hasOwn(locals, key)) throw new TypeError(`Local service already supplied: ${key}`);
-    }
-    return makeScope(runtime, Object.freeze({ ...locals, ...values }));
-  },
-});
+): ServiceScope<Services, E, R, G> => {
+  const scope: ServiceScope<Services, E, R, G> = {
+    use: scopedUse(runtime, locals) as ServiceScope<Services, E, R, G>["use"],
+    useSingletons: scopedUse(runtime, locals, "singleton") as ServiceScope<
+      Services,
+      E,
+      R,
+      G
+    >["useSingletons"],
+    fetch: (dependencies, handle) => (request) =>
+      runScopedResponse(request, (respond) => {
+        const requestScope = makeScope(runtime, locals);
+        const use = requestScope.use as unknown as (
+          keys: readonly string[],
+          callback: (services: RuntimeServices) => RuntimeTask<void>,
+        ) => RuntimeTask<void>;
+        return use(dependencies, (services) =>
+          ResultTask.tryPromise({
+            try: async () => {
+              const response = await handle(services as Parameters<typeof handle>[0], request);
+              if (request.signal.aborted) await response.body?.cancel(request.signal.reason);
+              return response;
+            },
+            catch: (error) => error,
+          }).flatMap((response) => respond(response)),
+        );
+      }),
+    close: () =>
+      runtime.close({ _tag: "Success", value: globalThis.undefined }) as unknown as ResultTask<
+        void,
+        ScopeError<R>
+      >,
+    withServices: (values) => {
+      for (const key of Object.keys(values)) {
+        if (Object.hasOwn(locals, key))
+          throw new TypeError(`Local service already supplied: ${key}`);
+      }
+      return makeScope(runtime, Object.freeze({ ...locals, ...values }));
+    },
+  };
+  scopeRuntimes.set(scope, { runtime, locals });
+  return scope;
+};
 
 const moduleDefinitions = new WeakMap<object, Definitions>();
 
@@ -831,7 +951,12 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
         register(
           definitions,
           name,
-          makeDefinition([], () => ResultTask.succeed(value), "singleton"),
+          makeDefinition(
+            [],
+            () => ResultTask.succeed(value),
+            "singleton",
+            () => value,
+          ),
         ),
       ),
 
@@ -881,7 +1006,12 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
           ...definitions,
           [
             name,
-            makeDefinition([], () => ResultTask.succeed(value), previous?.lifetime ?? "singleton"),
+            makeDefinition(
+              [],
+              () => ResultTask.succeed(value),
+              previous?.lifetime ?? "singleton",
+              () => value,
+            ),
           ],
         ]),
       );
@@ -897,6 +1027,105 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
 /** Starts an immutable module. Nothing executes until `use` or a child scope runs. */
 export const createModule = (): ServiceModule<object, never, never, Record<never, never>> =>
   makeModule(new Map());
+
+/** Read-only registration metadata for framework configuration adapters. */
+export const inspectModule = (
+  module: object,
+): readonly { readonly name: string; readonly lifetime: ServiceLifetime }[] => {
+  const definitions = moduleDefinitions.get(module);
+  if (definitions === undefined) throw new TypeError("Expected a module created by createModule");
+  return Object.freeze(
+    [...definitions].map(([name, definition]) =>
+      Object.freeze({ name, lifetime: definition.lifetime }),
+    ),
+  );
+};
+
+/** Adds or replaces a provider without executing it or changing other registrations. */
+export function withProvider<
+  S extends object,
+  E,
+  R,
+  G extends Graph,
+  const Name extends string,
+  A,
+  PE = never,
+  PR = never,
+>(
+  module: { readonly scope: () => ServiceScope<S, E, R, G> },
+  name: Name,
+  provider: ServiceProvider<A, PE, PR>,
+): ServiceModule<Omit<S, Name> & Record<Name, A>, E | PE, R | PR | ResultTaskScope<PE>, Graph> {
+  const definitions = moduleDefinitions.get(module);
+  if (definitions === undefined) throw new TypeError("Expected a module created by createModule");
+  let definition: Definition = makeDefinition([], succeedVoid);
+  if ("value" in provider) {
+    definition = makeDefinition(
+      [],
+      () => ResultTask.succeed(provider.value),
+      "singleton",
+      () => provider.value,
+    );
+  } else if ("task" in provider) {
+    definition = makeDefinition(
+      [],
+      () => provider.task as RuntimeTask,
+      provider.lifetime ?? "singleton",
+    );
+  } else {
+    definition = {
+      ...makeDefinition(
+        [],
+        () => die(new TypeError("Expected synchronous factory resolution")),
+        provider.lifetime ?? "singleton",
+        (access) => {
+          const value = provider.create(access);
+          assertSynchronous(value);
+          return value;
+        },
+      ),
+      synchronousFactory: true,
+      allowTransientDependencies: provider.allowTransientDependencies,
+      ...(provider.release === undefined
+        ? {}
+        : {
+            release: (value: unknown, exit: Exit<unknown, unknown>) =>
+              provider.release?.(value as A, exit) ?? succeedVoid(),
+          }),
+    };
+  }
+  return makeModule(new Map([...definitions, [name, definition]]));
+}
+
+/** Keeps dynamic service access alive in the same owned DI scope as its callback. */
+export const useServiceAccess = <A, E>(
+  scope: object,
+  use: (access: ServiceAccess) => ResultTask<A, E>,
+  options: { readonly application?: boolean; readonly initialize?: readonly string[] } = {},
+): ResultTask<A, unknown> =>
+  ResultTask.scoped(
+    ResultTask.gen(function* runServiceAccess() {
+      const context = scopeRuntimes.get(scope);
+      if (context === undefined)
+        throw new TypeError("Expected a scope created by a Resultar module");
+      const runtime =
+        options.application === true ? context.runtime : context.runtime.child(context.locals);
+      if (options.application !== true) {
+        yield* ResultTask.acquireRelease({
+          acquire: succeedVoid(),
+          release: (_value, exit) => runtime.close(exit),
+        });
+      }
+      yield* runtime.resolveMany(
+        options.initialize ?? [],
+        options.application === true ? "singleton" : undefined,
+      );
+      const result = yield* runtime.bind(
+        use(runtime.access(undefined, [], false, options.application)),
+      );
+      return result as A;
+    }),
+  );
 
 /** Checked selection for framework adapters using the public scope API. */
 export type HttpServiceSelection<

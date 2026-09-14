@@ -97,7 +97,12 @@ failures reject shutdown with their causes retained.
 Cleanup ownership is registered before acquisition, including Fastify plugin timeouts; pending
 startup work must settle before its resources can be released.
 
-The adapter composes native lifecycle failures with `tryResultAsync`, `orElse` and `mapErr`.
+Internal readiness, completion and shutdown use `ResultAsync`; lifecycle signals are adapted with
+`ResultAsync.fromCallback`. Readiness failures are typed `Err` values. Completion retains the full
+`Exit`, including interruptions and composite release failures, without starting a second execution.
+Native module/locals callbacks continue to accept ordinary async functions.
+
+The adapter composes native lifecycle failures with `tryResult`, `tryResultAsync`, `orElse` and `mapErr`.
 Rollback is awaited before `unwrapOrThrow()` hands the original failure back to Fastify;
 initialization and rollback failures are retained together when both fail.
 
@@ -116,3 +121,22 @@ pnpm --filter resultar-fastify check:full
 pnpm --filter resultar-fastify smoke:package
 pnpm --filter resultar-fastify-example smoke
 ```
+
+## Framework facades
+
+A framework can preserve its own service property API while sharing the native DI runtime.
+Use `exposeApplication(access, app)` and `exposeRequest(access, request)` to construct service
+views from the advanced DI `ServiceAccess` object. Set `requestHook: "onRequest"` when those views
+must exist before validation. The default remains `preHandler`. `appBindings` and `bindings`
+initialize the explicitly selected services before exposing the corresponding view; empty bindings
+allow entirely lazy synchronous factory access. Ordinary ResultTask providers must be initialized
+before a synchronous property read, or consumed through `access.use`.
+
+Declare facade options with `satisfies FastifyServicesOptions` before passing them to
+`createFastifyPlugin`. `InferAppServices` and `InferRequestServices` then infer the returned view
+shapes. `mapError` optionally translates errors at the native Fastify boundary after cleanup.
+Do not duplicate scope caches or resource finalizers in the view. Request cleanup, disconnects,
+startup rollback and application shutdown remain owned by this adapter.
+
+Facades that historically report startup rollback errors once can set
+`rethrowRollbackOnClose: false`. The default retains the cleanup failure on subsequent `close`.

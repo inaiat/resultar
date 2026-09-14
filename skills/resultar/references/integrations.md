@@ -232,6 +232,11 @@ When an agent encounters a diagnostic, fix the architecture first:
 - handle, compose, return, or intentionally discard a returned Resultar value; a discard does not
   run a lazy task and must not be applied just to silence diagnostics;
 - replace nested `Result` from `map` with `andThen`;
+- replace `Promise<Result>` / `Promise<StrictResult>` contracts with `ResultAsync` /
+  `StrictResultAsync` and return composed operations directly (`prefer-result-async`);
+- enable `preferResultAsyncMode: "all"` with `preferResultAsync: "error"` to also catch raw
+  `Promise<T>` repository/service contracts and inferred returns; map driver errors in adapters
+  and document local suppressions for required native framework or conversion callbacks;
 - replace error-only recovery with `mapErr`;
 - replace project-wide `try/catch` with `tryResult` or `tryResultAsync` when `noTryCatch` is enabled;
 - wrap raw promise awaits in Resultar contexts;

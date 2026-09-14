@@ -1,8 +1,8 @@
-import { createTaggedError, ok, tryResultAsync, type StrictResult } from "resultar";
+import { createTaggedError, ok, type StrictResultAsync } from "resultar";
 
 export type User = { readonly id: string; readonly name: string };
 export interface UsersRepository {
-  readonly findById: (id: string) => Promise<User | undefined>;
+  readonly findById: (id: string) => StrictResultAsync<User | undefined, UserReadError>;
 }
 
 export class UserNotFoundError extends createTaggedError({
@@ -16,7 +16,7 @@ export class UserReadError extends createTaggedError({
 }) {}
 
 export interface UsersService {
-  readonly findById: (id: string) => Promise<StrictResult<User, UserNotFoundError | UserReadError>>;
+  readonly findById: (id: string) => StrictResultAsync<User, UserNotFoundError | UserReadError>;
 }
 
 /** Plain business logic: usable with or without a DI module or an HTTP framework. */
@@ -25,13 +25,9 @@ export const createUsersService = ({
 }: {
   readonly repository: UsersRepository;
 }): UsersService => ({
-  async findById(id) {
-    const result = await tryResultAsync(
-      () => repository.findById(id),
-      (cause) => new UserReadError({ id, cause }),
-    );
-    return result.andThen((user) =>
-      user === undefined ? UserNotFoundError.err({ id }) : ok(user),
-    );
+  findById(id) {
+    return repository
+      .findById(id)
+      .andThen((user) => (user === undefined ? UserNotFoundError.err({ id }) : ok(user)));
   },
 });

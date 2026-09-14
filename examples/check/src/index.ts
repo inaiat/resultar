@@ -8,6 +8,7 @@ import {
   safeTry,
   tryResult,
   type ResultAsync,
+  type StrictResult,
 } from "resultar";
 import { createModule } from "resultar-di/advanced";
 
@@ -90,6 +91,12 @@ export const returned = (): Result<User, SaveUserError> => saveUser("returned");
 
 export const awaitedResultAsync = async (): Promise<Result<User, SaveUserError>> =>
   await saveUserAsync("awaited-result-async");
+
+// resultar/prefer-result-async: contracts and inferred async returns must retain ResultAsync.
+export interface UserLookup {
+  readonly findById: (id: string) => Promise<StrictResult<User, SaveUserError>>;
+}
+export const inferredPromiseResult = async () => saveUser("inferred-promise");
 
 export const assignedValue = assigned.match(
   (user) => user.id,

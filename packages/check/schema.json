@@ -182,6 +182,17 @@
           "default": "warning",
           "description": "Prefer mapErr when orElse only returns another Err."
         },
+        "preferResultAsync": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Prefer ResultAsync or StrictResultAsync over native Promise contracts and inferred function returns. Scope is controlled by preferResultAsyncMode. Review async implementations and external rejection mapping together."
+        },
+        "preferResultAsyncMode": {
+          "type": "string",
+          "enum": ["result", "all"],
+          "default": "result",
+          "description": "result checks Promise<Result> and Promise<StrictResult>; all checks every native Promise type contract and inferred function return, including raw repository values. Keep deliberate native boundaries explicit using rule suppressions or file severity overrides."
+        },
         "preferResultForEach": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",

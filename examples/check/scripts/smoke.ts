@@ -28,6 +28,7 @@ const expectedRules = [
   "prefer-first-success-of",
   "prefer-map",
   "prefer-map-err",
+  "prefer-result-async",
   "prefer-result-for-each",
   "prefer-tagged-error",
   "tagged-error-name-match",
@@ -57,6 +58,7 @@ const expectedCounts = {
   "prefer-first-success-of": 1,
   "prefer-map": 2,
   "prefer-map-err": 1,
+  "prefer-result-async": 4,
   "prefer-result-for-each": 1,
   "prefer-tagged-error": 3,
   "tagged-error-name-match": 1,
@@ -143,8 +145,30 @@ if (cleanRun.status !== 0) {
   throw new Error(`Expected the clean fixture to pass\n${cleanRun.stdout}${cleanRun.stderr}`);
 }
 
+const contractsRun = run("tsconfig.contracts.json", true);
+const contractFindings = contractsRun.stdout
+  .split("\n")
+  .filter((line) => line.startsWith("{"))
+  .map((line) => JSON.parse(line) as Finding);
+
+if (
+  contractsRun.status === 0 ||
+  contractsRun.stderr.trim() !== "" ||
+  contractFindings.length !== 2 ||
+  contractFindings.some(
+    (finding) =>
+      finding.rule !== "prefer-result-async" ||
+      finding.severity !== "error" ||
+      !finding.file.endsWith("/src/contracts.ts"),
+  )
+) {
+  throw new Error(
+    `Expected all mode to reject both raw Promise repositories and accept ResultAsync/native boundaries\n${contractsRun.stdout}${contractsRun.stderr}`,
+  );
+}
+
 const summary = expectedRules.map((rule) => `${rule}: ${counts[rule]}`).join(", ");
 
 process.stdout.write(
-  `Native resultar-check example passed (${findings.length} diagnostics across ${expectedRules.length} rules: ${summary}).\n`,
+  `Native resultar-check example passed (${findings.length} diagnostics across ${expectedRules.length} rules: ${summary}; all-mode Promise contracts: ${contractFindings.length}).\n`,
 );

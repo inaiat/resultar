@@ -20,6 +20,8 @@
         "noUselessRecovery": "error",
         "preferAndThen": "error",
         "preferMapErr": "error",
+        "preferResultAsync": "error",
+        "preferResultAsyncMode": "all",
         "preferTaggedError": "error",
         "taggedErrorNameMatch": "error",
         "typedCatchMapper": "error",

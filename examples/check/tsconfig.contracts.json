@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "resultar-check",
+        "preferResultAsync": "error",
+        "preferResultAsyncMode": "all"
+      }
+    ]
+  },
+  "include": ["src/contracts.ts"]
+}

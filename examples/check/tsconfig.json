@@ -34,6 +34,7 @@
         "preferFirstSuccessOf": "error",
         "preferMap": "error",
         "preferMapErr": "error",
+        "preferResultAsync": "error",
         "preferResultForEach": "error",
         "preferTaggedError": "error",
         "taggedErrorNameMatch": "error",
