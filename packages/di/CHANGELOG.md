@@ -1,5 +1,31 @@
 # resultar-di
 
+## 0.2.0
+
+### Minor Changes
+
+- c823e56: Support framework facades that retain synchronous, lazy service access while sharing Resultar DI's
+  resolution cache, lifetime checks and resource ownership. Add advanced provider registration,
+  module metadata and scoped service access, backed by synchronous finalizer registration on a
+  ResultTask scope owner. Existing native module factory timing remains unchanged.
+
+  Allow Fastify facades to choose onRequest registration, expose application/request service views
+  and map terminal lifecycle errors. Native selected-service defaults remain in preHandler. Facades
+  can opt to report rollback failures only at startup without repeating them on subsequent close.
+- 1ffab20: Add a native Fastify plugin with typed application and request service selections, request locals,
+  startup rollback, cancellation and resource cleanup through streamed responses. Add per-route
+  Hono services middleware that preserves native bindings and RPC inference. Both integrations
+  reuse Resultar DI scopes; application callbacks can explicitly restrict resolution to singletons
+  with useSingletons. Existing createHonoApp behavior remains compatible.
+  Compose Fastify lifecycle recovery with Resultar while preserving original failures and awaited rollback.
+
+### Patch Changes
+
+- Updated dependencies [8bf0d07]
+- Updated dependencies [c823e56]
+- Updated dependencies [c823e56]
+  - resultar@3.8.0
+
 ## 0.1.0
 
 ### Minor Changes

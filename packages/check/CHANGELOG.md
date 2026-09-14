@@ -1,5 +1,26 @@
 # resultar-check
 
+## 3.2.0
+
+### Minor Changes
+
+- c823e56: Add prefer-result-async diagnostics for Promise<Result> and Promise<StrictResult> type contracts
+  and inferred function returns. Support configurable severity, aliases and line suppressions;
+  provide migration guidance without applying unsafe annotation-only edits. Add the opt-in
+  preferResultAsyncMode: "all" policy to also catch raw Promise<T> contracts and inferred returns.
+  Update the Fastify repository and service example to return StrictResultAsync directly, preserve
+  repository errors, and enforce the all-mode policy with explicit native framework boundaries.
+
+### Patch Changes
+
+- 8bf0d07: Resolve Result.gen and ResultTask diagnostics through imported symbols, including renamed
+  imports and reexports. Classify intentional-discard suggestions separately from composition
+  corrections in JSONL and LSP output.
+
+  Keep ResultTask continuation helpers private and bundle versioned coding-agent guidance with
+  a compiled workflow example. Clarify eager/lazy execution, generator returns, tap failures,
+  resource ownership, and runResult rejection semantics.
+
 ## 3.1.0
 
 ### Minor Changes
