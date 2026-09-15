@@ -1,5 +1,50 @@
 # resultar-di
 
+## 0.3.0
+
+### Minor Changes
+
+- 2fc19dd: Infer literal service identifiers with `ResultTask.service<Contract>()("name")` while retaining the direct overload.
+  
+  Add `Service.require<Contract>()("name")` and optional `Service` dependency maps through `requires`. Construction factories receive inferred readonly dependencies and return a lazy ResultTask. Existing generator-only definitions, token identity, typed requirements and scope lifetimes remain supported.
+  
+  Require Resultar 3.9 or newer in the DI package's JSR import map so the curried service primitive is available.
+  
+  Make the Fastify and Hono examples self-contained, with class services using explicit `requires` maps, a repository, cache and function-based health service. Import the primary DI API through each framework integration and keep matching file layouts for services, routes and server startup. Omit optional bindings in both examples to expose all registered services.
+- 2fc19dd: BREAKING: remove the `resultar-di/advanced` entry point. Replace all imports from
+  `resultar-di/advanced` with `resultar-di` before upgrading. The pre-1.0 DI package
+  ships this breaking change in its next minor release.
+  
+  Expose one `createModule` and `ServiceModule` supporting token/class registration,
+  named factories, task/resource registration, and fluent composition. Export
+  `inspectModule`, `withProvider`, `useServiceAccess`, `ServiceAccessError` and their
+  public types from the same entry point. Resolution, lazy initialization, lifetimes
+  and resource ownership remain unchanged. No compatibility alias is retained.
+  
+  Update Fastify and Hono to use the unified entry point while preserving their
+  explicit application-facing DI reexports. External framework facades that
+  imported the removed subpath must migrate their imports when adopting this release.
+
+### Patch Changes
+
+- 2fc19dd: Allow omitting `bindings` in `createFastifyApp`, `createFastifyPlugin` and `createHonoApp`.
+  Omission selects all registered services, validates their requirements and infers their
+  readonly request view. Explicit selections and `bindings: []` retain their existing behavior;
+  Fastify `appBindings` still defaults to an empty selection. Request locals satisfy dependencies
+  but are not automatically exposed as registered services.
+  Explicit selections must be literal tuples; ambiguous tuple unions and widened arrays are
+  rejected so request types cannot promise services absent from the runtime selection.
+  
+  Selected services are resolved before the handler, preserving lazy application construction,
+  scope lifetimes, failure propagation and cleanup. This is not property-based lazy resolution:
+  a failure acquiring any default-selected service prevents the handler from executing.
+  
+  Use the Fastify and Hono example applications as integration cases in each package's test suite,
+  covering their real service graph, native routes, overrides and application isolation without
+  starting a listener. Both examples demonstrate omitted bindings and inferred application types.
+- Updated dependencies [2fc19dd]
+  - resultar@3.9.0
+
 ## 0.2.0
 
 ### Minor Changes
