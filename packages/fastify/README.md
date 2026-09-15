@@ -1,24 +1,108 @@
 # resultar-fastify
 
+`resultar-fastify` reexports the application DI helpers: `createModule`, `Service`, `service`,
+`resource`, and the types `ServiceClass`, `ServiceModule`, `ServiceScope`, `ServiceLifetime`
+and `HttpApplication`. These are the original `resultar-di` exports, with the same identity
+and behavior. You do not need to import or directly install `resultar-di` for this API.
+Keep `resultar-di` as a direct dependency for framework-independent shared services or
+when importing framework adapter helpers such as `withProvider` and `useServiceAccess`.
+Core helpers such as `ResultTask` and `okAsync` continue to come from `resultar`.
+The DI package has one entry point; migrate old `resultar-di/advanced` imports to `resultar-di`.
+
 Native Fastify plugins and request services backed by `resultar-di`. Routes keep ordinary
 `async` handlers, schemas, type providers, `request.log` and `reply.code().send()`.
 
 ```sh
-pnpm add fastify resultar resultar-di resultar-fastify
+pnpm add fastify resultar resultar-fastify
 ```
 
 ESM; Node.js 24+; Fastify 5.12.3+. The plugin uses `fastify-plugin` 6.
 
 ## Register native services
 
+For a new application, `createFastifyApp(options, configure)` follows the same shape as
+Hono's `createHonoApp`. It creates a native Fastify instance, registers the services plugin,
+and calls `configure` synchronously once.
+
+The factory accepts the same checked service options as `createFastifyPlugin`. It does not
+start a listener or initialize providers; native `ready()`, `inject()` and `listen()` drive
+initialization, and `close()` releases resources. Its return type, `FastifyServicesApplication`,
+preserves the selected services for `InferRequestServices` and `InferAppServices` without adding
+runtime metadata. For an existing server or custom Fastify constructor
+options, register `createFastifyPlugin` on your own instance.
+
+## Optional request bindings
+
+| Configuration | Services resolved and exposed before the handler |
+| --- | --- |
+| `bindings` omitted | All services registered in the module |
+| `bindings: ["users", "health"]` | Only the listed services; their dependencies are resolved internally |
+| `bindings: []` | None |
+
+Creating the application still initializes no providers. On a request, the effective selection
+is resolved in registration order for the default view, following dependency resolution and
+each provider's lifetime. Singletons are reused, scoped services belong to the request and
+transients are created per resolution. Reading the resulting view does not resolve them again.
+
+Omission is convenient for small modules. Restrict the list when an unrelated service should
+not initialize for those routes: an acquisition failure in any selected service prevents the
+handler from running. Missing or incompatible requirements are checked for the effective
+selection. No route-body analysis or automatic property-based resolution is performed.
+
+## Routes in separate files
+
+The [runnable example](../../examples/fastify/README.md) keeps service definitions and
+`createServices` in `services.ts`, native route plugins in `routes.ts`, and application
+creation, request typing and startup in `main.ts`:
+
+```ts
+// main.ts
+import { createFastifyApp, type InferRequestServices } from "resultar-fastify";
+import { healthRoutes, usersRoutes } from "./routes.ts";
+import { createServices } from "./services.ts";
+
+export const createApplication = (services = createServices()) =>
+  createFastifyApp({ services }, (app) => {
+    app.register(usersRoutes);
+    app.register(healthRoutes);
+  });
+
+declare module "fastify" {
+  interface FastifyRequest {
+    services: InferRequestServices<typeof createApplication>;
+  }
+}
+
+if (import.meta.main) {
+  const app = createApplication();
+  await app.listen({ port: Number(process.env.PORT ?? 3000) });
+}
+```
+
+Route plugins read `request.services.users` and `request.services.health`. They do not
+repeat service tokens or add declarations. Omitted `bindings` exposes the entire registered
+module; supplying a list restricts the request type and keeps unselected providers internal. The declaration can also live in a `.d.ts` file
+included by TypeScript, but the example needs no separate declaration file.
+
+`InferAppServices<typeof createApplication>` follows `appBindings`. Both inference helpers
+accept a factory, an application instance or a services plugin; `ReturnType` also remains
+supported. Custom `exposeRequest` and `exposeApplication` views retain their inferred types.
+Native routes and autoload remain supported when registered within the service plugin's scope.
+
+Start the example with `pnpm dev` from `examples/fastify`. The `import.meta.main` guard lets
+tests import `createApplication` without starting a listener.
+
+## Existing Fastify applications
+
+To register on an existing instance:
+
 ```ts
 import Fastify from 'fastify'
-import { ok } from 'resultar'
-import { createModule, service } from 'resultar-di'
-import { createFastifyPlugin, type InferRequestServices } from 'resultar-fastify'
+import { okAsync } from 'resultar'
+import { createModule, service, createFastifyPlugin, type InferRequestServices } from 'resultar-fastify'
 
 const Greeting = service('greeting', {}, () => ({
-  async greet(name: string) { return ok({ message: `Hello, ${name}` }) },
+  greet(name: string) { return okAsync({ message: `Hello, ${name}` }) },
 }))
 
 const plugin = createFastifyPlugin({
@@ -40,10 +124,11 @@ app.get<{ Params: { name: string } }>('/hello/:name', async (request, reply) => 
 await app.listen({ port: 3000 })
 ```
 
-Define business logic as a plain factory and pass it to `service(name, dependencies, factory)`.
-Its methods can return ordinary promises, `Result` or `ResultAsync`; `ResultTask` is optional for
-business methods. The [runnable example](../../examples/fastify/README.md) contains an independently
-testable service, TypeBox routes, exhaustive `matchTags` and an injected repository.
+Use `Service` classes with `requires` for dependencies, or
+`service(name, dependencies, factory)` for a function-based service. The
+[runnable example](../../examples/fastify/README.md) combines class-based `UsersRepository`
+and `Users` with function-based `Health`. Business methods return `StrictResultAsync`,
+compose operations through `Result.gen`, and map errors explicitly in TypeBox routes.
 
 ## Application and request lifetimes
 
@@ -52,7 +137,8 @@ testable service, TypeBox routes, exhaustive `matchTags` and an injected reposit
 - `appBindings`: optional singleton selection, initialized during registration and exposed through
   `app.services`. Defaults to an empty selection. `InferAppServices<typeof plugin>` infers its type.
   Scoped/transient selections fail at startup. Unselected providers stay uninitialized.
-- `bindings`: the services selected for each request. The plugin resolves them in `preHandler`
+- `bindings`: optional services selected for each request. Omission selects all registered
+  services, including repositories and caches; `[]` selects none. The plugin resolves them in `preHandler`
   and makes a shallow-frozen object available as `request.services` until response completion.
 - `locals`: optional sync/async extraction of externally owned request values. Perform authentication
   in earlier `onRequest`/`preValidation` hooks when services need authenticated locals. Locals cannot
@@ -131,9 +217,10 @@ pnpm --filter resultar-fastify-example smoke
 
 A framework can preserve its own service property API while sharing the native DI runtime.
 Use `exposeApplication(access, app)` and `exposeRequest(access, request)` to construct service
-views from the advanced DI `ServiceAccess` object. Set `requestHook: "onRequest"` when those views
+views from the DI `ServiceAccess` object. Set `requestHook: "onRequest"` when those views
 must exist before validation. The default remains `preHandler`. `appBindings` and `bindings`
-initialize the explicitly selected services before exposing the corresponding view; empty bindings
+initialize the effective selection before exposing the corresponding view. Omitted `bindings`
+selects all registrations even with `exposeRequest`; empty bindings
 allow entirely lazy synchronous factory access. Ordinary ResultTask providers must be initialized
 before a synchronous property read, or consumed through `access.use`.
 

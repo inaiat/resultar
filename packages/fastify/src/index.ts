@@ -1,4 +1,9 @@
-import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
+import Fastify, {
+  type FastifyInstance,
+  type FastifyPluginAsync,
+  type FastifyReply,
+  type FastifyRequest,
+} from "fastify";
 import fp from "fastify-plugin";
 import {
   err,
@@ -11,14 +16,24 @@ import {
   unitAsync,
   type ResultAsync,
 } from "resultar";
-import type { ServiceScope } from "resultar-di";
 import {
   useServiceAccess,
+  inspectModule,
+  type ServiceScope,
   type ServiceAccess,
   type HttpServiceSelection,
-} from "resultar-di/advanced";
+} from "resultar-di";
 
 import { hasFailure, startSession, type RuntimeTask, type ServiceSession } from "./session.js";
+
+export { createModule, Service, service, resource } from "resultar-di";
+export type {
+  HttpApplication,
+  ServiceClass,
+  ServiceLifetime,
+  ServiceModule,
+  ServiceScope,
+} from "resultar-di";
 
 export interface FastifyServicesPlugin<
   App extends object,
@@ -28,17 +43,29 @@ export interface FastifyServicesPlugin<
   readonly serviceTypes?: { readonly app: App; readonly request: Request };
 }
 
-export type InferAppServices<Plugin> = Plugin extends {
+export interface FastifyServicesApplication<
+  App extends object,
+  Request extends object,
+> extends FastifyInstance {
+  /** Inference only; no runtime metadata or global Fastify augmentation is installed. */
+  readonly serviceTypes?: { readonly app: App; readonly request: Request };
+}
+
+export type InferAppServices<Source> = Source extends {
   readonly serviceTypes?: { readonly app: infer App };
 }
   ? App
-  : never;
+  : Source extends (...args: never[]) => infer Created
+    ? InferAppServices<Created>
+    : never;
 
-export type InferRequestServices<Plugin> = Plugin extends {
+export type InferRequestServices<Source> = Source extends {
   readonly serviceTypes?: { readonly request: infer Request };
 }
   ? Request
-  : never;
+  : Source extends (...args: never[]) => infer Created
+    ? InferRequestServices<Created>
+    : never;
 
 type RuntimeServices = Readonly<Record<string, unknown>>;
 type UseServices = (
@@ -60,11 +87,9 @@ type ModuleInfo<M> =
     ? { readonly services: S; readonly requirements: R; readonly graph: G }
     : never;
 type ServicesOf<M> = ModuleInfo<M>["services"];
-type Selection<
-  M,
-  Local extends object,
-  Keys extends readonly string[],
-> = Keys extends readonly Extract<keyof ServicesOf<M>, string>[]
+type Selection<M, Local extends object, Keys extends readonly string[]> = [Keys] extends [
+  readonly Extract<keyof ServicesOf<M>, string>[],
+]
   ? HttpServiceSelection<
       ServicesOf<M> & Local,
       ModuleInfo<M>["requirements"],
@@ -143,7 +168,8 @@ type LocalsFactory = (request: FastifyRequest) => object | Promise<object>;
 export interface FastifyServicesOptions {
   readonly name?: string;
   readonly services: ModuleSource;
-  readonly bindings: readonly string[];
+  /** Defaults to all registered services; [] selects none. Resolved before each handler. */
+  readonly bindings?: readonly string[];
   readonly appBindings?: readonly string[];
   readonly locals?: LocalsFactory;
   /** Framework facades can expose lazy services before validation. Defaults to preHandler. */
@@ -164,21 +190,44 @@ type Exposed<O, Key extends PropertyKey, Fallback> =
 type AppBindings<O> = O extends { readonly appBindings: infer Keys extends readonly string[] }
   ? Keys
   : readonly [];
+type RequestBindings<O> = "bindings" extends keyof O ? O["bindings"] : undefined;
+type ExplicitBindings<O> = Extract<RequestBindings<O>, readonly string[]>;
+type RequestServices<M, Keys> = Keys extends readonly string[]
+  ? Readonly<Pick<ServicesOf<M>, Extract<Keys[number], keyof ServicesOf<M>>>>
+  : Readonly<ServicesOf<M>>;
 type CheckedOptions<O extends FastifyServicesOptions> = {
-  readonly bindings: Selection<O["services"], LocalValues<O>, O["bindings"]> &
-    ([ModuleInfo<O["services"]>] extends [never]
-      ? { readonly invalidModule: "Expected a Resultar service module" }
-      : unknown) &
-    (Extract<keyof LocalValues<O>, keyof ServicesOf<O["services"]>> extends never
-      ? unknown
-      : {
-          readonly duplicateServices: Extract<
-            keyof LocalValues<O>,
-            keyof ServicesOf<O["services"]>
-          >;
-        });
+  readonly bindings?: Selection<O["services"], LocalValues<O>, ExplicitBindings<O>>;
   readonly appBindings?: Selection<O["services"], Record<never, never>, AppBindings<O>>;
-};
+} & (undefined extends RequestBindings<O>
+  ? HttpServiceSelection<
+      ServicesOf<O["services"]> & LocalValues<O>,
+      ModuleInfo<O["services"]>["requirements"],
+      ModuleInfo<O["services"]>["graph"],
+      undefined
+    >
+  : unknown) &
+  ([ModuleInfo<O["services"]>] extends [never]
+    ? { readonly invalidModule: "Expected a Resultar service module" }
+    : unknown) &
+  (Extract<keyof LocalValues<O>, keyof ServicesOf<O["services"]>> extends never
+    ? unknown
+    : {
+        readonly duplicateServices: Extract<keyof LocalValues<O>, keyof ServicesOf<O["services"]>>;
+      });
+
+/** Creates a native Fastify instance and configures its routes before initialization. */
+export function createFastifyApp<const Options extends FastifyServicesOptions>(
+  options: Options & CheckedOptions<NoInfer<Options>>,
+  configure: (app: FastifyInstance) => void,
+): FastifyServicesApplication<
+  InferAppServices<ReturnType<typeof createFastifyPlugin<Options>>>,
+  InferRequestServices<ReturnType<typeof createFastifyPlugin<Options>>>
+> {
+  const app = Fastify();
+  app.register(createFastifyPlugin<Options>(options));
+  configure(app);
+  return app;
+}
 
 /** Registers native Fastify services backed by one Resultar DI root. */
 export function createFastifyPlugin<const Options extends FastifyServicesOptions>(
@@ -194,16 +243,7 @@ export function createFastifyPlugin<const Options extends FastifyServicesOptions
       >
     >
   >,
-  Exposed<
-    Options,
-    "exposeRequest",
-    Readonly<
-      Pick<
-        ServicesOf<Options["services"]>,
-        Extract<Options["bindings"][number], keyof ServicesOf<Options["services"]>>
-      >
-    >
-  >
+  Exposed<Options, "exposeRequest", RequestServices<Options["services"], RequestBindings<Options>>>
 > {
   const { exposeApplication, exposeRequest } = options;
   const plugin: FastifyPluginAsync = async (app) => {
@@ -211,6 +251,7 @@ export function createFastifyPlugin<const Options extends FastifyServicesOptions
       throw new TypeError("The services decorator is already registered in this Fastify context");
     const source: ModuleSource = options.services;
     const module = typeof source === "function" ? await source(app) : source;
+    const bindings = options.bindings ?? inspectModule(module).map(({ name }) => name);
     // Selections and local requirements are checked at the public boundary above.
     const root = module.scope() as RuntimeScope;
     const requests = new WeakMap<FastifyRequest, RequestState>();
@@ -268,11 +309,11 @@ export function createFastifyPlugin<const Options extends FastifyServicesOptions
                       const session = startSession(
                         (hold) =>
                           exposeRequest === undefined
-                            ? scope.use(options.bindings, hold)
+                            ? scope.use(bindings, hold)
                             : useServiceAccess(
                                 scope,
                                 (access) => hold(exposeRequest(access, request) as RuntimeServices),
-                                { initialize: options.bindings },
+                                { initialize: bindings },
                               ),
                         state.controller.signal,
                       );

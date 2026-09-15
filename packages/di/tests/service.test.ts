@@ -1,7 +1,7 @@
 import { ResultTask } from "resultar";
 import { describe, expect, test } from "vite-plus/test";
 
-import { Service, createModule } from "../src/advanced.js";
+import { Service, createModule } from "../src/index.js";
 
 interface CacheService {
   readonly values: ReadonlyMap<string, string>;

@@ -329,7 +329,7 @@ test("empty responses finish cleanup before fetch resolves, and handler failures
   await ResultTask.runPromise(root.close());
 });
 
-test("the primary autocomplete stays token-first throughout fluent composition", () => {
+test("the unified module preserves named and token registration throughout fluent composition", async () => {
   const initial = createModule();
   const value = initial.value("version", 1);
   const singleton = value.singleton(Cache);
@@ -337,12 +337,40 @@ test("the primary autocomplete stays token-first throughout fluent composition",
   const transient = scoped.transient(service("transient", {}, () => 1));
   const merged = transient.merge(createModule().value("other", 1));
   const overridden = merged.override("cache", new Map<string, string>());
-  type Hidden = "task" | "resource";
-  expectTypeOf<Extract<keyof typeof initial, Hidden>>().toEqualTypeOf<never>();
-  expectTypeOf<Extract<keyof typeof value, Hidden>>().toEqualTypeOf<never>();
-  expectTypeOf<Extract<keyof typeof singleton, Hidden>>().toEqualTypeOf<never>();
-  expectTypeOf<Extract<keyof typeof scoped, Hidden>>().toEqualTypeOf<never>();
-  expectTypeOf<Extract<keyof typeof transient, Hidden>>().toEqualTypeOf<never>();
-  expectTypeOf<Extract<keyof typeof merged, Hidden>>().toEqualTypeOf<never>();
-  expectTypeOf<Extract<keyof typeof overridden, Hidden>>().toEqualTypeOf<never>();
+  type Registration = "task" | "resource";
+  expectTypeOf<Extract<keyof typeof initial, Registration>>().toEqualTypeOf<Registration>();
+  expectTypeOf<Extract<keyof typeof value, Registration>>().toEqualTypeOf<Registration>();
+  expectTypeOf<Extract<keyof typeof singleton, Registration>>().toEqualTypeOf<Registration>();
+  expectTypeOf<Extract<keyof typeof scoped, Registration>>().toEqualTypeOf<Registration>();
+  expectTypeOf<Extract<keyof typeof transient, Registration>>().toEqualTypeOf<Registration>();
+  expectTypeOf<Extract<keyof typeof merged, Registration>>().toEqualTypeOf<Registration>();
+  expectTypeOf<Extract<keyof typeof overridden, Registration>>().toEqualTypeOf<Registration>();
+  const events: string[] = [];
+  const mixed = overridden
+    .singleton("namedSingleton", ["version"], ({ version }) => version + 1)
+    .scoped("namedScoped", ["namedSingleton"], ({ namedSingleton }) => namedSingleton + 1)
+    .transient("namedTransient", ["namedScoped"], ({ namedScoped }) => namedScoped + 1)
+    .task(
+      "computed",
+      ["namedTransient"],
+      ({ namedTransient }) => ResultTask.succeed(namedTransient + 1),
+      { lifetime: "transient" },
+    )
+    .resource("lease", ["computed"], {
+      lifetime: "transient",
+      acquire: ({ computed }) =>
+        ResultTask.sync(() => {
+          events.push("open");
+          return computed;
+        }),
+      release: () =>
+        ResultTask.sync(() => {
+          events.push("close");
+        }),
+    });
+  expect(events).toEqual([]);
+  const task = mixed.use(["lease"], ({ lease }) => ResultTask.succeed(lease));
+  expectTypeOf(task).toEqualTypeOf<ResultTask<number, never, never>>();
+  expect(await ResultTask.runPromise(task)).toBe(5);
+  expect(events).toEqual(["open", "close"]);
 });

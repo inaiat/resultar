@@ -20,7 +20,7 @@ The links below follow development on `main`; they are not a substitute for vers
 ## Packages
 
 - [resultar-di](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/README.md): typed composition, lifetimes, overrides.
-- [resultar-di advanced](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/ADVANCED.md): class tokens, scope.fetch, low-level registration.
+- [DI composition and framework adapters](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/ADVANCED.md): named registration, scope.fetch and provider access, all exported by resultar-di.
 - [resultar-hono](https://raw.githubusercontent.com/inaiat/resultar/main/packages/hono/README.md): Hono bindings, one scope per response, CloseError.
 - [resultar-fastify](https://raw.githubusercontent.com/inaiat/resultar/main/packages/fastify/README.md): native plugins, application/request services, cancellation and cleanup.
 - [resultar-request](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request/README.md) with [TypeBox](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request-typebox/README.md) and [Zod](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request-zod/README.md) adapters.
@@ -29,8 +29,9 @@ The links below follow development on `main`; they are not a substitute for vers
 ## Examples
 
 - [Core cookbook](https://raw.githubusercontent.com/inaiat/resultar/main/examples/resultar/README.md) including the [application lifecycle](https://raw.githubusercontent.com/inaiat/resultar/main/examples/resultar/src/application-lifecycle.ts) (database, session, HTTP scope ordering).
-- [Hono app](https://raw.githubusercontent.com/inaiat/resultar/main/examples/hono/README.md), [request](https://raw.githubusercontent.com/inaiat/resultar/main/examples/request/README.md), [check](https://raw.githubusercontent.com/inaiat/resultar/main/examples/check/README.md).
-- [Fastify app](https://raw.githubusercontent.com/inaiat/resultar/main/examples/fastify/README.md): plain service factory, TypeBox routes and inferred request.services.
+- [Hono app](https://raw.githubusercontent.com/inaiat/resultar/main/examples/hono/README.md): matching service classes, AppHono inferred in main.ts and native routes.
+- [request](https://raw.githubusercontent.com/inaiat/resultar/main/examples/request/README.md), [check](https://raw.githubusercontent.com/inaiat/resultar/main/examples/check/README.md).
+- [Fastify app](https://raw.githubusercontent.com/inaiat/resultar/main/examples/fastify/README.md): class services with requires, function-based health, TypeBox routes and request.services inferred in main.ts.
 
 ## Design records (history, not usage truth)
 

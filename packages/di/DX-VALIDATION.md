@@ -28,22 +28,22 @@ Give the participant only the README and example. Use the same small application
 
 Record time, documentation lookups, misleading errors, incorrect lifecycle assumptions, and requests for help. Ask the participant to explain singleton ownership and response cleanup afterward. Fix repeated confusion before adding more API alternatives.
 
-The main guide and primary autocomplete now expose one recommended token-based path. Low-level overloads are typed only in the advanced entry point.
+The main guide recommends token/class registration. Named registration and framework adapter
+helpers share the same package entry point.
 
-## Primary API and compiler diagnostics
+## Unified API and compiler diagnostics
 
-The primary entry point now hides named factory overloads and module-level `task`/`resource`
-registration throughout fluent composition. Advanced registration remains available through
-`resultar-di/advanced` using the same runtime. Type assertions cover the primary surface after
-value, singleton, scoped, transient, merge, and override.
+`resultar-di` exposes one `createModule` with token/class and named factory overloads,
+including module-level `task`/`resource` registration throughout fluent composition.
+Type assertions cover value, singleton, scoped, transient, merge and override. A mixed
+registration test checks that initialization stays lazy and finalizers still run.
 
-`pnpm --filter resultar-di test:dx` checks actual compiler output against the built declarations
+`pnpm --filter resultar-di test:dx` checks actual compiler output against built declarations
 for duplicate values/tokens, asynchronous factories, incompatible contracts, missing HTTP
-dependencies, and accidental advanced API usage. Duplicate names suggest `override()`;
-asynchronous factories suggest `service(name, task)`. These are compiler checks, not a human
-usability study or a visual inspection of an editor.
+requirements, invalid `requires` factories and invalid named dependencies. Duplicate names
+suggest `override()`; asynchronous service factories suggest `service(name, task)`.
+These are compiler checks, not a human usability study or a visual inspection of an editor.
 
-Validation after this refinement passed: 55 DI tests, seven compiler diagnostic cases,
-package smoke, type graphs up to 200 services, Hono route and real HTTP smoke checks,
-and private consumer check/build plus 72 unit tests using the local package link. Database integration
-was not rerun for this type-surface change.
+The previous split-entry validation recorded 55 DI tests, seven diagnostic cases,
+package smoke and type graphs up to 200 services. Use the current validation commands
+to assess the unified entry point; those historical results do not validate this change.

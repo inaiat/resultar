@@ -1,6 +1,13 @@
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import type { Cause, Exit, Result, ResultTaskRunOptions, ResultTaskServices } from '../src/index.js'
+import type {
+  Cause,
+  Exit,
+  Result,
+  ResultTaskRunOptions,
+  ResultTaskServices,
+  ServiceTag,
+} from '../src/index.js'
 import { ResultTask, ResultTaskTypeId } from '../src/index.js'
 
 describe('ResultTask public types', () => {
@@ -127,6 +134,26 @@ describe('ResultTask public types', () => {
       const Other = ResultTask.service<{ readonly value: string }, 'Other'>('Other')
       // @ts-expect-error Only services required by the workflow can be provided by token.
       void ResultTask.provideService(workflow, Other, { value: 'invalid' })
+    }
+  })
+
+  it('infers literal identifiers with curried and inline requirements', () => {
+    const Cache = ResultTask.service<ReadonlyMap<string, number>>()('cache')
+    expectTypeOf(Cache).toEqualTypeOf<ServiceTag<'cache', ReadonlyMap<string, number>>>()
+    const task = ResultTask.gen(function* () {
+      const cache = yield* ResultTask.service<ReadonlyMap<string, number>>()('cache')
+      return cache.get('answer')
+    })
+    expectTypeOf(task).toEqualTypeOf<ResultTask<number | undefined, never, typeof Cache>>()
+    const provided = task.provideServices({ cache: new Map([['answer', 42]]) })
+    expectTypeOf(provided).toEqualTypeOf<ResultTask<number | undefined>>()
+    if (false) {
+      // @ts-expect-error Inline requirements must still be supplied.
+      void ResultTask.runPromise(task)
+      // @ts-expect-error Named provisioning preserves the exact identifier.
+      void task.provideServices({ other: new Map<string, number>() })
+      // @ts-expect-error Named provisioning checks the service contract.
+      void task.provideServices({ cache: new Map<string, string>() })
     }
   })
 

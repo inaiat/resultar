@@ -932,8 +932,14 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   /** Creates a service tag that can be requested with `yield*` inside `ResultTask.gen`. */
   public static service<Service, const Identifier extends string>(
     identifier: Identifier,
-  ): ServiceTag<Identifier, Service> {
-    return new ServiceTagValue<Identifier, Service>(identifier)
+  ): ServiceTag<Identifier, Service>
+  /** Infers the literal identifier after specifying the service contract. */
+  public static service<Service>(): <const Identifier extends string>(
+    identifier: Identifier,
+  ) => ServiceTag<Identifier, Service>
+  public static service(identifier?: string): unknown {
+    if (identifier === undefined) return (name: string) => new ServiceTagValue(name)
+    return new ServiceTagValue(identifier)
   }
 
   /** Builds a task from a generator and short-circuits on the first failed task. */

@@ -1,10 +1,10 @@
-# Advanced composition
+# Composition and framework adapters
 
-Use the token-based API in [README](README.md) for new applications. This reference covers class tokens and low-level named registration.
+Use the token-based API in [README](README.md) for new applications. This reference covers low-level named registration and the shared class-token API.
 
-Import `createModule` from `resultar-di/advanced` for the named registration methods below.
-The primary entry point accepts tokens only. Both entry points share the same runtime;
-the distinction controls the TypeScript API and autocomplete.
+Import all APIs from `resultar-di`. The same `createModule` supports token/class registration
+and the named registration methods below. Tokens/classes remain the recommended application
+style; named factories and provider access support framework integration.
 
 ## Creation and lifetime
 
@@ -29,13 +29,16 @@ child scopes, then call `close()` during shutdown.
 
 ## Class-shaped services
 
-`Service` creates a class-shaped token. The token carries the service identifier and its `make`
-task, so dependencies are declared where they are used with `yield*`. The registration method still
+`Service` is exported by `resultar-di`. It creates a class-shaped
+token carrying an identifier and a lazy `make` task. Declare dependencies using `yield*` or the
+optional `requires` map described in [the service guide](README.md#class-services-and-explicit-requirements).
+With `requires`, `make` receives inferred dependencies and returns a ResultTask. `Service.require<T>()(name)`
+creates a yieldable requirement without registering a provider. The registration method still
 chooses the lifetime; the class itself does not need a lifetime option.
 
 ```ts
 import { ResultTask } from "resultar";
-import { createModule, Service } from "resultar-di/advanced";
+import { createModule, Service } from "resultar-di";
 
 interface CacheService {
   readonly values: ReadonlyMap<string, string>;
@@ -79,7 +82,7 @@ Use `singleton` for a service shared by multiple child scopes that needs no clea
 
 ```ts
 import { ResultTask } from "resultar";
-import { createModule } from "resultar-di/advanced";
+import { createModule } from "resultar-di";
 
 let cacheCreations = 0;
 const services = createModule()
@@ -173,7 +176,7 @@ keep their existing callback rules.
 
 ```ts
 import { ResultTask } from "resultar";
-import { createModule } from "resultar-di/advanced";
+import { createModule } from "resultar-di";
 
 const services = createModule()
   .value("config", { databaseUrl: "memory" })
@@ -271,7 +274,7 @@ service interface narrow automatically.
 ## Framework service facades
 
 Framework adapters that must preserve synchronous property access can use `withProvider`,
-`inspectModule` and `useServiceAccess` from `resultar-di/advanced`. They use the same DI runtime;
+`inspectModule` and `useServiceAccess` from `resultar-di`. They use the same DI runtime;
 there is no separate resolver or cache. Ordinary application code should prefer typed service
 selections.
 

@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { ResultTask } from "resultar";
-import { createModule, withProvider } from "resultar-di/advanced";
+import { createModule, withProvider } from "resultar-di";
 import { describe, expect, expectTypeOf, it } from "vite-plus/test";
 import {
   createFastifyPlugin,

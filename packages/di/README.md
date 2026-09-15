@@ -23,10 +23,10 @@ resources. All three register with the same `.singleton`, `.scoped`, or `.transi
 
 ```ts
 import { ResultTask } from 'resultar'
-import { createModule, service } from 'resultar-di'
+import { createModule, service, Service } from 'resultar-di'
 
 const Cache = service('cache', ResultTask.sync(() => new Map<string, string>()))
-const Tenant = ResultTask.service<string, 'tenant'>('tenant')
+const Tenant = Service.require<string>()('tenant')
 const Users = service('users', { cache: Cache, tenant: Tenant }, ({ cache, tenant }) => ({
   find: (id: string) => cache.get(`${tenant}:${id}`),
 }))
@@ -46,14 +46,69 @@ await ResultTask.runPromise(application.close())
 `merge` preserves types and rejects duplicate names. `withServices` returns a facade over the same
 root; each `use` or `fetch` creates a new child with those local values. It cannot overwrite
 registered services or capture request locals inside singletons. Local values are externally owned.
-Tokens remain available through `yield*` when initialization requires task composition. The class-shaped `Service` API in the advanced entry point is optional.
+Tokens remain available through `yield*` when initialization requires task composition. The class-shaped `Service` API is available from the same entry point.
 
-The primary `createModule()` exposes token registration only, including after `value`, `merge`,
-and `override`. Named factory overloads and module-level `task`/`resource` registration are available
-from `resultar-di/advanced`; they do not appear in the primary TypeScript autocomplete.
+A single `createModule()` supports tokens/classes, named factories and module-level
+`task`/`resource` registration, including after `value`, `merge` and `override`.
+All APIs are imported from `resultar-di`; prefer tokens/classes in application code.
 
 Duplicate registrations identify the service and suggest `override()`. An asynchronous factory
 passed to `service(name, dependencies, factory)` points to `service(name, task)` instead.
+
+## Class services and explicit requirements
+
+Use `Service` when you prefer class-shaped tokens. `requires` injects a readonly object whose
+properties are inferred from the declared tokens. Its `make` factory must return a `ResultTask`:
+
+```ts
+import { ResultTask } from 'resultar'
+import { createModule, Service } from 'resultar-di'
+
+const Storage = Service.require<ReadonlyMap<string, string>>()('storage')
+
+class Users extends Service('users', {
+  requires: { cache: Storage },
+  make: ({ cache }) => ResultTask.sync(() => ({
+    find: (id: string) => cache.get(id),
+  })),
+}) {}
+
+const services = createModule()
+  .value('storage', new Map([['1', 'Ada']]))
+  .scoped(Users)
+```
+
+`cache` is the injected alias; `storage` is the provider identifier. A requirement does not register
+or execute its provider. Register providers explicitly using `value`, `singleton`, `scoped`, or
+`transient`. Tokens and service classes can both appear in `requires`.
+
+With `requires`, `make` is a factory returning `ResultTask.sync` or `ResultTask.gen`, never a plain
+object or Promise. Without `requires`, `make` is a task. The generator form also supports inline
+requirements:
+
+```ts
+class Users extends Service('users', {
+  make: ResultTask.gen(function* () {
+    const cache = yield* Service.require<ReadonlyMap<string, string>>()('storage')
+    return { find: (id: string) => cache.get(id) }
+  }),
+}) {}
+```
+
+`ResultTask.service<T>()('name')` is the equivalent core API. The existing
+`ResultTask.service<T, 'name'>('name')` remains supported. For an explicit service contract, use
+`Service<UsersContract>()('users', definition)` with either definition form.
+
+Construction remains lazy. Dependencies resolve sequentially in entry order before `make` is
+called with a shallow-frozen object. The returned task executes in the service's owning lifetime.
+Its additional yielded requirements combine with those declared in `requires`; its failures remain
+in `E`. `requires: {}` supports a dependency-free factory. Thrown factory defects remain `Die`, and
+acquisition, interruption, rollback and finalization use the existing ResultTask scope.
+
+Each call to `Service.require` or `ResultTask.service` creates a distinct token. Inline requirements
+work with this DI module's named resolution and with core `provideServices({ storage })`. Core `provideService(token, value)` supplies both the exact token and a named fallback. Reuse the
+original reference to select an exact binding when identifiers collide. Same-name tokens are not
+globally interned; exact token bindings take precedence over named environments.
 
 ## Fetch and Hono request scopes
 
@@ -121,9 +176,16 @@ Routes read their request's services from `context.env`; domain service methods 
 awaitable calls. The returned application exposes `fetch(request)` and `request(path, init)` for
 tests. Keep server execution in the owning task scope and consume or cancel response bodies.
 
-The main exports are `createModule`, `service`, and `resource`. Class tokens are available from
-`resultar-di/advanced`. See [advanced composition](ADVANCED.md) for class tokens and low-level
-named registration; those are alternatives, not prerequisites for the main API.
+The application helpers are `createModule`, `service`, `Service` (including `Service.require`),
+and `resource`. Framework adapter helpers `inspectModule`, `withProvider`, `useServiceAccess`
+and `ServiceAccessError` are exported from the same entry point, along with their public types.
+See [composition and framework adapters](ADVANCED.md) for named registration and adapter APIs.
+
+### Migration from the split entry points
+
+Replace imports from `resultar-di/advanced` with `resultar-di`. The old subpath has been removed.
+Existing token-based imports keep working; `createModule` now exposes all registration forms.
+The change does not alter lazy initialization, dependency resolution or resource lifetimes.
 
 ## Lifetime and inference
 

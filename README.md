@@ -40,7 +40,7 @@ npm install resultar
 The npm package README is [packages/resultar/README.md](packages/resultar/README.md). It covers the
 selling points and quick-start examples for:
 
-- `Result<T, E>`, lazy `ResultTask<T, E>`, and `ResultAsync<T, E>`
+- `Result<T, E>`, lazy `ResultTask<T, E, R>`, and `ResultAsync<T, E>`
 - explicit `ResultTask` execution with typed services, generator composition, defects, and cleanup
 - `StrictResult<T, E extends Error>` and `StrictResultAsync<T, E extends Error>`
 - `createTaggedError`, `taggedEnum`, and redacted error props
@@ -59,7 +59,7 @@ Use the full guide when you need a specific recipe:
 | Redacted error props           | [Redacted Error Props](DOCUMENTATION.md#redacted-error-props)                               |
 | Catching and recovering errors | [Catching And Recovering Errors](DOCUMENTATION.md#catching-and-recovering-errors)           |
 | Async wrapping                 | [Wrapping Throwing Or Rejecting Code](DOCUMENTATION.md#wrapping-throwing-or-rejecting-code) |
-| Lazy workflows                 | [ResultTask core RFC](docs/rfcs/rfc-0001-result-task-core.md)                              |
+| Lazy workflows                 | [Lazy tasks and requirements](DOCUMENTATION.md#lazy-tasks-and-service-requirements)                              |
 | Local recovery                 | [Recovering Tagged Errors Locally](DOCUMENTATION.md#recovering-tagged-errors-locally)       |
 | Async racing and timeouts      | [Concurrent Racing And Timeouts](DOCUMENTATION.md#concurrent-racing-and-timeouts)           |
 | Async retry policies           | [Retrying Async Work](DOCUMENTATION.md#retrying-async-work)                                 |
@@ -105,8 +105,18 @@ guide.
 | [examples/resultar](examples/resultar) | Core Resultar cookbook | Sync validation, `safeTry`, tagged errors, async resilience, and resource cleanup |
 | [examples/check](examples/check)       | Native diagnostics     | Exact findings for all supported rules plus a zero-diagnostic clean project              |
 | [examples/request](examples/request)   | Request helpers        | Fetch-style JSON calls with TypeBox and Zod adapters                              |
-| [examples/hono](examples/hono)         | Hono + DI application  | Typed composition, scoped cache sharing, overrides, and HTTP shutdown (Node & Deno) |
-| [examples/fastify](examples/fastify)   | Native Fastify + DI    | Plain services, TypeBox routes, inferred request services and explicit HTTP mapping |
+| [examples/hono](examples/hono)         | Hono + DI application  | Class services, inferred AppHono bindings, overrides and response scopes (Node) |
+| [examples/fastify](examples/fastify)   | Native Fastify + DI    | Class services, TypeBox routes, inferred request services and explicit HTTP mapping |
+
+Both HTTP examples use three files: `services.ts` defines and registers services,
+`routes.ts` maps results to native HTTP responses, and `main.ts` creates and starts the app.
+They import DI helpers from their framework adapter and omit `bindings` to expose all registered
+services. Pass `bindings: ["health", "users"]` to restrict the view, or `bindings: []` to select none.
+Fastify declares `request.services` in `main.ts`; Hono exports `AppHono` there for route files.
+Both derive service types with `InferRequestServices<typeof createApplication>`.
+
+To start an example, enter `examples/fastify` or `examples/hono` and run `pnpm dev`.
+Both default to port 3000; use different `PORT` values if running them together.
 
 Run all example smokes with:
 
@@ -165,7 +175,8 @@ For an existing Hono router, use `createHonoServices(module).middleware(keys)` t
 [`resultar-fastify`](packages/fastify/README.md) registers native application and request services
 over the same DI scopes. Keep ordinary async handlers and explicit `reply.code().send()` mappings;
 the plugin manages resource ownership through streamed replies and shutdown. The
-[Fastify example](examples/fastify/README.md) includes a plain service factory and TypeBox routes.
+[Fastify example](examples/fastify/README.md) includes `UsersRepository` and `Users` classes
+with `requires`, function-based `Health`, and TypeBox routes.
 
 ### Coding-agent validation
 

@@ -10,7 +10,7 @@ import {
   type ResultAsync,
   type StrictResult,
 } from "resultar";
-import { createModule } from "resultar-di/advanced";
+import { createModule } from "resultar-di";
 
 interface User {
   readonly email: string;

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), "resultar-di-diagnostics-"));
-const imports = `import { createModule, service } from ${JSON.stringify(resolve(root, "dist/index.js"))};
+const imports = `import { createModule, service, Service } from ${JSON.stringify(resolve(root, "dist/index.js"))};
 import { ResultTask } from ${JSON.stringify(resolve(root, "../resultar/dist/index.js"))};
 const Cache = service("cache", {}, () => 1);
 `;
@@ -34,15 +34,26 @@ const cases = [
     "missingServices",
   ],
   [
-    "advanced-after-chain",
-    'createModule().singleton(Cache).merge(createModule().value("x", 1)).override("cache", 2).task;',
-    "Property 'task' does not exist",
+    "requires-wrong-contract",
+    'const User = Service("user", {requires: {cache: Cache}, make: ({cache}) => ResultTask.succeed(cache)}); createModule().value("cache", "wrong").scoped(User);',
+    "incompatibleServices",
   ],
   [
-    "advanced-overload",
-    'createModule().scoped("cache", [], () => 1);',
-    "Expected 1 arguments, but got 3",
+    "requires-missing-dependency",
+    'const User = Service("user", {requires: {cache: Service.require<number>()("cache")}, make: ({cache}) => ResultTask.succeed(cache)}); createModule().scoped(User).http(["user"], () => new Response());',
+    "missingServices",
   ],
+  [
+    "requires-promise-factory",
+    'Service("user", {requires: {}, make: () => Promise.resolve(1)});',
+    "ResultTask",
+  ],
+  [
+    "named-missing-dependency",
+    'createModule().scoped("user", ["missing"], ({missing}) => missing);',
+    "unknownService",
+  ],
+  ["named-async-factory", 'createModule().scoped("cache", [], () => Promise.resolve(1));', "never"],
 ] as const;
 try {
   for (const [name, source, expected] of cases) {

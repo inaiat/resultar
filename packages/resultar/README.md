@@ -494,13 +494,12 @@ The callback runs only when the task executes. Use `tryPromise({ try, catch })` 
 specific error type; both forms receive the runtime signal and preserve interruption semantics.
 
 Workflows can request typed services with `yield*` and receive them at the boundary. Pass the service
-type and its literal identifier so the named environment remains checked:
+type first, then let the second call infer its literal identifier:
 
 ```ts
 const Database = ResultTask.service<
-  { findUser: (id: string) => Promise<string> },
-  'Database'
->('Database')
+  { findUser: (id: string) => Promise<string> }
+>()('Database')
 
 const taskWithDatabase = ResultTask.gen(function* () {
   const database = yield* Database
@@ -528,6 +527,16 @@ const readyWithAll = ResultTask.provideServices(taskWithDatabase, { Database: da
 await ResultTask.runResult(readyWithOne)
 await ResultTask.runResult(readyWithAll)
 ```
+
+The direct form `ResultTask.service<DatabaseContract, 'Database'>('Database')` remains supported.
+The curried form can also be yielded inline: `yield* ResultTask.service<DatabaseContract>()('Database')`.
+Requirements belong to `R` in `ResultTask<T, E, R>`; `Result` has no service lookup API.
+
+Every tag creation has its own symbol identity. Inline tags resolve through named environments
+(`provideServices` or the DI module). `provideService(token, value)` supplies both an exact token binding and a named fallback.
+Reuse the same token to select its exact binding when identifiers collide; a separately created
+same-name tag can resolve the named fallback. Exact token bindings take precedence. For class services and explicit dependency maps, see
+[`Service.require` and `requires` in resultar-di](../di/README.md#class-services-and-explicit-requirements).
 
 Infrastructure such as a dependency-injection adapter can resolve service tags lazily with
 `provideServiceResolver(task, { Logger: () => loggerTask })`. Each required identifier has a

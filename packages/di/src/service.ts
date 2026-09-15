@@ -40,42 +40,94 @@ function createServiceClass<const Identifier extends string, Self, E = never, R 
   return ServiceBase;
 }
 
-/** Creates a class-shaped service token whose contract is inferred from `make`. */
-export function Service<const Identifier extends string, Self, E = never, R = never>(
-  identifier: Identifier,
-  definition: { readonly make: ResultTask<Self, E, R> },
-): ServiceClass<Self, Identifier, E, R>;
-/** Creates an Effect-style service token whose dependencies are declared with `yield*`. */
-export function Service<Self = never>(): <
-  const Identifier extends string,
-  ActualSelf = [Self] extends [never] ? unknown : Self,
-  E = never,
-  R = never,
->(
-  identifier: Identifier,
-  definition: { readonly make: ResultTask<[Self] extends [never] ? ActualSelf : Self, E, R> },
-) => ServiceClass<[Self] extends [never] ? ActualSelf : Self, Identifier, E, R>;
-export function Service(...args: unknown[]): unknown {
-  if (args.length >= 2) {
-    return createServiceClass(
-      args[0] as string,
-      args[1] as { readonly make: ResultTask<unknown, never, never> },
-    );
-  }
-  return function createService(
-    identifier: string,
-    definition: { readonly make: ResultTask<unknown, never, never> },
-  ) {
-    return createServiceClass(identifier, definition);
-  };
-}
-
 type Tags = Readonly<Record<string, ServiceTag<string, unknown>>>;
 type Values<Dependencies extends Tags> = {
   readonly [Key in keyof Dependencies]: Dependencies[Key] extends ServiceTag<string, infer Value>
     ? Value
     : never;
 };
+type TaskDefinition<Self, E, R> = {
+  readonly requires?: never;
+  readonly make: ResultTask<Self, E, R>;
+};
+type RequiredDefinition<Dependencies extends Tags, Self, E, R> = {
+  readonly requires: Dependencies;
+  readonly make: (dependencies: Values<Dependencies>) => ResultTask<Self, E, R>;
+};
+type Contract<Self, Inferred> = [Self] extends [never] ? Inferred : Self;
+
+interface CurriedService<Self> {
+  <const Identifier extends string, ActualSelf = unknown, E = never, R = never>(
+    identifier: Identifier,
+    definition: TaskDefinition<Contract<Self, ActualSelf>, E, R>,
+  ): ServiceClass<Contract<Self, ActualSelf>, Identifier, E, R>;
+  <
+    const Identifier extends string,
+    const Dependencies extends Tags,
+    ActualSelf = unknown,
+    E = never,
+    R = never,
+  >(
+    identifier: Identifier,
+    definition: RequiredDefinition<Dependencies, Contract<Self, ActualSelf>, E, R>,
+  ): ServiceClass<Contract<Self, ActualSelf>, Identifier, E, Dependencies[keyof Dependencies] | R>;
+}
+
+function resolveDependencies(dependencies: Tags) {
+  return ResultTask.gen(function* resolve() {
+    const entries: [string, unknown][] = [];
+    for (const [key, tag] of Object.entries(dependencies)) entries.push([key, yield* tag]);
+    return Object.freeze(Object.fromEntries(entries));
+  });
+}
+
+function defineService<const Identifier extends string, Self, E = never, R = never>(
+  identifier: Identifier,
+  definition: TaskDefinition<Self, E, R>,
+): ServiceClass<Self, Identifier, E, R>;
+function defineService<
+  const Identifier extends string,
+  const Dependencies extends Tags,
+  Self,
+  E = never,
+  R = never,
+>(
+  identifier: Identifier,
+  definition: RequiredDefinition<Dependencies, Self, E, R>,
+): ServiceClass<Self, Identifier, E, Dependencies[keyof Dependencies] | R>;
+function defineService<Self = never>(): CurriedService<Self>;
+function defineService(...args: unknown[]): unknown {
+  if (args.length === 0) return defineService;
+  const identifier = args[0] as string;
+  const definition = args[1] as
+    | TaskDefinition<unknown, unknown, unknown>
+    | RequiredDefinition<Tags, unknown, unknown, unknown>;
+  if (definition.requires === undefined) {
+    if (!(definition.make instanceof ResultTask))
+      throw new TypeError("Service make must be a ResultTask when requires is absent");
+    return createServiceClass(identifier, definition);
+  }
+  const { requires, make } = definition;
+  if (typeof make !== "function")
+    throw new TypeError("Service make must be a factory when requires is present");
+  return createServiceClass(identifier, {
+    make: ResultTask.gen(function* construct() {
+      const dependencies = yield* resolveDependencies(requires);
+      const task = make(dependencies);
+      if (!(task instanceof ResultTask))
+        throw new TypeError("Service make factory must return a ResultTask");
+      return yield* task;
+    }),
+  });
+}
+
+/** Creates a lazy class-shaped service with explicit `requires` or generator-inferred dependencies. */
+export const Service: typeof defineService & {
+  /** Declares a yieldable requirement; its provider must be registered separately. */
+  readonly require: <Self>() => <const Identifier extends string>(
+    identifier: Identifier,
+  ) => ServiceTag<Identifier, Self>;
+} = Object.assign(defineService, { require: <Self>() => ResultTask.service<Self>() });
 
 /** Defines a task-backed token without a class wrapper. */
 export function service<const Name extends string, A, E, R>(
@@ -102,10 +154,9 @@ export function service(
     dependencies instanceof ResultTask
       ? dependencies
       : ResultTask.gen(function* construct() {
-          const values: Record<string, unknown> = {};
-          for (const [key, tag] of Object.entries(dependencies)) values[key] = yield* tag;
+          const values = yield* resolveDependencies(dependencies);
           if (create === undefined) throw new TypeError("A service factory is required");
-          const value = create(Object.freeze(values));
+          const value = create(values);
           if (
             value instanceof ResultTask ||
             (value !== null && typeof value === "object" && "then" in value)

@@ -18,9 +18,9 @@ catalog:
   tsx: 4.23.13
   typebox: 1.3.30
   vitest: 4.1.11
-  vite-plus: 0.3.1
+  vite-plus: 0.3.2
   typescript: 7.0.2
-  zod: 4.6.4
+  zod: 4.6.5
 
 allowBuilds:
   esbuild: true
@@ -28,14 +28,14 @@ allowBuilds:
 # Keep the runner and its coverage/UI packages aligned with Vite+'s bundled Vitest.
 # https://viteplus.dev/guide/migrate#manual-installation-migration
 overrides:
-  vite: npm:@voidzero-dev/vite-plus-core@0.3.1
+  vite: npm:@voidzero-dev/vite-plus-core@0.3.2
   vitest: 4.1.11
 
-# The Vite+ alias is versioned 0.3.1 but bundles Vite 8.2.2.
+# The Vite+ alias uses its own version instead of the bundled Vite version.
 peerDependencyRules:
   allowedVersions:
-    "@vitest/mocker@4.1.11>vite": 0.3.1
-    "vitest@4.1.11>vite": 0.3.1
+    "@vitest/mocker@4.1.11>vite": 0.3.2
+    "vitest@4.1.11>vite": 0.3.2
 
 # Stryker 10 still calls compiler APIs (e.g. ts.parseConfigFileTextToJson) removed from TypeScript 7.
 packageExtensions:
