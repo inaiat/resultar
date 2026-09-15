@@ -1,29 +1,20 @@
-import { pathToFileURL } from "node:url";
-import Fastify, { type FastifyInstance } from "fastify";
+import { createFastifyApp, type InferRequestServices } from "resultar-fastify";
+import { healthRoutes, usersRoutes } from "./routes.ts";
 import { createServices } from "./services.ts";
-import { usersRoutes } from "./routes.ts";
 
-export const createApplication = (): FastifyInstance => {
-  const app = Fastify();
-  app.register(createServices());
-  app.register(usersRoutes);
-  return app;
-};
+export const createApplication = (services = createServices()) =>
+  createFastifyApp({ services }, (app) => {
+    app.register(usersRoutes);
+    app.register(healthRoutes);
+  });
 
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+declare module "fastify" {
+  interface FastifyRequest {
+    services: InferRequestServices<typeof createApplication>;
+  }
+}
+
+if (import.meta.main) {
   const app = createApplication();
-
-  await app.listen({ port: 3000, host: "127.0.0.1" });
-  process.once("SIGINT", () => {
-    app.close().catch((error) => {
-      app.log.error(error);
-      process.exitCode = 1;
-    });
-  });
-  process.once("SIGTERM", () => {
-    app.close().catch((error) => {
-      app.log.error(error);
-      process.exitCode = 1;
-    });
-  });
+  await app.listen({ port: Number(process.env.PORT ?? 3000) });
 }

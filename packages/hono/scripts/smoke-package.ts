@@ -26,17 +26,38 @@ try {
   const file = join(directory, "consumer.mts");
   writeFileSync(
     file,
-    `import { createHonoApp, createHonoServices } from "resultar-hono";
+    `import { createHonoApp, createHonoServices, type InferRequestServices } from "resultar-hono";
 import { Hono } from "hono";
-import { createModule } from "resultar-di";
-const app = createHonoApp({ services: createModule().value("answer", 42), bindings: ["answer"] }, (router) => {
- router.get("/", (c) => c.text(String(c.env.answer)));
+import { ResultTask } from "resultar";
+import { createModule, Service, service, resource, type ServiceLifetime } from "resultar-hono";
+let released = 0;
+const Base = service("base", {}, () => 40);
+class Answer extends Service("answer", {
+ requires: { base: Base },
+ make: ({ base }) => ResultTask.sync(() => base + 2),
+}) {}
+const Lease = resource("lease", {
+ acquire: ResultTask.succeed("open"),
+ release: () => ResultTask.sync(() => { released += 1; }),
 });
+const lifetime: ServiceLifetime = "singleton";
+const services = createModule().singleton(Base)[lifetime](Answer).scoped(Lease);
+const createApplication = () => createHonoApp({ services }, (router) => {
+ routes(router);
+});
+const routes = (router: Hono<{ Bindings: InferRequestServices<typeof createApplication> }>) => {
+ router.get("/", (c) => {
+  if (c.env.base !== 40) throw new Error("Missing default Hono binding");
+  return c.text(String(c.env.answer));
+ });
+};
+const app = createApplication();
 try {
  const response = await app.request("/");
  if (await response.text() !== "42") throw new Error("Unexpected packed response");
 } finally { const closed = await app.close(); if (closed.isErr()) throw closed.error; }
-const di = createHonoServices(createModule().value("answer", 42));
+if (released !== 1) throw new Error("Packed resource was not released");
+const di = createHonoServices(services);
 const native = new Hono<{Bindings: {suffix: string}}>().get("/", di.middleware(["answer"]), (c) => c.text(String(c.var.services.answer) + c.env.suffix));
 try {
  const response = await native.request("/", undefined, {suffix: "!"});

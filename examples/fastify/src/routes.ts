@@ -30,3 +30,28 @@ export const usersRoutes: FastifyPluginAsyncTypebox = async (app) => {
     },
   );
 };
+
+// Fastify's plugin callback uses its native async lifecycle contract.
+// resultar-check-disable-next-line prefer-result-async
+export const healthRoutes: FastifyPluginAsyncTypebox = async (app) => {
+  app.get(
+    "/health",
+    {
+      schema: {
+        response: {
+          200: Type.Object({ status: Type.String(), users: Type.Integer({ minimum: 0 }) }),
+          503: Type.Object({ error: Type.String() }),
+        },
+      },
+    },
+    // Fastify awaits the HTTP reply after the Resultar channel has been matched.
+    // resultar-check-disable-next-line prefer-result-async
+    async (request, reply) => {
+      const result = await request.services.health.check();
+      return result.match(
+        (health) => reply.code(200).send(health),
+        () => reply.code(503).send({ error: "Health unavailable" }),
+      );
+    },
+  );
+};

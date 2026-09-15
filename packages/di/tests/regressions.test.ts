@@ -1,6 +1,6 @@
 import { ResultTask, type ServiceTag } from "resultar";
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
-import { createModule, Service } from "../src/advanced.js";
+import { createModule, Service } from "../src/index.js";
 
 class Cache extends Service<{ read: () => string }>()("cache", {
   make: ResultTask.succeed({ read: () => "ok" }),

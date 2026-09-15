@@ -1,7 +1,7 @@
 import { ResultTask, type ResultTaskScope } from "resultar";
 import { expectTypeOf, test } from "vite-plus/test";
 
-import { createModule } from "../src/advanced.js";
+import { createModule } from "../src/index.js";
 
 test("requires a declared parameter when synchronous factories list dependencies", () => {
   const services = createModule().value("cache", new Map<string, string>());

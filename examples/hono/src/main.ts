@@ -1,10 +1,21 @@
 import { serve } from "@hono/node-server";
-import { createApplication } from "./app.ts";
+import type { Hono } from "hono";
+import { createHonoApp, type InferRequestServices } from "resultar-hono";
+import { healthRoutes, usersRoutes } from "./routes.ts";
+import { createServices } from "./services.ts";
 
-const app = createApplication();
-const port = Number(process.env.PORT ?? 3000);
-const hostname = process.env.HOST ?? "127.0.0.1";
+// The package infers context.env and keeps resources alive until the response finishes.
+export const createApplication = (services = createServices()) =>
+  createHonoApp({ services }, (app) => {
+    usersRoutes(app);
+    healthRoutes(app);
+  });
 
-serve({ fetch: app.fetch, port, hostname }, (info) => {
-  console.log(`Listening on http://${info.address}:${info.port}/`);
-});
+export type AppHono = Hono<{ Bindings: InferRequestServices<typeof createApplication> }>;
+
+if (import.meta.main) {
+  const app = createApplication();
+  serve({ fetch: app.fetch, port: Number(process.env.PORT ?? 3000) }, (info) => {
+    console.log(`Listening on http://${info.address}:${info.port}/`);
+  });
+}

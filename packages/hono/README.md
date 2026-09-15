@@ -1,5 +1,14 @@
 # resultar-hono
 
+`resultar-hono` reexports the application DI helpers: `createModule`, `Service`, `service`,
+`resource`, and the types `ServiceClass`, `ServiceModule`, `ServiceScope`, `ServiceLifetime`
+and `HttpApplication`. These are the original `resultar-di` exports, with the same identity
+and behavior. You do not need to import or directly install `resultar-di` for this API.
+Keep `resultar-di` as a direct dependency for framework-independent shared services or
+when importing framework adapter helpers such as `withProvider` and `useServiceAccess`.
+Core helpers such as `ResultTask` and `okAsync` continue to come from `resultar`.
+The DI package has one entry point; migrate old `resultar-di/advanced` imports to `resultar-di`.
+
 ## Add services to an existing Hono router
 
 `createHonoServices` supplies per-route middleware over the same `resultar-di` request scopes.
@@ -7,8 +16,7 @@ It preserves `c.env`, execution context and native route/RPC response inference:
 
 ```ts
 import { Hono } from 'hono'
-import { createModule } from 'resultar-di'
-import { createHonoServices } from 'resultar-hono'
+import { createModule, createHonoServices } from 'resultar-hono'
 
 const di = createHonoServices(createModule().value('answer', 42))
 const app = new Hono<{ Bindings: { suffix: string } }>()
@@ -40,16 +48,15 @@ Typed Hono service bindings and one DI scope per response. Configure ordinary Ho
 reuse Resultar DI for service resolution, streaming ownership and cleanup.
 
 ```sh
-pnpm add resultar-hono resultar-di resultar hono
+pnpm add resultar-hono resultar hono
 ```
 
 ```ts
-import { createModule, service } from 'resultar-di';
-import { createHonoApp } from 'resultar-hono';
+import { createModule, service, createHonoApp } from 'resultar-hono';
 
 const Greeting = service('greeting', {}, () => ({ text: 'Hello' }));
 const app = createHonoApp(
-  { services: createModule().scoped(Greeting), bindings: ['greeting'] },
+  { services: createModule().scoped(Greeting) },
   (hono) => {
     hono.get('/', (c) => c.text(c.env.greeting.text));
   },
@@ -70,6 +77,81 @@ inferred from the selected DI services. Unknown names and missing dependencies a
 errors. Use ordinary `await` and `result.match` inside routes. Configure middleware, `onError`
 and `notFound` on the supplied Hono instance as usual.
 
+## Optional request bindings
+
+| Configuration | Services resolved and exposed before the handler |
+| --- | --- |
+| `bindings` omitted | All services registered in the module |
+| `bindings: ["users", "health"]` | Only the listed services; their dependencies are resolved internally |
+| `bindings: []` | None |
+
+Creating the application still initializes no providers. On a request, the effective selection
+is resolved in registration order for the default view, following dependency resolution and
+each provider's lifetime. Singletons are reused, scoped services belong to the request and
+transients are created per resolution. Reading the resulting view does not resolve them again.
+
+Omission is convenient for small modules. Restrict the list when an unrelated service should
+not initialize for those routes: an acquisition failure in any selected service prevents the
+handler from running. Missing or incompatible requirements are checked for the effective
+selection. No route-body analysis or automatic property-based resolution is performed.
+
+## Routes in separate files
+
+The [runnable example](../../examples/hono/README.md) keeps service definitions and
+`createServices` in `services.ts`, native routes in `routes.ts`, and application creation,
+the exported `AppHono` type and Node startup in `main.ts`:
+
+```ts
+// main.ts
+import { serve } from "@hono/node-server";
+import type { Hono } from "hono";
+import { createHonoApp, type InferRequestServices } from "resultar-hono";
+import { healthRoutes, usersRoutes } from "./routes.ts";
+import { createServices } from "./services.ts";
+
+// The package infers context.env and keeps resources alive until the response finishes.
+export const createApplication = (services = createServices()) =>
+  createHonoApp({ services }, (app) => {
+    usersRoutes(app);
+    healthRoutes(app);
+  });
+
+export type AppHono = Hono<{ Bindings: InferRequestServices<typeof createApplication> }>;
+
+if (import.meta.main) {
+  const app = createApplication();
+  serve({ fetch: app.fetch, port: Number(process.env.PORT ?? 3000) }, (info) => {
+    console.log(`Listening on http://${info.address}:${info.port}/`);
+  });
+}
+```
+
+Route files import only the application type:
+
+```ts
+// routes.ts — health route excerpt
+import type { AppHono } from "./main.ts";
+
+export const healthRoutes = (app: AppHono) => {
+  app.get("/health", async (c) => {
+    const result = await c.env.health.check();
+    return result.match(
+      (health) => c.json(health),
+      () => c.json({ error: "Health unavailable" }, 503),
+    );
+  });
+};
+```
+
+The type-only import adds no runtime dependency on the bootstrap. `InferRequestServices`
+accepts the factory or its returned application and infers a readonly view of all registered
+services by default, or only the explicit `bindings` selection. Routes do not repeat service tokens and need no global augmentation.
+This helper describes `createHonoApp` bindings in `c.env`; `createHonoServices` middleware
+continues to infer its per-route selection in `c.var.services`.
+
+Start the example with `pnpm dev` from `examples/hono`. Tests import `createApplication`
+without starting the Node server because startup is guarded by `import.meta.main`.
+
 ## Lifecycle
 
 - `fetch(request)` serves requests using one shared root and a fresh child scope per response.
@@ -79,11 +161,12 @@ and `notFound` on the supplied Hono instance as usual.
   composite causes that cannot be represented by Result may reject with ResultTaskCauseError,
   following `ResultTask.runResult` semantics.
 
-The application type is `HonoApplication<CloseError>`. `createHonoApp` instantiates it as
-`HonoApplication<ServiceScopeError<R>>`: handle the `close()` `Err` case for typed release
-failures.
+The application type is `HonoApplication<CloseError, RequestServices>`. The second parameter
+defaults to `object`, preserving `HonoApplication<CloseError>`. `createHonoApp` retains both
+`ServiceScopeError<R>` and the selected bindings: handle the `close()` `Err` case for typed
+release failures. Service type metadata exists only in the declarations, not at runtime.
 
-Services are acquired on demand. Singleton providers live until root close; scoped providers live
+Selected services are acquired before each handler. Singleton providers live until root close; scoped providers live
 until their response is consumed, canceled or fails. A returned Response does not mean its body
 has finished. Consume or cancel every response in tests. `close` waits for active consumers:
 persistent streams must be finished or canceled before waiting for shutdown.

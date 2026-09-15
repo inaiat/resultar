@@ -1,7 +1,7 @@
 import { ResultTask } from "resultar";
 import { expect, test } from "vite-plus/test";
 
-import { createModule } from "../src/advanced.js";
+import { createModule } from "../src/index.js";
 
 interface Database {
   readonly health: () => ResultTask<string>;

@@ -28,5 +28,5 @@
       }
     ]
   },
-  "include": ["src/app.ts", "src/services.ts", "src/main.ts", "scripts/smoke.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts"]
 }

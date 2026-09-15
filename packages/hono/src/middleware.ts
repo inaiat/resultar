@@ -1,7 +1,11 @@
 import type { Context, Env, MiddlewareHandler } from "hono";
 import { ResultTask, type Result } from "resultar";
-import type { ServiceModule } from "resultar-di";
-import type { HttpServiceSelection, ServiceGraph, ServiceScopeError } from "resultar-di/advanced";
+import type {
+  ServiceModule,
+  HttpServiceSelection,
+  ServiceGraph,
+  ServiceScopeError,
+} from "resultar-di";
 
 export interface HonoServices<S extends object, R, G extends ServiceGraph> {
   readonly middleware: <
@@ -9,7 +13,7 @@ export interface HonoServices<S extends object, R, G extends ServiceGraph> {
     Local extends object = Record<never, never>,
     Environment extends Env = Env,
   >(
-    keys: HttpServiceSelection<S & NoInfer<Local>, R, G, Keys>,
+    keys: Keys & HttpServiceSelection<S & NoInfer<Local>, R, G, Keys>,
     options?: {
       readonly locals?: ((context: Context<Environment>) => Local | Promise<Local>) &
         (Extract<keyof NoInfer<Local>, keyof S> extends never

@@ -117,7 +117,7 @@ type DependencyParameter<
     ? { readonly dependencyParameterRequired: Keys[number] }
     : unknown;
 
-type RegisterSync<Services extends object, E, R, G extends Graph, Primary extends boolean> = <
+type RegisterSync<Services extends object, E, R, G extends Graph> = <
   const Name extends string,
   const Keys extends readonly string[],
   Create extends (services: Readonly<Pick<Services, Keys[number] & keyof Services>>) => unknown,
@@ -129,15 +129,14 @@ type RegisterSync<Services extends object, E, R, G extends Graph, Primary extend
     ((
       services: Readonly<Pick<Services, Keys[number] & keyof Services>>,
     ) => SyncValue<ReturnType<Create>>),
-) => ModuleFor<
+) => ServiceModule<
   Services & Readonly<Record<Name, ReturnType<Create>>>,
   E,
   R,
-  G & Record<Name, Entry<never, never, Keys[number]>>,
-  Primary
+  G & Record<Name, Entry<never, never, Keys[number]>>
 >;
 
-type RegisterClass<Services extends object, E, R, G extends Graph, Primary extends boolean> = <
+type RegisterClass<Services extends object, E, R, G extends Graph> = <
   Self,
   const Identifier extends string,
   ServiceError = never,
@@ -147,22 +146,20 @@ type RegisterClass<Services extends object, E, R, G extends Graph, Primary exten
     CheckRequirements<NoInfer<ServiceR>, Services> & {
       readonly identifier: Identifier & NewName<Services, Identifier>;
     },
-) => ModuleFor<
+) => ServiceModule<
   Services & Readonly<Record<Identifier, Self>>,
   E | ServiceError,
   R | ServiceR,
-  G & Record<Identifier, Entry<ServiceError, ServiceR, never>>,
-  Primary
+  G & Record<Identifier, Entry<ServiceError, ServiceR, never>>
 >;
 
-type RegisterLifetime<
-  Services extends object,
+type RegisterLifetime<Services extends object, E, R, G extends Graph> = RegisterSync<
+  Services,
   E,
   R,
-  G extends Graph,
-  Primary extends boolean,
-> = (Primary extends true ? unknown : RegisterSync<Services, E, R, G, Primary>) &
-  RegisterClass<Services, E, R, G, Primary>;
+  G
+> &
+  RegisterClass<Services, E, R, G>;
 
 type UseTask<Services extends object, E, R, G extends Graph> = <
   const Keys extends readonly KeysOf<Services>[],
@@ -231,7 +228,6 @@ export interface ServiceModule<
   E = never,
   R = never,
   G extends Graph = Graph,
-  Primary extends boolean = false,
 > {
   /** Acquires a Fetch application with one owned root and a fresh scope per response. */
   readonly http: <const Keys extends readonly KeysOf<Services>[]>(
@@ -252,32 +248,31 @@ export interface ServiceModule<
 
   /** Combines immutable modules; duplicate names are rejected. */
   readonly merge: <Other extends object, OtherE, OtherR, OtherG extends Graph>(
-    module: ModuleFor<Other, OtherE, OtherR, OtherG, Primary> &
+    module: ServiceModule<Other, OtherE, OtherR, OtherG> &
       (Extract<keyof Services, keyof Other> extends never
         ? unknown
         : { readonly duplicateServices: Extract<keyof Services, keyof Other> }),
-  ) => ModuleFor<Services & Other, E | OtherE, R | OtherR, G & OtherG, Primary>;
+  ) => ServiceModule<Services & Other, E | OtherE, R | OtherR, G & OtherG>;
 
   /** Shares an externally owned value across all scopes. The module never disposes it. */
   readonly value: <const Name extends string, A>(
     name: Name & NewName<Services, Name>,
     value: A,
-  ) => ModuleFor<
+  ) => ServiceModule<
     Services & Readonly<Record<Name, A>>,
     E,
     R,
-    G & Record<Name, Entry<never, never, never>>,
-    Primary
+    G & Record<Name, Entry<never, never, never>>
   >;
 
   /** Creates once per root. Token tasks retain their finalizers until root close. */
-  readonly singleton: RegisterLifetime<Services, E, R, G, Primary>;
+  readonly singleton: RegisterLifetime<Services, E, R, G>;
 
   /** Creates once per child. Token tasks retain their finalizers until child close. */
-  readonly scoped: RegisterLifetime<Services, E, R, G, Primary>;
+  readonly scoped: RegisterLifetime<Services, E, R, G>;
 
   /** Creates on every resolution. Token finalizers belong to the requesting scope. */
-  readonly transient: RegisterLifetime<Services, E, R, G, Primary>;
+  readonly transient: RegisterLifetime<Services, E, R, G>;
 
   /** Initializes on demand with a ResultTask. Defaults to `scoped`. */
   readonly task: <
@@ -293,12 +288,11 @@ export interface ServiceModule<
       services: Readonly<Pick<Services, Keys[number] & keyof Services>>,
     ) => ResultTask<A, TaskError, TaskR>,
     options?: ServiceRegistrationOptions,
-  ) => ModuleFor<
+  ) => ServiceModule<
     Services & Readonly<Record<Name, A>>,
     E | TaskError,
     R | TaskR,
-    G & Record<Name, Entry<TaskError, TaskR, Keys[number]>>,
-    Primary
+    G & Record<Name, Entry<TaskError, TaskR, Keys[number]>>
   >;
 
   /** Acquires on demand and registers release with the selected lifetime owner. */
@@ -323,7 +317,7 @@ export interface ServiceModule<
         services: Readonly<Pick<Services, Keys[number] & keyof Services>>,
       ) => ResultTask<void, ReleaseError, ReleaseR>;
     },
-  ) => ModuleFor<
+  ) => ServiceModule<
     Services & Readonly<Record<Name, A>>,
     E | AcquireError,
     R | AcquireR | WithoutScope<ReleaseR> | ResultTaskScope<ReleaseError | ScopeError<ReleaseR>>,
@@ -335,20 +329,18 @@ export interface ServiceModule<
           AcquireR | WithoutScope<ReleaseR> | ResultTaskScope<ReleaseError | ScopeError<ReleaseR>>,
           Keys[number]
         >
-      >,
-    Primary
+      >
   >;
 
   /** Returns a new module with a typed, externally owned replacement. */
   readonly override: <const Name extends KeysOf<Services>>(
     name: Name & LiteralName<Name>,
     value: Services[Name],
-  ) => ModuleFor<
+  ) => ServiceModule<
     Services,
     SelectedE<Omit<G, Name>, Extract<keyof G, string>, E>,
     SelectedR<Omit<G, Name>, Extract<keyof G, string>, R>,
-    Omit<G, Name> & Record<Name, Entry<never, never, never>>,
-    Primary
+    Omit<G, Name> & Record<Name, Entry<never, never, never>>
   >;
 
   /** Runs one isolated root and closes all of its resources when the callback finishes. */
@@ -357,24 +349,6 @@ export interface ServiceModule<
   /** Opens a long-lived root. Call `scope.close()` during application shutdown. */
   readonly scope: () => ServiceScope<Services, E, R, G>;
 }
-
-/** Token-first public surface; fluent operations preserve the selected API. */
-export type ModuleFor<
-  S extends object,
-  E,
-  R,
-  G extends Graph,
-  Primary extends boolean,
-> = Primary extends true
-  ? Omit<ServiceModule<S, E, R, G, Primary>, "task" | "resource">
-  : ServiceModule<S, E, R, G, Primary>;
-
-export type PrimaryServiceModule<
-  S extends object,
-  E = never,
-  R = never,
-  G extends Graph = Graph,
-> = ModuleFor<S, E, R, G, true>;
 
 type RuntimeServices = Readonly<Record<string, unknown>>;
 type RuntimeTask<A = unknown, E = unknown, R = never> = ResultTask<A, E, R>;
@@ -869,9 +843,7 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
     return ResultTask.scoped(task) as never;
   }) as ServiceModule<Services, E, R, G>["use"];
 
-  const registerLifetime = (
-    lifetime: ServiceLifetime,
-  ): RegisterLifetime<Services, E, R, G, false> => {
+  const registerLifetime = (lifetime: ServiceLifetime): RegisterLifetime<Services, E, R, G> => {
     const registerService = function registerService(
       nameOrService: unknown,
       dependencies?: readonly string[],
@@ -916,7 +888,7 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
       );
     };
 
-    return registerService as unknown as RegisterLifetime<Services, E, R, G, false>;
+    return registerService as unknown as RegisterLifetime<Services, E, R, G>;
   };
 
   const module: ServiceModule<Services, E, R, G> = {
@@ -1127,15 +1099,19 @@ export const useServiceAccess = <A, E>(
     }),
   );
 
-/** Checked selection for framework adapters using the public scope API. */
+type HttpRequirements<S extends object, R, G extends Graph, Names extends KeysOf<S>> = [
+  RemainingRequirements<SelectedR<G, Names, R>, S>,
+] extends [never]
+  ? unknown
+  : { readonly missingServices: RemainingRequirements<SelectedR<G, Names, R>, S> };
+
+/** Checked selection for framework adapters; undefined validates all registered services. */
 export type HttpServiceSelection<
   S extends object,
   R,
   G extends Graph,
-  Keys extends readonly KeysOf<S>[],
-> = Keys &
-  LiteralKeys<Keys> &
-  ([RemainingRequirements<SelectedR<G, Keys[number], R>, S>] extends [never]
-    ? unknown
-    : { readonly missingServices: RemainingRequirements<SelectedR<G, Keys[number], R>, S> });
+  Keys extends readonly KeysOf<S>[] | undefined,
+> = [Keys] extends [readonly KeysOf<S>[]]
+  ? Keys & LiteralKeys<Keys> & HttpRequirements<S, R, G, Keys[number]>
+  : HttpRequirements<S, R, G, KeysOf<S>>;
 export type { Graph as ServiceGraph, ScopeError as ServiceScopeError };

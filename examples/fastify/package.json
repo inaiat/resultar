@@ -5,14 +5,13 @@
   "scripts": {
     "build:deps": "pnpm --filter resultar build && pnpm --filter resultar-di build && pnpm --filter resultar-fastify build && pnpm --filter resultar-check build",
     "check": "node ../../packages/check/dist/cli.js",
-    "start": "pnpm run build:deps && node --import tsx src/main.ts",
+    "dev": "pnpm run build:deps && node --import tsx src/main.ts",
     "smoke": "pnpm run build:deps && pnpm run check && node --import tsx scripts/smoke.ts"
   },
   "dependencies": {
     "@fastify/type-provider-typebox": "6.1.0",
     "fastify": "catalog:",
     "resultar": "workspace:*",
-    "resultar-di": "workspace:*",
     "resultar-fastify": "workspace:*",
     "typebox": "catalog:"
   },

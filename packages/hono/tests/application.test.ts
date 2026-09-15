@@ -2,7 +2,58 @@
 import { expect, expectTypeOf, test } from "vite-plus/test";
 import { ResultTask, type Result } from "resultar";
 import { createModule, service, resource } from "resultar-di";
-import { createHonoApp } from "../src/index.js";
+import type { Hono } from "hono";
+import { createHonoApp, type HonoApplication, type InferRequestServices } from "../src/index.js";
+
+test("infers selected readonly services from applications and factories for separate routes", async () => {
+  const services = createModule().value("answer", 42).value("hidden", "internal");
+  const createApplication = (module = services) =>
+    createHonoApp({ services: module, bindings: ["answer"] }, (router) => {
+      routes(router);
+    });
+  type Bindings = InferRequestServices<typeof createApplication>;
+  const routes = (router: Hono<{ Bindings: Bindings }>) => {
+    router.get("/", (c) => c.json({ answer: c.env.answer }));
+  };
+  const app = createApplication();
+  expectTypeOf<Bindings>().toEqualTypeOf<{ readonly answer: number }>();
+  expectTypeOf<InferRequestServices<typeof app>>().toEqualTypeOf<Bindings>();
+  expectTypeOf<
+    InferRequestServices<ReturnType<typeof createApplication>>
+  >().toEqualTypeOf<Bindings>();
+  expectTypeOf(app).toExtend<HonoApplication>();
+  expectTypeOf<ReturnType<typeof app.close>>().toEqualTypeOf<Promise<Result<void, never>>>();
+  expect(app).not.toHaveProperty("serviceTypes");
+  expect(await (await app.request("/")).json()).toEqual({ answer: 42 });
+  await app.close();
+});
+
+const checkInferredTypes = () => {
+  const createApplication = (answer: number) =>
+    createHonoApp(
+      { services: createModule().value("answer", answer), bindings: ["answer"] },
+      () => {
+        /* Type-only configuration. */
+      },
+    );
+  type Bindings = InferRequestServices<typeof createApplication>;
+  expectTypeOf<Bindings>().toEqualTypeOf<{ readonly answer: number }>();
+  const bindings: Bindings = { answer: 42 };
+  expectTypeOf(bindings).toEqualTypeOf<Bindings>();
+  // @ts-expect-error Bindings preserve the readonly injected service view.
+  bindings.answer = 0;
+  // @ts-expect-error Only selected services are exposed.
+  expectTypeOf(bindings.hidden).toBeUnknown();
+  const empty = createHonoApp(
+    { services: createModule().value("answer", 42), bindings: [] },
+    () => {
+      /* Type-only configuration. */
+    },
+  );
+  expectTypeOf<keyof InferRequestServices<typeof empty>>().toEqualTypeOf<never>();
+  expectTypeOf<InferRequestServices<number>>().toEqualTypeOf<never>();
+};
+expectTypeOf(checkInferredTypes).toBeFunction();
 
 const build = () => {
   const events: string[] = [];

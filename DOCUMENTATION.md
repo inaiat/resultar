@@ -5,7 +5,7 @@ file when you need the complete API map, larger examples, and repository workflo
 
 Resultar is a small TypeScript library for explicit error handling.
 
-It gives you two primitives:
+Its eager value primitives are:
 
 ```ts
 Result<T, E>
@@ -103,6 +103,8 @@ If you already know Result-style error handling, jump to:
 
 | If you need to... | Start here | Main APIs |
 | --- | --- | --- |
+| Declare service dependencies | [Lazy tasks and service requirements](#lazy-tasks-and-service-requirements) | `ResultTask.service`, `Service.require`, `Service`, `requires` |
+| Connect services to HTTP routes | [Services in Fastify and Hono](#services-in-fastify-and-hono) | `createFastifyApp`, `createHonoApp`, `InferRequestServices` |
 | Create success or failure values | [Creating Results](#creating-results) | `ok`, `err`, `unit`, `okAsync`, `errAsync`, `unitAsync` |
 | Model expected domain failures | [Tagged Errors](#tagged-errors) | `createTaggedError`, `.err`, `StrictResult` |
 | Model lightweight tagged unions | [Tagged Enums](#tagged-enums) | `TaggedEnum`, `taggedEnum` |
@@ -167,6 +169,89 @@ StrictResultAsync<T, E extends Error>
 
 Those aliases are still Resultar results, but they document that failures are real `Error`
 instances with `message`, `cause`, stack traces, and structured metadata.
+
+## Lazy tasks and service requirements
+
+`ResultTask<T, E, R>` represents lazy work with a success type, expected errors, and required
+services. `ResultTask.service<Contract>()('name')` infers the literal name without repeating it in
+type arguments. The direct `ResultTask.service<Contract, 'name'>('name')` form remains supported.
+
+```ts
+import { ResultTask } from 'resultar'
+import { createModule, Service } from 'resultar-di'
+
+const Config = Service.require<{ greeting: string }>()('config')
+class Greeting extends Service('greeting', {
+  requires: { config: Config },
+  make: ({ config }) => ResultTask.sync(() => ({
+    text: (name: string) => `${config.greeting}, ${name}`,
+  })),
+}) {}
+
+const services = createModule().value('config', { greeting: 'Hello' }).scoped(Greeting)
+```
+
+`Service` and `Service.require` are exported from `resultar-di`. With `requires`, the factory returns a
+ResultTask; without it, `make: ResultTask.gen(...)` can use `yield* Service.require<Contract>()('name')`
+inline. Both preserve lazy construction and infer dependencies. Declaring a requirement does not
+register its provider. `Result` handles values and has no service lookup API.
+
+See the [core task reference](packages/resultar/README.md#lazy-workflows-with-resulttask) and
+[DI service guide](packages/di/README.md#class-services-and-explicit-requirements) for ownership,
+typed failures, token identity and named provisioning. Fastify and Hono use this same DI mechanism.
+
+## Services in Fastify and Hono
+
+Both adapters use the same DI module. `resultar-di` has one entry point for class/token
+registration, named factories and framework adapter helpers. Replace imports from the removed
+`resultar-di/advanced` subpath with `resultar-di` when migrating.
+
+Application code can import `createModule`, `Service`, `service` and `resource` directly from
+`resultar-fastify` or `resultar-hono`. Core operators and result types still come from `resultar`.
+Framework adapter helpers such as `withProvider` and `useServiceAccess` come from `resultar-di`.
+
+The runnable [Fastify](examples/fastify/README.md) and [Hono](examples/hono/README.md) examples
+have matching, self-contained layouts:
+
+| File | Responsibility |
+| --- | --- |
+| `services.ts` | `Cache`, `UsersRepository`, `Users`, function-based `Health` and `createServices()` |
+| `routes.ts` | Native route handlers, input/response schemas where used, and explicit error mapping |
+| `main.ts` | `createApplication()`, optional `bindings`, inferred route types and server startup |
+
+`Users` declares `requires: { repository: UsersRepository }`. The repository declares
+`requires: { cache: Cache }`. Business methods return `StrictResultAsync` and use `Result.gen`
+to compose repository results. The cache and repository are singletons; users and health are scoped.
+Declaring `requires` does not register a provider: `createServices` registers each service explicitly.
+
+Both applications omit `bindings`, so the cache, repository, users and health services are
+available in the request view. Pass `bindings: ["health", "users"]` to expose only those two,
+or `bindings: []` to select none. All selected services are resolved before the handler;
+omission does not mean property-based lazy resolution. Fastify infers the declaration in `main.ts`:
+
+```ts
+declare module "fastify" {
+  interface FastifyRequest {
+    services: InferRequestServices<typeof createApplication>;
+  }
+}
+```
+
+Hono exports a router type from `main.ts`:
+
+```ts
+export type AppHono = Hono<{
+  Bindings: InferRequestServices<typeof createApplication>;
+}>;
+```
+
+Hono route files use `import type { AppHono } from "./main.ts"`. Import `InferRequestServices`
+from the corresponding adapter, and `Hono` as a type from `hono`. The types follow the module automatically, or the explicit `bindings` selection when supplied. Fastify handlers read `request.services`; `createHonoApp` handlers read `c.env`.
+For an existing Hono router, `createHonoServices` middleware instead infers `c.var.services` per route.
+
+Run `pnpm dev` inside either example directory. Both use `PORT` (default 3000); the
+`import.meta.main` guard allows tests to import the factory without starting the server.
+The examples use an in-memory repository; see the package guides for owned resources and shutdown.
 
 ## Creating Results
 

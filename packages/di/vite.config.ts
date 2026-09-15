@@ -17,7 +17,7 @@ const config: UserConfig = defineConfig({
     clean: true,
     dts: true,
     deps: { onlyBundle: false },
-    entry: ["src/index.ts", "src/advanced.ts"],
+    entry: ["src/index.ts"],
     format: ["esm"],
     outExtensions: () => ({ dts: ".d.ts", js: ".js" }),
     sourcemap: true,

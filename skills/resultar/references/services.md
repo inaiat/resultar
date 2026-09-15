@@ -1,9 +1,22 @@
 # Typed services and HTTP scopes
 
 Read the installed `resultar-di/README.md`, `resultar-hono/README.md` and `resultar-fastify/README.md` for the exact companion
-versions. The primary DI exports are `createModule`, `service`, and `resource`; class tokens and
-named factory overloads belong to `resultar-di/advanced`.
+versions. The application DI helpers are `createModule`, `service`, `Service`, and `resource`.
+Named factory overloads and low-level adapter access use the same `resultar-di` entry point.
+The former `/advanced` subpath has been removed; migrate existing imports to `resultar-di`.
 
+- Use `ResultTask.service<Contract>()('name')` in core or `Service.require<Contract>()('name')`
+  in DI to infer the literal identifier. The direct core overload remains supported; do not invent
+  `Result.service`. Service requirements are represented by `R` in `ResultTask<T, E, R>`.
+- Declare class services with `Service('name', { requires: { alias: Token }, make: ({ alias }) =>
+  ResultTask.sync(...) })`. The readonly dependency object is inferred; `make` must return a
+  ResultTask, never a plain object or Promise. Use `ResultTask.gen` for initialization with more
+  steps. Without `requires`, pass a task directly as `make` and yield requirements inline or by token.
+  Both forms support `Service<Contract>()('name', definition)`.
+- Keep provider registration explicit. `requires` does not acquire or register dependencies.
+  Inline tokens resolve by name in DI or `provideServices`; core `provideService` supplies an exact
+  token binding plus a named fallback. Reuse the same token for exact identity when identifiers
+  collide; separately created tags can resolve the named fallback.
 - Register a service token with `.singleton(Token)`, `.scoped(Token)`, or `.transient(Token)`.
   Dependency objects are inferred from tokens. Use `service(name, task)` for asynchronous
   initialization; an async function passed as an ordinary factory is a defect in the contract.
@@ -11,10 +24,26 @@ named factory overloads belong to `resultar-di/advanced`.
   live resource from a completed scope returns a resource whose finalizer has already run.
 - Use `createHonoApp` for Hono routes. Ordinary `await` and `result.match` inside a route are valid;
   generator-specific restrictions do not apply to a route body.
+  Export `type AppHono = Hono<{ Bindings: InferRequestServices<typeof createApplication> }>`
+  from `main.ts`, using `InferRequestServices` from `resultar-hono`. Separate route files import
+  `AppHono` with `import type` and receive `(app: AppHono)`. Bindings follow the application
+  selection without repeating service tokens.
+- `bindings` is optional in `createHonoApp`, `createFastifyApp` and `createFastifyPlugin`.
+  Omission selects all registrations; an explicit list restricts the view and `[]` selects none.
+  Selected services resolve before the handler, preserving each lifetime and resource ownership.
+  Unused default-selected services can still fail acquisition and prevent the handler.
+  Fastify `appBindings` continues to default to `[]`; locals satisfy requirements without being
+  automatically exposed as registrations. The Hono middleware API still takes explicit keys.
 - Use `createHonoServices(module).middleware(keys, { locals })` to add services to an existing Hono
   router. Inline route middleware infers `c.var.services` while preserving `c.env` and native RPC
   responses. Install one services middleware per request; consume/cancel responses before `close()`.
-- Use `createFastifyPlugin({ services, bindings, appBindings?, locals? })` for native Fastify routes.
+- Use `createFastifyApp({ services, bindings? }, configure)` for a new native Fastify application,
+  or `createFastifyPlugin({ services, bindings?, appBindings?, locals? })` for an existing server.
+  Derive `FastifyRequest.services` once with
+  `InferRequestServices<typeof createApplication>` directly in `main.ts` or in a declaration
+  file included by TypeScript. `InferAppServices` also accepts the application return type. Both follow the
+  selected bindings or custom exposed views; no global types or runtime metadata are installed
+  by the adapter. Native routes and autoload do not need wrappers.
   `app.services` contains the selected startup singletons; `request.services` is available from
   `preHandler` through response completion. Register authentication providing locals earlier.
   Infer decorators with `InferAppServices` / `InferRequestServices`; augment Fastify in the application
@@ -37,3 +66,23 @@ named factory overloads belong to `resultar-di/advanced`.
 For a complete runnable pattern, see the workspace `examples/hono/` and `examples/resultar/`
 application lifecycle examples. The distributed guide includes the checked core recipe at
 `examples/workflow.mjs`; use the published declarations to adapt companion integrations.
+
+## Framework DI exports
+
+`resultar-fastify` and `resultar-hono` reexport the application DI helpers: `createModule`, `Service`,
+`service`, `resource`, plus `HttpApplication`, `ServiceClass`, `ServiceLifetime`, `ServiceModule`
+and `ServiceScope` types. In framework-specific code, import these from the adapter together
+with its integration helpers. Core APIs such as `ResultTask` still come from `resultar`.
+Keep direct `resultar-di` imports and dependencies in framework-independent shared code and
+for framework adapter helpers such as `withProvider` and `useServiceAccess`. Check the installed adapter exports before using this convenience
+with older versions.
+
+## Runnable HTTP examples
+
+The maintained Fastify and Hono examples each contain their own `services.ts`, `routes.ts`
+and `main.ts`. `services.ts` declares `Cache`, `UsersRepository` and `Users` classes,
+function-based `Health`, and the `createServices` module factory. `main.ts` omits
+`bindings` and owns framework typing and startup. The default request view includes all
+registered services, including the cache and repository. Do not introduce
+a shared package, separate `users.ts` or an extra `app.ts` for these small examples.
+Start either example with `pnpm dev` from its directory; `PORT` defaults to 3000.

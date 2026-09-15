@@ -1,7 +1,12 @@
 import { ResultTask } from "resultar";
 import { describe, expect, it } from "vite-plus/test";
-import { createModule, inspectModule, useServiceAccess, withProvider } from "../src/advanced.js";
-import { service } from "../src/index.js";
+import {
+  createModule,
+  inspectModule,
+  useServiceAccess,
+  withProvider,
+  service,
+} from "../src/index.js";
 
 describe("framework service access", () => {
   it("keeps factories lazy, caches by scope and recreates transients on every read", async () => {

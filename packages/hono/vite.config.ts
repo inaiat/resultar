@@ -1,4 +1,5 @@
 import { defineConfig, type UserConfig } from "vite-plus";
+import { fileURLToPath } from "node:url";
 
 const ignorePatterns = [
   "node_modules",
@@ -15,7 +16,8 @@ const config: UserConfig = defineConfig({
   staged: { "*": "vp check --fix" },
   pack: {
     clean: true,
-    dts: true,
+    // Declaration isolation applies to package exports, not the imported example applications.
+    dts: { compilerOptions: { isolatedDeclarations: true } },
     deps: { onlyBundle: false },
     entry: ["src/index.ts"],
     format: ["esm"],
@@ -93,6 +95,7 @@ const config: UserConfig = defineConfig({
     ],
   },
   test: {
+    alias: { "resultar-hono": fileURLToPath(new URL("src/index.ts", import.meta.url)) },
     coverage: {
       exclude: ["node_modules/", "dist/", "tests/", "src/index.ts"],
       reporter: ["text", "json", "html", "lcov"],

@@ -1,17 +1,14 @@
-import { createModule as createAdvancedModule, type PrimaryServiceModule } from "./module.js";
-
-export const createModule = (): PrimaryServiceModule<object, never, never, Record<never, never>> =>
-  createAdvancedModule() as unknown as PrimaryServiceModule<
-    object,
-    never,
-    never,
-    Record<never, never>
-  >;
+export { createModule, inspectModule, withProvider, useServiceAccess } from "./module.js";
+export { ServiceAccessError, type ServiceAccess, type ServiceProvider } from "./access.js";
 export { service, resource, Service } from "./service.js";
 export type { ServiceClass } from "./service.js";
 export type {
   HttpApplication,
   ServiceLifetime,
-  PrimaryServiceModule as ServiceModule,
+  ServiceModule,
+  ServiceRegistrationOptions,
   ServiceScope,
+  ServiceGraph,
+  ServiceScopeError,
+  HttpServiceSelection,
 } from "./module.js";
