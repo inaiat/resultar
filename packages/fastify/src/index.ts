@@ -397,7 +397,7 @@ export function createFastifyPlugin<const Options extends FastifyServicesOptions
                   .andThen((session) => session.ready)
                   .andThen((services) =>
                     tryResult(() => {
-                      request.setDecorator("services", services);
+                      (request as unknown as { services: unknown }).services = services;
                       state.exposed = true;
                     }, preserveNativeError),
                   )
