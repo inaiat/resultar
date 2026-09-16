@@ -9,9 +9,10 @@ The former `/advanced` subpath has been removed; migrate existing imports to `re
   in DI to infer the literal identifier. The direct core overload remains supported; do not invent
   `Result.service`. Service requirements are represented by `R` in `ResultTask<T, E, R>`.
 - Declare class services with `Service('name', { requires: { alias: Token }, make: ({ alias }) =>
-  ResultTask.sync(...) })`. The readonly dependency object is inferred; `make` must return a
-  ResultTask, never a plain object or Promise. Use `ResultTask.gen` for initialization with more
-  steps. Without `requires`, pass a task directly as `make` and yield requirements inline or by token.
+({ ... }) })`. The readonly dependency object is inferred; `make` can return the service
+  object directly or a ResultTask. Factories remain lazy and synchronous values add no typed
+  initialization errors. Promises and thenables are rejected. Use `ResultTask.gen` for
+  initialization with typed failures, additional requirements or owned resources. Without `requires`, pass a task directly as `make` and yield requirements inline or by token.
   Both forms support `Service<Contract>()('name', definition)`.
 - Keep provider registration explicit. `requires` does not acquire or register dependencies.
   Inline tokens resolve by name in DI or `provideServices`; core `provideService` supplies an exact
@@ -34,6 +35,12 @@ The former `/advanced` subpath has been removed; migrate existing imports to `re
   Unused default-selected services can still fail acquisition and prevent the handler.
   Fastify `appBindings` continues to default to `[]`; locals satisfy requirements without being
   automatically exposed as registrations. The Hono middleware API still takes explicit keys.
+- `startup` is optional in the native application adapters and accepts a `ResultTask<void, E, R>`
+  whose requirements are checked against the module. Fastify runs it in `onReady` after plugin
+  loading and also accepts `(app: FastifyInstance) => ResultTask<void, E, R>`. Hono runs it on
+  `ready()` or before the first request. Direct resources live until close and release before
+  singleton dependencies; scoped/transient dependencies are rejected. A failure rolls back the
+  application root, preserving cleanup causes. Hono close cancels pending startup cooperatively.
 - Use `createHonoServices(module).middleware(keys, { locals })` to add services to an existing Hono
   router. Inline route middleware infers `c.var.services` while preserving `c.env` and native RPC
   responses. Install one services middleware per request; consume/cancel responses before `close()`.

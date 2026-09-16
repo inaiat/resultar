@@ -31,6 +31,7 @@ import { Hono } from "hono";
 import { ResultTask } from "resultar";
 import { createModule, Service, service, resource, type ServiceLifetime } from "resultar-hono";
 let released = 0;
+let started = 0;
 const Base = service("base", {}, () => 40);
 class Answer extends Service("answer", {
  requires: { base: Base },
@@ -42,7 +43,11 @@ const Lease = resource("lease", {
 });
 const lifetime: ServiceLifetime = "singleton";
 const services = createModule().singleton(Base)[lifetime](Answer).scoped(Lease);
-const createApplication = () => createHonoApp({ services }, (router) => {
+const startup = ResultTask.gen(function* smokeStartup() {
+ yield* Answer;
+ started += 1;
+});
+const createApplication = () => createHonoApp({ services, startup }, (router) => {
  routes(router);
 });
 const routes = (router: Hono<{ Bindings: InferRequestServices<typeof createApplication> }>) => {
@@ -53,6 +58,8 @@ const routes = (router: Hono<{ Bindings: InferRequestServices<typeof createAppli
 };
 const app = createApplication();
 try {
+ const ready = await app.ready();
+ if (ready.isErr() || started !== 1) throw new Error("Packed startup task did not run once");
  const response = await app.request("/");
  if (await response.text() !== "42") throw new Error("Unexpected packed response");
 } finally { const closed = await app.close(); if (closed.isErr()) throw closed.error; }

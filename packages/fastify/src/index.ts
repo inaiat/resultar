@@ -19,9 +19,12 @@ import {
 import {
   useServiceAccess,
   inspectModule,
+  startServiceTask,
+  type ServiceTaskSession,
   type ServiceScope,
   type ServiceAccess,
   type HttpServiceSelection,
+  type ServiceTaskRequirements,
 } from "resultar-di";
 
 import { hasFailure, startSession, type RuntimeTask, type ServiceSession } from "./session.js";
@@ -33,6 +36,7 @@ export type {
   ServiceLifetime,
   ServiceModule,
   ServiceScope,
+  ServiceTaskRequirements,
 } from "resultar-di";
 
 export interface FastifyServicesPlugin<
@@ -112,21 +116,23 @@ const preserveNativeError = (error: unknown): unknown => error;
 function closeApplication(
   root: RuntimeScope,
   session?: ServiceSession,
+  startup?: ServiceTaskSession,
 ): ResultAsync<void, AggregateError> {
   // Acquisition failures are reported through ready; singleton finalizers belong to the root.
-  const finished: ResultAsync<unknown, never> = session?.finish() ?? unitAsync();
-  return finished
+  const errors: unknown[] = [];
+  return (startup?.close() ?? unitAsync())
+    .orElse((error) => {
+      errors.push(error);
+      return unit();
+    })
+    .andThen(() => session?.finish() ?? unitAsync())
     .andThen(() => fromSafePromise(ResultTask.runExit(root.close())))
-    .andThen((exit) =>
-      exit._tag === "Failure"
-        ? err(
-            new AggregateError(
-              [new ResultTaskCauseError(exit.cause)],
-              "Application service cleanup failed",
-            ),
-          )
-        : unit(),
-    );
+    .andThen((exit) => {
+      if (exit._tag === "Failure") errors.push(new ResultTaskCauseError(exit.cause));
+      return errors.length > 0
+        ? err(new AggregateError(errors, "Application service cleanup failed"))
+        : unit();
+    });
 }
 
 function finishRequest(state: RequestState): ResultAsync<void, never> {
@@ -171,6 +177,10 @@ export interface FastifyServicesOptions {
   /** Defaults to all registered services; [] selects none. Resolved before each handler. */
   readonly bindings?: readonly string[];
   readonly appBindings?: readonly string[];
+  /** A one-time application task, run in onReady after plugin loading. */
+  readonly startup?:
+    | ResultTask<void, unknown, unknown>
+    | ((app: FastifyInstance) => ResultTask<void, unknown, unknown>);
   readonly locals?: LocalsFactory;
   /** Framework facades can expose lazy services before validation. Defaults to preHandler. */
   readonly requestHook?: "onRequest" | "preHandler";
@@ -195,17 +205,35 @@ type ExplicitBindings<O> = Extract<RequestBindings<O>, readonly string[]>;
 type RequestServices<M, Keys> = Keys extends readonly string[]
   ? Readonly<Pick<ServicesOf<M>, Extract<Keys[number], keyof ServicesOf<M>>>>
   : Readonly<ServicesOf<M>>;
+type StartupTask<Startup> = Startup extends (...args: never[]) => infer Task ? Task : Startup;
+type StartupRequirements<O extends FastifyServicesOptions> = [
+  StartupTask<Exclude<O["startup"], undefined>>,
+] extends [never]
+  ? unknown
+  : StartupTask<Exclude<O["startup"], undefined>> extends ResultTask<
+        unknown,
+        unknown,
+        infer StartupR
+      >
+    ? ServiceTaskRequirements<
+        ServicesOf<O["services"]>,
+        StartupR,
+        ModuleInfo<O["services"]>["graph"],
+        ModuleInfo<O["services"]>["requirements"]
+      >
+    : unknown;
 type CheckedOptions<O extends FastifyServicesOptions> = {
   readonly bindings?: Selection<O["services"], LocalValues<O>, ExplicitBindings<O>>;
   readonly appBindings?: Selection<O["services"], Record<never, never>, AppBindings<O>>;
-} & (undefined extends RequestBindings<O>
-  ? HttpServiceSelection<
-      ServicesOf<O["services"]> & LocalValues<O>,
-      ModuleInfo<O["services"]>["requirements"],
-      ModuleInfo<O["services"]>["graph"],
-      undefined
-    >
-  : unknown) &
+} & StartupRequirements<O> &
+  (undefined extends RequestBindings<O>
+    ? HttpServiceSelection<
+        ServicesOf<O["services"]> & LocalValues<O>,
+        ModuleInfo<O["services"]>["requirements"],
+        ModuleInfo<O["services"]>["graph"],
+        undefined
+      >
+    : unknown) &
   ([ModuleInfo<O["services"]>] extends [never]
     ? { readonly invalidModule: "Expected a Resultar service module" }
     : unknown) &
@@ -257,13 +285,28 @@ export function createFastifyPlugin<const Options extends FastifyServicesOptions
     const requests = new WeakMap<FastifyRequest, RequestState>();
     const application: {
       session?: ServiceSession;
+      startup?: ServiceTaskSession;
       closing?: ResultAsync<void, AggregateError>;
       rolledBack?: boolean;
     } = {};
     const close = () => {
-      application.closing ??= closeApplication(root, application.session);
+      application.closing ??= closeApplication(root, application.session, application.startup);
       return application.closing;
     };
+    const rollback = (error: unknown) =>
+      close()
+        .mapErr((cleanupError) => {
+          application.rolledBack = true;
+          return new AggregateError(
+            [error, cleanupError],
+            "Service initialization and cleanup failed",
+            { cause: cleanupError },
+          );
+        })
+        .andThen(() => {
+          application.rolledBack = true;
+          return err(error);
+        });
     // Register ownership before awaiting providers, including Fastify plugin-timeout failures.
     app.addHook("onClose", async () => {
       if (application.rolledBack === true && options.rethrowRollbackOnClose === false) return;
@@ -293,6 +336,23 @@ export function createFastifyPlugin<const Options extends FastifyServicesOptions
               throw new Error("Fastify services closed during initialization");
             app.decorate("services", appServices);
             app.decorateRequest("services");
+
+            if (options.startup !== undefined)
+              app.addHook("onReady", async () => {
+                const startup = ResultTask.gen(function* initializeApplication() {
+                  const task =
+                    typeof options.startup === "function" ? options.startup(app) : options.startup;
+                  if (task !== undefined) yield* task;
+                });
+                application.startup = startServiceTask(
+                  (task) => root.useSingletons([], () => task as RuntimeTask),
+                  startup,
+                );
+                await application.startup.ready
+                  .orElse(rollback)
+                  .mapErr(options.mapError ?? preserveNativeError)
+                  .unwrapOrThrow();
+              });
 
             app.addHook(options.requestHook ?? "preHandler", async (request, reply) => {
               const state = attachRequest(request, reply);
@@ -359,22 +419,7 @@ export function createFastifyPlugin<const Options extends FastifyServicesOptions
             });
           }, preserveNativeError),
         )
-        .orElse((error) =>
-          // Rollback is awaited and its failure is retained alongside the initialization failure.
-          close()
-            .mapErr((cleanupError) => {
-              application.rolledBack = true;
-              return new AggregateError(
-                [error, cleanupError],
-                "Service initialization and cleanup failed",
-                { cause: cleanupError },
-              );
-            })
-            .andThen(() => {
-              application.rolledBack = true;
-              return err(error);
-            }),
-        )
+        .orElse(rollback)
         .mapErr(options.mapError ?? preserveNativeError)
         // Plugin registration deliberately rejects at the Fastify boundary.
         .unwrapOrThrow()

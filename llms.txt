@@ -19,8 +19,7 @@ The links below follow development on `main`; they are not a substitute for vers
 
 ## Packages
 
-- [resultar-di](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/README.md): typed composition, lifetimes, overrides.
-- [DI composition and framework adapters](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/ADVANCED.md): named registration, scope.fetch and provider access, all exported by resultar-di.
+- [resultar-di](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/README.md): services, typed composition, lifetimes, overrides, named registration and framework adapter APIs.
 - [resultar-hono](https://raw.githubusercontent.com/inaiat/resultar/main/packages/hono/README.md): Hono bindings, one scope per response, CloseError.
 - [resultar-fastify](https://raw.githubusercontent.com/inaiat/resultar/main/packages/fastify/README.md): native plugins, application/request services, cancellation and cleanup.
 - [resultar-request](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request/README.md) with [TypeBox](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request-typebox/README.md) and [Zod](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request-zod/README.md) adapters.
@@ -41,5 +40,5 @@ The links below follow development on `main`; they are not a substitute for vers
 
 ## Freshness rule
 
-Package READMEs and `packages/di/ADVANCED.md` override `DOCUMENTATION.md`; both override the
+Package READMEs override `DOCUMENTATION.md`; both override the
 skill; RFCs are design history. The installed `node_modules` types always win over any document.

@@ -192,17 +192,26 @@ test("rejects invalid factory shapes and returns as programmer defects", async (
   );
 });
 
-test.each([() => ({ value: 1 }), () => Promise.resolve(1)])(
-  "rejects a non-task factory return",
-  async (invalid) => {
-    // @ts-expect-error Factories must return ResultTask.
-    const Invalid = Service("invalid", { requires: {}, make: invalid });
-    const task = createModule()
-      .scoped(Invalid)
-      .use(["invalid"], ({ invalid: value }) => ResultTask.succeed(value));
-    expect(await ResultTask.runExit(task)).toMatchObject({
-      _tag: "Failure",
-      cause: { _tag: "Die", defect: { message: "Service make factory must return a ResultTask" } },
-    });
-  },
-);
+test.each([
+  () => Promise.resolve(1),
+  // eslint-disable-next-line unicorn/no-thenable -- Validate structural thenable rejection.
+  () => ({ then: Promise.resolve(1).then.bind(Promise.resolve(1)) }),
+  // eslint-disable-next-line unicorn/no-thenable -- Callable thenables must be rejected too.
+  () => Object.assign(() => 1, { then: Promise.resolve(1).then.bind(Promise.resolve(1)) }),
+])("rejects a promise or thenable factory return", async (invalid) => {
+  // @ts-expect-error Async factories must return a ResultTask.
+  const Invalid = Service("invalid", { requires: {}, make: invalid });
+  const task = createModule()
+    .scoped(Invalid)
+    .use(["invalid"], ({ invalid: value }) => ResultTask.succeed(value));
+  expect(await ResultTask.runExit(task)).toMatchObject({
+    _tag: "Failure",
+    cause: {
+      _tag: "Die",
+      defect: {
+        message:
+          "Service make factory must return a synchronous value or ResultTask, not a Promise or thenable",
+      },
+    },
+  });
+});

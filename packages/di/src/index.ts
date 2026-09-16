@@ -2,6 +2,7 @@ export { createModule, inspectModule, withProvider, useServiceAccess } from "./m
 export { ServiceAccessError, type ServiceAccess, type ServiceProvider } from "./access.js";
 export { service, resource, Service } from "./service.js";
 export type { ServiceClass } from "./service.js";
+export { startServiceTask, type ServiceTaskSession } from "./task-session.js";
 export type {
   HttpApplication,
   ServiceLifetime,
@@ -11,4 +12,5 @@ export type {
   ServiceGraph,
   ServiceScopeError,
   HttpServiceSelection,
+  ServiceTaskRequirements,
 } from "./module.js";

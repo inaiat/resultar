@@ -96,36 +96,34 @@ export class Cache extends Service("cache", {
 
 export class UsersRepository extends Service("repository", {
   requires: { cache: Cache },
-  make: ({ cache }) =>
-    ResultTask.sync(() => ({
-      findById(id: string): StrictResultAsync<User | undefined, UserReadError> {
-        return okAsync(cache.get(id));
-      },
-      remove(id: string): StrictResultAsync<boolean, never> {
-        return okAsync(cache.delete(id));
-      },
-    })),
+  make: ({ cache }) => ({
+    findById(id: string): StrictResultAsync<User | undefined, UserReadError> {
+      return okAsync(cache.get(id));
+    },
+    remove(id: string): StrictResultAsync<boolean, never> {
+      return okAsync(cache.delete(id));
+    },
+  }),
 }) {}
 
 export class Users extends Service("users", {
   requires: { repository: UsersRepository },
-  make: ({ repository }) =>
-    ResultTask.sync(() => ({
-      findById(id: string): StrictResultAsync<User, UserNotFoundError | UserReadError> {
-        return Result.gen(async function* () {
-          const user = yield* repository.findById(id);
-          if (user === undefined) return UserNotFoundError.err({ id });
-          return ok(user);
-        });
-      },
-      remove(id: string): StrictResultAsync<void, UserNotFoundError> {
-        return Result.gen(async function* () {
-          const removed = yield* repository.remove(id);
-          if (!removed) return UserNotFoundError.err({ id });
-          return ok(undefined);
-        });
-      },
-    })),
+  make: ({ repository }) => ({
+    findById(id: string): StrictResultAsync<User, UserNotFoundError | UserReadError> {
+      return Result.gen(async function* () {
+        const user = yield* repository.findById(id);
+        if (user === undefined) return UserNotFoundError.err({ id });
+        return ok(user);
+      });
+    },
+    remove(id: string): StrictResultAsync<void, UserNotFoundError> {
+      return Result.gen(async function* () {
+        const removed = yield* repository.remove(id);
+        if (!removed) return UserNotFoundError.err({ id });
+        return ok(undefined);
+      });
+    },
+  }),
 }) {}
 ```
 
@@ -178,3 +176,7 @@ use a local suppression when their Promise return is required for interoperabili
 The package test suite also imports this application directly as a use case.
 Run `pnpm --filter resultar-fastify test` from the workspace root to include its routes,
 repository override and application isolation checks alongside adapter tests.
+
+With `requires`, class service factories return their method objects directly. The DI module
+constructs them lazily within the registered lifetime. Return a `ResultTask` only when
+initialization needs task composition; service methods still return `StrictResultAsync`.

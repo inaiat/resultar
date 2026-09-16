@@ -55,6 +55,15 @@ type RequiredDefinition<Dependencies extends Tags, Self, E, R> = {
   readonly make: (dependencies: Values<Dependencies>) => ResultTask<Self, E, R>;
 };
 type Contract<Self, Inferred> = [Self] extends [never] ? Inferred : Self;
+type AsyncFactoryValue =
+  | ResultTask<unknown, unknown, unknown>
+  | { readonly then: (...args: never[]) => unknown };
+type SyncDefinition<Dependencies extends Tags, Self> = {
+  readonly requires: Dependencies;
+  readonly make: (
+    dependencies: Values<Dependencies>,
+  ) => Self & ([Extract<Self, AsyncFactoryValue>] extends [never] ? unknown : never);
+};
 
 interface CurriedService<Self> {
   <const Identifier extends string, ActualSelf = unknown, E = never, R = never>(
@@ -71,6 +80,14 @@ interface CurriedService<Self> {
     identifier: Identifier,
     definition: RequiredDefinition<Dependencies, Contract<Self, ActualSelf>, E, R>,
   ): ServiceClass<Contract<Self, ActualSelf>, Identifier, E, Dependencies[keyof Dependencies] | R>;
+  <
+    const Identifier extends string,
+    const Dependencies extends Tags,
+    ActualSelf extends Contract<Self, unknown> = Contract<Self, unknown>,
+  >(
+    identifier: Identifier,
+    definition: SyncDefinition<Dependencies, ActualSelf>,
+  ): ServiceClass<Contract<Self, ActualSelf>, Identifier, never, Dependencies[keyof Dependencies]>;
 }
 
 function resolveDependencies(dependencies: Tags) {
@@ -95,13 +112,18 @@ function defineService<
   identifier: Identifier,
   definition: RequiredDefinition<Dependencies, Self, E, R>,
 ): ServiceClass<Self, Identifier, E, Dependencies[keyof Dependencies] | R>;
+function defineService<const Identifier extends string, const Dependencies extends Tags, Self>(
+  identifier: Identifier,
+  definition: SyncDefinition<Dependencies, Self>,
+): ServiceClass<Self, Identifier, never, Dependencies[keyof Dependencies]>;
 function defineService<Self = never>(): CurriedService<Self>;
 function defineService(...args: unknown[]): unknown {
   if (args.length === 0) return defineService;
   const identifier = args[0] as string;
   const definition = args[1] as
     | TaskDefinition<unknown, unknown, unknown>
-    | RequiredDefinition<Tags, unknown, unknown, unknown>;
+    | RequiredDefinition<Tags, unknown, unknown, unknown>
+    | SyncDefinition<Tags, unknown>;
   if (definition.requires === undefined) {
     if (!(definition.make instanceof ResultTask))
       throw new TypeError("Service make must be a ResultTask when requires is absent");
@@ -113,10 +135,18 @@ function defineService(...args: unknown[]): unknown {
   return createServiceClass(identifier, {
     make: ResultTask.gen(function* construct() {
       const dependencies = yield* resolveDependencies(requires);
-      const task = make(dependencies);
-      if (!(task instanceof ResultTask))
-        throw new TypeError("Service make factory must return a ResultTask");
-      return yield* task;
+      const value = make(dependencies);
+      if (value instanceof ResultTask) return yield* value as ResultTask<unknown, unknown, unknown>;
+      if (
+        value !== null &&
+        (typeof value === "object" || typeof value === "function") &&
+        "then" in value &&
+        typeof value.then === "function"
+      )
+        throw new TypeError(
+          "Service make factory must return a synchronous value or ResultTask, not a Promise or thenable",
+        );
+      return value;
     }),
   });
 }
