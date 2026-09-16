@@ -1,5 +1,12 @@
 # resultar-fastify
 
+## 0.4.1
+
+### Patch Changes
+
+- 9034eac: Require resultar-di ^0.4.1 so existing consumer lockfiles cannot retain DI 0.4.0 behind the adapters when upgrading for optional Service factory requirements.
+- a912c37: Attach request services to earlier-registered child routes, such as Swagger UI routes, whose request constructors predate the services decorator. Preserve request isolation and resource cleanup.
+
 ## 0.4.0
 
 ### Minor Changes
