@@ -200,6 +200,8 @@ See the [core task reference](packages/resultar/README.md#lazy-workflows-with-re
 [DI service guide](packages/di/README.md#class-services-and-explicit-requirements) for ownership,
 typed failures, token identity and named provisioning. Fastify and Hono use this same DI mechanism.
 
+Dependency-free `Service` factories can omit `requires`: `Service("cache", { make: () => new Map<string, string>() })`. A zero-argument factory may also return a `ResultTask`; its requirements and errors remain inferred. Construction stays lazy, and Promise/thenable returns are rejected.
+
 ## Services in Fastify and Hono
 
 Both adapters use the same DI module. `resultar-di` has one entry point for class/token

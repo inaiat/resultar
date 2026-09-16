@@ -100,7 +100,7 @@ directly for ordinary service construction; keep `ResultTask.gen` for initializa
 failures, additional requirements or owned resources. Existing `ResultTask.sync` factories remain
 supported. Promises and thenables are rejected: wrap asynchronous initialization in
 `ResultTask.tryPromise` or another task. Methods on the returned service can still return
-`ResultAsync` or `StrictResultAsync`. Without `requires`, `make` remains a task. The generator form
+`ResultAsync` or `StrictResultAsync`. Without `requires`, `make` accepts a task or a zero-argument factory returning a synchronous value or ResultTask. The generator form
 also supports inline requirements:
 
 ```ts
@@ -122,7 +122,7 @@ Construction remains lazy. Dependencies resolve sequentially in entry order befo
 called with a shallow-frozen object. Both synchronous factories and returned tasks execute in the
 service's owning lifetime, and `ServiceClass.make` always exposes a normalized `ResultTask`.
 Synchronous factories add no typed initialization failures (`E = never`). A returned task's
-additional requirements combine with `requires`, and its failures remain in `E`. `requires: {}` supports a dependency-free factory. Thrown factory defects remain `Die`, and
+additional requirements combine with `requires`, and its failures remain in `E`. For dependency-free factories, omit `requires`; `requires: {}` remains supported. Thrown factory defects remain `Die`, and
 acquisition, interruption, rollback and finalization use the existing ResultTask scope.
 
 Each call to `Service.require` or `ResultTask.service` creates a distinct token. Inline requirements
