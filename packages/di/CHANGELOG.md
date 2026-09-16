@@ -1,5 +1,11 @@
 # resultar-di
 
+## 0.4.1
+
+### Patch Changes
+
+- d6eefe0: Allow Service factories to omit requires when they do not declare injected dependencies. Preserve lazy construction, explicit contracts, inferred task requirements and errors, and rejection of Promise factories.
+
 ## 0.4.0
 
 ### Minor Changes
