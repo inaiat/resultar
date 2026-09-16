@@ -296,7 +296,7 @@ importers:
         specifier: workspace:^
         version: link:../resultar
       resultar-di:
-        specifier: workspace:^
+        specifier: workspace:^0.4.1
         version: link:../di
     devDependencies:
       '@types/node':
@@ -333,7 +333,7 @@ importers:
         specifier: workspace:^
         version: link:../resultar
       resultar-di:
-        specifier: workspace:^
+        specifier: workspace:^0.4.1
         version: link:../di
     devDependencies:
       '@types/node':

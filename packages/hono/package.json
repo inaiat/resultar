@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "resultar": "workspace:^",
-    "resultar-di": "workspace:^"
+    "resultar-di": "workspace:^0.4.1"
   },
   "devDependencies": {
     "@types/node": "catalog:",

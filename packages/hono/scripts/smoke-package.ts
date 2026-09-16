@@ -1,5 +1,14 @@
+import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, realpathSync } from "node:fs";
+import {
+  readFileSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  symlinkSync,
+  realpathSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +32,15 @@ try {
     execFileSync("tar", ["-xzf", archive, "--strip-components=1", "-C", target]);
   }
   symlinkSync(realpathSync(join(root, "node_modules/hono")), join(directory, "node_modules/hono"));
+  const manifest: unknown = JSON.parse(
+    readFileSync(join(directory, "node_modules", "resultar-hono", "package.json"), "utf8"),
+  );
+  assert.ok(manifest !== null && typeof manifest === "object" && "dependencies" in manifest);
+  const dependencies = manifest.dependencies;
+  assert.ok(
+    dependencies !== null && typeof dependencies === "object" && "resultar-di" in dependencies,
+  );
+  assert.equal(dependencies["resultar-di"], "^0.4.1");
   const file = join(directory, "consumer.mts");
   writeFileSync(
     file,
