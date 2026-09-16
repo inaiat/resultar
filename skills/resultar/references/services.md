@@ -12,7 +12,7 @@ The former `/advanced` subpath has been removed; migrate existing imports to `re
 ({ ... }) })`. The readonly dependency object is inferred; `make` can return the service
   object directly or a ResultTask. Factories remain lazy and synchronous values add no typed
   initialization errors. Promises and thenables are rejected. Use `ResultTask.gen` for
-  initialization with typed failures, additional requirements or owned resources. Without `requires`, pass a task directly as `make` and yield requirements inline or by token.
+  initialization with typed failures, additional requirements or owned resources. Without `requires`, pass a task or a zero-argument factory returning a synchronous value or ResultTask. Tasks can yield requirements inline or by token.
   Both forms support `Service<Contract>()('name', definition)`.
 - Keep provider registration explicit. `requires` does not acquire or register dependencies.
   Inline tokens resolve by name in DI or `provideServices`; core `provideService` supplies an exact

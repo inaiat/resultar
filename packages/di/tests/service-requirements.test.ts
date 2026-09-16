@@ -1,5 +1,5 @@
 import { ResultTask } from "resultar";
-import { expect, test } from "vite-plus/test";
+import { expect, expectTypeOf, test } from "vite-plus/test";
 import { Service, createModule, resource } from "../src/index.js";
 
 test("resolves explicit dependencies lazily in order and includes yielded requirements", async () => {
@@ -182,10 +182,6 @@ test("preserves finalizer failures from the returned construction task", async (
 });
 
 test("rejects invalid factory shapes and returns as programmer defects", async () => {
-  // @ts-expect-error Without requires, make must be a task.
-  expect(() => Service("invalid", { make: () => ResultTask.succeed(1) })).toThrow(
-    "Service make must be a ResultTask",
-  );
   // @ts-expect-error With requires, make must be a factory.
   expect(() => Service("invalid", { requires: {}, make: ResultTask.succeed(1) })).toThrow(
     "Service make must be a factory",
@@ -214,4 +210,51 @@ test.each([
       },
     },
   });
+});
+
+test("accepts lazy factories without requires with explicit and inferred contracts", async () => {
+  let calls = 0;
+  class Repository extends Service<{ find: () => number }>()("repository", {
+    make: () => {
+      calls += 1;
+      return { find: () => 42 };
+    },
+  }) {}
+  const Inferred = Service("inferred", { make: () => ({ value: 1 }) });
+  const Task = Service("task", {
+    make: () =>
+      ResultTask.gen(function* constructIndependent() {
+        return (yield* Repository).find();
+      }),
+  });
+  const module = createModule().singleton(Repository).scoped(Inferred).scoped(Task);
+  expect(calls).toBe(0);
+  const task = module.use(["task", "inferred"], (values) => ResultTask.succeed(values));
+  expect(await ResultTask.runPromise(task)).toEqual({ task: 42, inferred: { value: 1 } });
+  expect(calls).toBe(1);
+});
+
+test("rejects promises without requires", async () => {
+  // @ts-expect-error Promise factories are not supported.
+  const Invalid = Service("invalid", { make: () => Promise.resolve(1) });
+  expect(await ResultTask.runExit(Invalid.make)).toMatchObject({
+    _tag: "Failure",
+    cause: { _tag: "Die" },
+  });
+});
+
+test("infers independent factory task requirements and errors", () => {
+  const Config = Service.require<number>()("config");
+  const task = ResultTask.gen(function* construct() {
+    yield* Config;
+    return yield* ResultTask.fail("unavailable" as const);
+  });
+  const Inferred = Service("inferred", { make: () => task });
+  const Explicit = Service<number>()("explicit", { make: () => task });
+  expectTypeOf(Inferred.make).toEqualTypeOf<typeof task>();
+  expectTypeOf(Explicit.make).toEqualTypeOf<ResultTask<number, "unavailable", typeof Config>>();
+  // @ts-expect-error Explicit contracts reject incompatible synchronous values.
+  Service<{ value: number }>()("invalid", { make: () => ({ value: "wrong" }) });
+  // @ts-expect-error Explicit contracts do not allow Promise factories.
+  Service<{ value: number }>()("invalid", { make: () => Promise.resolve({ value: 1 }) });
 });
