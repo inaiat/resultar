@@ -1,6 +1,6 @@
 {
   "name": "resultar-di",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Typed dependency composition and scoped resources for ResultTask.",
   "keywords": [
     "composition",
