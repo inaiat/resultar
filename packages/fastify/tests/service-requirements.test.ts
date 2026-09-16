@@ -8,7 +8,7 @@ import {
   type InferRequestServices,
 } from "../src/index.js";
 
-test("explicit and inline dependencies preserve Fastify request isolation and cleanup", async () => {
+test("sync, task and inline dependencies preserve Fastify request isolation and cleanup", async () => {
   let opened = 0;
   let closed = 0;
   const Tenant = Service.require<string>()("tenant");
@@ -32,15 +32,21 @@ test("explicit and inline dependencies preserve Fastify request isolation and cl
       return `${session.owner}:${session.id}`;
     }),
   }) {}
+  class View extends Service("view", {
+    requires: { session: Session, greeting: Greeting },
+    make: ({ session, greeting }) => ({ session, greeting }),
+  }) {}
   const plugin = createFastifyPlugin({
-    services: createModule().scoped(Session).scoped(Greeting),
-    bindings: ["session", "greeting"],
+    services: createModule().scoped(Session).scoped(Greeting).scoped(View),
+    bindings: ["session", "greeting", "view"],
     locals: (request: FastifyRequest) => ({ tenant: String(request.headers["x-tenant"]) }),
   });
   const app = Fastify();
   await app.register(plugin);
   app.get("/", (request) => {
     const services = request.getDecorator<InferRequestServices<typeof plugin>>("services");
+    expect(services.view.session).toBe(services.session);
+    expect(services.view.greeting).toBe(services.greeting);
     expectTypeOf(services.greeting).toEqualTypeOf<string>();
     expect(services.greeting).toBe(`${services.session.owner}:${services.session.id}`);
     return services.session;

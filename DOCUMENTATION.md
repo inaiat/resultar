@@ -183,16 +183,16 @@ import { createModule, Service } from 'resultar-di'
 const Config = Service.require<{ greeting: string }>()('config')
 class Greeting extends Service('greeting', {
   requires: { config: Config },
-  make: ({ config }) => ResultTask.sync(() => ({
+  make: ({ config }) => ({
     text: (name: string) => `${config.greeting}, ${name}`,
-  })),
+  }),
 }) {}
 
 const services = createModule().value('config', { greeting: 'Hello' }).scoped(Greeting)
 ```
 
 `Service` and `Service.require` are exported from `resultar-di`. With `requires`, the factory returns a
-ResultTask; without it, `make: ResultTask.gen(...)` can use `yield* Service.require<Contract>()('name')`
+synchronous service value or a ResultTask (never a Promise); without it, `make: ResultTask.gen(...)` can use `yield* Service.require<Contract>()('name')`
 inline. Both preserve lazy construction and infer dependencies. Declaring a requirement does not
 register its provider. `Result` handles values and has no service lookup API.
 
@@ -252,6 +252,12 @@ For an existing Hono router, `createHonoServices` middleware instead infers `c.v
 Run `pnpm dev` inside either example directory. Both use `PORT` (default 3000); the
 `import.meta.main` guard allows tests to import the factory without starting the server.
 The examples use an in-memory repository; see the package guides for owned resources and shutdown.
+Both native adapters also accept an optional `startup: ResultTask<void, E, R>`. Its `R` requirements
+are checked against the service module. Fastify runs it once in `onReady` after plugin loading and
+also accepts `(app: FastifyInstance) => ResultTask<void, E, R>`. Hono runs it on `ready()` or before
+the first request. Resources acquired by startup live until application close and release before
+their singleton dependencies. Failure rolls back the root and preserves cleanup causes. This is
+suitable for schema validation, indexes and idempotent seeds.
 
 ## Creating Results
 

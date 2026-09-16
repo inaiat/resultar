@@ -1,7 +1,7 @@
 /* eslint-disable unicorn/no-await-expression-member, unicorn/no-null */
 import { expect, expectTypeOf, test } from "vite-plus/test";
-import { ResultTask, type Result } from "resultar";
-import { createModule, service, resource } from "resultar-di";
+import { ResultTask, unit, type Result } from "resultar";
+import { createModule, resource, Service, service } from "resultar-di";
 import type { Hono } from "hono";
 import { createHonoApp, type HonoApplication, type InferRequestServices } from "../src/index.js";
 
@@ -28,7 +28,61 @@ test("infers selected readonly services from applications and factories for sepa
   await app.close();
 });
 
+test("runs an optional startup task once before requests and shares concurrent readiness", async () => {
+  let runs = 0;
+  const Config = Service.require<{ readonly environment: string }>()("config");
+  const startup = ResultTask.gen(function* initialize() {
+    const config = yield* Config;
+    runs += 1;
+    expect(config.environment).toBe("test");
+  });
+  const app = createHonoApp(
+    { services: createModule().value("config", { environment: "test" }), startup, bindings: [] },
+    (router) => router.get("/", (context) => context.text("ready")),
+  );
+  expect(runs).toBe(0);
+  const readiness = await Promise.all([app.ready(), app.ready()]);
+  expect(readiness.every((result) => result.isOk())).toBe(true);
+  expect(runs).toBe(1);
+  expect(await (await app.request("/")).text()).toBe("ready");
+  expect(runs).toBe(1);
+  await app.close();
+});
+
+test("rolls back application resources when optional startup fails", async () => {
+  let released = 0;
+  const Connection = resource("connection", {
+    acquire: ResultTask.sync(() => "connected"),
+    release: () =>
+      ResultTask.sync(() => {
+        released += 1;
+      }),
+  });
+  const app = createHonoApp(
+    {
+      services: createModule().singleton(Connection),
+      startup: ResultTask.gen(function* failStartup() {
+        yield* Connection;
+        return yield* ResultTask.fail("offline" as const);
+      }),
+      bindings: [],
+    },
+    (router) => router.get("/", (context) => context.text("unreachable")),
+  );
+  const failure = await app.ready();
+  expect(failure.isErr()).toBe(true);
+  expect(released).toBe(1);
+  await expect(app.request("/")).rejects.toThrow();
+  await app.close();
+});
+
 const checkInferredTypes = () => {
+  const legacy: HonoApplication = {
+    fetch: async () => new Response(),
+    request: async () => new Response(),
+    close: async () => unit(),
+  };
+  expectTypeOf(legacy).toExtend<HonoApplication>();
   const createApplication = (answer: number) =>
     createHonoApp(
       { services: createModule().value("answer", answer), bindings: ["answer"] },
@@ -82,6 +136,25 @@ const build = () => {
   const services = createModule().singleton(Shared).scoped(Local);
   return { events, services };
 };
+
+const startupTypeChecks = () => {
+  const Config = Service.require<string>()("config");
+  const Greeting = service("greeting", { config: Config }, ({ config }) => config);
+  const startup = ResultTask.gen(function* useGreeting() {
+    yield* Greeting;
+  });
+  createHonoApp(
+    { services: createModule().value("config", "test").singleton(Greeting), startup, bindings: [] },
+    () => {
+      /* Transitive startup requirements are supplied by the module. */
+    },
+  );
+  // @ts-expect-error A startup task's transitive requirements must be registered.
+  createHonoApp({ services: createModule().scoped(Greeting), startup, bindings: [] }, () => {
+    /* No routes are needed for this check. */
+  });
+};
+expectTypeOf(startupTypeChecks).toBeFunction();
 
 test("infers bindings, shares a root and isolates concurrent requests", async () => {
   const { events, services } = build();

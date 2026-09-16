@@ -6,6 +6,19 @@ Define services once, select the part of the application you need, and keep its 
 through a `use` callback. The package handles dependency selection, lifetimes, and ownership;
 Resultar handles execution, interruption, failure causes, and cleanup.
 
+## Contents
+
+- [Recommended API](#recommended-api)
+- [Class services and explicit requirements](#class-services-and-explicit-requirements)
+- [Fetch and Hono request scopes](#fetch-and-hono-request-scopes)
+- [Managed HTTP lifetime](#one-router-managed-http-lifetime)
+- [Lifetime and inference](#lifetime-and-inference)
+- [Named registration](#named-registration)
+- [API reference](#api-reference)
+- [Testing with overrides](#testing-with-overrides)
+- [Framework service facades](#framework-service-facades)
+- [Limitations](#limitations)
+
 ## Install
 
 ```sh
@@ -58,7 +71,7 @@ passed to `service(name, dependencies, factory)` points to `service(name, task)`
 ## Class services and explicit requirements
 
 Use `Service` when you prefer class-shaped tokens. `requires` injects a readonly object whose
-properties are inferred from the declared tokens. Its `make` factory must return a `ResultTask`:
+properties are inferred from the declared tokens. Its `make` factory can return the service object directly:
 
 ```ts
 import { ResultTask } from 'resultar'
@@ -68,9 +81,9 @@ const Storage = Service.require<ReadonlyMap<string, string>>()('storage')
 
 class Users extends Service('users', {
   requires: { cache: Storage },
-  make: ({ cache }) => ResultTask.sync(() => ({
+  make: ({ cache }) => ({
     find: (id: string) => cache.get(id),
-  })),
+  }),
 }) {}
 
 const services = createModule()
@@ -82,9 +95,13 @@ const services = createModule()
 or execute its provider. Register providers explicitly using `value`, `singleton`, `scoped`, or
 `transient`. Tokens and service classes can both appear in `requires`.
 
-With `requires`, `make` is a factory returning `ResultTask.sync` or `ResultTask.gen`, never a plain
-object or Promise. Without `requires`, `make` is a task. The generator form also supports inline
-requirements:
+With `requires`, `make` returns a synchronous value or a `ResultTask`. Prefer returning the object
+directly for ordinary service construction; keep `ResultTask.gen` for initialization with typed
+failures, additional requirements or owned resources. Existing `ResultTask.sync` factories remain
+supported. Promises and thenables are rejected: wrap asynchronous initialization in
+`ResultTask.tryPromise` or another task. Methods on the returned service can still return
+`ResultAsync` or `StrictResultAsync`. Without `requires`, `make` remains a task. The generator form
+also supports inline requirements:
 
 ```ts
 class Users extends Service('users', {
@@ -97,12 +114,15 @@ class Users extends Service('users', {
 
 `ResultTask.service<T>()('name')` is the equivalent core API. The existing
 `ResultTask.service<T, 'name'>('name')` remains supported. For an explicit service contract, use
-`Service<UsersContract>()('users', definition)` with either definition form.
+`Service<UsersContract>()('users', definition)` with either definition form. Class services are tokens;
+resolve them through the module rather than instantiating them with `new`. Forward token registrations
+are checked at the `use` boundary.
 
 Construction remains lazy. Dependencies resolve sequentially in entry order before `make` is
-called with a shallow-frozen object. The returned task executes in the service's owning lifetime.
-Its additional yielded requirements combine with those declared in `requires`; its failures remain
-in `E`. `requires: {}` supports a dependency-free factory. Thrown factory defects remain `Die`, and
+called with a shallow-frozen object. Both synchronous factories and returned tasks execute in the
+service's owning lifetime, and `ServiceClass.make` always exposes a normalized `ResultTask`.
+Synchronous factories add no typed initialization failures (`E = never`). A returned task's
+additional requirements combine with `requires`, and its failures remain in `E`. `requires: {}` supports a dependency-free factory. Thrown factory defects remain `Die`, and
 acquisition, interruption, rollback and finalization use the existing ResultTask scope.
 
 Each call to `Service.require` or `ResultTask.service` creates a distinct token. Inline requirements
@@ -179,7 +199,8 @@ tests. Keep server execution in the owning task scope and consume or cancel resp
 The application helpers are `createModule`, `service`, `Service` (including `Service.require`),
 and `resource`. Framework adapter helpers `inspectModule`, `withProvider`, `useServiceAccess`
 and `ServiceAccessError` are exported from the same entry point, along with their public types.
-See [composition and framework adapters](ADVANCED.md) for named registration and adapter APIs.
+See [named registration](#named-registration), the [API reference](#api-reference) and
+[framework service facades](#framework-service-facades) below.
 
 ### Migration from the split entry points
 
@@ -228,9 +249,230 @@ It also rejects request locals. Keep the application callback alive for the serv
 `close()` waits for it before releasing singleton resources. This is how
 [`resultar-fastify`](../fastify/README.md) initializes `app.services` without another container.
 
+Framework adapters can run an optional application `ResultTask` through this same operation. The
+task's `R` is checked against the module and its singleton dependencies are shared with requests;
+the adapter owns when the task runs and how native startup and shutdown events are connected.
+`startServiceTask(use, task)` is the low-level adapter bridge: `use` binds the task to the existing
+`useSingletons` scope, `ready` reports initialization, and `close()` releases its retained scope.
+Close the session before closing the root. The bridge starts on invocation; constructing the
+underlying `ResultTask` remains lazy. Native adapters own this session automatically.
+
 Cancellation is cooperative and follows ResultTask semantics. An uncooperative SDK can delay
 shutdown. Initialization within a graph is sequential; the package does not implement parallel startup
 or a global runtime.
+
+## Named registration
+
+The same `createModule()` also accepts named factories. Prefer tokens and classes for application
+services; named registration is useful when integrating an existing framework or composing factories.
+
+`singleton`, `scoped` and `transient` receive a name, a typed dependency list and a synchronous
+factory. `task` and module-level `resource` default to scoped lifetime; pass
+`{ lifetime: 'singleton' | 'scoped' | 'transient' }` to choose another lifetime.
+
+### Simple singleton without release
+
+Use `singleton` for a service shared by multiple child scopes that needs no cleanup.
+
+```ts
+import { ResultTask } from "resultar";
+import { createModule } from "resultar-di";
+
+let cacheCreations = 0;
+const services = createModule()
+  .singleton("cache", [], () => {
+    cacheCreations += 1;
+    return new Map<string, string>();
+  })
+  .scoped("users", ["cache"], ({ cache }) => ({ cache }))
+  .scoped("sessions", ["cache"], ({ cache }) => ({ cache }));
+
+const application = services.scope();
+const program = application.use(["users", "sessions"], ({ users, sessions }) =>
+  ResultTask.sync(() => {
+    users.cache.set("status", "ready");
+    return {
+      cacheInstance: cacheCreations,
+      sameInstance: users.cache === sessions.cache,
+      status: sessions.cache.get("status"),
+    };
+  }),
+);
+
+const first = await ResultTask.runResult(program);
+// Ok({ cacheInstance: 1, sameInstance: true, status: 'ready' })
+
+const second = await ResultTask.runResult(
+  application.use(["users", "sessions"], ({ users, sessions }) =>
+    ResultTask.sync(() => ({
+      cacheInstance: cacheCreations,
+      sameInstance: users.cache === sessions.cache,
+      status: sessions.cache.get("status"),
+    })),
+  ),
+);
+// Ok({ cacheInstance: 1, sameInstance: true, status: 'ready' })
+await ResultTask.runPromise(application.close());
+```
+
+`users` and `sessions` share one cache in each child scope, while both child scopes share the
+singleton cache owned by `application`. The application root owns the cache until `close()`.
+
+### Share an existing instance across executions
+
+Register an existing instance with `value` when independent executions should share it:
+
+```ts
+const sharedCache = new Map<string, string>();
+const sharedServices = createModule().value("cache", sharedCache);
+const sharedProgram = sharedServices.use(["cache"], ({ cache }) =>
+  ResultTask.sync(() => {
+    const alreadyUsed = cache.has("status");
+    cache.set("status", "ready");
+    return alreadyUsed;
+  }),
+);
+
+const first = await ResultTask.runResult(sharedProgram); // Ok(false)
+const second = await ResultTask.runResult(sharedProgram); // Ok(true): same cache
+```
+
+`value` uses the supplied instance directly; it does not create or dispose it.
+
+### Compose an application
+
+Factories receive only the dependencies they declare. Register dependencies before dependents;
+unknown names, forward references, duplicate names, and incompatible overrides are type errors.
+Dependency lists infer literal tuples without `as const` at inline call sites.
+
+For `singleton`, `scoped`, and `transient`, a non-empty dependency list requires the creation
+function to declare a dependency parameter. This catches accidentally passing an unrelated
+zero-argument function at the registration itself:
+
+```ts
+const unrelated = () => ({ status: "ready" });
+
+// Type error: dependencyParameterRequired: "cache"
+services.scoped("users", ["cache"], unrelated);
+
+// Receive the selected dependencies, with their inferred types.
+services.scoped("users", ["cache"], ({ cache }) => ({ cache }));
+
+// A zero-argument function is valid when no dependencies are declared.
+services.singleton("status", [], unrelated);
+```
+
+This is a TypeScript signature check, not a runtime inspection of the function body. A function
+can still declare a parameter and ignore it, and an explicitly widened function type or `any`
+can hide its original signature. The returned service type is inferred independently; consumers
+still validate that it satisfies their service contract. Task providers and resource callbacks
+keep their existing callback rules.
+
+```ts
+import { ResultTask } from "resultar";
+import { createModule } from "resultar-di";
+
+const services = createModule()
+  .value("config", { databaseUrl: "memory" })
+  .resource("database", ["config"], {
+    acquire: ({ config }) => connectDatabase(config.databaseUrl),
+    release: (database) => database.close(),
+  })
+  .scoped("health", ["database"], ({ database }) => createHealthUseCase({ database }))
+  .resource("session", ["database"], {
+    acquire: ({ database }) => connectSession(database),
+    release: (session) => session.close(),
+  })
+  .resource("server", ["health", "session"], {
+    acquire: ({ health, session }) => serve({ health, session }),
+    release: (server) => server.close(),
+  });
+
+// connectDatabase, connectSession, serve, close, and waitForShutdown return ResultTask.
+// createHealthUseCase is an ordinary synchronous factory.
+const program = services.use(["server"], ({ server }) => server.waitForShutdown());
+const exit = await ResultTask.runExit(program);
+```
+
+Nothing is acquired until `program` runs. Shutdown releases server, session, then database.
+A failure during construction releases resources already acquired. A failed release does not skip
+earlier finalizers; `runExit` retains execution and release causes.
+
+The server adapter must implement graceful HTTP draining in its release task. This package does
+not install process signal handlers or implement HTTP/session shutdown behavior.
+
+## API reference
+
+| Operation                                            | Purpose                                                                      |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `value(name, value)`                                 | Register an externally owned value; no automatic release                     |
+| `singleton(name, dependencies, create)`              | Create a synchronous service once per root                                   |
+| `scoped(name, dependencies, create)`                 | Create a synchronous service once per child scope                            |
+| `transient(name, dependencies, create)`              | Create a synchronous service on every resolution                             |
+| `singleton(ServiceToken)`                            | Register a class-shaped service once per root                                |
+| `scoped(ServiceToken)`                               | Register a class-shaped service once per child scope                         |
+| `transient(ServiceToken)`                            | Register a class-shaped service on every resolution                          |
+| `task(name, dependencies, create)`                   | Initialize using a lazy ResultTask, including an existing scoped acquisition |
+| `resource(name, dependencies, { acquire, release })` | Acquire with a ResultTask and register release in the same scope             |
+| `override(name, value)`                              | Return a new module with a type-checked, externally owned replacement        |
+| `use(dependencies, callback)`                        | Select a graph and keep it alive through the callback's ResultTask           |
+| `scope()`                                            | Open a long-lived root; each `scope.use` call gets a child scope             |
+| `merge(module)`                                      | Combine immutable modules; duplicate names are rejected                      |
+| `http(dependencies, handle)`                         | Fetch application task: one owned root, a fresh child scope per response     |
+| `scope.withServices(values)`                         | Supply typed locals a child may resolve; cannot overwrite registrations      |
+| `scope.fetch(dependencies, handle)`                  | Fetch handler whose child stays open through response-body consumption       |
+| `scope.useSingletons(dependencies, callback)`        | Hold application services with singleton lifetime rules                      |
+| `scope.close()`                                      | Release root singletons; waits for active children, then runs finalizers     |
+
+`release(resource, exit, dependencies)` receives the original scope outcome and the same dependencies
+used during acquisition. Use it for cleanup that depends on whether the application succeeded.
+
+Pass `{ lifetime: 'singleton' }`, `{ lifetime: 'scoped' }`, or `{ lifetime: 'transient' }` as the
+last argument to `task`, or alongside `acquire` and `release` for `resource`.
+
+`singleton`, `scoped`, and `transient` accept synchronous return values. For task-based initialization without its own cleanup,
+use `task`; for an SDK returning a Promise, adapt it with `ResultTask.tryPromise` inside that task.
+Existing `ResultTask.acquireRelease` programs can also be registered with `task` without duplicating
+their release logic.
+
+## Testing with overrides
+
+```ts
+const testing = services.override("database", fakeDatabase);
+
+const result = await ResultTask.runResult(testing.use(["health"], ({ health }) => health.check()));
+```
+
+Only health and its selected dependencies are resolved. Database acquisition is replaced entirely;
+session and the HTTP server are not created. Downstream factories receive the replacement. The
+original module remains available for other tests. Callers own the lifetime of injected values.
+
+An override must implement the complete registered service contract. For small mocks, declare
+small application-facing interfaces at factory and resource boundaries. DI cannot make a broad
+service interface narrow automatically.
+
+## Framework service facades
+
+Framework adapters that must preserve synchronous property access can use `withProvider`,
+`inspectModule` and `useServiceAccess` from `resultar-di`. They use the same DI runtime;
+there is no separate resolver or cache. Ordinary application code should prefer typed service
+selections.
+
+`withProvider(module, name, provider)` returns a new module and replaces that name without acquiring
+it. A provider is an external `{ value }`, a `{ task, lifetime }`, or a synchronous
+`{ create: access => value, release?, lifetime }`. Lifetime defaults to `singleton` for these
+adapter providers. `release(value, exit)` returns a ResultTask and belongs to the native owner.
+`allowTransientDependencies` is an explicit opt-in for traditional factory-container semantics;
+token dependencies continue to enforce lifetime ordering.
+
+`inspectModule(module)` returns immutable name/lifetime metadata. `useServiceAccess(scope, callback,
+{ initialize, application })` holds a request child scope until its ResultTask callback finishes.
+Application access uses the root; its caller must close the root after ending the callback.
+`initialize` eagerly resolves only its named services. The access object exposes `get`, `has`,
+`keys`, `use` and `close`. `get` returns a Result, resolves factories synchronously, and reads
+previously initialized task providers. It reports an error when an asynchronous provider has not
+been initialized. Factories stay lazy, scoped values are cached per child and transient reads
+acquire a fresh value each time. Root access rejects request-scoped services.
 
 ## Relationship to the core RFC
 

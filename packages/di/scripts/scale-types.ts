@@ -16,6 +16,10 @@ try {
     [100, false, "requires"],
     [200, false, "requires"],
     [12, true, "requires"],
+    [50, false, "sync-requires"],
+    [100, false, "sync-requires"],
+    [200, false, "sync-requires"],
+    [12, true, "sync-requires"],
   ] as const) {
     const lines = [
       `import { createModule, service, Service } from ${JSON.stringify(resolve(root, "dist/index.js"))};`,
@@ -25,14 +29,16 @@ try {
     for (let i = 0; i < size; i += 1) {
       const args =
         deep && i > 0 ? `{ previous: s${i - 1} }, ({ previous }) => previous + 1` : "{}, () => 1";
+      const value = deep && i > 0 ? "previous + 1" : "1";
+      const construction = style === "sync-requires" ? value : `ResultTask.succeed(${value})`;
       const required =
         deep && i > 0
-          ? `{ requires: { previous: s${i - 1} }, make: ({ previous }) => ResultTask.succeed(previous + 1) }`
-          : `{ requires: {}, make: () => ResultTask.succeed(1) }`;
+          ? `{ requires: { previous: s${i - 1} }, make: ({ previous }) => ${construction} }`
+          : `{ requires: {}, make: () => ${construction} }`;
       const declaration =
-        style === "requires"
-          ? `class s${i} extends Service("s${i}", ${required}) {}`
-          : `const s${i} = service("s${i}", ${args});`;
+        style === "service"
+          ? `const s${i} = service("s${i}", ${args});`
+          : `class s${i} extends Service("s${i}", ${required}) {}`;
       lines.push(declaration, `const m${i + 1} = m${i}.singleton(s${i});`);
     }
     lines.push(

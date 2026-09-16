@@ -13,7 +13,6 @@ const rootDir = process.cwd();
 const requiredFiles = [
   "LICENSE",
   "README.md",
-  "ADVANCED.md",
   "dist/index.d.ts",
   "dist/index.js",
   "package.json",
@@ -25,6 +24,7 @@ const expectedExports = [
   "inspectModule",
   "resource",
   "service",
+  "startServiceTask",
   "useServiceAccess",
   "withProvider",
 ] as const;
@@ -104,7 +104,7 @@ for (const file of requiredFiles) {
 }
 
 const allowedPackedFile =
-  /^(?:LICENSE|README\.md|ADVANCED\.md|package\.json|dist\/[^/]+\.(?:js|d\.ts|js\.map))$/u;
+  /^(?:LICENSE|README\.md|package\.json|dist\/[^/]+\.(?:js|d\.ts|js\.map))$/u;
 const unexpectedFiles = packedFiles.filter((file) => !allowedPackedFile.test(file));
 
 if (unexpectedFiles.length > 0) {

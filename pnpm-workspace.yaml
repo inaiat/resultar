@@ -12,7 +12,7 @@ catalog:
   "@vitest/coverage-v8": 4.1.11
   "@vitest/ui": 4.1.11
   fallow: 3.25.0
-  fastify: 5.12.3
+  fastify: 5.12.4
   fastify-plugin: 6.0.0
   hono: 4.13.7
   tsx: 4.23.13
@@ -50,6 +50,8 @@ trustPolicyExclude:
 blockExoticSubdeps: true
 minimumReleaseAge: 10080 # 1 week
 minimumReleaseAgeExclude:
+  # Align the Fastify peer used by locally linked integration consumers.
+  - "fastify@5.12.4"
   - "@fallow-cli/*"
   # Transitive checker used internally by Vite+; not part of resultar-check's public surface.
   - "@oxlint/*"

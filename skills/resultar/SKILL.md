@@ -44,7 +44,8 @@ contracts; converting an already-started Promise or ResultAsync cannot undo its 
 when the boundary must inspect every exit without rejection. See [API details](references/api.md).
 For DI, Hono and Fastify, read [services and HTTP scopes](references/services.md). Use
 `ResultTask.service<T>()(name)` or DI `Service.require<T>()(name)` for inferred identifiers. Class
-services support optional `requires` with a factory returning ResultTask; generator-only `make`
+services support optional `requires` with a factory returning a synchronous value or ResultTask
+(Promises and thenables are rejected); generator-only `make`
 remains available. Check installed versions before using these overloads.
 
 ## Apply Opinionated Defaults

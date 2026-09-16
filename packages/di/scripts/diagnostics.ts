@@ -46,7 +46,17 @@ const cases = [
   [
     "requires-promise-factory",
     'Service("user", {requires: {}, make: () => Promise.resolve(1)});',
-    "ResultTask",
+    "not assignable to type 'never'",
+  ],
+  [
+    "sync-requires-wrong-contract",
+    'const User = Service("user", {requires: {cache: Cache}, make: ({cache}) => ({cache})}); createModule().value("cache", "wrong").scoped(User);',
+    "incompatibleServices",
+  ],
+  [
+    "sync-requires-missing-dependency",
+    'const User = Service("user", {requires: {cache: Cache}, make: ({cache}) => ({cache})}); createModule().scoped(User).http(["user"], () => new Response());',
+    "missingServices",
   ],
   [
     "named-missing-dependency",

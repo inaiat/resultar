@@ -26,36 +26,34 @@ export class Cache extends Service("cache", {
 
 export class UsersRepository extends Service("repository", {
   requires: { cache: Cache },
-  make: ({ cache }) =>
-    ResultTask.sync(() => ({
-      findById(id: string): StrictResultAsync<User | undefined, UserReadError> {
-        return okAsync(cache.get(id));
-      },
-      remove(id: string): StrictResultAsync<boolean, never> {
-        return okAsync(cache.delete(id));
-      },
-    })),
+  make: ({ cache }) => ({
+    findById(id: string): StrictResultAsync<User | undefined, UserReadError> {
+      return okAsync(cache.get(id));
+    },
+    remove(id: string): StrictResultAsync<boolean, never> {
+      return okAsync(cache.delete(id));
+    },
+  }),
 }) {}
 
 export class Users extends Service("users", {
   requires: { repository: UsersRepository },
-  make: ({ repository }) =>
-    ResultTask.sync(() => ({
-      findById(id: string): StrictResultAsync<User, UserNotFoundError | UserReadError> {
-        return Result.gen(async function* () {
-          const user = yield* repository.findById(id);
-          if (user === undefined) return UserNotFoundError.err({ id });
-          return ok(user);
-        });
-      },
-      remove(id: string): StrictResultAsync<void, UserNotFoundError> {
-        return Result.gen(async function* () {
-          const removed = yield* repository.remove(id);
-          if (!removed) return UserNotFoundError.err({ id });
-          return ok(undefined);
-        });
-      },
-    })),
+  make: ({ repository }) => ({
+    findById(id: string): StrictResultAsync<User, UserNotFoundError | UserReadError> {
+      return Result.gen(async function* () {
+        const user = yield* repository.findById(id);
+        if (user === undefined) return UserNotFoundError.err({ id });
+        return ok(user);
+      });
+    },
+    remove(id: string): StrictResultAsync<void, UserNotFoundError> {
+      return Result.gen(async function* () {
+        const removed = yield* repository.remove(id);
+        if (!removed) return UserNotFoundError.err({ id });
+        return ok(undefined);
+      });
+    },
+  }),
 }) {}
 
 export const Health = service("health", { cache: Cache }, ({ cache }) => ({

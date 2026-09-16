@@ -36,6 +36,7 @@ import { createFastifyApp, createFastifyPlugin, type InferAppServices, type Infe
 import { ResultTask } from "resultar";
 import { createModule, Service, service, resource, type ServiceLifetime } from "resultar-fastify";
 let released = 0;
+let started = 0;
 const Base = service("base", {}, () => 40);
 class Answer extends Service("answer", {
  requires: { base: Base },
@@ -47,8 +48,12 @@ const Lease = resource("lease", {
 });
 const lifetime: ServiceLifetime = "singleton";
 const services = createModule().singleton(Base)[lifetime](Answer).scoped(Lease);
-const plugin = createFastifyPlugin({ services, appBindings: ["answer"] });
-const createApplication = () => createFastifyApp({ services, appBindings: ["answer"] }, (router) => {
+const startup = ResultTask.gen(function* smokeStartup() {
+ yield* Answer;
+ started += 1;
+});
+const plugin = createFastifyPlugin({ services, startup, appBindings: ["answer"] });
+const createApplication = () => createFastifyApp({ services, startup, appBindings: ["answer"] }, (router) => {
  router.get("/", (request) => request.services.answer);
 });
 type RequestServices = InferRequestServices<typeof createApplication>;
@@ -59,6 +64,7 @@ declare module "fastify" {
 }
 const app = Fastify();
 await app.register(plugin);
+if (started !== 0) throw new Error("Packed startup task ran before readiness");
 app.get<{Params: {id: string}}>("/:id", async (request, reply) => {
  const value: number = request.services.answer;
  if (request.services.base !== 40) throw new Error("Missing default request binding");
@@ -68,6 +74,7 @@ app.get<{Params: {id: string}}>("/:id", async (request, reply) => {
 try {
  if (app.services.answer !== 42) throw new Error("Missing application singleton");
  const response = await app.inject("/one");
+ if (Number(started) !== 1) throw new Error("Packed startup task did not run once");
  if (response.statusCode !== 200 || response.json().value !== 42) throw new Error("Unexpected packed response");
 } finally { await app.close(); }
 if (released !== 1) throw new Error("Packed resource was not released");

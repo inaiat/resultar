@@ -3,7 +3,7 @@ import { ResultTask } from "resultar";
 import { expect, expectTypeOf, test } from "vite-plus/test";
 import { Service, createModule, createHonoServices } from "../src/index.js";
 
-test("explicit and inline dependencies preserve Hono request isolation and cleanup", async () => {
+test("sync, task and inline dependencies preserve Hono request isolation and cleanup", async () => {
   let opened = 0;
   let closed = 0;
   const Tenant = Service.require<string>()("tenant");
@@ -27,7 +27,11 @@ test("explicit and inline dependencies preserve Hono request isolation and clean
       return `${session.owner}:${session.id}`;
     }),
   }) {}
-  const di = createHonoServices(createModule().scoped(Session).scoped(Greeting));
+  class View extends Service("view", {
+    requires: { session: Session, greeting: Greeting },
+    make: ({ session, greeting }) => ({ session, greeting }),
+  }) {}
+  const di = createHonoServices(createModule().scoped(Session).scoped(Greeting).scoped(View));
   type Environment = { Variables: { tenant: string } };
   const router = new Hono<Environment>();
   router.use(async (context, next) => {
@@ -36,11 +40,13 @@ test("explicit and inline dependencies preserve Hono request isolation and clean
   });
   const app = router.get(
     "/",
-    di.middleware(["session", "greeting"], {
+    di.middleware(["session", "greeting", "view"], {
       locals: (context: Context<Environment>) => ({ tenant: context.var.tenant }),
     }),
     (context) => {
       const services = context.var.services;
+      expect(services.view.session).toBe(services.session);
+      expect(services.view.greeting).toBe(services.greeting);
       expectTypeOf(services.greeting).toEqualTypeOf<string>();
       expect(services.greeting).toBe(`${services.session.owner}:${services.session.id}`);
       return context.json(services.session);

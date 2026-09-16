@@ -123,6 +123,56 @@ test("retains native startup failure and rollback", async () => {
   }
 });
 
+test("runs an optional ResultTask startup once after application services are ready", async () => {
+  let runs = 0;
+  const Config = Service.require<{ readonly environment: string }>()("config");
+  const startup = ResultTask.gen(function* initialize() {
+    const config = yield* Config;
+    runs += 1;
+    expect(config.environment).toBe("test");
+  });
+  const app = createFastifyApp(
+    { services: createModule().value("config", { environment: "test" }), startup, bindings: [] },
+    (router) => {
+      router.get("/", () => "ready");
+    },
+  );
+  expect(runs).toBe(0);
+  await app.ready();
+  expect(runs).toBe(1);
+  await app.inject("/");
+  await app.ready();
+  expect(runs).toBe(1);
+  await app.close();
+});
+
+test("rolls back application resources when optional startup fails", async () => {
+  let released = 0;
+  const Connection = resource("connection", {
+    acquire: ResultTask.sync(() => "connected"),
+    release: () =>
+      ResultTask.sync(() => {
+        released += 1;
+      }),
+  });
+  const app = createFastifyApp(
+    {
+      services: createModule().singleton(Connection),
+      startup: ResultTask.gen(function* failStartup() {
+        yield* Connection;
+        return yield* ResultTask.fail("offline" as const);
+      }),
+      bindings: [],
+    },
+    () => {
+      /* Startup must fail before a request can run. */
+    },
+  );
+  await expect(app.ready()).rejects.toThrow();
+  expect(released).toBe(1);
+  await app.close();
+});
+
 const typeChecks = () => {
   const module = createModule().value("answer", 42);
   // @ts-expect-error Unknown binding.
@@ -141,6 +191,33 @@ const typeChecks = () => {
   });
   // @ts-expect-error Incompatible local dependency.
   createFastifyApp({ services, bindings: ["greeting"], locals: () => ({ tenant: 42 }) }, () => {
+    /* No routes are needed for this check. */
+  });
+  const Config = Service.require<string>()("config");
+  const startup = ResultTask.gen(function* checkConfig() {
+    yield* Config;
+  });
+  createFastifyApp(
+    { services: createModule().value("config", "test"), startup, bindings: [] },
+    () => {
+      /* Startup requirements are supplied by the module. */
+    },
+  );
+  // @ts-expect-error Startup requirements must be registered in the module.
+  createFastifyApp({ services: createModule(), startup, bindings: [] }, () => {
+    /* No routes are needed for this check. */
+  });
+  const ConfigGreeting = service("configGreeting", { config: Config }, ({ config }) => config);
+  const transitiveStartup = ResultTask.gen(function* useGreeting() {
+    yield* ConfigGreeting;
+  });
+  const missingTransitive = {
+    services: createModule().singleton(ConfigGreeting),
+    startup: transitiveStartup,
+    bindings: [],
+  } as const;
+  // @ts-expect-error Transitive startup requirements must be registered in the module.
+  createFastifyApp(missingTransitive, () => {
     /* No routes are needed for this check. */
   });
 };

@@ -95,6 +95,35 @@ not initialize for those routes: an acquisition failure in any selected service 
 handler from running. Missing or incompatible requirements are checked for the effective
 selection. No route-body analysis or automatic property-based resolution is performed.
 
+`createHonoApp` also accepts an optional `startup: ResultTask<void, E, R>`. It runs once on the first call to
+`ready()` or before the first request, using the same root as the request services:
+
+```ts
+import { ResultTask } from 'resultar'
+
+const app = createHonoApp(
+  {
+    services,
+    startup: ResultTask.gen(function* () {
+      const database = yield* Database
+      yield* database.ensureSchema()
+    }),
+  },
+  configureRoutes,
+)
+
+// At the server boundary, stop startup if initialization fails.
+await app.ready().unwrapOrThrow()
+```
+
+The task's requirements are checked against the module. A failed task closes the root and prevents
+subsequent requests. Startup is lazy, shared by concurrent requests and optional; applications
+without it keep the existing behavior.
+Directly acquired resources remain alive until `close()`, then release before singleton dependencies.
+Startup cannot capture scoped/transient services. Closing during startup requests cooperative
+cancellation and prevents waiting requests from reaching routes. Failed startup and cleanup causes
+are retained together; an SDK that ignores cancellation can still delay shutdown.
+
 ## Routes in separate files
 
 The [runnable example](../../examples/hono/README.md) keeps service definitions and
@@ -156,6 +185,8 @@ without starting the Node server because startup is guarded by `import.meta.main
 
 - `fetch(request)` serves requests using one shared root and a fresh child scope per response.
 - `request(input, init?)` uses the same path for tests. Relative paths resolve against localhost.
+- `ready()` runs the optional startup task once and returns a `ResultAsync`; call it before opening a
+  server listener when startup errors should be handled explicitly.
 - `close()` returns a Promise of Result, retaining the module's typed release failures. Concurrent
   and repeated calls return the same promise; requests after close are rejected. Defects or
   composite causes that cannot be represented by Result may reject with ResultTaskCauseError,
@@ -165,6 +196,8 @@ The application type is `HonoApplication<CloseError, RequestServices>`. The seco
 defaults to `object`, preserving `HonoApplication<CloseError>`. `createHonoApp` retains both
 `ServiceScopeError<R>` and the selected bindings: handle the `close()` `Err` case for typed
 release failures. Service type metadata exists only in the declarations, not at runtime.
+`createHonoApp` adds `ready()` to its inferred return type without requiring that method on existing
+implementations or test doubles of the `HonoApplication` interface.
 
 Selected services are acquired before each handler. Singleton providers live until root close; scoped providers live
 until their response is consumed, canceled or fails. A returned Response does not mean its body
@@ -200,3 +233,8 @@ guarantee Hono RPC schemas, support WebSocket upgrades, or infer authenticated r
 values — typed local entries such as the authenticated user still depend on a framework adapter.
 Selection is per request, not per route. Use the existing lower-level integration when those
 features are needed.
+
+Class services reexported by this adapter accept synchronous factories:
+`Service("users", { requires: { repository: Repository }, make: ({ repository }) => ({ find: (id: string) => repository.find(id) }) })`.
+Construction remains lazy and follows the registered lifetime. Factories can also return a
+`ResultTask` for initialization with failures or resources; raw Promises are not accepted.

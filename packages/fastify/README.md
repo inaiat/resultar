@@ -137,6 +137,10 @@ compose operations through `Result.gen`, and map errors explicitly in TypeBox ro
 - `appBindings`: optional singleton selection, initialized during registration and exposed through
   `app.services`. Defaults to an empty selection. `InferAppServices<typeof plugin>` infers its type.
   Scoped/transient selections fail at startup. Unselected providers stay uninitialized.
+- `startup`: optional `ResultTask<void, E, R>` or `(app: FastifyInstance) => ResultTask<void, E, R>`
+  run once in `onReady`, after plugin loading and before Fastify becomes ready.
+  Its service requirements are checked against the module, and a failure rolls back the application
+  root. Use it for schema setup, seeds or framework-level consumers; it does not expose its values.
 - `bindings`: optional services selected for each request. Omission selects all registered
   services, including repositories and caches; `[]` selects none. The plugin resolves them in `preHandler`
   and makes a shallow-frozen object available as `request.services` until response completion.
@@ -144,6 +148,31 @@ compose operations through `Result.gen`, and map errors explicitly in TypeBox ro
   in earlier `onRequest`/`preValidation` hooks when services need authenticated locals. Locals cannot
   replace registrations or become dependencies of singletons.
 - `name`: optional native plugin name, defaulting to `resultar-fastify`.
+
+An application task can carry its own `R` requirements without repeating those services in
+`appBindings`:
+
+```ts
+import { ResultTask } from 'resultar'
+
+const startup = ResultTask.gen(function* () {
+  const database = yield* Database
+  yield* database.ensureSchema()
+  yield* database.seed()
+})
+
+createFastifyPlugin({ services, startup, bindings: ['users'] })
+```
+
+The task runs once during Fastify's `ready()` sequence through the same DI root as application
+services. Startup tasks run with application lifetime rules, so scoped and transient services cannot
+be captured there. `startup` is optional and existing applications need no change.
+Resources acquired directly by the task remain alive until application close and are released before
+their singleton dependencies. Failure rolls back both sets of resources and retains cleanup causes.
+The factory form can access decorators from later plugins; annotate its argument as `FastifyInstance`.
+It runs in native `onReady` hook order, so it cannot depend on a later hook's initialization.
+When a generic helper returns the startup factory, assign its result to `const startup` before
+passing it to the options object. This preserves TypeScript inference for the service selections.
 
 For configuration and locals, annotate callback parameters with the native framework types so
 TypeScript can infer the complete graph before checking selections:
@@ -232,3 +261,8 @@ startup rollback and application shutdown remain owned by this adapter.
 
 Facades that historically report startup rollback errors once can set
 `rethrowRollbackOnClose: false`. The default retains the cleanup failure on subsequent `close`.
+
+Class services reexported by this adapter accept synchronous factories:
+`Service("users", { requires: { repository: Repository }, make: ({ repository }) => ({ find: (id: string) => repository.find(id) }) })`.
+Construction remains lazy and follows the registered lifetime. Factories can also return a
+`ResultTask` for initialization with failures or resources; raw Promises are not accepted.

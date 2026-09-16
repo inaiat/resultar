@@ -108,6 +108,23 @@ type CheckRequirements<R, Services> = [IncompatibleRequirements<R, Services>] ex
     };
 type RemainingRequirements<R, Services> = RegisteredServiceRequirements<WithoutScope<R>, Services>;
 
+type TaskRequirements<R, G extends Graph, ModuleR> =
+  | WithoutScope<R>
+  | SelectedR<G, TagNames<WithoutScope<R>>, ModuleR>;
+
+/** Checks the direct and transitive requirements carried by an arbitrary ResultTask. */
+export type ServiceTaskRequirements<
+  Services extends object,
+  R,
+  G extends Graph = Graph,
+  ModuleR = never,
+> = CheckRequirements<TaskRequirements<R, G, ModuleR>, Services> &
+  ([RemainingRequirements<TaskRequirements<R, G, ModuleR>, Services>] extends [never]
+    ? unknown
+    : {
+        readonly missingServices: RemainingRequirements<TaskRequirements<R, G, ModuleR>, Services>;
+      });
+
 type DependencyParameter<
   Keys extends readonly string[],
   Args extends readonly unknown[],

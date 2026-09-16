@@ -84,10 +84,85 @@ test("preserves explicit and inferred contracts in both class declaration forms"
     Service<Reader>()("bad", { requires: { cache: Cache }, make: () => ResultTask.succeed(42) });
     // @ts-expect-error A ready task is not a requires factory in the curried form.
     Service<Reader>()("bad", { requires: {}, make: ResultTask.succeed({ find: () => "ok" }) });
-    // @ts-expect-error An ordinary object is not a construction task.
-    Service<Reader>()("bad", { requires: {}, make: () => ({ find: () => "ok" }) });
     // @ts-expect-error Promises are not lazy construction tasks.
     Service<Reader>()("bad", { requires: {}, make: () => Promise.resolve({ find: () => "ok" }) });
+  };
+  expectTypeOf(invalid).toBeFunction();
+});
+
+test("infers synchronous factories while preserving contracts and dependency requirements", () => {
+  const Cache = Service.require<ReadonlyMap<string, string>>()("cache");
+  interface Reader {
+    readonly find: (key: string) => string | undefined;
+  }
+  class Explicit extends Service<Reader>()("reader", {
+    requires: { storage: Cache },
+    make: (deps) => {
+      expectTypeOf(deps).toEqualTypeOf<{ readonly storage: ReadonlyMap<string, string> }>();
+      return { find: (key: string) => deps.storage.get(key) };
+    },
+  }) {}
+  const Inferred = Service("size", {
+    requires: { storage: Cache },
+    make: ({ storage }) => ({ size: storage.size }),
+  });
+  const Curried = Service()("curried", {
+    requires: { reader: Explicit },
+    make: ({ reader }) => reader.find("1"),
+  });
+  const Empty = Service("empty", { requires: {}, make: () => ({ value: 42 }) });
+  expectTypeOf(Explicit.make).toEqualTypeOf<ResultTask<Reader, never, typeof Cache>>();
+  expectTypeOf(Inferred.make).toEqualTypeOf<ResultTask<{ size: number }, never, typeof Cache>>();
+  expectTypeOf(Curried.make).toEqualTypeOf<
+    ResultTask<string | undefined, never, typeof Explicit>
+  >();
+  expectTypeOf(Empty.make).toEqualTypeOf<ResultTask<{ value: number }>>();
+  const external = createModule()
+    .scoped(Inferred)
+    .use(["size"], ({ size }) => ResultTask.succeed(size));
+  expectTypeOf(external).toEqualTypeOf<ResultTask<{ size: number }, never, typeof Cache>>();
+  const invalid = () => {
+    // @ts-expect-error A synchronous factory must satisfy an explicit contract.
+    Service<Reader>()("bad", { requires: {}, make: () => ({ find: () => 42 }) });
+    // @ts-expect-error A known provider must satisfy a synchronous service's requirements.
+    createModule().value("cache", 42).scoped(Inferred);
+    // @ts-expect-error Missing dependencies remain required at the boundary.
+    const missing = ResultTask.runPromise(external);
+    expectTypeOf(missing).toEqualTypeOf<Promise<{ size: number }>>();
+    // @ts-expect-error Inferred factories must not return promises.
+    Service("bad", { requires: {}, make: async () => ({ value: 42 }) });
+    // @ts-expect-error A broad explicit contract must not hide promises.
+    Service<unknown>()("bad", { requires: {}, make: async () => ({ value: 42 }) });
+    const maybeAsync = (): { value: number } | Promise<{ value: number }> =>
+      Math.random() > 0.5 ? { value: 42 } : Promise.resolve({ value: 42 });
+    // @ts-expect-error A synchronous branch must not hide an asynchronous branch.
+    Service("bad-union", { requires: {}, make: maybeAsync });
+    // @ts-expect-error Explicit broad contracts must reject asynchronous unions too.
+    Service<object>()("bad-union", { requires: {}, make: maybeAsync });
+    const maybeTask = (): { value: number } | ResultTask<{ value: number }> =>
+      Math.random() > 0.5 ? { value: 42 } : ResultTask.succeed({ value: 42 });
+    // @ts-expect-error A task branch must use the task overload, not leak into the service value.
+    Service("bad-task-union", { requires: {}, make: maybeTask });
+    Service("bad-then", {
+      requires: {},
+      // @ts-expect-error Any callable then is rejected by the runtime, not just PromiseLike signatures.
+      // eslint-disable-next-line unicorn/no-thenable -- Deliberately invalid thenable factory.
+      make: () => ({ then: () => 42 }),
+    });
+    Service("bad", {
+      requires: {},
+      // @ts-expect-error A structural thenable is asynchronous too.
+      // eslint-disable-next-line unicorn/no-thenable -- Deliberately invalid async factory.
+      make: () => ({ then: Promise.resolve(42).then.bind(Promise.resolve(42)) }),
+    });
+    Service("readonly", {
+      requires: { cache: Cache },
+      make: (deps) => {
+        // @ts-expect-error Synchronous factories receive readonly aliases.
+        deps.cache = new Map();
+        return {};
+      },
+    });
   };
   expectTypeOf(invalid).toBeFunction();
 });

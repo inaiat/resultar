@@ -23,8 +23,7 @@
   "files": [
     "dist",
     "LICENSE",
-    "README.md",
-    "ADVANCED.md"
+    "README.md"
   ],
   "type": "module",
   "types": "dist/index.d.ts",

@@ -146,3 +146,7 @@ Bun has not been validated). Binding selection is per request, not per route.
 The package test suite also imports this application directly as a use case.
 Run `pnpm --filter resultar-hono test` from the workspace root to include lookup, deletion,
 health, repository override and application isolation checks alongside adapter tests.
+
+With `requires`, class service factories return their method objects directly. The DI module
+constructs them lazily within the registered lifetime. Return a `ResultTask` only when
+initialization needs task composition; service methods still return `StrictResultAsync`.
