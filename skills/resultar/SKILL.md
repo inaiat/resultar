@@ -209,6 +209,10 @@ Use `resultar-check overview --json` to inventory exported workflows/errors/serv
 concrete task requirements: assertions must not hide services or pending scope errors.
 Remove unused suppression entries; disabled rules are excluded from usage checks.
 
+The checker schema combines standard `tsconfig` options and Resultar rules for editor
+completion/validation. Schema resolution and compiler compatibility are separate checks;
+read [checker configuration](references/integrations.md#configure-the-native-checker) for details.
+
 Treat stable `resultar/*` rule IDs as architecture feedback. Fix the typed boundary or composition
 problem instead of suppressing diagnostics broadly. Use narrow ignore patterns only for deliberate
 test, script, generated, or process-boundary exceptions.

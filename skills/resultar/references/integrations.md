@@ -222,6 +222,13 @@ extension. Start `resultar-check lsp` from the editor's language-server configur
 rule IDs such as `resultar/no-discard`; pass `--format json` (or `--json`) when machine-readable JSON
 Lines output is needed.
 
+The `$schema` composes the standard SchemaStore `tsconfig` schema with Resultar rule options.
+Preserve it when configuring the checker so editors can complete and validate both sets of options.
+Resolving the standard reference requires SchemaStore access or an editor cache. The schema is
+independent of the installed TypeScript version; validate compiler compatibility with the native
+checker and, when relevant, the consuming project's installed compiler. The `plugins` entry remains
+configuration for the native checker, including when the project uses TypeScript 7.
+
 The LSP overlays unsaved project buffers and dependencies, debounces changes, and uses
 versioned UTF-16 edits. Hover separates task success/errors/requirements and service contracts.
 Use `resultar-check overview --json` for a sorted exported inventory and
