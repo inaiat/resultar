@@ -405,6 +405,25 @@ Choose the wrapper that matches the external boundary:
 
 Prefer a factory with `tryResultAsync` when creating the promise can also throw synchronously.
 
+## Reusable function composition
+
+Import `pipe`, `flow`, `identity`, and `constant` from the root package:
+
+```ts
+import { constant, flow, identity, ok, pipe } from 'resultar'
+
+const normalize = flow((input: string) => input.trim(), (input) => input.toLowerCase())
+const name = pipe('  ADA  ', normalize, (value) => ok(value))
+const label = name.match({ ok: identity, error: constant('Unavailable') })
+```
+
+`pipe` applies zero through eight transformations; `value.pipe()` also accepts zero
+transformations. `flow` composes one through nine functions and preserves the first
+function's optional/rest parameters and explicit `this`. Later functions receive one
+value. Both compose synchronously: exceptions propagate, Promises pass through unchanged,
+and tasks execute only at a run boundary. `identity` preserves its argument's reference;
+`constant(value)` captures and returns that same value without copying it.
+
 ## Lazy Workflows With ResultTask
 
 `ResultTask<T, E, R>` is the lazy workflow primitive in Resultar. Creating one does not start the
@@ -421,10 +440,10 @@ operation. Mapping, chaining, recovery, service provision, and generator composi
 | Defer synchronous work | `sync`, `try` |
 | Defer promise-producing work | `tryPromise` |
 | Transform, observe, or chain | `map`, `mapError`, `flatMap`, `andThen`, `tap`, `tapError`, `as`, `match` |
-| Recover typed failures | `catchAll` |
-| Write a linear lazy workflow | `gen` with `yield*` |
+| Recover typed failures | `catchAll`, `catchTag`, `catchTags` |
+| Write a linear lazy workflow | `gen` with `yield*`, `fn` for parameterized functions |
 | Declare and provide dependencies | `service`, `provideService`, `provideServices`, `provideServiceResolver` |
-| Own resources and await cleanup | `acquireRelease`, `scoped` |
+| Own resources and await cleanup | `acquireRelease`, `acquireDisposable`, `scoped` |
 | Execute at the application boundary | `runExit`, `runResult`, `runPromise` |
 | Bridge to started promises | `fromResultAsync`, `toResultAsync`, `ResultAsync.fromTask` |
 
@@ -571,6 +590,38 @@ scopes below when both the body and cleanup failure must be preserved.
 Generators also accept `yield* result` for plain `Result` values: `Ok` unwraps its value and
 `Err` short-circuits into `E`.
 
+### Parameterized tasks and tagged recovery
+
+`ResultTask.fn` wraps a synchronous generator function. Calling the wrapper captures
+its arguments and receiver without executing the body. Each run creates a fresh iterator,
+with the same success/error/requirements inference and cleanup policy as `gen`:
+
+```ts
+import { createTaggedError, pipe, ResultTask } from 'resultar'
+
+class NotFound extends createTaggedError({ name: 'NotFound', message: 'User $id was not found' }) {}
+const Users = ResultTask.service<{
+  find(id: string): ResultTask<string, NotFound>
+}>()('Users')
+
+const loadUser = ResultTask.fn(function* (id: string) {
+  const users = yield* Users
+  return yield* users.find(id)
+})
+
+const recovered = pipe(loadUser('user_123'),
+  ResultTask.catchTag('NotFound', (error: NotFound) => ResultTask.succeed(`Guest ${error.id}`)),
+)
+```
+
+`task.catchTag(tag, handler)` narrows the handler's error to that tag. `task.catchTags(handlers)`
+allows partial recovery. Both also support `ResultTask.catchTag(task, tag, handler)` /
+`ResultTask.catchTags(task, handlers)` and curried forms for `pipe`. Unhandled tags remain in
+`E`; handler errors and requirements join the source channels. Scope requirements remain
+until closure. Handlers run only for simple `Fail` causes: defects and interruptions pass
+through, and composites retain the existing `catchAll` policy of `Die(ResultTaskCauseError)`.
+A throwing handler becomes a defect.
+
 ### Resource scopes and application lifecycle
 
 ```ts
@@ -595,6 +646,13 @@ const program = ResultTask.scoped(ResultTask.gen(function* () {
 
 const exit = await ResultTask.runExit(program)
 ```
+
+For native `Disposable` or `AsyncDisposable` resources, use
+`ResultTask.acquireDisposable(acquireTask)` inside the same scopes. It prefers
+`Symbol.asyncDispose` when both protocols exist, awaits disposal once in LIFO order,
+and registers nothing when acquisition fails. Disposal throws/rejections become `Die`;
+body and disposal failures retain their sequential cause tree. Cancellation does not
+interrupt cleanup. This helper adds a scope requirement to `R`, just like `acquireRelease`.
 
 Every run owns a root scope. `scoped` closes a child scope before the next task continues. Successful
 acquisitions register finalizers in LIFO order; every finalizer is awaited once, even after a body

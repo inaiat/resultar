@@ -8,6 +8,7 @@ If you are evaluating or using the main library, start with:
 
 - [resultar package README](packages/resultar/README.md)
 - [full Resultar guide](DOCUMENTATION.md)
+- [new features](#new-features)
 - [API map](DOCUMENTATION.md#api-map)
 - [AI/RAG map](llms.txt)
 
@@ -47,6 +48,31 @@ selling points and quick-start examples for:
 - reusable `pipe` combinators for `Result` and `ResultAsync`
 - `ResultAsync.timeout`, `retry`, `retryOrElse`, `race`, `raceAll`, and `withResource`
 - `Result.gen`/`safeTry`, `matchTags`, local recovery, and boundary response mapping
+
+## New features
+
+These additions are implemented in the workspace and prepared for minor releases through Changesets.
+Versioning and publication follow the project's release workflow.
+
+| Feature | What it enables | Guide |
+| --- | --- | --- |
+| `pipe`, `flow`, `identity`, `constant` | Reusable synchronous function composition, typed callbacks, and fixed fallbacks. | [Function composition](DOCUMENTATION.md#function-composition-and-parameterized-tasks) |
+| `ResultTask.fn` | Parameterized lazy generators with inferred success, errors, services, and preserved arguments/receiver. | [Task functions](DOCUMENTATION.md#parameterized-task-functions) |
+| `ResultTask.catchTag` / `catchTags` | Recover selected error tags while keeping unhandled errors and handler requirements in the type. | [Tagged task recovery](DOCUMENTATION.md#tagged-task-recovery) |
+| `ResultTask.acquireDisposable` | Own native `Disposable` / `AsyncDisposable` resources with awaited scoped cleanup. | [Native disposal](DOCUMENTATION.md#native-disposable-resources) |
+| Task requirement checks | Detect `any`/`unknown` requirements and assertions that hide services or pending scope errors. | [Requirements safety](DOCUMENTATION.md#task-requirement-safety) |
+| Unused suppression diagnostics | Find obsolete suppression entries and unknown rule IDs. | [Suppression checks](DOCUMENTATION.md#unused-suppression-diagnostics) |
+| Updated LSP | Analyze unsaved buffers, explain `T`/`E`/`R` in hover, and preview generator/recovery refactors. | [Editor tooling](DOCUMENTATION.md#editor-diagnostics-and-refactors) |
+| `overview` / `quickfixes` CLI | Inventory exported workflows, errors, and services; inspect proposed edits. | [Inspection commands](DOCUMENTATION.md#inspection-commands) |
+| Vite+ 1.1.0 and corrected mutation testing | Keep the test toolchain aligned and run Stryker's selected tests correctly with Vitest 5. | [Workspace validation](DOCUMENTATION.md#workspace-toolchain-and-validation) |
+
+The two new checker rules default to `suggestion`, which the default `failOn: "message"` includes
+in CI failures. See the guide for gradual-adoption settings.
+
+`ResultAsync` remains eager; `ResultTask` remains lazy and repeatable. Fibers and task concurrency
+remain deferred. Function `memoize` / `memoizeIdempotent` await a separate evaluation, and `dual`
+is an internal helper. Try the [functional ergonomics example](examples/resultar/src/functional-ergonomics.ts)
+with `pnpm run example:resultar`.
 
 ## Documentation Map
 
@@ -90,7 +116,9 @@ binary performs compiler diagnostics and all Resultar rules in one project pass.
 
 - human, JSON Lines, SARIF 2.1.0, and JUnit output;
 - configurable severities, file overrides, suppressions, and CI `failOn` policy;
-- a stdio LSP server with diagnostics and safe composition quick fixes;
+- a stdio LSP server with unsaved-buffer diagnostics, channel/service hover, quick fixes, and refactors;
+- requirements safety and unused-suppression diagnostics;
+- `overview` and `quickfixes` commands for read-only inventories and edit previews;
 - `init` and `doctor` commands for a portable Zed setup;
 - macOS, Linux, and Windows binaries for ARM64 and x64.
 

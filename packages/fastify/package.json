@@ -49,7 +49,7 @@
   "dependencies": {
     "fastify-plugin": "catalog:",
     "resultar": "workspace:^",
-    "resultar-di": "workspace:^0.4.1"
+    "resultar-di": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "catalog:",

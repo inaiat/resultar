@@ -207,6 +207,13 @@ const workflow = safeTry(async function* () {
 Use `yield*` for `Result` and `ResultAsync`. Wrap raw promises before yielding. Avoid raw `await`,
 `try/catch`, and legacy `safeUnwrap()` inside the generator.
 
+## Function Utilities
+
+Root `pipe` supports zero through eight transforms; `flow` supports one through nine
+functions and preserves the first function's arguments/receiver. Both compose synchronously.
+`identity` returns the original value; `constant(value)` returns a callback capturing that value.
+Use `result.match({ ok: identity, error: constant(fallback) })` for fixed boundary fallbacks.
+
 ## ResultTask (Lazy Workflows)
 
 `ResultTask<A, E, R>` is a lazy, reusable description of work: building one starts nothing, and
@@ -215,12 +222,19 @@ laziness matters.
 
 - Build: `succeed`, `fail`, `fromResult`, `sync`, `try`, `tryPromise` (`try`/`tryPromise` map
   external throws into `E`; `sync` treats them as defects).
-- Compose lazily: `map`, `flatMap`, `catchAll`, `tap`, `gen` with `yield*` (also accepts
+- Compose lazily: `map`, `flatMap`, `catchAll`, `catchTag`, partial `catchTags`, `tap`, `gen` with `yield*` (also accepts
   `yield* result`: `Ok` unwraps, `Err` short-circuits into `E`).
+- `fn(function* (args) { ... })` creates a lazy parameterized function, capturing arguments/
+  receiver and creating fresh generators on each execution; infer all three task channels.
+- Tagged task recovery has instance/direct/curried forms. Handler errors and requirements
+  join the source; unhandled tags and scope markers remain. Defects/interruptions pass through;
+  composites follow `catchAll`'s `ResultTaskCauseError` policy.
+- `acquireDisposable` prefers async disposal, awaits it once in LIFO order, and treats
+  disposal failures as defects while preserving sequential body/cleanup causes.
 - Provide services: `yield* Tag`, then `provideService` / `provideServices` /
   `provideServiceResolver` (data-first and curried); missing or incompatible providers are
   compile-time errors, never runtime surprises.
-- Resources: `acquireRelease` + `scoped`; LIFO awaited finalizers run on every exit; deferred
+- Resources: `acquireRelease` / `acquireDisposable` + `scoped`; LIFO awaited finalizers run on every exit; deferred
   release errors live in `R` until `scoped` folds them into `E`; `catchAll` recovers a release
   failure only after `scoped`.
 - Boundaries: `runExit` preserves `Success`/`Fail`/`Die`/`Interrupt`/`Sequential`; `runResult`

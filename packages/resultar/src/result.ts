@@ -377,9 +377,50 @@ export interface ResultOperations<T, E> {
    * Pipes this Result through reusable transformation functions.
    */
   pipe: {
-    <A>(ab: PipeFn<Result<T, E>, A>): A
-    <A, B>(ab: PipeFn<Result<T, E>, A>, bc: PipeFn<A, B>): B
-    <A, B, C>(ab: PipeFn<Result<T, E>, A>, bc: PipeFn<A, B>, cd: PipeFn<B, C>): C
+    <Self>(this: Self): Self
+    <P1>(f0: PipeFn<Result<T, E>, P1>): P1
+    <P1, P2>(f0: PipeFn<Result<T, E>, P1>, f1: PipeFn<P1, P2>): P2
+    <P1, P2, P3>(f0: PipeFn<Result<T, E>, P1>, f1: PipeFn<P1, P2>, f2: PipeFn<P2, P3>): P3
+    <P1, P2, P3, P4>(
+      f0: PipeFn<Result<T, E>, P1>,
+      f1: PipeFn<P1, P2>,
+      f2: PipeFn<P2, P3>,
+      f3: PipeFn<P3, P4>,
+    ): P4
+    <P1, P2, P3, P4, P5>(
+      f0: PipeFn<Result<T, E>, P1>,
+      f1: PipeFn<P1, P2>,
+      f2: PipeFn<P2, P3>,
+      f3: PipeFn<P3, P4>,
+      f4: PipeFn<P4, P5>,
+    ): P5
+    <P1, P2, P3, P4, P5, P6>(
+      f0: PipeFn<Result<T, E>, P1>,
+      f1: PipeFn<P1, P2>,
+      f2: PipeFn<P2, P3>,
+      f3: PipeFn<P3, P4>,
+      f4: PipeFn<P4, P5>,
+      f5: PipeFn<P5, P6>,
+    ): P6
+    <P1, P2, P3, P4, P5, P6, P7>(
+      f0: PipeFn<Result<T, E>, P1>,
+      f1: PipeFn<P1, P2>,
+      f2: PipeFn<P2, P3>,
+      f3: PipeFn<P3, P4>,
+      f4: PipeFn<P4, P5>,
+      f5: PipeFn<P5, P6>,
+      f6: PipeFn<P6, P7>,
+    ): P7
+    <P1, P2, P3, P4, P5, P6, P7, P8>(
+      f0: PipeFn<Result<T, E>, P1>,
+      f1: PipeFn<P1, P2>,
+      f2: PipeFn<P2, P3>,
+      f3: PipeFn<P3, P4>,
+      f4: PipeFn<P4, P5>,
+      f5: PipeFn<P5, P6>,
+      f6: PipeFn<P6, P7>,
+      f7: PipeFn<P7, P8>,
+    ): P8
   }
   /**
    * Runs a side effect with the Ok or Err value and returns this same Result.

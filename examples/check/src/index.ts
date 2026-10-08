@@ -8,6 +8,7 @@ import {
   safeTry,
   tryResult,
   type ResultAsync,
+  type ResultTaskScope,
   type StrictResult,
 } from "resultar";
 import { createModule } from "resultar-di";
@@ -392,3 +393,75 @@ export const throwInTaskSyncExample = (): ResultTask<User, never> =>
   ResultTask.sync((): User => {
     throw new FetchUserError({ id: "sync-throw" });
   });
+
+const TaskClock = ResultTask.service<{ now(): number }>()("task-clock");
+type TaskWithRequirements<Requirements> = ResultTask<User, FetchUserError, Requirements>;
+
+// resultar/no-unknown-task-requirements: concrete errors are not enough when
+// unknown or any requirements hide which services a workflow needs, even via aliases.
+export declare const unknownRequirementsTask: TaskWithRequirements<unknown>;
+export declare const anyRequirementsTask: TaskWithRequirements<any>;
+
+// resultar/unsafe-result-type-assertion: discharge services with providers;
+// narrowing R with an assertion does not provide the service at runtime.
+export const unsafeTaskServiceAssertionExample = (
+  task: TaskWithRequirements<typeof TaskClock>,
+): ResultTask<User, FetchUserError> => task as ResultTask<User, FetchUserError>;
+
+// An intermediate unknown must not conceal the original service requirement.
+export const unsafeTaskServiceBridgeExample = (
+  task: TaskWithRequirements<typeof TaskClock>,
+): ResultTask<User, FetchUserError> => task as unknown as ResultTask<User, FetchUserError>;
+
+// Pending release errors belong to the scope requirement until it is closed.
+// Erasing the scope would also hide FetchUserError from the eventual error channel.
+export const unsafeTaskScopeAssertionExample = (
+  task: ResultTask<User, never, ResultTaskScope<FetchUserError>>,
+): ResultTask<User, never> => task as unknown as ResultTask<User, never>;
+
+// resultar/unused-suppression: this helper no longer throws.
+// resultar-check-disable-next-line no-throw // Legacy throwing implementation was removed.
+export const obsoleteThrowSuppression = (): string => "safe";
+
+// Only no-discard is used; the no-unknown-result-error entry is obsolete.
+// resultar-check-disable-next-line no-discard no-unknown-result-error // Deliberate discard.
+saveUser("partially-obsolete-suppression");
+
+// Wildcard directives must still suppress an actual enabled diagnostic.
+// resultar-check-disable-next-line // There are no diagnostics on this declaration.
+export const obsoleteWildcardSuppression = 42;
+
+// Unknown rule IDs are diagnosed instead of silently accepted.
+// resultar-check-disable-next-line nonexistent-rule // Misspelled rule identifier.
+export const unknownRuleSuppression = "unknown-rule";
+
+// resultar/yield-star-in-result-task-gen also recognizes parameterized fn bodies.
+export const yieldStarInResultTaskFnExample = ResultTask.fn(function* (id: string) {
+  yield loadUserTask(id);
+
+  return { email: "unreachable@example.com", id: "unreachable" };
+});
+
+// resultar/no-result-in-task-gen: fn bodies return plain success values too.
+export const okInTaskFnExample = ResultTask.fn(function* (id: string) {
+  const user = yield* loadUserTask(id);
+
+  return ok(user);
+});
+
+// resultar/no-await-in-result-task-gen: async generators are invalid for fn.
+// @ts-expect-error fn requires a synchronous generator; the checker also explains the raw await.
+export const awaitInResultTaskFnExample = ResultTask.fn(async function* (id: string) {
+  await fetchUser(id);
+
+  return yield* loadUserTask(id);
+});
+
+// resultar/no-unscoped-acquire-release also covers native disposal in fn bodies.
+export const unscopedDisposableFnExample = ResultTask.fn(function* () {
+  const session = yield* ResultTask.acquireDisposable(
+    ResultTask.sync(() => ({ id: "session", [Symbol.dispose]: (): void => {} })),
+  );
+
+  return session.id;
+});

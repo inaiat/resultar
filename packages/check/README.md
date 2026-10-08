@@ -77,6 +77,12 @@ pnpm check
 The `plugins` entry is configuration consumed by the native CLI and LSP server. It does not install
 a TypeScript language-service plugin or editor extension.
 
+The `$schema` combines the standard [SchemaStore tsconfig schema](https://json.schemastore.org/tsconfig.json)
+with Resultar options. Editors can complete and validate both TypeScript options such as `strict`,
+`target`, and `moduleResolution`, and Resultar rule severities. The editor needs access to SchemaStore
+or a cached copy to resolve the standard schema. This schema does not select a compiler version;
+the native checker validates the project with its bundled TypeScript-Go compiler.
+
 ## Command Line
 
 With no subcommand, `resultar-check` analyzes the project and writes diagnostics:
@@ -97,6 +103,8 @@ Additional commands:
 
 | Command | Purpose |
 | --- | --- |
+| `resultar-check overview --project tsconfig.json --json` | Inventory exported Resultar functions/values, tagged errors, and services |
+| `resultar-check quickfixes --project tsconfig.json --file src/workflow.ts` | Preview diagnostics with proposed edits without writing files |
 | `resultar-check lsp --project tsconfig.json` | Run the stdio language server |
 | `resultar-check init --project tsconfig.json` | Create the portable Zed LSP configuration |
 | `resultar-check init --force` | Refresh the Resultar Zed entry while preserving other settings |
@@ -105,6 +113,18 @@ Additional commands:
 
 Compiler diagnostics are always included. Resultar diagnostics use their configured severity, and
 the process exits with status `1` when a compiler error or a diagnostic at or above `failOn` exists.
+
+`overview` and `quickfixes` support `--file` (relative to the project directory),
+`--format human|json`, and `--json`. `overview --json` emits one document with
+`schemaVersion: 1` and sorted `entries`, containing declaration/export locations and
+`success`, `error`, and `requirements` channels where applicable. Reexports retain the
+original declaration and the exporting module. Services include identifier/contract;
+tagged error constructors include their tag.
+
+`quickfixes --json` emits diagnostic JSONL with fix titles, kinds, explanations, and text
+edits. Human output shows the old/new snippets. Preview commands exit `0` after successful
+analysis, even when fixes exist; project/compiler failures exit `1` and go to stderr.
+They never apply changes. Use the default command for the CI diagnostic gate.
 
 ## Output Formats
 
@@ -135,9 +155,15 @@ Run the native stdio server directly from any editor that supports a custom lang
 pnpm exec resultar-check lsp --project tsconfig.json
 ```
 
-The server publishes diagnostics on open, change, and save events and reuses the last project
-analysis until a save or watched-file event invalidates it. TypeScript-Go currently opens the
-project from disk, so unsaved buffers retain the last disk-backed diagnostics until saved.
+The server overlays all open buffers on the project filesystem, including new files matched
+by the project configuration. Diagnostics reflect unsaved changes in imported dependencies.
+Changes are debounced for 150 ms; hover and code-action requests analyze the latest accepted
+version immediately. Stale document versions are ignored. Save, close, and watched-file events
+refresh the snapshot; closing a buffer restores its disk contents.
+
+Hover separates success `T`, errors `E`, and requirements `R`, including `yield*` task
+operands. Service hover shows its identifier and contract. Quick fixes and refactors use UTF-16
+ranges from the analyzed text and versioned document edits, so editors can reject stale actions.
 
 For Zed, the project-local setup is generated and checked with:
 
@@ -154,7 +180,13 @@ The LSP offers quick fixes for:
 
 - explicitly discarding a directly ignored Resultar value with `void`;
 - replacing `yield` or `await` with `yield*` for Resultar values inside `safeTry`;
-- replacing plain `yield` with `yield*` inside `ResultTask.gen`.
+- replacing plain `yield` with `yield*` inside `ResultTask.gen` or `ResultTask.fn`.
+
+The LSP also offers `refactor.rewrite` actions for a generator that only delegates to an
+already initialized constant task, tag-based `catchAll` branches, and consecutive `catchTag`
+calls with stable handlers. It declines generators with `finally` and recovery combinations
+whose first handler could introduce the next handled error. Review the editor preview before
+applying it.
 
 Findings that require an application-specific error mapper, such as a raw Promise `await`, remain
 guided diagnostics instead of unsafe automatic rewrites.
@@ -229,16 +261,24 @@ await runLegacyBoundary() // resultar-check-disable-line no-unsafe-await
 Omitting the rule ID disables all Resultar rules for that line. TypeScript compiler diagnostics are
 not suppressed by Resultar comments.
 
+`unused-suppression` tracks each entry against enabled findings before filtering them.
+A partially used directive can remove just its unused rule; disabled rules do not produce
+unused-entry warnings. Empty/wildcard directives are reported when they suppress nothing,
+and unknown IDs are diagnosed. Removal fixes retain trailing justification comments.
+The new requirements and suppression rules default to `suggestion`; the default
+`failOn: "message"` includes them in CI failures. Configure per-rule severities or raise
+`failOn` when adopting them gradually.
+
 ## Diagnostics
 
 | Rule | Option | Default | What it checks |
 | --- | --- | --- | --- |
-| `no-await-in-result-task-gen` | `noAwaitInResultTaskGen` | `warning` | Prevents `await` from breaking laziness and typing inside `ResultTask.gen` |
+| `no-await-in-result-task-gen` | `noAwaitInResultTaskGen` | `warning` | Prevents `await` from breaking laziness and typing inside `ResultTask.gen` / `ResultTask.fn` |
 | `no-await-in-safe-try` | `noAwaitInSafeTry` | `error` | Prevents `await` from unwrapping Resultar control flow inside `safeTry` |
 | `no-discard` | `noDiscard` | `error` | Requires `Result`, `ResultAsync`, and `ResultTask` values to be handled, returned, or explicitly discarded |
 | `no-invalid-lifetime` | `noInvalidLifetime` | `warning` | Rejects dependencies a longer-lived service cannot capture, such as a singleton on a scoped service |
 | `no-promise-in-result-success` | `noPromiseInResultSuccess` | `warning` | Prevents Promises inside synchronous `Result` or lazy `ResultTask` success channels |
-| `no-result-in-task-gen` | `noResultInTaskGen` | `warning` | Requires `ResultTask.gen` bodies to return plain success values instead of nested `ok`/`err` results |
+| `no-result-in-task-gen` | `noResultInTaskGen` | `warning` | Requires `ResultTask.gen` / `ResultTask.fn` bodies to return plain success values instead of nested `ok`/`err` results |
 | `no-tagged-error-constructor-override` | `noTaggedErrorConstructorOverride` | `warning` | Protects the constructor generated by `createTaggedError` |
 | `no-throw` | `noThrow` | `off` | Reports throw-based expected-failure control flow |
 | `no-throw-in-task-sync` | `noThrowInTaskSync` | `warning` | Reports `throw` inside `ResultTask.sync`, where failures become defects instead of typed errors |
@@ -246,7 +286,9 @@ not suppressed by Resultar comments.
 | `no-try-catch-in-safe-try` | `noTryCatchInSafeTry` | `warning` | Keeps throwing APIs outside `safeTry` generators |
 | `no-unsafe-await` | `noUnsafeAwait` | `off` | Reports Promise awaits that can reject outside a typed Resultar boundary |
 | `no-unknown-result-error` | `noUnknownResultError` | `suggestion` | Rejects `unknown` or `any` Resultar error channels |
-| `no-unscoped-acquire-release` | `noUnscopedAcquireRelease` | `warning` | Requires `acquireRelease` workflows in `ResultTask.gen` to run under `ResultTask.scoped` |
+| `no-unknown-task-requirements` | `noUnknownTaskRequirements` | `suggestion` | Rejects `unknown` or `any` task requirements, including type aliases |
+| `unused-suppression` | `unusedSuppression` | `suggestion` | Reports unknown suppression IDs and unused entries for enabled rules |
+| `no-unscoped-acquire-release` | `noUnscopedAcquireRelease` | `warning` | Requires `acquireRelease` / `acquireDisposable` workflows in `ResultTask.gen` / `ResultTask.fn` to run under `ResultTask.scoped` |
 | `no-useless-recovery` | `noUselessRecovery` | `warning` | Removes recovery operators from infallible error channels |
 | `prefer-and-then` | `preferAndThen` | `warning` | Replaces `map` callbacks that return Resultar values with fallible chaining |
 | `prefer-catch-reason` | `preferCatchReason` | `warning` | Uses reason-aware recovery instead of manually checking nested reason tags |
@@ -258,15 +300,15 @@ not suppressed by Resultar comments.
 | `prefer-tagged-error` | `preferTaggedError` | `warning` | Encourages stable tagged domain errors over plain `Error` values |
 | `tagged-error-name-match` | `taggedErrorNameMatch` | `warning` | Keeps the generated runtime tag equal to the TypeScript class name |
 | `typed-catch-mapper` | `typedCatchMapper` | `warning` | Requires throwing and rejecting boundaries to map causes into concrete errors |
-| `unsafe-result-type-assertion` | `unsafeResultTypeAssertion` | `warning` | Prevents assertions that narrow away possible Resultar failures |
-| `yield-star-in-result-task-gen` | `yieldStarInResultTaskGen` | `warning` | Requires `yield*` for tasks and services inside `ResultTask.gen` |
+| `unsafe-result-type-assertion` | `unsafeResultTypeAssertion` | `warning` | Prevents assertions that remove Resultar failures, task services, or deferred scope errors (including unknown bridges) |
+| `yield-star-in-result-task-gen` | `yieldStarInResultTaskGen` | `warning` | Requires `yield*` for tasks and services inside `ResultTask.gen` / `ResultTask.fn` |
 | `yield-star-in-safe-try` | `yieldStarInSafeTry` | `warning` | Requires `yield*` to compose Resultar values inside `safeTry` |
 
 Rules understand both method and static composition forms where applicable. ResultTask-aware checks
-cover ignored tasks, unknown or narrowed error channels, nested tasks returned from `map`, Promises
+cover ignored tasks, unknown or narrowed error and requirements channels, nested tasks returned from `map`, Promises
 stored in task successes, useless `catchAll`, and generator composition.
 
-Generator rules also cover `Result.gen`. Static ResultTask and Result namespace recognition and
+Generator rules also cover `Result.gen` and `ResultTask.fn`. Static ResultTask and Result namespace recognition and
 generator recognition resolve imported symbols, including renamed imports, namespace imports,
 and barrel reexports. Rule IDs retain the `safe-try` spelling for both `safeTry` and `Result.gen`.
 

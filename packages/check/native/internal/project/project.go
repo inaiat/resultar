@@ -22,6 +22,11 @@ type Opened struct {
 }
 
 func Open(configPath string) (*Opened, []*ast.Diagnostic, error) {
+	return OpenWithOverlay(configPath, nil)
+}
+
+// OpenWithOverlay binds a fresh program against an immutable editor snapshot.
+func OpenWithOverlay(configPath string, overlay map[string]string) (*Opened, []*ast.Diagnostic, error) {
 	absolutePath, err := filepath.Abs(configPath)
 	if err != nil {
 		return nil, nil, err
@@ -31,7 +36,7 @@ func Open(configPath string) (*Opened, []*ast.Diagnostic, error) {
 		absolutePath = filepath.Join(absolutePath, "tsconfig.json")
 	}
 	directory := tspath.GetDirectoryPath(absolutePath)
-	fs := bundled.WrapFS(cachedvfs.From(osvfs.FS()))
+	fs := bundled.WrapFS(cachedvfs.From(overlayFS(osvfs.FS(), overlay)))
 	host := compiler.NewCompilerHost(directory, fs, bundled.LibPath(), nil, nil)
 	parsed, diagnostics := tsoptions.GetParsedCommandLineOfConfigFile(
 		absolutePath,

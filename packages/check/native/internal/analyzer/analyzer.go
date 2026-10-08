@@ -30,7 +30,7 @@ func Run(ctx context.Context, program *compiler.Program, projectDir string, opti
 		if options.ShouldInspect(file.FileName(), projectDir) {
 			fileAnalyzer := analyzer
 			fileAnalyzer.options = options.ForFile(file.FileName(), projectDir)
-			findings = append(findings, filterSuppressed(file, fileAnalyzer.analyzeFile(file))...)
+			findings = append(findings, fileAnalyzer.applySuppressions(file, fileAnalyzer.analyzeFile(file))...)
 		}
 	}
 	sort.SliceStable(findings, func(left, right int) bool {
@@ -47,6 +47,9 @@ func Run(ctx context.Context, program *compiler.Program, projectDir string, opti
 
 func (a *Analyzer) analyzeFile(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
+	if a.options.NoUnknownTaskRequirements != config.SeverityOff {
+		findings = append(findings, a.noUnknownTaskRequirements(file)...)
+	}
 	if a.options.NoDiscard != config.SeverityOff {
 		findings = append(findings, a.noDiscard(file)...)
 	}

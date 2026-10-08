@@ -635,34 +635,65 @@ func (a *Analyzer) unsafeResultTypeAssertion(file *ast.SourceFile) []Finding {
 		if node.Kind != ast.KindAsExpression && node.Kind != ast.KindTypeAssertionExpression {
 			return
 		}
+		// Only the outer assertion reports a chain; retain the expression before unknown/any bridges.
+		parent := node.Parent
+		for parent != nil && parent.Kind == ast.KindParenthesizedExpression {
+			parent = parent.Parent
+		}
+		if parent != nil && (parent.Kind == ast.KindAsExpression || parent.Kind == ast.KindTypeAssertionExpression) {
+			return
+		}
 		expression := node.Expression()
-		originalErrors := resultErrorTypes(a.checker, a.checker.GetTypeAtLocation(expression))
-		assertedErrors := resultErrorTypes(a.checker, a.checker.GetTypeAtLocation(node))
-		if len(originalErrors) == 0 || len(assertedErrors) == 0 {
-			return
+		for expression != nil && (expression.Kind == ast.KindAsExpression || expression.Kind == ast.KindTypeAssertionExpression || expression.Kind == ast.KindParenthesizedExpression) {
+			expression = expression.Expression()
 		}
-		details := make([]string, 0)
-		for _, original := range originalErrors {
-			if original == nil || isUnknownOrAnyType(original) {
-				continue
-			}
-			for _, asserted := range assertedErrors {
-				if asserted == nil {
+		source, target := a.checker.GetTypeAtLocation(expression), a.checker.GetTypeAtLocation(node)
+		for _, channel := range []struct {
+			name    string
+			extract func(*checker.Checker, *checker.Type) []*checker.Type
+		}{{"error", resultErrorTypes}, {"requirements", taskRequirementTypes}} {
+			originalTypes, assertedTypes := channel.extract(a.checker, source), channel.extract(a.checker, target)
+			details := []string{}
+			for _, original := range originalTypes {
+				if original == nil || isUnknownOrAnyType(original) {
 					continue
 				}
-				originalName := a.checker.TypeToStringEx(original, expression, checker.TypeFormatFlagsNoTruncation, nil)
-				assertedName := a.checker.TypeToStringEx(asserted, node, checker.TypeFormatFlagsNoTruncation, nil)
-				if a.checker.IsTypeAssignableTo(original, asserted) && !isRenderedUnionNarrowing(originalName, assertedName) {
-					continue
+				for _, asserted := range assertedTypes {
+					if asserted == nil {
+						continue
+					}
+					originalName := a.checker.TypeToStringEx(original, expression, checker.TypeFormatFlagsNoTruncation, nil)
+					assertedName := a.checker.TypeToStringEx(asserted, node, checker.TypeFormatFlagsNoTruncation, nil)
+					if a.checker.IsTypeAssignableTo(original, asserted) && !isRenderedUnionNarrowing(originalName, assertedName) {
+						continue
+					}
+					details = append(details, fmt.Sprintf("`%s` to `%s`", originalName, assertedName))
 				}
-				details = append(details, fmt.Sprintf("`%s` to `%s`", originalName, assertedName))
+			}
+			if len(details) > 0 {
+				advice := "Prefer a real recovery or mapping step."
+				if channel.name == "requirements" {
+					advice = "Provide the services or close the owning scope instead of erasing requirements."
+				}
+				findings = append(findings, newFinding(file, node, "unsafe-result-type-assertion", a.options.UnsafeResultTypeAssertion, fmt.Sprintf("This assertion narrows the Resultar %s channel unsafely (%s). %s", channel.name, strings.Join(details, ", "), advice), ""))
 			}
 		}
-		if len(details) == 0 {
+	})
+	return findings
+}
+
+func (a *Analyzer) noUnknownTaskRequirements(file *ast.SourceFile) []Finding {
+	findings := []Finding{}
+	visit(file.AsNode(), func(node *ast.Node) {
+		if node.Kind != ast.KindTypeReference {
 			return
 		}
-		findings = append(findings, newFinding(file, node, "unsafe-result-type-assertion", a.options.UnsafeResultTypeAssertion,
-			fmt.Sprintf("This assertion narrows the Resultar error channel unsafely (%s). Prefer a real recovery or mapping step.", strings.Join(details, ", ")), ""))
+		for _, r := range taskRequirementTypes(a.checker, a.checker.GetTypeAtLocation(node)) {
+			if isUnknownOrAnyType(r) {
+				findings = append(findings, newFinding(file, node, "no-unknown-task-requirements", a.options.NoUnknownTaskRequirements, "This ResultTask requirements channel is unknown or any. Preserve concrete services and scope requirements.", ""))
+				break
+			}
+		}
 	})
 	return findings
 }
@@ -1101,7 +1132,7 @@ func (a *Analyzer) resultTaskGenBody(node *ast.Node) *ast.Node {
 		return nil
 	}
 	call := node.AsCallExpression()
-	if !a.isResultTaskStaticCall(call.Expression, "gen") || len(call.Arguments.Nodes) == 0 {
+	if (!a.isResultTaskStaticCall(call.Expression, "gen") && !a.isResultTaskStaticCall(call.Expression, "fn")) || len(call.Arguments.Nodes) == 0 {
 		return nil
 	}
 	body := unwrapExpression(call.Arguments.Nodes[0])
@@ -1551,14 +1582,18 @@ func (a *Analyzer) noUnscopedAcquireRelease(file *ast.SourceFile) []Finding {
 				return
 			}
 			yielded := unwrapExpression(bodyNode.AsYieldExpression().Expression)
-			if yielded == nil || yielded.Kind != ast.KindCallExpression || !a.isResultTaskStaticCall(yielded.AsCallExpression().Expression, "acquireRelease") {
+			if yielded == nil || yielded.Kind != ast.KindCallExpression {
+				return
+			}
+			acquire := yielded.AsCallExpression().Expression
+			if !a.isResultTaskStaticCall(acquire, "acquireRelease") && !a.isResultTaskStaticCall(acquire, "acquireDisposable") {
 				return
 			}
 			if a.acquiresScopeOwner(yielded) {
 				return
 			}
 			findings = append(findings, newFinding(file, yielded, "no-unscoped-acquire-release", a.options.NoUnscopedAcquireRelease,
-				"`acquireRelease` registers its release in the current scope. Ensure an enclosing `ResultTask.scoped(...)` closes it, or record the owning scope with a suppression comment.", ""))
+				"Resource acquisition registers cleanup in the current scope. Ensure an enclosing `ResultTask.scoped(...)` closes it, or record the owning scope with a suppression comment.", ""))
 		})
 	})
 	return findings

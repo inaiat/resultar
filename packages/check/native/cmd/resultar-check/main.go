@@ -22,8 +22,11 @@ const usage = `Usage: resultar-check
 Commands:
   init                      Create a portable Zed LSP setup.
   doctor                    Check the project, binary, pnpm, and Zed setup.
+  overview                  Inventory exported workflows, errors, and services.
+  quickfixes                Preview diagnostic fixes without writing files.
 
 Flags:
+  --file <path>             Filter overview/quickfixes by source file.
   --mode <direct|must-use>  Override noDiscardMode.
   -p, --project <path>      TypeScript project. Defaults to tsconfig.json.
   --format <human|json|sarif|junit>  Diagnostic output format (default: human).
@@ -37,6 +40,11 @@ func main() {
 }
 
 func run(args []string) int {
+	command := ""
+	if len(args) > 0 && (args[0] == "overview" || args[0] == "quickfixes") {
+		command = args[0]
+		args = args[1:]
+	}
 	if len(args) > 0 {
 		switch args[0] {
 		case "help":
@@ -56,11 +64,13 @@ func run(args []string) int {
 	flags := flag.NewFlagSet("resultar-check", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	var projectPath string
+	var fileFilter string
 	var mode string
 	var jsonOutput bool
 	var formatName string
 	var failOnName string
 	var help bool
+	flags.StringVar(&fileFilter, "file", "", "filter overview or quickfixes by source file")
 	flags.StringVar(&projectPath, "project", "tsconfig.json", "TypeScript project")
 	flags.StringVar(&projectPath, "p", "tsconfig.json", "TypeScript project")
 	flags.StringVar(&mode, "mode", "", "no-discard mode")
@@ -91,6 +101,14 @@ func run(args []string) int {
 	if jsonOutput {
 		formatName = string(output.FormatJSON)
 	}
+	if command != "" && formatName != "human" && formatName != "json" {
+		fmt.Fprintln(os.Stderr, "Preview commands support human or json output.")
+		return 1
+	}
+	if command == "" && fileFilter != "" {
+		fmt.Fprintln(os.Stderr, "--file requires overview or quickfixes.")
+		return 1
+	}
 	format := output.Format(formatName)
 	if format != output.FormatHuman && format != output.FormatJSON && format != output.FormatSARIF && format != output.FormatJUnit {
 		fmt.Fprintf(os.Stderr, "Unknown --format value: %s\n", formatName)
@@ -103,6 +121,10 @@ func run(args []string) int {
 		return 1
 	}
 	if len(diagnostics) > 0 {
+		if command != "" {
+			printHumanDiagnostics(tsDiagnostics(diagnostics))
+			return 1
+		}
 		if err := writeDiagnostics(format, tsDiagnostics(diagnostics)); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
@@ -123,15 +145,25 @@ func run(args []string) int {
 	ctx := context.Background()
 	tsFindings := collectTypeScriptDiagnostics(ctx, opened.Program, opened.Program.SourceFiles())
 	if len(tsFindings) > 0 {
+		if command != "" {
+			printHumanDiagnostics(tsFindings)
+			return 1
+		}
 		if err := writeDiagnostics(format, tsFindings); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 		return 1
 	}
+	if command == "overview" {
+		return printOverview(ctx, opened, options, fileFilter, format)
+	}
 	findings, err := analyzer.Run(ctx, opened.Program, opened.Directory, options)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
+	}
+	if command == "quickfixes" {
+		return printQuickfixes(opened, findings, fileFilter, format)
 	}
 	if format == output.FormatHuman {
 		cwd, _ := os.Getwd()

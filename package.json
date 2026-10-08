@@ -35,7 +35,8 @@
     "example:fastify": "pnpm --filter resultar-fastify-example smoke"
   },
   "devDependencies": {
-    "@changesets/cli": "^3.0.2"
+    "@changesets/cli": "^3.0.3",
+    "vite-plus": "catalog:"
   },
-  "packageManager": "pnpm@11.24.0"
+  "packageManager": "pnpm@12.9.1"
 }

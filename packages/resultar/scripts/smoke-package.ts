@@ -77,16 +77,19 @@ const expectedExports = [
   'ResultTaskTypeId',
   'ResultTaskYieldTypeId',
   'ServiceTagTypeId',
+  'constant',
   'createTaggedError',
   'default',
   'err',
   'errAsync',
   'findCause',
+  'flow',
   'fromCallback',
   'fromPromise',
   'fromSafePromise',
   'fromThrowable',
   'fromThrowableAsync',
+  'identity',
   'isAbortError',
   'isError',
   'isRedacted',
@@ -96,6 +99,7 @@ const expectedExports = [
   'matchErrorPartial',
   'ok',
   'okAsync',
+  'pipe',
   'redact',
   'revealRedacted',
   'runPromise',
@@ -153,12 +157,23 @@ execFileSync(
     '--input-type=module',
     '-e',
     `import assert from 'node:assert/strict';
-import {ResultTask} from './dist/index.js';
+import {constant, flow, identity, ok, pipe, ResultTask} from './dist/index.js';
 import {account, welcome} from './dist/agent/examples/workflow.mjs';
 assert.equal(account('invalid').isErr(), true);
 const result = await ResultTask.runResult(welcome(' ADA@EXAMPLE.COM '), {services: {greeting: 'Hello'}});
 assert.equal(result.isOk(), true);
-assert.equal(result.value, 'Hello, ada@example.com');`,
+assert.equal(result.value, 'Hello, ada@example.com');
+const normalize = flow((value) => value.trim(), (value) => value.toLowerCase());
+assert.equal(pipe(' ADA ', normalize), 'ada');
+assert.equal(ok('Ready').match({ok: identity, error: constant('Unavailable')}), 'Ready');
+const lazy = ResultTask.fn(function* (value) { return yield* ResultTask.succeed(value); });
+const task = lazy(42);
+assert.equal(await ResultTask.runPromise(task), 42);
+assert.equal(await ResultTask.runPromise(task), 42);
+assert.equal(await ResultTask.runPromise(ResultTask.fail({_tag:'Missing'}).catchTags({Missing: () => ResultTask.succeed('guest')})), 'guest');
+let disposed = 0;
+await ResultTask.runPromise(ResultTask.acquireDisposable(ResultTask.succeed({[Symbol.asyncDispose]: async () => {disposed++;}})));
+assert.equal(disposed, 1);`,
   ],
   { cwd: rootDir, stdio: 'inherit' },
 )

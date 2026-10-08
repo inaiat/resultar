@@ -58,16 +58,16 @@ type Contract<Self, Inferred> = [Self] extends [never] ? Inferred : Self;
 type AsyncFactoryValue =
   | ResultTask<unknown, unknown, unknown>
   | { readonly then: (...args: never[]) => unknown };
+type SyncFactoryResult<Self> = Self &
+  ([Extract<Self, AsyncFactoryValue>] extends [never] ? unknown : never);
 type SyncDefinition<Dependencies extends Tags, Self> = {
   readonly requires: Dependencies;
-  readonly make: (
-    dependencies: Values<Dependencies>,
-  ) => Self & ([Extract<Self, AsyncFactoryValue>] extends [never] ? unknown : never);
+  readonly make: (dependencies: Values<Dependencies>) => SyncFactoryResult<Self>;
 };
 
 type IndependentDefinition<Self> = {
   readonly requires?: never;
-  readonly make: () => ReturnType<SyncDefinition<Record<never, never>, Self>["make"]>;
+  readonly make: () => SyncFactoryResult<Self>;
 };
 
 interface CurriedService<Self> {

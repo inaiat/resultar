@@ -104,6 +104,7 @@ const checkInferredTypes = () => {
       /* Type-only configuration. */
     },
   );
+  // eslint-disable-next-line typescript/no-generated-empty-object-type -- This assertion verifies that an empty selection exposes no service keys.
   expectTypeOf<keyof InferRequestServices<typeof empty>>().toEqualTypeOf<never>();
   expectTypeOf<InferRequestServices<number>>().toEqualTypeOf<never>();
 };

@@ -593,7 +593,7 @@ describe('coverage-focused public behavior', () => {
 
   it('covers redaction and tagged enum defensive branches', () => {
     const redacted = resultar.redact('secret')
-    const Enum = resultar.taggedEnum<{ A: Record<never, never> }>()
+    const Enum = resultar.taggedEnum<{ A: object }>()
 
     equal(redacted.toJSON(), '<redacted>')
     equal(redacted.toString(), '<redacted>')

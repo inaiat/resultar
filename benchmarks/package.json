@@ -8,7 +8,8 @@
     "bench:check-native": "pnpm --filter resultar-check build && pnpm --filter resultar-check native:build && node --import tsx resultar-check-native.ts",
     "bench:neverthrow": "pnpm run bench",
     "bench:stable": "pnpm --filter resultar build && node --import tsx resultar-vs-stable.ts",
-    "bench:task": "pnpm --filter resultar build && node --import tsx resultar-task-chains.ts"
+    "bench:task": "pnpm --filter resultar build && node --import tsx resultar-task-chains.ts",
+    "bench:function": "pnpm --filter resultar build && node --import tsx resultar-functional-ergonomics.ts"
   },
   "dependencies": {
     "resultar": "workspace:*"

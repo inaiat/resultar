@@ -10,6 +10,7 @@ import type {
 export interface HonoServices<S extends object, R, G extends ServiceGraph> {
   readonly middleware: <
     const Keys extends readonly Extract<keyof S, string>[],
+    // eslint-disable-next-line typescript/no-generated-empty-object-type -- The default contributes no local service keys.
     Local extends object = Record<never, never>,
     Environment extends Env = Env,
   >(

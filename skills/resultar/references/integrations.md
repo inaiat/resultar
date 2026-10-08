@@ -222,6 +222,12 @@ extension. Start `resultar-check lsp` from the editor's language-server configur
 rule IDs such as `resultar/no-discard`; pass `--format json` (or `--json`) when machine-readable JSON
 Lines output is needed.
 
+The LSP overlays unsaved project buffers and dependencies, debounces changes, and uses
+versioned UTF-16 edits. Hover separates task success/errors/requirements and service contracts.
+Use `resultar-check overview --json` for a sorted exported inventory and
+`resultar-check quickfixes --json` for read-only fix previews. The latter emits diagnostic
+JSONL; inventory output is one document with `schemaVersion: 1`.
+
 Read `packages/check/README.md` for all rules, severities, modes, and command-line flags. Use narrow
 `ignoreFilePatterns` only for deliberate tests, scripts, generated files, or terminal process boundaries.
 
@@ -241,7 +247,8 @@ When an agent encounters a diagnostic, fix the architecture first:
 - replace project-wide `try/catch` with `tryResult` or `tryResultAsync` when `noTryCatch` is enabled;
 - wrap raw promise awaits in Resultar contexts;
 - use `yield*` and avoid `try/catch` inside `Result.gen` / `safeTry`;
-- preserve the inferred error channel instead of asserting it away.
+- preserve inferred error and task requirements channels instead of asserting them away;
+- remove obsolete suppression entries without suppressing their diagnostic broadly.
 
 ## Discover Repository Commands
 
