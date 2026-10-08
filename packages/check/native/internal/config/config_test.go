@@ -27,6 +27,8 @@ func TestLoadJSONCPluginOptions(t *testing.T) {
 		"noUnsafeAwaitIgnoreCalls": ["startServer", "fastify.after"],
 		"noUnsafeAwaitMode": "all",
         "noUnknownResultError": "off",
+        "noUnknownTaskRequirements": "error",
+        "unusedSuppression": "off",
 		"noUselessRecovery": "error",
 		"preferAndThen": "error",
 		"preferCatchReason": "error",
@@ -64,6 +66,9 @@ func TestLoadJSONCPluginOptions(t *testing.T) {
 	}
 	if options.NoPromiseInResultSuccess != SeverityError || options.NoUnknownResultError != SeverityOff {
 		t.Fatalf("unexpected pilot rule options: %#v", options)
+	}
+	if options.NoUnknownTaskRequirements != SeverityError || options.UnusedSuppression != SeverityOff {
+		t.Fatalf("new rule options: %#v", options)
 	}
 	if options.NoUselessRecovery != SeverityError || options.UnsafeResultTypeAssertion != SeveritySuggestion {
 		t.Fatalf("unexpected error channel options: %#v", options)
@@ -305,5 +310,28 @@ func TestLoadRejectsUnknownDiagnosticRule(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected unknown diagnostic rule to fail")
+	}
+}
+
+func TestRequirementAndSuppressionSeverityAliases(t *testing.T) {
+	for _, name := range []string{"noUnknownTaskRequirements", "no-unknown-task-requirements", "resultar/no-unknown-task-requirements", "unusedSuppression", "unused-suppression", "resultar/unused-suppression"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "tsconfig.json")
+			contents := `{"compilerOptions":{"plugins":[{"name":"resultar-check","diagnosticSeverity":{"` + name + `":"error"},"overrides":[{"include":"native.ts","options":{"diagnosticSeverity":{"` + name + `":"off"}}}]}]}}`
+			if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			options, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value, known := RuleSeverity(options, name); !known || value != SeverityError {
+				t.Fatalf("global severity: %v %v", value, known)
+			}
+			if value, _ := RuleSeverity(options.ForFile(filepath.Join(dir, "native.ts"), dir), name); value != SeverityOff {
+				t.Fatalf("override severity: %v", value)
+			}
+		})
 	}
 }

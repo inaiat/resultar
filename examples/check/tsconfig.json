@@ -26,6 +26,7 @@
         "noUnsafeAwaitIgnoreCalls": ["startServer", "fastify.after"],
         "noUnsafeAwaitMode": "all",
         "noUnknownResultError": "error",
+        "noUnknownTaskRequirements": "error",
         "noResultInTaskGen": "error",
         "noUnscopedAcquireRelease": "error",
         "noUselessRecovery": "error",
@@ -40,6 +41,7 @@
         "taggedErrorNameMatch": "error",
         "typedCatchMapper": "error",
         "unsafeResultTypeAssertion": "error",
+        "unusedSuppression": "error",
         "yieldStarInSafeTry": "error",
         "yieldStarInResultTaskGen": "error"
       }

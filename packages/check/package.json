@@ -37,7 +37,7 @@
   "scripts": {
     "build": "vp pack",
     "check": "vp check",
-    "check:full": "pnpm run build && pnpm run check && pnpm run native:test && pnpm run native:check",
+    "check:full": "pnpm run build && pnpm run check && pnpm run test && pnpm run native:check",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
     "native:build": "go -C native build -o resultar-check-native ./cmd/resultar-check",
@@ -45,8 +45,9 @@
     "native:build:current": "node scripts/build-native-binaries.ts --current",
     "native:check": "go -C native run ./cmd/resultar-check --project ../tsconfig.json",
     "native:fmt": "gofmt -w native/cmd native/internal",
-    "test": "pnpm run native:test",
+    "test": "pnpm run native:test && pnpm run schema:test",
     "native:test": "go -C native test ./...",
+    "schema:test": "tsx --test scripts/schema.test.ts",
     "prepare": "vp config || true",
     "prepublishOnly": "vp pack",
     "smoke:package": "pnpm run build && pnpm run native:build:current && tsx scripts/smoke-package.ts"
@@ -54,7 +55,8 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "tsx": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vscode-json-languageservice": "5.6.1"
   },
   "optionalDependencies": {
     "resultar-check-darwin-arm64": "workspace:*",

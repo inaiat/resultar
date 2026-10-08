@@ -1,5 +1,10 @@
 import { describe, expect, expectTypeOf, test } from 'vite-plus/test'
-import { ResultTask, type ServiceTag } from '../src/index.js'
+import {
+  MissingServiceError,
+  ResultTask,
+  type ResultTaskServices,
+  type ServiceTag,
+} from '../src/index.js'
 
 describe('service resolver guarantees', () => {
   const Name = ResultTask.service<string, 'name'>('name')
@@ -50,5 +55,25 @@ describe('service resolver guarantees', () => {
     )
     expect(cleaned).toBe(true)
     expect(exit).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect } })
+  })
+
+  test('reports missing provider dependencies and delegates them to outer resolvers', async () => {
+    const resolved = ResultTask.provideServiceResolver(task, {
+      name: () =>
+        ResultTask.gen(function* provideName() {
+          return yield* External
+        }),
+    })
+    const exit = await ResultTask.runExit(resolved, {
+      services: {} as ResultTaskServices<typeof External>,
+    })
+    expect(exit).toEqual({
+      _tag: 'Failure',
+      cause: { _tag: 'Die', defect: new MissingServiceError('external') },
+    })
+    const provided = resolved.provideServiceResolver({
+      external: () => ResultTask.succeed('outer provider'),
+    })
+    expect(await ResultTask.runPromise(provided)).toBe('outer provider')
   })
 })

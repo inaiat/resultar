@@ -25,13 +25,13 @@ import {
 const AiReason = taggedEnum<{
   QuotaExceededError: { readonly limit: number }
   RateLimitError: { readonly retryAfterMs: number }
-  SafetyBlockedError: Record<never, never>
+  SafetyBlockedError: object
 }>()
 
 type AiReason = TaggedEnum<{
   QuotaExceededError: { readonly limit: number }
   RateLimitError: { readonly retryAfterMs: number }
-  SafetyBlockedError: Record<never, never>
+  SafetyBlockedError: object
 }>
 
 class AiError extends createTaggedError({ message: 'AI request failed', name: 'AiError' }) {

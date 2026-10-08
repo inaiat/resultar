@@ -42,16 +42,19 @@ describe('public API', () => {
       'ResultTaskTypeId',
       'ResultTaskYieldTypeId',
       'ServiceTagTypeId',
+      'constant',
       'createTaggedError',
       'default',
       'err',
       'errAsync',
       'findCause',
+      'flow',
       'fromCallback',
       'fromPromise',
       'fromSafePromise',
       'fromThrowable',
       'fromThrowableAsync',
+      'identity',
       'isAbortError',
       'isError',
       'isRedacted',
@@ -61,6 +64,7 @@ describe('public API', () => {
       'matchErrorPartial',
       'ok',
       'okAsync',
+      'pipe',
       'redact',
       'revealRedacted',
       'runPromise',
@@ -169,7 +173,7 @@ describe('public API', () => {
       },
     }
 
-    type ReasonMembers = { Foo: { readonly id: string }; Nothing: Record<never, never> }
+    type ReasonMembers = { Foo: { readonly id: string }; Nothing: object }
 
     const methodShapedEnumMatch: Pick<TaggedEnumFactory<ReasonMembers>, '$match'> = {
       $match() {
@@ -199,7 +203,7 @@ describe('public API', () => {
       const err = TestError.err
       TestError.err = err
 
-      const reason = resultar.taggedEnum<{ Nothing: Record<never, never> }>()
+      const reason = resultar.taggedEnum<{ Nothing: object }>()
       const match = reason.$match
       reason.$match = match
 

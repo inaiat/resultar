@@ -194,7 +194,8 @@ export interface FastifyServicesOptions {
 
 type LocalValues<O> = O extends { readonly locals: infer Local extends LocalsFactory }
   ? Awaited<ReturnType<Local>>
-  : Record<never, never>;
+  : // eslint-disable-next-line typescript/no-generated-empty-object-type -- No locals contributes no keys to the service intersection.
+    Record<never, never>;
 type Exposed<O, Key extends PropertyKey, Fallback> =
   O extends Record<Key, (...args: never[]) => infer Value extends object> ? Value : Fallback;
 type AppBindings<O> = O extends { readonly appBindings: infer Keys extends readonly string[] }
@@ -224,6 +225,7 @@ type StartupRequirements<O extends FastifyServicesOptions> = [
     : unknown;
 type CheckedOptions<O extends FastifyServicesOptions> = {
   readonly bindings?: Selection<O["services"], LocalValues<O>, ExplicitBindings<O>>;
+  // eslint-disable-next-line typescript/no-generated-empty-object-type -- Application bindings have no request-local services.
   readonly appBindings?: Selection<O["services"], Record<never, never>, AppBindings<O>>;
 } & StartupRequirements<O> &
   (undefined extends RequestBindings<O>

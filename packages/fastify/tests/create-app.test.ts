@@ -261,6 +261,7 @@ const inferenceChecks = () => {
   expectTypeOf<InferRequestServices<typeof createPlugin>>().toEqualTypeOf<
     Readonly<{ answer: number }>
   >();
+  // eslint-disable-next-line typescript/no-generated-empty-object-type -- This assertion verifies that no application service keys are selected.
   expectTypeOf<keyof InferAppServices<typeof createPlugin>>().toEqualTypeOf<never>();
   expectTypeOf<InferRequestServices<() => number>>().toEqualTypeOf<never>();
   expectTypeOf<InferAppServices<() => number>>().toEqualTypeOf<never>();
@@ -276,7 +277,9 @@ const inferenceChecks = () => {
   const empty = createFastifyApp({ services: options.services, bindings: [] }, () => {
     /* Empty selections must not expose registered providers. */
   });
+  // eslint-disable-next-line typescript/no-generated-empty-object-type -- This assertion verifies that an empty selection exposes no request service keys.
   expectTypeOf<keyof InferRequestServices<typeof empty>>().toEqualTypeOf<never>();
+  // eslint-disable-next-line typescript/no-generated-empty-object-type -- This assertion verifies that an empty selection exposes no application service keys.
   expectTypeOf<keyof InferAppServices<typeof empty>>().toEqualTypeOf<never>();
 };
 expectTypeOf(inferenceChecks).toBeFunction();

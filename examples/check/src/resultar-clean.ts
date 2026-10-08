@@ -8,6 +8,7 @@ import {
   tryResult,
   tryResultAsync,
   type Result,
+  type ResultTaskScope,
   type StrictResult,
   type StrictResultAsync,
 } from "resultar";
@@ -239,3 +240,42 @@ export const typedSyncUser = (id: string): ResultTask<User, FetchUserError> =>
     try: () => ({ email: `${id}@example.com`, id }),
     catch: (cause) => new FetchUserError({ cause, id }),
   });
+
+const TaskClock = ResultTask.service<{ now(): number }>()("task-clock");
+
+// no-unknown-task-requirements: keep concrete services inferred through fn.
+// yield-star-in-result-task-gen / no-result-in-task-gen: delegate and return a value.
+export const loadClockedUser = ResultTask.fn(function* (id: string) {
+  const clock = yield* TaskClock;
+  const user = yield* loadUserTask(id);
+
+  return { ...user, loadedAt: clock.now() };
+});
+
+// unsafe-result-type-assertion: providers discharge requirements without assertions.
+export const provideClockedUser = (id: string) =>
+  loadClockedUser(id).provideService(TaskClock, { now: () => 42 });
+
+// Scope closure exposes deferred release errors in E instead of erasing them from R.
+export const closePendingTaskScope = (
+  task: ResultTask<User, never, ResultTaskScope<FetchUserError>>,
+): ResultTask<User, FetchUserError> => ResultTask.scoped(task);
+
+// no-unscoped-acquire-release: fn acquisition also needs an explicit owning scope.
+export const scopedDisposableFn = (id: string) =>
+  ResultTask.scoped(
+    ResultTask.fn(function* (userId: string) {
+      const session = yield* ResultTask.acquireDisposable(
+        ResultTask.sync(() => ({ id: userId, [Symbol.dispose]: (): void => {} })),
+      );
+      const user = yield* loadUserTask(session.id);
+
+      return user;
+    })(id),
+  );
+
+// unused-suppression: retain a narrow directive only at an intentional terminal boundary.
+export const throwAtTerminalBoundary = (error: FetchUserError): never => {
+  // resultar-check-disable-next-line no-throw // Explicit terminal boundary preserves this error.
+  throw error;
+};

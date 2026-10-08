@@ -3,6 +3,9 @@
 This is the long-form Resultar guide. Use [README.md](README.md) as the project entry point and this
 file when you need the complete API map, larger examples, and repository workflow notes.
 
+The [workspace README](README.md#new-features) summarizes the new features. This guide includes
+their usage examples, checker configuration, editor tooling, and workspace validation details.
+
 Resultar is a small TypeScript library for explicit error handling.
 
 Its eager value primitives are:
@@ -201,6 +204,172 @@ See the [core task reference](packages/resultar/README.md#lazy-workflows-with-re
 typed failures, token identity and named provisioning. Fastify and Hono use this same DI mechanism.
 
 Dependency-free `Service` factories can omit `requires`: `Service("cache", { make: () => new Map<string, string>() })`. A zero-argument factory may also return a `ResultTask`; its requirements and errors remain inferred. Construction stays lazy, and Promise/thenable returns are rejected.
+
+## Function composition and parameterized tasks
+
+These APIs are implemented in the workspace and prepared for minor releases through Changesets.
+Versioning and publication follow the release workflow; the examples use the current workspace API.
+
+### Pipe and flow
+
+Import `pipe`, `flow`, `identity`, and `constant` from the root package:
+
+```ts
+import { constant, flow, identity, ok, pipe } from 'resultar'
+
+const normalize = flow(
+  (input: string) => input.trim(),
+  (input) => input.toLowerCase(),
+)
+
+const id = pipe('  ADA  ', normalize) // 'ada'
+const status = ok<string, Error>('Available').match({
+  ok: identity,
+  error: constant('Unavailable'),
+}) // 'Available'
+```
+
+`pipe(value, ...transforms)` applies zero through eight transformations. Without transformations,
+it returns the input itself; instance `.pipe()` also accepts that form. Each transformation receives
+the previous result, and incompatible intermediate types are rejected.
+
+`flow(first, ...transforms)` composes one through nine functions. The returned function preserves
+the first function's optional/rest parameters and explicit `this`; subsequent functions receive
+only the previous result. Composition is synchronous: exceptions propagate, Promises remain values,
+and tasks still wait for a run boundary.
+
+### Identity and constant
+
+`identity(value)` returns its argument unchanged, including its object reference.
+`constant(value)` creates a function that returns the captured value on every call. It preserves
+object identity and does not copy the value or recompute a factory. Use them for passing through
+success values and supplying fixed fallbacks, as in the `match` example above.
+
+The internal `dual` helper shares implementations of direct and curried task combinators. Function
+`memoize` and `memoizeIdempotent` remain deferred pending a concrete cache contract; this is separate
+from the existing task execution-sharing API.
+
+### Parameterized task functions
+
+`ResultTask.fn` wraps a synchronous generator function. Calling the wrapper captures its arguments
+and receiver without executing the body:
+
+```ts
+import { ResultTask } from 'resultar'
+
+const Clock = ResultTask.service<{ now(): number }>()('Clock')
+
+const loadLabel = ResultTask.fn(function* (id: string) {
+  const clock = yield* Clock
+  return `${id}:${clock.now()}`
+})
+
+const task = loadLabel('ada').provideService(Clock, { now: () => 42 })
+const first = await ResultTask.runPromise(task) // 'ada:42'
+const second = await ResultTask.runPromise(task) // 'ada:42'
+```
+
+Each run creates a fresh iterator and executes the body again. Success, errors, requirements,
+parameters, and `this` remain inferred. Use `yield*` for tasks, services, and Results; return a plain
+success value, following `ResultTask.gen` semantics. Generator exceptions become `Die`.
+
+The checker recognizes `fn` in applicable generator rules, including `yield*`, raw `await`, nested
+returns, and resource acquisition without a scope.
+
+### Tagged task recovery
+
+`ResultTask.catchTag` recovers one error tag. `ResultTask.catchTags` accepts a handler map and allows
+partial recovery:
+
+```ts
+import { createTaggedError, pipe, ResultTask } from 'resultar'
+
+class UserNotFound extends createTaggedError({
+  name: 'UserNotFound',
+  message: 'User $id was not found',
+}) {}
+
+class AccessDenied extends createTaggedError({
+  name: 'AccessDenied',
+  message: 'Access denied',
+}) {}
+
+const query: ResultTask<string, UserNotFound | AccessDenied> = ResultTask.fail(
+  new UserNotFound({ id: 'missing' }),
+)
+
+const recovered = pipe(
+  query,
+  ResultTask.catchTags({
+    UserNotFound: (error: UserNotFound) => ResultTask.succeed(`guest:${error.id}`),
+  }),
+)
+
+const label = await ResultTask.runPromise(recovered) // 'guest:missing'
+```
+
+`recovered` retains `AccessDenied` in `E`; only the handled tag is removed. Handler errors and
+requirements join the source channels, and pending scope requirements remain until closure. Each
+handler receives its corresponding error type and returns a `ResultTask`.
+
+Both operators support instance methods, direct static calls, and curried static calls for `pipe`:
+`query.catchTag('UserNotFound', handler)`, `ResultTask.catchTag(query, 'UserNotFound', handler)`,
+and `ResultTask.catchTag('UserNotFound', handler)(query)`.
+
+Handlers run only for simple `Fail` causes. `Die` and `Interrupt` pass through; composites follow
+the existing `catchAll` policy of `Die(ResultTaskCauseError)`, preserving the original cause tree.
+A throwing handler becomes a defect.
+
+### Native disposable resources
+
+`ResultTask.acquireDisposable(acquireTask)` acquires a `Disposable` or `AsyncDisposable` and registers
+disposal in its owning scope:
+
+```ts
+import { ResultTask } from 'resultar'
+
+const events: string[] = []
+const program = ResultTask.scoped(
+  ResultTask.gen(function* () {
+    const session = yield* ResultTask.acquireDisposable(
+      ResultTask.sync(() => {
+        events.push('open')
+        return {
+          label: 'session',
+          [Symbol.asyncDispose]: async () => {
+            await Promise.resolve()
+            events.push('close')
+          },
+        }
+      }),
+    )
+    return session.label
+  }),
+)
+
+const label = await ResultTask.runPromise(program) // 'session'
+// events: ['open', 'close']
+```
+
+The helper prefers `Symbol.asyncDispose` when both protocols exist. Scope closure awaits disposal
+exactly once, in reverse acquisition order, after success, failure, or interruption. Failed
+acquisition registers no disposal, and cancellation does not interrupt cleanup.
+
+Disposal throws/rejections become `Die`; body and disposal failures preserve their sequential cause
+tree. The helper adds a scope requirement to `R`, like `acquireRelease`. `scoped` closes a child scope
+before the next task continues.
+
+### Execution compatibility
+
+`ResultAsync` remains eager, and `ResultTask` remains lazy and repeatable. These additions reuse the
+interpreter, scopes, and contracts of `runExit`, `runResult`, and `runPromise`. Fibers, `forkChild`,
+task `race`/`timeout`, and `Cause.Parallel` remain deferred; existing `ResultAsync` concurrency is
+unchanged.
+
+See the [core reference](packages/resultar/README.md#parameterized-tasks-and-tagged-recovery)
+and the runnable [ergonomics example](examples/resultar/src/functional-ergonomics.ts), which combines
+functions, tagged recovery, services, disposal, and repeated execution. Run it with
+`pnpm run example:resultar`. Design history is in [RFC 0004](docs/rfcs/rfc-0004-effect-v4-ergonomics-and-tooling.md).
 
 ## Services in Fastify and Hono
 
@@ -2308,6 +2477,7 @@ Configure Resultar rules in `tsconfig.json`:
 
 ```json
 {
+  "$schema": "./node_modules/resultar-check/schema.json",
   "compilerOptions": {
     "plugins": [
       {
@@ -2323,6 +2493,75 @@ Configure Resultar rules in `tsconfig.json`:
 The `compilerOptions.plugins` entry is configuration consumed by the native CLI and its stdio LSP
 mode. Start `resultar-check lsp` from the editor's language-server configuration; no TypeScript
 plugin installation is required.
+
+The schema composes the standard [SchemaStore tsconfig schema](https://json.schemastore.org/tsconfig.json)
+with Resultar configuration, preserving editor completion and validation for both TypeScript options
+and Resultar rules. Resolving the standard schema requires editor access to SchemaStore or its cache.
+Compiler compatibility is checked separately by TypeScript-Go; JSON Schema does not select or inherit
+an installed TypeScript version.
+
+### Task requirement safety
+
+`ResultTask<T, E, R>` separates success `T`, expected errors `E`, and service/scope requirements `R`.
+Safety diagnostics also inspect `R`:
+
+| Rule | What it checks | Default severity |
+| --- | --- | --- |
+| `no-unknown-task-requirements` | Rejects `any` or `unknown` requirements, including type aliases. | `suggestion` |
+| `unsafe-result-type-assertion` | Rejects assertions that erase errors, services, or scope markers, including `as unknown as`. | `warning` |
+| `unused-suppression` | Reports unknown IDs and unused suppression entries for enabled rules. | `suggestion` |
+
+Satisfy requirements through providers and scopes. Assertions must preserve required services and
+pending release errors; a genuine `R = never` is valid. The existing assertion rule now identifies
+whether a cast narrows `E`, `R`, or both.
+
+### Unused suppression diagnostics
+
+`unused-suppression` evaluates each entry against enabled findings before suppression filtering.
+A directive with several rules can have just one unused entry. Wildcard directives are reported
+when they suppress nothing, and removal fixes retain justification comments. Disabled rules do not
+generate unused-entry warnings merely because they were not analyzed.
+
+The new `noUnknownTaskRequirements` and `unusedSuppression` options default to `suggestion`.
+The default `failOn: "message"` includes suggestions, so updating the checker can introduce new CI
+failures. Adjust per-rule severities or the `failOn` threshold when adopting the rules gradually.
+
+### Editor diagnostics and refactors
+
+The LSP overlays all open project buffers, including new included files and unsaved changes in
+imported dependencies. Changes are debounced for 150 ms; hover and code-action requests analyze the
+latest accepted version immediately. Closing a buffer restores the disk-backed contents.
+
+Hover shows `T`, `E`, and `R` separately for tasks, including `yield*` operands. Service hover shows
+the identifier and contract; `Result` and `ResultAsync` show their success/error channels.
+
+Contextual refactors offer previews for generators that only delegate to an initialized constant
+task, tag dispatch in recovery, and consecutive `catchTag` calls. Unsafe candidates are declined,
+including generators with `finally` and earlier handlers that could introduce a later handled error.
+Edits use UTF-16 ranges and document versions so the editor can reject stale actions.
+
+### Inspection commands
+
+From a consuming project:
+
+```sh
+pnpm exec resultar-check overview --project tsconfig.json --json
+pnpm exec resultar-check quickfixes --project tsconfig.json --file src/workflow.ts
+pnpm exec resultar-check quickfixes --project tsconfig.json --json
+```
+
+`overview` inventories exported Resultar functions/values, tagged errors, and services. JSON output
+is one document with `schemaVersion: 1`, sorted entries, declaration/export locations, type channels,
+and service/tag details where applicable. Reexports retain their original declaration locations.
+
+`quickfixes` previews diagnostics with proposed edits. Human output shows old/new snippets; JSON
+output is JSONL with fix titles, kinds, explanations, and text edits. Contextual refactors remain
+editor actions.
+
+Both commands accept `--file`, `--format human|json`, and `--json`, and leave files unchanged.
+They exit `0` after valid analysis even when fixes exist; configuration/compiler failures exit `1`.
+Use the default `pnpm exec resultar-check --project tsconfig.json` command for the CI diagnostic gate.
+See the [checker reference](packages/check/README.md#command-line) for configuration and exit policy.
 
 ## Testing Resultar Code
 
@@ -2825,6 +3064,28 @@ Use `log`, `toDisposable`, `toAsyncDisposable`, and `safeTry(async function* () 
 
 ## API Map
 
+### Function helpers
+
+- `pipe(value, ...transforms)`
+- `flow(first, ...transforms)`
+- `identity(value)`
+- `constant(value)`
+
+### ResultTask function and resource helpers
+
+- `ResultTask.fn(generator)`
+- `ResultTask.gen(generator)`
+- `task.catchTag(tag, handler)`
+- `task.catchTags(handlers)`
+- `ResultTask.catchTag(task, tag, handler)` / `ResultTask.catchTag(tag, handler)(task)`
+- `ResultTask.catchTags(task, handlers)` / `ResultTask.catchTags(handlers)(task)`
+- `ResultTask.acquireDisposable(acquireTask)`
+- `ResultTask.acquireRelease(options)`
+- `ResultTask.scoped(task)`
+
+See the [core task reference](packages/resultar/README.md#lazy-workflows-with-resulttask) for the full
+execution, services, and composition API.
+
 ### Result helpers
 
 - `ok(value)`
@@ -3024,8 +3285,31 @@ pnpm run test:cov
 pnpm run build
 pnpm run check:full
 pnpm run test:examples
+pnpm --filter resultar run test:mutation
 pnpm run bench
 ```
+
+### Workspace toolchain and validation
+
+The workspace uses Vite+ `1.1.0` with Vitest, UI, and V8 coverage aligned at its bundled version,
+`5.0.3`. Validation on October 7, 2026 passed `check:full` with 832 tests (629 in the core), build,
+package smoke tests, all example suites, and the agent evaluation graders.
+
+Mutation testing keeps `coverageAnalysis: "perTest"` and uses a tracked pnpm patch for Stryker 10's
+Vitest runner. Vitest 5 joins suite and test names with ` > `; both the runner's filters and its
+bundled coverage setup must use that separator. Without the patch, covered mutants can be reported
+as survivors with zero completed tests. Keep the patch until the upstream runner supports these
+names. Keep Vitest and its coverage/UI packages aligned with Vite+'s bundled version (5.0.3 for
+Vite+ 1.1.0). After changing the runner or its configuration, regenerate the report and incremental cache
+with `pnpm --filter resultar run test:mutation --force`. The JSON report is written to
+`packages/resultar/reports/mutation/mutation.json`.
+
+The previous report contained 52 survivors with zero completed tests. After fixing test selection,
+strengthening the pipeline/service-resolver tests, and forcing a fresh run on October 7, 2026, the
+report recorded 2,052 killed mutants, 61 detected by timeout, zero survivors, and zero uncovered
+mutants: a 100% mutation score. The 290 ignored mutants include nine documented exclusions in three
+unreachable defensive defaults of the private interpreter. These results cover the ten configured
+source files and preserve runtime behavior and public execution contracts.
 
 ## License
 

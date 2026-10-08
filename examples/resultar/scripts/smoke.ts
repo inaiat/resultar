@@ -525,6 +525,13 @@ assert.deepEqual(importFailed.events, [
 ]);
 
 const summary = await runCookbook();
+assert.deepEqual(summary.ergonomics, {
+  first: "session:guest:missing",
+  second: "session:guest:missing",
+  normalized: "user:ada:42",
+  events: ["open", "close", "open", "close"],
+  status: "Ready",
+});
 assert.equal(summary.signup.statusCode, 201);
 assert.equal(summary.account.statusCode, 201);
 assert.equal(summary.payment.label, "settled:rcpt_1900");

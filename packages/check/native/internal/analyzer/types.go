@@ -53,6 +53,14 @@ func isResultLikeType(type_ *checker.Type) bool {
 		return false
 	}
 	name := typeSymbolName(type_)
+	if symbol := type_.Symbol(); symbol != nil {
+		if _, ok := resultTypeNames[symbol.Name]; ok {
+			return true
+		}
+		if _, ok := resultTaskTypeNames[symbol.Name]; ok {
+			return true
+		}
+	}
 	if _, ok := resultTypeNames[name]; ok {
 		return true
 	}
@@ -71,6 +79,9 @@ func isResultTaskLikeType(type_ *checker.Type) bool {
 			}
 		}
 		return false
+	}
+	if symbol := type_.Symbol(); symbol != nil && symbol.Name == "ResultTask" {
+		return true
 	}
 	_, ok := resultTaskTypeNames[typeSymbolName(type_)]
 	return ok
@@ -92,15 +103,15 @@ func isResultAsyncLikeType(type_ *checker.Type) bool {
 	return ok
 }
 
-func typeArguments(checker_ *checker.Checker, type_ *checker.Type) []*checker.Type {
-	if type_ == nil {
+func typeArguments(c *checker.Checker, t *checker.Type) []*checker.Type {
+	if t == nil {
 		return nil
 	}
-	if alias := type_.Alias(); alias != nil && len(alias.TypeArguments()) > 0 {
-		return alias.TypeArguments()
+	if t.Flags()&checker.TypeFlagsObject != 0 && t.ObjectFlags()&checker.ObjectFlagsReference != 0 {
+		return c.GetTypeArguments(t)
 	}
-	if type_.Flags()&checker.TypeFlagsObject != 0 && type_.ObjectFlags()&checker.ObjectFlagsReference != 0 {
-		return checker_.GetTypeArguments(type_)
+	if alias := t.Alias(); alias != nil {
+		return alias.TypeArguments()
 	}
 	return nil
 }
@@ -196,4 +207,26 @@ func unwrapExpression(node *ast.Node) *ast.Node {
 		}
 	}
 	return nil
+}
+
+// taskRequirementTypes extracts R, preserving aliases and union constituents.
+func taskRequirementTypes(c *checker.Checker, t *checker.Type) []*checker.Type {
+	if t == nil {
+		return nil
+	}
+	if t.Flags()&checker.TypeFlagsUnionOrIntersection != 0 {
+		var result []*checker.Type
+		for _, part := range t.Types() {
+			result = append(result, taskRequirementTypes(c, part)...)
+		}
+		return result
+	}
+	if !isResultTaskLikeType(t) {
+		return nil
+	}
+	args := typeArguments(c, t)
+	if len(args) < 3 {
+		return nil
+	}
+	return []*checker.Type{args[2]}
 }

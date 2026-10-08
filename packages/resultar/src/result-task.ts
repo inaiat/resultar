@@ -1,3 +1,12 @@
+import { dual } from './dual.js'
+import { callTaggedHandler, hasTag, isTaggedHandlerMatch } from './tagged-match.js'
+import type {
+  CatchTagHandlerResult,
+  CatchTagHandlers,
+  ErrorForTag,
+  ExcludeTag,
+  TagsOf,
+} from './tagged-types.js'
 import { Pipeable } from './pipe.js'
 import type { Result } from './result.js'
 import { err, ok } from './result.js'
@@ -244,6 +253,16 @@ type GeneratorRequirements<Yield> = Yield extends {
   : Yield extends { readonly _tag: 'Service'; readonly tag: infer Tag }
     ? Tag
     : never
+
+type FunctionTask<Body extends (...args: never[]) => unknown> =
+  ReturnType<Body> extends Generator<infer Yield, infer Return, infer _Next>
+    ? ResultTask<Return, GeneratorError<Yield>, GeneratorRequirements<Yield>>
+    : never
+
+type TaskSuccess<T> = T extends ResultTask<infer A, infer _E, infer _R> ? A : never
+type TaskError<T> = T extends ResultTask<infer _A, infer E, infer _R> ? E : never
+type TaskRequirements<T> = T extends ResultTask<infer _A, infer _E, infer R> ? R : never
+type TaskHandlers<E, H> = CatchTagHandlers<E, H, ResultTask<unknown, unknown, unknown>>
 
 type ResultTaskRunArguments<R> = [WithoutScope<R>] extends [never]
   ? [options?: ResultTaskRunOptions<R>]
@@ -602,7 +621,9 @@ const executeInstruction = async (
         return { nextCurrent: undefined, exit: died(error) }
       }
     }
+    // Stryker disable next-line all: the private instruction union is exhaustively handled above; its defensive default is unreachable through the public API.
     default: {
+      // Stryker disable next-line ObjectLiteral: this return belongs to the unreachable defensive default.
       return { nextCurrent: undefined, exit: undefined }
     }
   }
@@ -683,7 +704,9 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
       case 'CatchAll': {
         return { current: undefined, currentExit: exit }
       }
+      // Stryker disable next-line all: all private continuation tags have explicit cases; this defensive default cannot be reached by public task combinators.
       default: {
+        // Stryker disable next-line ObjectLiteral: this return belongs to the unreachable defensive default.
         return { current: undefined, currentExit: exit }
       }
     }
@@ -742,7 +765,9 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
       case 'Tap': {
         return { current: undefined, currentExit: exit }
       }
+      // Stryker disable next-line all: all private continuation tags have explicit cases; this defensive default cannot be reached by public task combinators.
       default: {
+        // Stryker disable next-line ObjectLiteral: this return belongs to the unreachable defensive default.
         return { current: undefined, currentExit: exit }
       }
     }
@@ -915,6 +940,21 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
+  /** Acquires a native disposable lazily and releases it in the owning scope. */
+  public static acquireDisposable<A extends Disposable | AsyncDisposable, E, R>(
+    acquire: ResultTask<A, E, R>,
+  ): ResultTask<A, E, R | ResultTaskScope<never>> {
+    return ResultTask.acquireRelease({
+      acquire,
+      release: (resource) =>
+        new ResultTask<void>(async () => {
+          if (Symbol.asyncDispose in resource) await resource[Symbol.asyncDispose]()
+          else resource[Symbol.dispose]()
+          return success(undefined)
+        }),
+    })
+  }
+
   /** Closes a child scope before continuing, adding its deferred release errors to E. */
   public static scoped<A, E, R>(
     task: ResultTask<A, E, R>,
@@ -940,6 +980,15 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   public static service(identifier?: string): unknown {
     if (identifier === undefined) return (name: string) => new ServiceTagValue(name)
     return new ServiceTagValue(identifier)
+  }
+
+  /** Wraps a generator function without executing it until each task run. */
+  public static fn<Body extends (...args: never[]) => Generator<unknown, unknown, never>>(
+    body: Body,
+  ): (this: ThisParameterType<Body>, ...args: Parameters<Body>) => FunctionTask<Body> {
+    return function (this: ThisParameterType<Body>, ...args: Parameters<Body>): FunctionTask<Body> {
+      return ResultTask.gen(() => body.call(this, ...(args as never[]))) as FunctionTask<Body>
+    }
   }
 
   /** Builds a task from a generator and short-circuits on the first failed task. */
@@ -1070,6 +1119,42 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
       _tag: 'CatchAll',
       task: this as unknown as ResultTask<unknown, unknown, unknown>,
       f: f as (error: unknown) => ResultTask<unknown, unknown, unknown>,
+    })
+  }
+
+  /** Recovers a selected simple tagged failure, preserving other errors and scope requirements. */
+  public catchTag<const Tag extends TagsOf<E>, B, E2, R2>(
+    tag: Tag,
+    handler: (error: ErrorForTag<E, Tag>) => ResultTask<B, E2, R2>,
+  ): ResultTask<A | B, ExcludeTag<E, Tag> | E2, R | R2> {
+    return this.catchAll<B, ExcludeTag<E, Tag> | E2, R2>((error) =>
+      hasTag(error, tag)
+        ? handler(error as ErrorForTag<E, Tag>)
+        : ResultTask.fail(error as ExcludeTag<E, Tag>),
+    )
+  }
+
+  /** Recovers any supplied tags; omitted tags remain in the error channel. */
+  public catchTags<const H extends object>(
+    handlers: H & TaskHandlers<E, H>,
+  ): ResultTask<
+    A | TaskSuccess<CatchTagHandlerResult<H>>,
+    ExcludeTag<E, keyof H & string> | TaskError<CatchTagHandlerResult<H>>,
+    R | TaskRequirements<CatchTagHandlerResult<H>>
+  > {
+    return this.catchAll<
+      TaskSuccess<CatchTagHandlerResult<H>>,
+      ExcludeTag<E, keyof H & string> | TaskError<CatchTagHandlerResult<H>>,
+      TaskRequirements<CatchTagHandlerResult<H>>
+    >((error) => {
+      const handled = callTaggedHandler<CatchTagHandlerResult<H>>(error, handlers)
+      return isTaggedHandlerMatch(handled)
+        ? (handled.value as ResultTask<
+            TaskSuccess<CatchTagHandlerResult<H>>,
+            TaskError<CatchTagHandlerResult<H>>,
+            TaskRequirements<CatchTagHandlerResult<H>>
+          >)
+        : ResultTask.fail(error as ExcludeTag<E, keyof H & string>)
     })
   }
 
@@ -1409,13 +1494,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     taskOrF: ResultTask<A, E, R> | ((value: A) => B),
     f?: (value: A) => B,
   ): ResultTask<B, E, R> | (<E2, R2>(task: ResultTask<A, E2, R2>) => ResultTask<B, E2, R2>) {
-    if (typeof taskOrF === 'function') {
-      return (task) => task.map(taskOrF)
-    }
-    if (f === undefined) {
-      throw new TypeError('ResultTask.map requires a mapping function')
-    }
-    return taskOrF.map(f)
+    return dual(
+      (args) => typeof args[0] !== 'function',
+      (task: ResultTask<A, E, R>, callback: typeof f) => {
+        if (callback === undefined)
+          throw new TypeError('ResultTask.map requires a mapping function')
+        return task.map(callback)
+      },
+    )(taskOrF, f) as
+      | ResultTask<B, E, R>
+      | (<E2, R2>(task: ResultTask<A, E2, R2>) => ResultTask<B, E2, R2>)
   }
 
   /** Maps the error value using the canonical functional form or curried for `pipe`. */
@@ -1430,13 +1518,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     taskOrF: ResultTask<A, E, R> | ((error: E) => E2),
     f?: (error: E) => E2,
   ): ResultTask<A, E2, R> | (<A2, R2>(task: ResultTask<A2, E, R2>) => ResultTask<A2, E2, R2>) {
-    if (typeof taskOrF === 'function') {
-      return (task) => task.mapError(taskOrF)
-    }
-    if (f === undefined) {
-      throw new TypeError('ResultTask.mapError requires an error mapping function')
-    }
-    return taskOrF.mapError(f)
+    return dual(
+      (args) => typeof args[0] !== 'function',
+      (task: ResultTask<A, E, R>, callback: typeof f) => {
+        if (callback === undefined)
+          throw new TypeError('ResultTask.mapError requires an error mapping function')
+        return task.mapError(callback)
+      },
+    )(taskOrF, f) as
+      | ResultTask<A, E2, R>
+      | (<A2, R2>(task: ResultTask<A2, E, R2>) => ResultTask<A2, E2, R2>)
   }
 
   /** Chains a task using the canonical functional form or curried for `pipe`. */
@@ -1453,13 +1544,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   ):
     | ResultTask<B, E | E2, R | R2>
     | (<E3, R3>(task: ResultTask<A, E3, R3>) => ResultTask<B, E3 | E2, R3 | R2>) {
-    if (typeof taskOrF === 'function') {
-      return (task) => task.flatMap(taskOrF)
-    }
-    if (f === undefined) {
-      throw new TypeError('ResultTask.flatMap requires a continuation function')
-    }
-    return taskOrF.flatMap(f)
+    return dual(
+      (args) => typeof args[0] !== 'function',
+      (task: ResultTask<A, E, R>, callback: typeof f) => {
+        if (callback === undefined)
+          throw new TypeError('ResultTask.flatMap requires a continuation function')
+        return task.flatMap(callback)
+      },
+    )(taskOrF, f) as
+      | ResultTask<B, E | E2, R | R2>
+      | (<E3, R3>(task: ResultTask<A, E3, R3>) => ResultTask<B, E3 | E2, R3 | R2>)
   }
 
   /** Alias for `flatMap`, matching the existing Resultar vocabulary. */
@@ -1476,13 +1570,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   ):
     | ResultTask<B, E | E2, R | R2>
     | (<E3, R3>(task: ResultTask<A, E3, R3>) => ResultTask<B, E3 | E2, R3 | R2>) {
-    if (typeof taskOrF === 'function') {
-      return (task) => task.flatMap(taskOrF)
-    }
-    if (f === undefined) {
-      throw new TypeError('ResultTask.andThen requires a continuation function')
-    }
-    return taskOrF.flatMap(f)
+    return dual(
+      (args) => typeof args[0] !== 'function',
+      (task: ResultTask<A, E, R>, callback: typeof f) => {
+        if (callback === undefined)
+          throw new TypeError('ResultTask.andThen requires a continuation function')
+        return task.flatMap(callback)
+      },
+    )(taskOrF, f) as
+      | ResultTask<B, E | E2, R | R2>
+      | (<E3, R3>(task: ResultTask<A, E3, R3>) => ResultTask<B, E3 | E2, R3 | R2>)
   }
 
   /** Recovers from a typed failure using the canonical functional form or curried for `pipe`. */
@@ -1499,13 +1596,74 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   ):
     | ResultTask<A | B, E2, R | R2>
     | (<A2, R3>(task: ResultTask<A2, E, R3>) => ResultTask<A2 | B, E2, R3 | R2>) {
-    if (typeof taskOrF === 'function') {
-      return (task) => task.catchAll(taskOrF)
-    }
-    if (f === undefined) {
-      throw new TypeError('ResultTask.catchAll requires a recovery function')
-    }
-    return taskOrF.catchAll(f)
+    return dual(
+      (args) => typeof args[0] !== 'function',
+      (task: ResultTask<A, E, R>, callback: typeof f) => {
+        if (callback === undefined)
+          throw new TypeError('ResultTask.catchAll requires a recovery function')
+        return task.catchAll(callback)
+      },
+    )(taskOrF, f) as
+      | ResultTask<A | B, E2, R | R2>
+      | (<A2, R3>(task: ResultTask<A2, E, R3>) => ResultTask<A2 | B, E2, R3 | R2>)
+  }
+
+  /** Recovers a tagged failure in direct or pipe-friendly form. */
+  public static catchTag<A, E, R, const Tag extends TagsOf<E>, B, E2, R2>(
+    task: ResultTask<A, E, R>,
+    tag: Tag,
+    handler: (error: ErrorForTag<E, Tag>) => ResultTask<B, E2, R2>,
+  ): ResultTask<A | B, ExcludeTag<E, Tag> | E2, R | R2>
+  public static catchTag<
+    const Tag extends string,
+    Handled extends { readonly _tag: Tag },
+    B,
+    E2,
+    R2,
+  >(
+    tag: Tag,
+    handler: (error: Handled) => ResultTask<B, E2, R2>,
+  ): <A, E, R>(
+    task: ResultTask<A, E, R> &
+      (Tag extends TagsOf<E> ? (ErrorForTag<E, Tag> extends Handled ? unknown : never) : never),
+  ) => ResultTask<A | B, ExcludeTag<E, Tag> | E2, R | R2>
+  public static catchTag(...args: readonly unknown[]): unknown {
+    if (typeof args[0] === 'string')
+      return (task: ResultTask<unknown, { readonly _tag: string }, unknown>) =>
+        ResultTask.catchTag(
+          task,
+          args[0] as string,
+          args[1] as (error: { readonly _tag: string }) => ResultTask<unknown, unknown, unknown>,
+        )
+    const task = args[0] as ResultTask<unknown, { readonly _tag: string }, unknown>
+    return task.catchTag(
+      args[1] as string,
+      args[2] as (error: { readonly _tag: string }) => ResultTask<unknown, unknown, unknown>,
+    )
+  }
+
+  /** Recovers supplied tags in direct or pipe-friendly form. */
+  public static catchTags<A, E, R, const H extends object>(
+    task: ResultTask<A, E, R>,
+    handlers: H & TaskHandlers<E, H>,
+  ): ResultTask<
+    A | TaskSuccess<CatchTagHandlerResult<H>>,
+    ExcludeTag<E, keyof H & string> | TaskError<CatchTagHandlerResult<H>>,
+    R | TaskRequirements<CatchTagHandlerResult<H>>
+  >
+  public static catchTags<const H extends object>(
+    handlers: H,
+  ): <A, E, R>(
+    task: ResultTask<A, E, R> & (H extends TaskHandlers<E, H> ? unknown : never),
+  ) => ResultTask<
+    A | TaskSuccess<CatchTagHandlerResult<H>>,
+    ExcludeTag<E, keyof H & string> | TaskError<CatchTagHandlerResult<H>>,
+    R | TaskRequirements<CatchTagHandlerResult<H>>
+  >
+  public static catchTags(...args: readonly unknown[]): unknown {
+    if (args.length === 1)
+      return (task: ResultTask<unknown, unknown, unknown>) => task.catchTags(args[0] as object)
+    return (args[0] as ResultTask<unknown, unknown, unknown>).catchTags(args[1] as object)
   }
 
   /** Executes a side effect on the success value using the canonical functional form or curried for `pipe`. */
@@ -1524,13 +1682,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   ):
     | ResultTask<A, E | E2, R | R2>
     | (<E3, R3>(task: ResultTask<A, E3, R3>) => ResultTask<A, E3 | E2, R3 | R2>) {
-    if (typeof taskOrF === 'function') {
-      return (task) => task.tap(taskOrF)
-    }
-    if (f === undefined) {
-      throw new TypeError('ResultTask.tap requires a side-effect function')
-    }
-    return taskOrF.tap(f)
+    return dual(
+      (args) => typeof args[0] !== 'function',
+      (task: ResultTask<A, E, R>, callback: typeof f) => {
+        if (callback === undefined)
+          throw new TypeError('ResultTask.tap requires a side-effect function')
+        return task.tap(callback)
+      },
+    )(taskOrF, f) as
+      | ResultTask<A, E | E2, R | R2>
+      | (<E3, R3>(task: ResultTask<A, E3, R3>) => ResultTask<A, E3 | E2, R3 | R2>)
   }
 
   /** Executes a side effect on the error value using the canonical functional form or curried for `pipe`. */
@@ -1549,13 +1710,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   ):
     | ResultTask<A, E | E2, R | R2>
     | (<A3, R3>(task: ResultTask<A3, E, R3>) => ResultTask<A3, E | E2, R3 | R2>) {
-    if (typeof taskOrF === 'function') {
-      return (task) => task.tapError(taskOrF)
-    }
-    if (f === undefined) {
-      throw new TypeError('ResultTask.tapError requires an error side-effect function')
-    }
-    return taskOrF.tapError(f)
+    return dual(
+      (args) => typeof args[0] !== 'function',
+      (task: ResultTask<A, E, R>, callback: typeof f) => {
+        if (callback === undefined)
+          throw new TypeError('ResultTask.tapError requires an error side-effect function')
+        return task.tapError(callback)
+      },
+    )(taskOrF, f) as
+      | ResultTask<A, E | E2, R | R2>
+      | (<A3, R3>(task: ResultTask<A3, E, R3>) => ResultTask<A3, E | E2, R3 | R2>)
   }
 
   /** Replaces the success value with a constant using the canonical functional form or curried for `pipe`. */

@@ -89,9 +89,12 @@ type ExtractTemplateVariables<Template extends string> =
       : ExtractTemplateVariables<AfterDollar>
     : never
 
+// Templates without placeholders intentionally contribute no properties to the Error intersection.
+/* eslint-disable typescript/no-generated-empty-object-type */
 type TemplateProps<Template extends string> = [ExtractTemplateVariables<Template>] extends [never]
   ? Record<never, never>
   : Readonly<Record<ExtractTemplateVariables<Template>, string | number>>
+/* eslint-enable typescript/no-generated-empty-object-type */
 type ReservedVariablesIn<Template extends string> = Extract<
   ExtractTemplateVariables<Template>,
   ReservedTemplateVariable

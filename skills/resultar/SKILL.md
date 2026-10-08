@@ -74,6 +74,12 @@ remains available. Check installed versions before using these overloads.
 - Keep `_unsafeUnwrap()` and `_unsafeUnwrapErr()` in tests. Use `unwrapOrThrow()` only when throwing
   is explicitly the intended boundary behavior.
 
+For reusable synchronous transformations, use root `pipe` / `flow`. `identity` preserves
+its callback input; `constant(value)` captures a fallback. These utilities do not await or
+execute tasks. Use `ResultTask.fn` for parameterized lazy generators and `catchTag` / partial
+`catchTags` for typed task recovery. Native disposables use `acquireDisposable` in a scope;
+async disposal is awaited and disposal failures become defects.
+
 ## Choose The Composition Operator
 
 | Need                                      | Prefer                   |
@@ -187,7 +193,8 @@ Read `references/integrations.md` before implementing request adapters or diagno
 1. Run the `resultar-check` CLI as the authoritative project and CI gate. It runs TypeScript and the
    full Resultar rule set against the project.
 2. Configure `resultar-check lsp` as the editor's stdio language server for inline diagnostics and
-   quick fixes. It reads the same project configuration as the CLI.
+   quick fixes. It analyzes unsaved buffers and dependencies with versioned edits; hover shows
+   `T`, `E`, and `R`. It reads the same project configuration as the CLI.
 3. Use JSONL, SARIF, or JUnit output when another CI or review system needs structured diagnostics;
    do not present those consumers as replacements for the native checker.
 4. Run the repository's native formatting, build, tests, analysis, package smoke, and example
@@ -196,6 +203,15 @@ Read `references/integrations.md` before implementing request adapters or diagno
 JSONL fixes distinguish `correction` from `intentional-discard`; LSP actions carry the same
 classification in `data.kind`. Do not apply a discard just to silence the checker: `void task`
 does not execute a lazy task or handle its errors. Corrections still need compilation and tests.
+
+Use `resultar-check overview --json` to inventory exported workflows/errors/services and
+`resultar-check quickfixes --json` to inspect proposed edits without writing files. Preserve
+concrete task requirements: assertions must not hide services or pending scope errors.
+Remove unused suppression entries; disabled rules are excluded from usage checks.
+
+The checker schema combines standard `tsconfig` options and Resultar rules for editor
+completion/validation. Schema resolution and compiler compatibility are separate checks;
+read [checker configuration](references/integrations.md#configure-the-native-checker) for details.
 
 Treat stable `resultar/*` rule IDs as architecture feedback. Fix the typed boundary or composition
 problem instead of suppressing diagnostics broadly. Use narrow ignore patterns only for deliberate

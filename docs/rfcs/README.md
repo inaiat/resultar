@@ -11,6 +11,7 @@ This directory centralizes the architectural proposals, design decisions, and te
 | [**RFC 0001**](./rfc-0001-result-task-core.md) | **ResultTask and the next core architecture** | `resultar` | **In Progress (Phases 0, 1, and 2 Done)** | 2026-09-04 |
 | [**RFC 0002**](./rfc-0002-di-lifetimes-scopes.md) | **Explicit lifetimes and request scopes** | `resultar-di` | **Implemented** | 2026-09-05 |
 | [**RFC 0003**](./rfc-0003-phase-3-remainder-and-validation.md) | **Phase 3 remainder, live lifecycle validation, and dependency health** | `resultar` | **Draft** | 2026-09-07 |
+| [**RFC 0004**](./rfc-0004-effect-v4-ergonomics-and-tooling.md) | **Functional ergonomics and developer tooling** | `resultar`, `resultar-check` | **In Progress** | 2026-10-06 |
 
 ---
 

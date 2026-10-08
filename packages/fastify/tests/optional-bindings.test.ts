@@ -59,6 +59,7 @@ test("omitted bindings resolve all registrations in order, with request lifetime
   expectTypeOf<keyof InferRequestServices<typeof app>>().toEqualTypeOf<
     "shared" | "local" | "transient"
   >();
+  // eslint-disable-next-line typescript/no-generated-empty-object-type -- This assertion verifies that no application service keys are selected.
   expectTypeOf<keyof InferAppServices<typeof app>>().toEqualTypeOf<never>();
   expect(events).toEqual([]);
   await app.ready();

@@ -27,6 +27,7 @@ lerna-debug.log*
 
 # Tests
 coverage/
+.vitest/
 /.nyc_output
 
 # Docs

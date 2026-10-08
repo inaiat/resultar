@@ -116,3 +116,5 @@ export type {
   TaggedErrorInstance,
   TaggedErrorOptions,
 } from './tagged-error.js'
+
+export { constant, flow, identity, pipe } from './function.js'

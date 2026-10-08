@@ -1014,6 +1014,7 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
 };
 
 /** Starts an immutable module. Nothing executes until `use` or a child scope runs. */
+// eslint-disable-next-line typescript/no-generated-empty-object-type -- The initial graph intentionally has no dependency keys.
 export const createModule = (): ServiceModule<object, never, never, Record<never, never>> =>
   makeModule(new Map());
 

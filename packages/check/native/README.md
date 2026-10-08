@@ -14,6 +14,8 @@ The native backend implements these stable rule IDs and their tsconfig options:
 - `resultar/no-discard` (`noDiscard`, `noDiscardMode`)
 - `resultar/no-promise-in-result-success` (`noPromiseInResultSuccess`)
 - `resultar/no-unknown-result-error` (`noUnknownResultError`)
+- `resultar/no-unknown-task-requirements` (`noUnknownTaskRequirements`)
+- `resultar/unused-suppression` (`unusedSuppression`)
 - `resultar/prefer-map-err` (`preferMapErr`)
 - `resultar/prefer-result-async` (`preferResultAsync`, `preferResultAsyncMode`: `result` or `all`)
 - `resultar/prefer-and-then` (`preferAndThen`)
@@ -40,6 +42,11 @@ The native backend implements these stable rule IDs and their tsconfig options:
 - `resultar/no-await-in-result-task-gen` (`noAwaitInResultTaskGen`)
 - `resultar/no-throw-in-task-sync` (`noThrowInTaskSync`)
 - shared `ignoreFilePatterns`, `diagnosticSeverity`, `overrides`, and `failOn`
+
+The stdio LSP builds read-only project snapshots from open buffers, uses a single analysis
+worker with debounced changes, and publishes versioned diagnostics/edits. Hover exposes
+Resultar channels. Conservative contextual refactors share the same typed snapshot.
+`overview` and `quickfixes` provide read-only human/JSON previews through the native CLI.
 
 ## Development
 

@@ -1,17 +1,13 @@
 /* eslint-disable max-params */
 export type PipeFn<Input, Output> = (input: Input) => Output
 
-const runPipe = <Self>(self: Self, fns: readonly PipeFn<never, unknown>[]): unknown => {
-  const first = fns[0]
-
-  if (!first) {
-    return self
-  }
-
-  let input = first(self as never)
-
-  for (const fn of fns.slice(1)) {
-    input = (fn as PipeFn<unknown, unknown>)(input)
+export const runPipe = <Self>(self: Self, fns: readonly PipeFn<never, unknown>[]): unknown => {
+  let input: unknown = self
+  const length = fns.length
+  for (let index = 0; index < length; index += 1) {
+    const transform = fns[index]
+    if (transform === undefined) throw new TypeError('pipe requires transformation functions')
+    input = transform(input as never)
   }
 
   return input
@@ -24,6 +20,7 @@ export abstract class Pipeable {
    * Use `pipe` to package reusable Result or ResultAsync combinators without hiding the underlying
    * type.
    */
+  public pipe(): this
   public pipe<A>(ab: PipeFn<this, A>): A
   public pipe<A, B>(ab: PipeFn<this, A>, bc: PipeFn<A, B>): B
   public pipe<A, B, C>(ab: PipeFn<this, A>, bc: PipeFn<A, B>, cd: PipeFn<B, C>): C

@@ -20,6 +20,8 @@ const (
 )
 
 type Options struct {
+	NoUnknownTaskRequirements        Severity
+	UnusedSuppression                Severity
 	IgnoreFilePatterns               []string
 	Overrides                        []FileOverride
 	FailOn                           Severity
@@ -75,6 +77,8 @@ type compilerOptions struct {
 
 func Defaults() Options {
 	return Options{
+		NoUnknownTaskRequirements:        SeveritySuggestion,
+		UnusedSuppression:                SeveritySuggestion,
 		NoAwaitInSafeTry:                 SeverityError,
 		NoDiscard:                        SeverityError,
 		NoDiscardMode:                    "must-use",
@@ -233,6 +237,12 @@ func resolveExtendsPath(configPath, extension string) (string, error) {
 }
 
 func applyPlugin(options *Options, plugin map[string]any) error {
+	if err := setSeverity(plugin, "noUnknownTaskRequirements", &options.NoUnknownTaskRequirements); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "unusedSuppression", &options.UnusedSuppression); err != nil {
+		return err
+	}
 	var err error
 	if value, ok := plugin["ignoreFilePatterns"]; ok {
 		if options.IgnoreFilePatterns, err = filePatterns(value); err != nil {
@@ -453,6 +463,7 @@ func canonicalRule(name string) string {
 }
 
 var ruleNames = map[string]struct{}{
+	"nounknowntaskrequirements": {}, "unusedsuppression": {},
 	"noawaitinsafetry": {}, "nodiscard": {}, "nopromiseinresultsuccess": {},
 	"notaggederrorconstructoroverride": {}, "nothrow": {}, "notrycatch": {},
 	"notrycatchinsafetry": {}, "nounknownresulterror": {}, "nouselessrecovery": {},
@@ -467,6 +478,10 @@ var ruleNames = map[string]struct{}{
 
 func setRuleSeverity(options *Options, name string, value Severity) error {
 	switch canonicalRule(name) {
+	case "nounknowntaskrequirements":
+		options.NoUnknownTaskRequirements = value
+	case "unusedsuppression":
+		options.UnusedSuppression = value
 	case "noawaitinsafetry":
 		options.NoAwaitInSafeTry = value
 	case "nodiscard":
@@ -752,4 +767,72 @@ func normalizeJSONC(contents []byte) []byte {
 
 	withoutTrailingCommas := regexp.MustCompile(`,\s*([}\]])`).ReplaceAllString(result.String(), "$1")
 	return []byte(withoutTrailingCommas)
+}
+
+// RuleSeverity resolves canonical, kebab-case, and fully qualified rule IDs.
+func RuleSeverity(options Options, name string) (Severity, bool) {
+	switch canonicalRule(name) {
+	case "nounknowntaskrequirements":
+		return options.NoUnknownTaskRequirements, true
+	case "unusedsuppression":
+		return options.UnusedSuppression, true
+	case "noawaitinsafetry":
+		return options.NoAwaitInSafeTry, true
+	case "nodiscard":
+		return options.NoDiscard, true
+	case "nopromiseinresultsuccess":
+		return options.NoPromiseInResultSuccess, true
+	case "notaggederrorconstructoroverride":
+		return options.NoTaggedErrorConstructorOverride, true
+	case "nothrow":
+		return options.NoThrow, true
+	case "notrycatch":
+		return options.NoTryCatch, true
+	case "notrycatchinsafetry":
+		return options.NoTryCatchInSafeTry, true
+	case "nounsafeawait":
+		return options.NoUnsafeAwait, true
+	case "nounknownresulterror":
+		return options.NoUnknownResultError, true
+	case "nouselessrecovery":
+		return options.NoUselessRecovery, true
+	case "preferandthen":
+		return options.PreferAndThen, true
+	case "prefercatchreason":
+		return options.PreferCatchReason, true
+	case "preferfirstsuccessof":
+		return options.PreferFirstSuccessOf, true
+	case "prefermap":
+		return options.PreferMap, true
+	case "prefermaperr":
+		return options.PreferMapErr, true
+	case "preferresultasync":
+		return options.PreferResultAsync, true
+	case "preferresultforeach":
+		return options.PreferResultForEach, true
+	case "prefertaggederror":
+		return options.PreferTaggedError, true
+	case "taggederrornamematch":
+		return options.TaggedErrorNameMatch, true
+	case "typedcatchmapper":
+		return options.TypedCatchMapper, true
+	case "unsaferesulttypeassertion":
+		return options.UnsafeResultTypeAssertion, true
+	case "yieldstarinsafetry":
+		return options.YieldStarInSafeTry, true
+	case "yieldstarinresulttaskgen":
+		return options.YieldStarInResultTaskGen, true
+	case "noinvalidlifetime":
+		return options.NoInvalidLifetime, true
+	case "nounscopedacquirerelease":
+		return options.NoUnscopedAcquireRelease, true
+	case "noresultintaskgen":
+		return options.NoResultInTaskGen, true
+	case "noawaitinresulttaskgen":
+		return options.NoAwaitInResultTaskGen, true
+	case "nothrowintasksync":
+		return options.NoThrowInTaskSync, true
+	default:
+		return SeverityOff, false
+	}
 }
