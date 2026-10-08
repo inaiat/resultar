@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
+const formatter = fileURLToPath(import.meta.resolve("vite-plus/bin"));
 
 const packages = [
   "packages/resultar",
@@ -36,4 +38,8 @@ for (const packageDir of packages) {
   jsrJson.version = packageJson.version;
 
   await writeFile(jsrJsonPath, `${JSON.stringify(jsrJson, null, 2)}\n`);
+  execFileSync(process.execPath, [formatter, "fmt", "jsr.json"], {
+    cwd: dirname(jsrJsonPath),
+    stdio: "inherit",
+  });
 }
