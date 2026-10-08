@@ -12,6 +12,7 @@ pnpm run example:resultar
 Or run the package directly:
 
 ```sh
+pnpm --filter resultar-example build:deps
 pnpm --filter resultar-example check
 pnpm --filter resultar-example smoke
 pnpm --filter resultar-example start
@@ -20,6 +21,8 @@ pnpm --filter resultar-example start
 The `check` script runs `resultar-check`. The Resultar rule set is
 configured in `tsconfig.json`. The `smoke` script runs both `scripts/smoke.ts` (the cookbook
 branches) and `scripts/lifecycle-smoke.ts` (the `ResultTask` application-lifecycle fixture).
+The `smoke` and `start` scripts build their workspace dependencies explicitly. Installation
+does not build packages; run `build:deps` before a standalone `check`.
 
 ## Samples
 

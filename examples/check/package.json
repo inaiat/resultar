@@ -7,8 +7,8 @@
     "check:clean": "node ../../packages/check/dist/cli.js --project tsconfig.clean.json",
     "check:json": "node ../../packages/check/dist/cli.js --project tsconfig.json --json",
     "check:types": "tsc --project tsconfig.json && tsc --project tsconfig.clean.json && tsc --project tsconfig.contracts.json",
-    "prepare": "pnpm --filter resultar build && pnpm --filter resultar-di build && pnpm --filter resultar-check build && pnpm --filter resultar-check native:build:current",
-    "smoke": "pnpm run prepare && pnpm run check:types && tsx scripts/smoke.ts"
+    "build:deps": "pnpm --filter resultar build && pnpm --filter resultar-di build && pnpm --filter resultar-check build && pnpm --filter resultar-check native:build:current",
+    "smoke": "pnpm run build:deps && pnpm run check:types && tsx scripts/smoke.ts"
   },
   "dependencies": {
     "resultar": "workspace:*",

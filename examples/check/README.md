@@ -27,8 +27,12 @@ the native CLI. This also runs in CI through the workspace `test:examples` comma
 To check TypeScript compatibility independently after building the workspace dependencies:
 
 ```sh
+pnpm --filter resultar-check-example build:deps
 pnpm --filter resultar-check-example check:types
 ```
+
+Installation does not build packages. The smoke script invokes `build:deps` explicitly;
+use it before running standalone compiler or diagnostic commands.
 
 The native package tests also analyze TypeScript snippets with the compiler. Their isolated fixtures
 exercise rule behavior, while this example imports the real Resultar package types. The catalog's
