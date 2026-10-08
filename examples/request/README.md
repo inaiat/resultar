@@ -12,12 +12,16 @@ pnpm run example:request
 Or run the package directly:
 
 ```sh
+pnpm --filter resultar-request-example build:deps
 pnpm --filter resultar-request-example check
 pnpm --filter resultar-request-example smoke
 pnpm --filter resultar-request-example start
 pnpm --filter resultar-request-example typebox
 pnpm --filter resultar-request-example zod
 ```
+
+Installation does not build packages. The execution and smoke scripts build their workspace
+dependencies explicitly; run `build:deps` before a standalone `check`.
 
 The `src/` files start a real local HTTP server, call it with `fetch`, and release it through
 `ResultAsync.withResource`. The `start` script runs `src/server.ts` separately for manual
