@@ -3295,6 +3295,11 @@ The workspace uses Vite+ `1.1.0` with Vitest, UI, and V8 coverage aligned at its
 `5.0.3`. Validation on October 7, 2026 passed `check:full` with 832 tests (629 in the core), build,
 package smoke tests, all example suites, and the agent evaluation graders.
 
+`check:full` also runs `test:release`, which exercises JSR version synchronization with the
+package formatter configurations and checks that repeated runs preserve the output. The
+`sync:jsr-version` command formats each manifest from its owning package directory so generated
+release commits follow the same configuration as package validation.
+
 Mutation testing keeps `coverageAnalysis: "perTest"` and uses a tracked pnpm patch for Stryker 10's
 Vitest runner. Vitest 5 joins suite and test names with ` > `; both the runner's filters and its
 bundled coverage setup must use that separator. Without the patch, covered mutants can be reported
