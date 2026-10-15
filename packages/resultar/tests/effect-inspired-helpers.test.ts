@@ -474,7 +474,7 @@ describe('orElseSucceed and unwrapOr helpers', () => {
     equal(pipe(succeeded, Result.unwrapOr(99)), 42)
   })
 
-  it('recovers with plain or promised values via orElseSucceed and unwrapOr on ResultAsync', async () => {
+  it('recovers with plain values via orElseSucceed and unwrapOr on ResultAsync', async () => {
     const failed = PermissionError.errAsync({ permission: 'admin' }) as ResultAsync<
       number,
       PermissionError
@@ -482,7 +482,6 @@ describe('orElseSucceed and unwrapOr helpers', () => {
     const succeeded = okAsync<number, PermissionError>(10)
 
     const fromInstance = failed.orElseSucceed((error) => `missing:${error.permission}`)
-    const fromAsyncCallback = failed.orElseSucceed(async (error) => `async:${error.permission}`)
     const fromPipe = pipe(
       failed,
       ResultAsync.orElseSucceed((error) => `pipe:${error.permission}`),
@@ -490,25 +489,21 @@ describe('orElseSucceed and unwrapOr helpers', () => {
     const keptOk = succeeded.orElseSucceed(() => 'fallback')
 
     expectTypeOf(fromInstance).toEqualTypeOf<ResultAsync<number | string, never>>()
-    expectTypeOf(fromAsyncCallback).toEqualTypeOf<ResultAsync<number | string, never>>()
 
     const resolvedInstance = await fromInstance
-    const resolvedAsync = await fromAsyncCallback
     const resolvedPipe = await fromPipe
     const resolvedKept = await keptOk
 
     isTrue(resolvedInstance.isOk())
     equal(resolvedInstance.value, 'missing:admin')
-    isTrue(resolvedAsync.isOk())
-    equal(resolvedAsync.value, 'async:admin')
     isTrue(resolvedPipe.isOk())
     equal(resolvedPipe.value, 'pipe:admin')
     isTrue(resolvedKept.isOk())
     equal(resolvedKept.value, 10)
 
-    equal(await ResultAsync.unwrapOr(failed, 0), 0)
-    equal(await pipe(failed, ResultAsync.unwrapOr(77)), 77)
-    equal(await pipe(succeeded, ResultAsync.unwrapOr(77)), 10)
+    deepEqual(await ResultAsync.unwrapOr(failed, 0), ok(0))
+    deepEqual(await pipe(failed, ResultAsync.unwrapOr(77)), ok(77))
+    deepEqual(await pipe(succeeded, ResultAsync.unwrapOr(77)), ok(10))
   })
 
   it('recovers with plain values via orElseSucceed and unwrapOr on ResultTask', async () => {

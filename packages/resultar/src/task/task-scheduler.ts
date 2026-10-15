@@ -1,4 +1,5 @@
 import { AbortError } from '../core/abort-error.js'
+import { toNativeAbortSignal } from './exit.js'
 import type { TaskClock } from './task-clock.js'
 
 /**
@@ -93,7 +94,7 @@ export const hasScheduledTasks = (clock: TaskClock): boolean => (scheduledTasks.
 
 const dispatch = (scheduling: TaskScheduling, signal: AbortSignal): Promise<void> => {
   if (scheduling.scheduler !== Scheduler.live) {
-    return Promise.resolve(scheduling.scheduler.yield(signal))
+    return Promise.resolve(scheduling.scheduler.yield(toNativeAbortSignal(signal)))
   }
   const clock = scheduling.clock
   scheduledTasks.set(clock, (scheduledTasks.get(clock) ?? 0) + 1)
@@ -107,12 +108,16 @@ const dispatch = (scheduling: TaskScheduling, signal: AbortSignal): Promise<void
 
 /** Returns no Promise on the fast path, avoiding an extra microtask per instruction. */
 export const schedulerCheckpoint = (
-  scheduling: TaskScheduling,
+  scheduling: TaskScheduling | undefined,
   signal: AbortSignal,
 ): Promise<void> | undefined => {
-  if (signal.aborted) return undefined
+  if (scheduling === undefined) return undefined
   scheduling.remaining -= 1
   if (scheduling.remaining > 0) return undefined
+  if (signal.aborted) {
+    scheduling.remaining += 1
+    return undefined
+  }
   scheduling.remaining = scheduling.yieldEvery
   return dispatch(scheduling, signal)
 }

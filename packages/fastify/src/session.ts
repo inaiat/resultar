@@ -31,12 +31,14 @@ export function startSession(
   // fromCallback subscribes immediately; neither signal owns a separate execution or scope.
   // eslint-disable-next-line init-declarations
   let readiness!: ResultAsyncCallbackContext<Readonly<Record<string, unknown>>>;
-  const ready = ResultAsync.fromCallback({
-    subscribe: (context: typeof readiness) => {
-      readiness = context;
-    },
-    catch: sessionError,
-  }).mapErr(sessionError);
+  const ready = ResultTask.toResultAsync(
+    ResultAsync.fromCallback({
+      subscribe: (context: typeof readiness) => {
+        readiness = context;
+      },
+      catch: sessionError,
+    }).mapErr(sessionError),
+  );
   // Initialized synchronously by the subscription below.
   // eslint-disable-next-line init-declarations
   let finish!: () => void;
@@ -54,11 +56,13 @@ export function startSession(
   signal?.addEventListener("abort", finish, { once: true });
   if (signal?.aborted === true) finish();
   // runExit always fulfills with the complete outcome, including interruption and release failures.
-  const completion = fromSafePromise(ResultTask.runExit(task, { signal })).map((exit) => {
-    signal?.removeEventListener("abort", finish);
-    if (exit._tag === "Failure") readiness.reject(new ResultTaskCauseError(exit.cause));
-    return exit;
-  });
+  const completion = fromSafePromise(
+    ResultTask.runExit(task, { signal }).then((exit) => {
+      signal?.removeEventListener("abort", finish);
+      if (exit._tag === "Failure") readiness.reject(new ResultTaskCauseError(exit.cause));
+      return exit;
+    }),
+  );
   return {
     ready,
     completion,

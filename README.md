@@ -53,22 +53,23 @@ selling points and quick-start examples for:
 ## Adopt gradually
 
 Start with `Result<T, E>` in one function and handle its `Ok` / `Err` at the caller. Keep using
-ordinary application code around it. Add `ResultAsync<T, E>` where existing Promise-based work
-needs typed failures, then introduce `ResultTask<T, E, R>` in individual workflows that need lazy,
-repeatable execution. `E` names expected errors; the task's third parameter `R` names requirements.
+ordinary application code around it. Add `ResultAsync<T, E>` (`ResultTask<T, E, never>`) where
+async work needs typed failures and direct `await` support, then use `ResultTask<T, E, R>` when
+workflows require typed service dependencies or resource scopes (`R`).
 
 | When the workflow needs... | Add... |
 | --- | --- |
 | Explicit success and failure | `Result`, `ok`, `err`, `match` |
 | Composition across fallible steps | `andThen`, `mapErr`, `Result.gen` |
-| Typed failures around existing async work | `ResultAsync`, `tryResultAsync` |
-| Deferred execution and a reusable workflow | `ResultTask`, `fromResultAsync`, an explicit `run*` boundary |
+| Typed failures around async work (`R = never`, directly awaitable) | `ResultAsync`, `tryResultAsync` |
+| Typed service requirements, scopes, and explicit runtime boundaries | `ResultTask<T, E, R>`, `service`, `acquireRelease`, `runResult` |
 | Controlled time and transient-failure policy | `Clock`, `Retry.policy`, task `retry` / `timeout` |
 | Concurrent work owned by a scope | `forkChild`, `Fiber`, `scoped` |
 
 Each stage is useful on its own. Synchronous domain functions can keep returning `Result` inside
-task workflows, and existing async callers can consume a task through `toResultAsync`. Services
-and DI are optional; introduce them when dependencies or resource lifetimes call for them.
+task workflows, and any `ResultTask` with `R = never` (`ResultAsync<T, E>`) can be `await`ed
+directly. Services and DI are optional; introduce them when dependencies or resource lifetimes call
+for them.
 The [gradual adoption guide](docs/gradual-adoption.md) walks through these boundaries with examples.
 The [v4 migration notes](docs/migrations/v4.md) cover release compatibility and retained APIs.
 
@@ -92,7 +93,7 @@ These additions are implemented in the workspace and covered by unit, type, muta
 | `ResultTask.fn`, `catchTag` / `catchTags`, ` catchReason` / `catchReasons`, `acquireDisposable` | Parameterized lazy task generators, tagged/reasoned error recovery, and native `Disposable` / `AsyncDisposable` ownership. | [Task functions](DOCUMENTATION.md#parameterized-task-functions) |
 | `resultar-check` diagnostics, LSP, and `overview` / `quickfixes` CLI | Enforce `resultTaskRequirementsSafety`, `unusedSuppression`, `taggedErrorPropsMismatch`, and `matchExhaustive` in CLI and editor. | [No-Discard Validation](DOCUMENTATION.md#no-discard-validation) |
 
-`ResultAsync` remains eager; `ResultTask` remains lazy and repeatable. See the
+`ResultAsync<T, E>` and `ResultTask<T, E, R>` share a single lazy task engine, with `ResultAsync<T, E>` (`ResultTask<T, E, never>`) directly `await`able when `R = never`. See the
 [gradual adoption guide](docs/gradual-adoption.md), [v4 migration notes](docs/migrations/v4.md),
 [task resilience example](examples/resultar/src/task-resilience.ts), and
 [functional ergonomics example](examples/resultar/src/functional-ergonomics.ts) (`pnpm run example:resultar`).

@@ -1,7 +1,12 @@
 import type { ResultTask } from './result-task.js'
+import { NEVER_ABORTED_SIGNAL } from './promise-interruption.js'
+
+export type SemaphoreAcquire = (
+  signal: AbortSignal,
+) => (() => void) | undefined | Promise<(() => void) | undefined>
 
 export type SemaphoreTaskFactory = <A, E, R>(
-  acquire: (signal: AbortSignal) => Promise<(() => void) | undefined>,
+  acquire: SemaphoreAcquire,
   task: ResultTask<A, E, R>,
   caller: string,
 ) => ResultTask<A, E, R>
@@ -28,6 +33,7 @@ interface Waiter {
   readonly signal: AbortSignal
   readonly resolve: (release: (() => void) | undefined) => void
   readonly onAbort: () => void
+  aborted: boolean
 }
 
 const assertPositiveSafeInteger = (permits: number, label: string): void => {
@@ -68,58 +74,89 @@ export interface Semaphore {
 const make = (permits: number): Semaphore => {
   assertPositiveSafeInteger(permits, 'Semaphore.make permits')
   let currentPermits = permits
-  const waiters: Waiter[] = []
+  const waiters: (Waiter | undefined)[] = []
+  let waitersHead = 0
 
-  const makeRelease =
-    (released: number): (() => void) =>
-    () => {
-      currentPermits += released
-      drainQueue()
-    }
+  const releaseOne = (): void => {
+    currentPermits += 1
+    drainQueue()
+  }
+
+  const makeRelease = (released: number): (() => void) =>
+    released === 1
+      ? releaseOne
+      : () => {
+          currentPermits += released
+          drainQueue()
+        }
 
   const drainQueue = (): void => {
-    while (waiters.length > 0) {
-      const next = waiters[0]
-      if (next === undefined || next.permits > currentPermits) {
-        break
+    while (waitersHead < waiters.length) {
+      const next = waiters[waitersHead]
+      if (next === undefined || next.aborted) {
+        waiters[waitersHead] = undefined
+        waitersHead += 1
+      } else {
+        if (next.permits > currentPermits) {
+          break
+        }
+        waiters[waitersHead] = undefined
+        waitersHead += 1
+        currentPermits -= next.permits
+        if (next.signal !== NEVER_ABORTED_SIGNAL) {
+          next.signal.removeEventListener('abort', next.onAbort)
+        }
+        next.resolve(makeRelease(next.permits))
       }
-      waiters.shift()
-      currentPermits -= next.permits
-      next.signal.removeEventListener('abort', next.onAbort)
-      next.resolve(makeRelease(next.permits))
+    }
+    if (waitersHead > 0 && waitersHead === waiters.length) {
+      waiters.length = 0
+      waitersHead = 0
     }
   }
 
-  const acquire = (requested: number, signal: AbortSignal): Promise<(() => void) | undefined> => {
+  const acquire = (
+    requested: number,
+    signal: AbortSignal,
+  ): (() => void) | undefined | Promise<(() => void) | undefined> => {
     if (signal.aborted) {
-      return Promise.resolve(undefined)
+      return undefined
     }
-    if (waiters.length === 0 && currentPermits >= requested) {
+    if (waitersHead === waiters.length && currentPermits >= requested) {
       currentPermits -= requested
-      return Promise.resolve(makeRelease(requested))
+      return makeRelease(requested)
     }
     return new Promise<(() => void) | undefined>((resolve) => {
       const waiter: Waiter = {
         permits: requested,
         signal,
         resolve,
+        aborted: false,
         onAbort: () => {
-          waiters.splice(waiters.indexOf(waiter), 1)
+          waiter.aborted = true
           resolve(undefined)
           drainQueue()
         },
       }
-      signal.addEventListener('abort', waiter.onAbort, { once: true })
+      if (signal !== NEVER_ABORTED_SIGNAL) {
+        signal.addEventListener('abort', waiter.onAbort, { once: true })
+      }
       waiters.push(waiter)
     })
   }
+
+  const acquireOne: SemaphoreAcquire = (signal) => acquire(1, signal)
 
   const runWithPermits = <A, E, R>(
     requested: number,
     task: ResultTask<A, E, R>,
     caller: string,
   ): ResultTask<A, E, R> =>
-    createSemaphoreTask((signal) => acquire(requested, signal), task, caller)
+    createSemaphoreTask(
+      requested === 1 ? acquireOne : (signal) => acquire(requested, signal),
+      task,
+      caller,
+    )
 
   function withPermits(
     requested: number,

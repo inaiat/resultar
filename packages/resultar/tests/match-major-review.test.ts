@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
-import { Match, createTaggedError, err, errAsync } from '../src/index.js'
+import { Match, type ResultAsync, createTaggedError, err, errAsync, ok } from '../src/index.js'
 
 type Role = { readonly role: 'admin' } | { readonly role: 'member' }
 
@@ -9,9 +9,9 @@ describe('Match major review regressions', () => {
     class SecondError extends createTaggedError({ name: 'SecondError', message: 'second' }) {}
     type Tables =
       | { FirstError: (error: FirstError) => string }
-      | { SecondError: (error: SecondError) => Promise<number> }
+      | { SecondError: (error: SecondError) => number }
     const select = (first: boolean): Tables =>
-      first ? { FirstError: () => 'first' } : { SecondError: async () => 2 }
+      first ? { FirstError: () => 'first' } : { SecondError: () => 2 }
     const sync = err<never, FirstError | SecondError>(new FirstError()).matchTagsPartial(
       () => false as const,
       select(true),
@@ -20,15 +20,15 @@ describe('Match major review regressions', () => {
         return false as const
       },
     )
-    expectTypeOf(sync).toEqualTypeOf<string | Promise<number> | false>()
+    expectTypeOf(sync).toEqualTypeOf<string | number | false>()
     expect(sync).toBe('first')
     const async = errAsync<never, FirstError | SecondError>(new SecondError()).matchTagsPartial(
       () => false as const,
       select(false),
       () => false as const,
     )
-    expectTypeOf(async).toEqualTypeOf<Promise<string | number | false>>()
-    expect(await async).toBe(2)
+    expectTypeOf(async).toEqualTypeOf<ResultAsync<string | number | false, never>>()
+    expect(await async).toEqual(ok(2))
   })
   it('treats array patterns as prefixes with their full required length', () => {
     const run = Match.type<[] | [undefined]>()

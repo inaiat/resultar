@@ -19,11 +19,11 @@ export {
   tryCatchAsync,
   tryResultAsync,
   unitAsync,
-} from './result/result-async.js'
+} from './task/result-task.js'
 
 /** @deprecated Import `tryResultAsync` instead. */
 // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
-export { tryCatchAsync as tryAsync } from './result/result-async.js'
+export { tryCatchAsync as tryAsync } from './task/result-task.js'
 
 export type {
   ResultAsyncAbortSignal,
@@ -46,7 +46,7 @@ export type {
   ResultAsyncWithResourceOptions,
   StrictResultAsync,
   TryResultAsyncOptions,
-} from './result/result-async.js'
+} from './task/result-task.js'
 export {
   DisposableResult,
   err,
@@ -60,11 +60,11 @@ export {
   tryCatch,
   tryResult,
   unit,
-} from './result/result.js'
+} from './result.js'
 
 /** @deprecated Import the named `tryResult` export instead. */
 // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated exports.
-export { tryCatch as default, tryCatch as try } from './result/result.js'
+export { tryCatch as default, tryCatch as try } from './result.js'
 
 export type {
   AsyncResultGenOptions,
@@ -78,7 +78,7 @@ export type {
   SafeTryOptions,
   StrictResult,
   TryResultOptions,
-} from './result/result.js'
+} from './result.js'
 export { AbortError, isAbortError } from './core/abort-error.js'
 export { Cause } from './task/cause.js'
 export { Fiber } from './task/fiber.js'

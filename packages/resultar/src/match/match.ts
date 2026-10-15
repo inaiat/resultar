@@ -1,6 +1,6 @@
 import { identity } from '../core/function.js'
-import { err, ok } from '../result/result.js'
-import type { Result } from '../result/result.js'
+import { err, ok } from '../result.js'
+import type { Result } from '../result.js'
 import { Pipeable } from '../core/pipe.js'
 import type {
   LiteralCoverage,

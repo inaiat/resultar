@@ -1,16 +1,14 @@
-import { type ErrorConfig, createResultarError } from '../core/error.js'
-import { type FnPipe, Pipeable, type PipeFn, runFnPipe } from '../core/pipe.js'
-import { dual } from '../core/dual.js'
-import { createResultAsync } from './result-async-adapter.js'
-import type { ResultAsync } from './result-async.js'
-import type { ResultTask } from '../task/result-task.js'
-import type { ExtractErrTypes, ExtractOkTypes, InferErrTypes, InferOkTypes } from '../core/utils.js'
+import { type ErrorConfig, createResultarError } from './core/error.js'
+import { type FnPipe, Pipeable, type PipeFn, runFnPipe } from './core/pipe.js'
+import { dual } from './core/dual.js'
+import { ResultTask, type ResultAsync } from './task/result-task.js'
+import type { ExtractErrTypes, ExtractOkTypes, InferErrTypes, InferOkTypes } from './core/utils.js'
 import {
   callTaggedHandler,
   hasTag,
   isTaggedHandlerMatch,
   matchTaggedOr,
-} from '../tagged/tagged-match.js'
+} from './tagged/tagged-match.js'
 import type {
   CatchTagHandlerResult,
   CoveredHandlerKeys,
@@ -29,7 +27,7 @@ import type {
   ResultCatchTagHandlers as CatchTagHandlers,
   TagsOf,
   TagsWithReasonOf,
-} from '../tagged/tagged-types.js'
+} from './tagged/tagged-types.js'
 
 type ResultFinalizer<T, E> = (value: T | undefined, error: E | undefined) => void
 type MatchOkHandler<T, A> = (value: T) => A
@@ -2503,9 +2501,7 @@ class Ok<T, E> extends ResultVariant<T, E> {
   }
 
   public asyncMap<X>(f: (t: T) => Promise<X>): ResultAsync<X, E> {
-    return createResultAsync<ResultAsync<X, E>>(
-      Promise.resolve(f(this.value)).then((value) => ok<X, E>(value)),
-    )
+    return new ResultTask(Promise.resolve(f(this.value)).then((value) => ok<X, E>(value)))
   }
 
   public unwrapOr<A>(_defaultValue: A): T | A {
@@ -2750,11 +2746,11 @@ class Err<T, E> extends ResultVariant<T, E> {
 
   public asyncAndThen<X, Y>(_f: (t: T) => ResultAsync<X, Y>): ResultAsync<X, E | Y>
   public asyncAndThen<X, Y>(_f: (t: T) => ResultAsync<X, E>): ResultAsync<X, E | Y> {
-    return createResultAsync<ResultAsync<X, E | Y>>(Promise.resolve(err<X, E | Y>(this.error)))
+    return new ResultTask(Promise.resolve(err<X, E | Y>(this.error)))
   }
 
   public asyncMap<X>(_f: (t: T) => Promise<X>): ResultAsync<X, E> {
-    return createResultAsync<ResultAsync<X, E>>(Promise.resolve(err<X, E>(this.error)))
+    return new ResultTask(Promise.resolve(err<X, E>(this.error)))
   }
 
   public unwrapOr<A>(defaultValue: A): T | A {
@@ -3043,7 +3039,7 @@ const runResultGenerator = (
     throw error
   }
 
-  return createResultAsync<ResultAsync<unknown, unknown>>(
+  return new ResultTask(
     n.then(onStep).catch((error: unknown) => {
       if (catchFn) {
         return err(catchFn(error))

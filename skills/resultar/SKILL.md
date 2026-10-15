@@ -46,29 +46,23 @@ application rewrite or a move to services, scopes, clocks, or fibers before type
    and owned fibers when child lifetimes and cancellation need supervision. Task runs already
    supply a live clock; sequential tasks do not need explicit fibers.
 
-Keep existing Result helpers and ResultAsync adapters in use as tasks are adopted. A task can
-compose Results directly and use `ResultTask.fromResultAsync(factory)` to defer an existing eager
-adapter until a run. Passing an existing ResultAsync captures work that has already started.
-`ResultTask.toResultAsync(task)` starts a requirement-free task immediately, so it can preserve an
-existing ResultAsync boundary while the implementation changes. Supply service requirements and
-wrap resource workflows in `ResultTask.scoped` before that bridge. Read the
+Keep existing Result helpers and ResultAsync adapters in use as tasks are adopted. `ResultAsync<T, E>` is a type alias for `ResultTask<T, E, never>`, and the `ResultAsync` runtime value is an alias for `ResultTask` (`instanceof ResultAsync === instanceof ResultTask`). Requirement-free tasks (`R = never`, i.e. `ResultAsync<T, E>`) implement `.then(...)` and can be `await`ed directly to resolve to `Result<T, E>`, whereas tasks with pending requirements (`R !== never`) cannot be `await`ed until requirements and `Scope` are satisfied. Read the
 [gradual adoption guide](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md).
 
 ## Choose The Execution Model
 
-| Contract                   | `Result` / `Result.gen`                                                | `ResultAsync`                              | `ResultTask`                                                                |
-| -------------------------- | ---------------------------------------------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------- |
-| Execution                  | Sync values; `Result.gen` also accepts async generators                | Starts immediately                         | Building/composing starts nothing; each `run*` executes again               |
-| Generator return           | `return value`; `yield*` short-circuits failures                       | Compose through async `Result.gen` with `yield*` | `return value`; compose tasks, services and Results with `yield*`           |
-| Error transform / recovery | `mapErr` / `orElse` / `orElseSucceed` / `unwrapOr`                     | `mapErr` / `orElse` / `orElseSucceed` / `unwrapOr` | `mapErr` / `orElse` / `orElseSucceed` / `unwrapOr`                          |
-| Observation                | `inspect` / `inspectError` / `inspectBoth` ignore callback failures    | Same, including rejected Promises          | Same, lazily; returned tasks are not executed                               |
-| Fallible side operations   | `andThen`                                                              | `andThen`                                  | `tap` / `tapError` / `tapBoth`; returned task errors and requirements join the workflow |
-| Cleanup                    | Disposal callbacks are best-effort                                     | `withResource` release is best-effort      | `acquireRelease` + `scoped` await release and preserve failures             |
+| Contract                   | `Result` / `Result.gen`                                                | `ResultAsync<T, E>` (`ResultTask<T, E, never>`)                | `ResultTask<T, E, R>`                                                       |
+| -------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Execution                  | Sync values; `Result.gen` also accepts async generators                | Lazy blueprint (starts on `await` or `run*`; `fromPromise` wraps an already-started `Promise`) | Lazy blueprint; building/composing starts nothing and each `run*` executes again |
+| Generator return           | `return value`; `yield*` short-circuits failures                       | Compose through `ResultTask.gen` or async `Result.gen` with `yield*` | `return value`; compose tasks, services and Results with `yield*`           |
+| Error transform / recovery | `mapErr` / `orElse` / `orElseSucceed` / `unwrapOr`                     | `mapErr` / `orElse` / `orElseSucceed` / `unwrapOr` (returns `ResultAsync<T, never>`) | `mapErr` / `orElse` / `orElseSucceed` / `unwrapOr` (returns `ResultTask<T, never, R>`) |
+| Boundary fold              | `match` / `matchTags` / `matchTagsPartial` return `Out`                | Return `ResultAsync<Out, never>`; use `(await task).match(...)` or `runPromise` for `Out` | Return `ResultTask<Out, never, R>`; use `(await task).match(...)` or `runPromise` for `Out` |
+| Observation                | `inspect` / `inspectError` / `inspectBoth` ignore callback failures    | Same, lazily; returned tasks are not executed                  | Same, lazily; returned tasks are not executed                               |
+| Fallible side operations   | `andThen` (sync `tap` / `tapError` are deprecated best-effort aliases) | `tap` / `tapError` / `tapBoth` or `andThen`                    | `tap` / `tapError` / `tapBoth`; returned task errors and requirements join the workflow |
+| Cleanup                    | Disposal callbacks are best-effort                                     | `withResource` / `acquireRelease` + `scoped`                   | `acquireRelease` + `scoped` await release and preserve failures             |
 
-Use `ResultAsync` for existing Promise-shaped use cases. Choose `ResultTask` for reusable lazy
-work, typed service requirements, or owned resource lifetimes. Preserve existing eager/lazy
-contracts; converting an already-started Promise or ResultAsync cannot undo its execution.
-`ResultTask.runResult` can reject on defects, interruption, and composite causes. Use `runExit`
+Use `ResultAsync<T, E>` for requirement-free async workflows (`R = never`) that callers `await` for `Result<T, E>`. Choose `ResultTask<T, E, R>` when the signature needs typed service requirements (`R`), explicit scopes, or fiber supervision.
+`ResultTask.runResult` (and `await task` when `R = never`) can reject on defects, interruption, and composite causes. Use `runExit`
 when the boundary must inspect every exit without rejection. See [API details](references/api.md).
 For DI, Hono and Fastify, read [services and HTTP scopes](references/services.md). Use
 `ResultTask.service<T>()(name)` or DI `Service.require<T>()(name)` for inferred identifiers. Class
@@ -236,13 +230,9 @@ interrupts and awaits its children.
 
 Return `ResultTask<A, E, R>` directly from lazy service functions and plain success values inside
 `ResultTask.gen` / `fn`. Compose a final step with `return yield* step`; `return step` leaves that
-task unexecuted as the success value. `Promise<ResultTask<...>>` and `await task` do not run it.
+task unexecuted as the success value. `await task` runs a requirement-free task (`R = never`) and resolves to `Result<A, E>`, whereas tasks with pending requirements (`R !== never`) do not expose `.then(...)` until requirements are provided.
 
-On `Result` and `ResultAsync`, `inspect` / `inspectError` and the deprecated `tap` / `tapError`
-spellings provide the same best-effort observation. `log` also preserves the original result.
-`ResultTask.tap` / `tapError` compose fallible task side operations; `inspect` / `inspectError`
-ignore observer failures and never execute returned tasks. Use `andThen`, `orElse`,
-or a Resultar wrapper when a Result/ResultAsync callback failure must change control flow.
+Across `Result`, `ResultAsync`, and `ResultTask`, `inspect` / `inspectError` / `inspectBoth` and `log` provide best-effort observation (swallowing callback failures and never executing returned tasks). On synchronous `Result`, deprecated `tap` / `tapError` keep best-effort observation. On `ResultTask` and `ResultAsync`, `tap` / `tapError` / `tapCause` / `tapBoth` compose fallible task side operations whose errors and defects propagate.
 
 ## Use `Result.gen` For Linear Result Flows
 

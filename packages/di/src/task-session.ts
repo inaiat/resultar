@@ -64,12 +64,14 @@ export function startServiceTask(
       }),
     );
   });
-  const completion = fromSafePromise(ResultTask.runExit(task, { signal: controller.signal })).map(
-    (exit) => {
-      completed = true;
-      if (exit._tag === "Failure") readiness.reject(new ResultTaskCauseError(exit.cause));
-      return exit;
-    },
+  const completion = fromSafePromise(
+    Promise.resolve()
+      .then(() => ResultTask.runExit(task, { signal: controller.signal }))
+      .then((exit) => {
+        completed = true;
+        if (exit._tag === "Failure") readiness.reject(new ResultTaskCauseError(exit.cause));
+        return exit;
+      }),
   );
   return {
     ready,

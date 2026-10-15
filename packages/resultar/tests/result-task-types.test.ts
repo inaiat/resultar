@@ -1,4 +1,4 @@
-import { describe, expectTypeOf, it } from 'vite-plus/test'
+import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
 
 import type {
   Exit,
@@ -16,6 +16,7 @@ import {
   err,
   ok,
   pipe,
+  ResultAsync,
   ResultTask,
   ResultTaskTypeId,
   Semaphore,
@@ -40,10 +41,12 @@ describe('ResultTask public types', () => {
 
     const exit = await ResultTask.runExit(successful)
     const result = await ResultTask.runResult(successful)
+    const awaited = await successful
     const value = await ResultTask.runPromise(successful)
 
     expectTypeOf(exit).toEqualTypeOf<Exit<number, never>>()
     expectTypeOf(result).toEqualTypeOf<Result<number, never>>()
+    expectTypeOf(awaited).toEqualTypeOf<Result<number, never>>()
     expectTypeOf(value).toEqualTypeOf<number>()
     const runOptions: ResultTaskRunOptions<never> = {}
     expectTypeOf(runOptions).toExtend<{
@@ -54,10 +57,49 @@ describe('ResultTask public types', () => {
     if (false) {
       // @ts-expect-error A task without requirements does not accept a service environment.
       void ResultTask.runResult(successful, { services: {} })
-      // @ts-expect-error ResultTask is not implicitly awaitable.
+      // @ts-expect-error ResultTask resolves to Result<A, E> when awaited, not raw A.
       const promiseLike: PromiseLike<number> = successful
       void promiseLike
     }
+  })
+
+  it('unifies ResultAsync<A, E> with ResultTask<A, E, never> and gates await on R = never', async () => {
+    expectTypeOf<ResultAsync<number, 'err'>>().toEqualTypeOf<ResultTask<number, 'err', never>>()
+
+    const asyncTask = ResultAsync.ok(42)
+    const syncTask = ResultTask.ok(42)
+    expect(asyncTask).toBeInstanceOf(ResultTask)
+    expect(asyncTask).toBeInstanceOf(ResultAsync)
+    expect(syncTask).toBeInstanceOf(ResultTask)
+    expect(syncTask).toBeInstanceOf(ResultAsync)
+
+    const Logger = ResultTask.service<{ readonly info: (msg: string) => void }, 'Logger'>('Logger')
+    const unprovided = ResultTask.gen(function* () {
+      const logger = yield* Logger
+      logger.info('hi')
+      return 21
+    })
+    const scopedResource = ResultTask.acquireRelease({
+      acquire: ResultTask.ok('conn'),
+      release: () => ResultTask.err('close-err' as const),
+    })
+
+    if (false) {
+      // @ts-expect-error Tasks with unprovided service requirements cannot be awaited directly.
+      await unprovided
+      // @ts-expect-error Tasks with open scope requirements cannot be awaited directly.
+      await scopedResource
+    }
+
+    const provided = unprovided.provideService(Logger, { info: () => undefined })
+    const closedScope = ResultTask.scoped(scopedResource)
+    const providedResult = await provided
+    const closedResult = await closedScope
+
+    expectTypeOf(providedResult).toEqualTypeOf<Result<number, never>>()
+    expectTypeOf(closedResult).toEqualTypeOf<Result<string, 'close-err'>>()
+    expect(providedResult).toEqual(ok(21))
+    expect(closedResult).toEqual(err('close-err'))
   })
 
   it('preserves and combines error and service requirement types', () => {

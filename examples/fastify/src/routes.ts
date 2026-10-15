@@ -19,15 +19,14 @@ export const usersRoutes: FastifyPluginAsyncTypebox = async (app) => {
     // Fastify awaits the HTTP reply after the Resultar channel has been matched.
     // resultar-check-disable-next-line prefer-result-async
     async (request, reply) => {
-      await request.services.users
-        .findById(request.params.id)
-        .matchTags((user) => reply.code(200).send(user), {
-          UserNotFoundError: (error) => reply.code(404).send({ error: error.message }),
-          UserReadError: (error) => {
-            request.log.error({ err: error }, "User lookup failed");
-            return reply.code(503).send({ error: "Temporarily unavailable" });
-          },
-        });
+      const result = await request.services.users.findById(request.params.id);
+      return result.matchTags((user) => reply.code(200).send(user), {
+        UserNotFoundError: (error) => reply.code(404).send({ error: error.message }),
+        UserReadError: (error) => {
+          request.log.error({ err: error }, "User lookup failed");
+          return reply.code(503).send({ error: "Temporarily unavailable" });
+        },
+      });
     },
   );
 };

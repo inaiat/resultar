@@ -80,9 +80,8 @@ validation. Report only issues supported by the installed Resultar version and r
 
 ## Observability And Cleanup
 
-- `Result` / `ResultAsync.inspect` / `inspectError` and deprecated `tap` / `tapError` are best-effort.
-- `ResultTask.tap` / `tapError` can introduce typed failures or defects; `inspect` / `inspectError`
-  are best-effort and never execute returned tasks.
+- `inspect` / `inspectError` / `inspectBoth` and `log` across `Result`, `ResultAsync`, and `ResultTask` (plus deprecated `Result.tap` / `tapError` on sync `Result`) are best-effort and never execute returned tasks.
+- `ResultTask` / `ResultAsync` `tap` / `tapError` / `tapCause` / `tapBoth` are effectful and can introduce typed failures or defects.
 - Resource cleanup and observation use the semantics of the concrete execution model.
 - `Result.gen` / `safeTry` do not close a suspended generator on early `Err`; cleanup does not rely
   on `finally` on that path. `ResultTask.gen` interprets yielded generator cleanup.

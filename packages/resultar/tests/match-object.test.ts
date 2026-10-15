@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer'
-import { equal } from 'node:assert'
+import { deepEqual, equal } from 'node:assert'
 
 import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
 
@@ -52,7 +52,7 @@ describe('match object form', () => {
       error: errorHandler,
     })
 
-    equal(matched, 'async resultar')
+    deepEqual(matched, ok('async resultar'))
     equal(okHandler.mock.calls.length, 1)
     equal(errorHandler.mock.calls.length, 0)
   })
@@ -66,7 +66,7 @@ describe('match object form', () => {
       error: errorHandler,
     })
 
-    equal(matched, 'async boom')
+    deepEqual(matched, ok('async boom'))
     equal(okHandler.mock.calls.length, 0)
     equal(errorHandler.mock.calls.length, 1)
   })
@@ -86,6 +86,6 @@ describe('match object form', () => {
       (error) => error.length,
     )
 
-    equal(matched, 3)
+    deepEqual(matched, ok(3))
   })
 })

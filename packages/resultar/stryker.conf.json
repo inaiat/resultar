@@ -17,9 +17,7 @@
     "src/core/error.ts",
     "src/core/pipe.ts",
     "src/core/redacted.ts",
-    "src/result/result.ts",
-    "src/result/result-async.ts",
-    "src/result/result-async-adapter.ts",
+    "src/result.ts",
     "src/task/result-task.ts",
     "src/tagged/tagged-error.ts",
     "src/tagged/tagged-match.ts"

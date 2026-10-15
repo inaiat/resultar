@@ -1,10 +1,8 @@
-import type { ResultAsync } from '../result/result-async.js'
-import type { ErrResult } from '../result/result.js'
+import type { ErrResult } from '../result.js'
 
 import { isRedacted, stringifyRedacted } from '../core/redacted.js'
-import { createResultAsync } from '../result/result-async-adapter.js'
-import { ResultTask } from '../task/result-task.js'
-import { err as resultErr } from '../result/result.js'
+import { ResultTask, type ResultAsync } from '../task/result-task.js'
+import { err as resultErr } from '../result.js'
 
 type Alpha =
   | 'a'
@@ -640,9 +638,7 @@ const createTaggedErrorClass = <
       ...args: TaggedErrorConstructorArgs<MessageTemplate>
     ): ResultAsync<never, InstanceType<This>> {
       const error = new this(...args) as InstanceType<This>
-      return createResultAsync<ResultAsync<never, InstanceType<This>>>(
-        Promise.resolve(resultErr<never, InstanceType<This>>(error)),
-      )
+      return new ResultTask(Promise.resolve(resultErr<never, InstanceType<This>>(error)))
     }
 
     /**

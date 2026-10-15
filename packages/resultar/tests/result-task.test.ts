@@ -218,8 +218,11 @@ describe('ResultTask', () => {
     equal(failureExit._tag, 'Failure')
 
     if (false) {
-      // @ts-expect-error ResultTask is not PromiseLike and does not execute implicitly.
-      void task.then
+      const taskWithReq = ResultTask.gen(function* () {
+        return yield* ResultTask.service<number, 'Num'>('Num')
+      })
+      // @ts-expect-error ResultTask with unprovided requirements cannot be awaited directly.
+      await taskWithReq
     }
   })
 

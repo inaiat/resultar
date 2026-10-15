@@ -88,7 +88,8 @@ const registerAccount = (input: string) =>
 // ResultAsync<Account, InvalidEmailError | AccountExistsError | DatabaseError>
 
 // 3. Handle every possible error at the HTTP boundary (compile error if a tag is missed!)
-const response = await registerAccount(req.body.email).matchTags(
+const result = await registerAccount(req.body.email)
+const response = result.matchTags(
   (account) => ({ status: 201, body: account }),
   {
     InvalidEmailError: (err) => ({ status: 400, body: { code: err._tag, message: err.message } }),
@@ -104,7 +105,7 @@ const response = await registerAccount(req.body.email).matchTags(
 
 | What you need | What Resultar provides |
 | --- | --- |
-| **Expected failures in the type system** | `Result<T, E>` (sync), `ResultAsync<T, E>` (eager async), and `ResultTask<T, E, R>` (lazy workflows) |
+| **Expected failures in the type system** | `Result<T, E>` (sync) and `ResultTask<T, E, R>` / `ResultAsync<T, E>` (unified lazy & awaitable async workflows) |
 | **Structured production errors** | Real `Error` subclasses via `createTaggedError` with `$prop` interpolation, `cause`, fingerprints, and secret redaction |
 | **Linear code without `try/catch`** | `Result.gen` / `Result.fn` and `ResultTask.gen` / `ResultTask.fn` using `yield*` short-circuiting |
 | **Exhaustive boundary handling** | `matchTags`, `catchTag`, `catchTags`, and general-purpose `Match` pattern matching |
@@ -132,28 +133,29 @@ npm install resultar
 
 ## Adopt Gradually: Three Primitives, One Mental Model
 
-You do not need to rewrite your application to use Resultar. Start with a single function returning `Result<T, E>` and scale up only when a workflow needs more power:
+You do not need to rewrite your application to use Resultar. Start with a single function returning `Result<T, E>` and scale up only when a workflow needs async I/O or typed dependencies:
 
 ```ts
 Result<T, E>          // 1. Synchronous value: Ok(T) or Err(E)
-ResultAsync<T, E>     // 2. Eager async Promise wrapper: awaitable Result<T, E>
+ResultAsync<T, E>     // 2. Requirement-free async task (ResultTask<T, E, never>): directly awaitable to Result<T, E>
 ResultTask<T, E, R>   // 3. Lazy, repeatable workflow with required services/scopes (R)
 ```
 
 - **`T`** is the success value.
 - **`E`** is the expected failure type.
-- **`R`** is the typed service environment or resource scope required before a `ResultTask` can run.
+- **`R`** is the typed service environment or resource scope required before a `ResultTask` can run (`never` when no external requirements remain).
+
+`ResultAsync<T, E>` is a type and runtime alias for `ResultTask<T, E, never>`. When `R` is `never`, the task can be `await`ed directly to produce `Result<T, E>`. When `R` contains pending service or scope requirements, TypeScript prevents direct `await` until you satisfy `R` (via `.provide*`, `ResultTask.scoped`, or `ResultTask.runResult(task, { services })`).
 
 | Stage | When to use it | Key APIs |
 | --- | --- | --- |
 | **1. `Result<T, E>`** | Synchronous validation, parsing, and domain rules | `ok`, `err`, `map`, `andThen`, `Result.gen`, `match` |
-| **2. `ResultAsync<T, E>`** | Wrapping existing Promise-based I/O with typed errors and policies | `tryResultAsync`, `asyncAndThen`, `ResultAsync.retry`, `timeout` |
-| **3. `ResultTask<T, E, R>`** | Deferred execution, typed service injection, cooperative cancellation, and scoped resource lifecycles | `ResultTask.gen`, `ResultTask.fn`, `tryPromise`, `service`, `acquireRelease`, `runResult` |
+| **2. `ResultAsync<T, E>`** | Requirement-free async workflows (`R = never`) that can be `await`ed directly | `tryResultAsync`, `asyncAndThen`, `ResultAsync.retry`, `timeout` |
+| **3. `ResultTask<T, E, R>`** | Workflows with typed service injection (`R`), cooperative cancellation, and scoped resource lifecycles | `ResultTask.gen`, `ResultTask.fn`, `tryPromise`, `service`, `acquireRelease`, `runResult` |
 
-All three models compose seamlessly:
-- Inside `Result.gen(async function* () { ... })`, you can `yield*` both `Result` and `ResultAsync`.
-- Inside `ResultTask.gen(function* () { ... })`, you can `yield*` both `Result` and `ResultTask`.
-- Bridge between eager `ResultAsync` and lazy `ResultTask` at migration boundaries with `ResultTask.fromResultAsync(() => readAsync())` and `ResultTask.toResultAsync(task)`.
+All three compose seamlessly on a single async engine:
+- Inside `Result.gen(async function* () { ... })` or `ResultTask.gen(function* () { ... })`, you can `yield*` both `Result` and `ResultAsync` / `ResultTask`.
+- Satisfying all `R` requirements on a `ResultTask<T, E, R>` automatically narrows it to `ResultAsync<T, E>` (`ResultTask<T, E, never>`), making it directly `await`able.
 
 See the [Gradual Adoption Guide](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md) for a step-by-step walkthrough.
 
@@ -385,6 +387,8 @@ At the edge of your application (HTTP controllers, CLI commands, queue consumers
 - **`matchTagsPartial(onOk, handlers, onUnhandled)`**: Handle specific tags and route the rest to a fallback.
 - **`match(onOk, onErr)` / `match({ ok, err })`**: Handle `Ok` and `Err` directly when individual tags don't matter.
 
+> On `Result<T, E>`, `match`, `matchTags`, `matchTagsPartial`, and `unwrapOr` return the unwrapped output value `Out` directly. On `ResultAsync<T, E>` / `ResultTask<T, E, R>`, they remain lazy task operators returning `ResultTask<Out, never, R>` (which resolves to `Ok(Out)` when awaited, or `Out` when executed via `ResultTask.runPromise` / `.unwrapOrThrow()`). At an async boundary, you can either `await` the task first (`(await task).matchTags(...)`) or chain `.matchTags(...).unwrapOrThrow()`.
+
 ### Strict Error-only boundaries (`StrictResult`)
 
 While `Result<T, E>` allows any error type (strings or literals are handy in small local helpers), production boundaries usually require real `Error` instances with stack traces and causes. Use the type aliases `StrictResult<T, E extends Error>` and `StrictResultAsync<T, E extends Error>` to enforce `Error` subtypes on public signatures.
@@ -393,13 +397,13 @@ While `Result<T, E>` allows any error type (strings or literals are handy in sma
 
 ## Async Work And Resilience
 
-`ResultAsync<T, E>` is an eager, awaitable wrapper around `Promise<Result<T, E>>`.
+`ResultAsync<T, E>` is a requirement-free `ResultTask<T, E, never>` that implements `PromiseLike<Result<T, E>>`, so you can `await` it directly in any `async` function to get `Result<T, E>`.
 
 ### Wrapping external async boundaries
 
 | External boundary | Helper |
 | --- | --- |
-| Run an async/promise factory now (catches sync throws too) | `tryResultAsync(factory, toError)` |
+| Wrap an async/promise factory (catches sync throws too) | `tryResultAsync(factory, toError)` |
 | Adapt an already-created Promise | `fromPromise(promise, toError)` |
 | Wrap an async function into a reusable `ResultAsync` function | `fromThrowableAsync(fn, toError)` |
 | Adapt a callback or event subscription | `ResultAsync.fromCallback(options)` |
@@ -457,7 +461,7 @@ const inserted = ResultAsync.withResource({
 
 ## Lazy Workflows With ResultTask
 
-`ResultTask<T, E, R>` is Resultar's lazy workflow primitive. Unlike `ResultAsync` (which starts executing as soon as it is constructed), a `ResultTask` is an immutable, reusable blueprint that only executes when you pass it to a `run*` boundary:
+`ResultTask<T, E, R>` is Resultar's unified async and workflow primitive (with `ResultAsync<T, E>` as its `R = never` specialization). A `ResultTask` is an immutable, reusable blueprint that only executes when `await`ed (when `R = never`) or passed to a `run*` boundary:
 
 ```ts
 import { ResultTask } from 'resultar'
@@ -470,20 +474,21 @@ const fetchUser = (id: string) =>
 
 const task = fetchUser('user_123') // Nothing has executed yet!
 
-// Execute explicitly at your application boundary:
+// Execute explicitly at your application boundary (or `await task` when R = never):
 const result = await ResultTask.runResult(task)
 ```
 
 | Execution boundary | Return type | When to use |
 | --- | --- | --- |
-| `ResultTask.runResult(task, options?)` | `Promise<Result<T, E>>` | Standard boundary: returns `Ok(T)` or `Err(E)` (rejects on unexpected defects or `AbortError`) |
+| `await task` (when `R = never`) | `Promise<Result<T, E>>` | Ergonomic boundary for requirement-free tasks (`ResultAsync<T, E>`) |
+| `ResultTask.runResult(task, options?)` | `Promise<Result<T, E>>` | Standard boundary with runtime options (`services`, `signal`, `clock`, `scheduler`) |
 | `ResultTask.runExit(task, options?)` | `Promise<Exit<T, E>>` | Total boundary: never rejects; captures typed `Fail`, unexpected `Die` defects, `Interrupt`, and `Sequential`/`Parallel` causes |
 | `ResultTask.runPromise(task, options?)` | `Promise<T>` | Promise-only interop: resolves `T` or rejects any failure |
 | `ResultTask.runFork(task, options?)` | `FiberHandle<T, E>` | Background execution: starts a root fiber with `.id`, `Fiber.poll`, `Fiber.await`, and `Fiber.interrupt` |
 
 ### Parameterized tasks and tagged recovery
 
-Declare typed service requirements with `ResultTask.service<Contract>()('Tag')` and compose lazy workflows with `ResultTask.gen` or `ResultTask.fn`. If a required service is missing at `runResult`, TypeScript reports a compile-time error:
+Declare typed service requirements with `ResultTask.service<Contract>()('Tag')` and compose lazy workflows with `ResultTask.gen` or `ResultTask.fn`. If a required service is missing at `runResult` (or if you try to `await` a task before providing `R`), TypeScript reports a compile-time error:
 
 ```ts
 import { createTaggedError, ok, ResultTask } from 'resultar'
@@ -571,7 +576,7 @@ const outcome = await pending
 
 ### Portable retry policies
 
-Share a single, immutable retry configuration across both lazy `ResultTask` and eager `ResultAsync` workflows with `Retry.policy`:
+Share a single, immutable retry configuration across both `ResultTask` and `ResultAsync` call styles with `Retry.policy`:
 
 ```ts
 import { Retry } from 'resultar'
@@ -648,7 +653,8 @@ const respondError = Match.context<
 })
 
 // Inside a route handler:
-return users.findById(id).match({
+const result = await users.findById(id)
+return result.match({
   ok: (user) => c.json(user, 200),
   err: (error) => respondError(error, c),
 })
@@ -747,8 +753,8 @@ Every npm release bundles `dist/llms.txt`, `dist/agent/SKILL.md`, focused API an
 ### Scope & Limitations
 
 - **Focused scope**: Resultar is not a full Effect port—it intentionally omits `Stream`, STM, distributed clustering, and a global application runtime.
-- **Cooperative cancellation**: `ResultTask` timeouts and fiber interruptions abort the `AbortSignal` and await scope finalizers; underlying I/O drivers must respect the signal (or opt into `interruption: 'detach'`).
-- **Eager vs. Lazy**: `ResultAsync` starts immediately upon creation; use `ResultTask` (or a `() => ResultAsync` factory) whenever execution must be deferred or retried.
+- **Cooperative cancellation**: `ResultTask` / `ResultAsync` timeouts and fiber interruptions abort the `AbortSignal` and await scope finalizers; underlying I/O drivers must respect the signal (or opt into `interruption: 'detach'`).
+- **Deferred execution vs. already-started Promises**: `ResultTask` and `ResultAsync` factories (`tryPromise`, `tryResultAsync`, `Result.gen`, `ResultTask.gen`) defer execution until `await`ed or passed to `ResultTask.run*`. Wrapping an already-created `Promise` with `fromPromise` or `fromSafePromise` cannot defer or retry work that has already started.
 
 ## License
 

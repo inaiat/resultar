@@ -80,15 +80,17 @@ test("a native registration failure waits for rollback and retains its identity"
   let settled = false;
   const ready = tryResultAsync(async () => {
     await app.ready();
-  }).match(
-    () => {
-      settled = true;
-    },
-    (error) => {
-      settled = true;
-      return error;
-    },
-  );
+  })
+    .match(
+      () => {
+        settled = true;
+      },
+      (error) => {
+        settled = true;
+        return error;
+      },
+    )
+    .unwrapOrThrow();
   await releasing.promise;
   expect(settled).toBe(false);
   expect(releases).toBe(0);

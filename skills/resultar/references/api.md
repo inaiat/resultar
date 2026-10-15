@@ -74,25 +74,24 @@ on rejection. Callback exceptions propagate; use `tryResult` to capture external
 
 ## Composition And Recovery
 
-`Result` and `ResultAsync` expose direct and curried `map`, `mapErr`, `andThen`, `orElse`,
+`Result`, `ResultAsync`, and `ResultTask` expose direct and curried `map`, `mapErr`, `andThen`, `orElse`,
 `orElseSucceed`, `unwrapOr`, `catchTag`, `catchTags`, `catchReason`, `catchReasons`,
 `unwrapReason`, `inspect`, `inspectError`, `inspectBoth`, `match`, `matchTags`,
 `matchTagsPartial`, `as`, `asVoid`, and `filterOrElse`. Use `pipe(result, Result.map(f))` or
-`Result.map(result, f)` for the same fluent behavior. Refinements retain success narrowing;
-ResultAsync callbacks retain eager Promise semantics. Result also exposes `asyncMap` and
-`asyncAndThen` for transitions into ResultAsync.
+`Result.map(result, f)` for the same fluent behavior. `ResultAsync<T, E>` is a type alias for `ResultTask<T, E, never>`, and the `ResultAsync` runtime value is an alias for `ResultTask`. Result also exposes `asyncMap` and
+`asyncAndThen` for transitions into `ResultAsync`.
 
-- `map` transforms an `Ok` value with an infallible function.
-- `mapErr` transforms an `Err` value.
+- `map` transforms an `Ok` value with a synchronous function.
+- `mapErr` transforms an `Err` value with a synchronous function.
 - `filterOrElse` validates or narrows an `Ok` value and introduces a typed error on failure.
-- `andThen` chains fallible work. On `ResultAsync`, it accepts sync or async Resultar work.
+- `andThen` chains fallible work. On `ResultAsync` / `ResultTask`, it accepts sync `Result` or `ResultTask` / `ResultAsync` work.
 - `asyncAndThen` bridges a synchronous `Result` into `ResultAsync`.
 - `orElse` recovers the complete error channel.
 - `orElseSucceed` recovers the complete error channel with a plain fallback value.
 - `catchTag` recovers one tagged error.
 - `catchTags` recovers selected tagged errors; unhandled variants stay in the error union.
 - `catchReason` / `catchReasons` / `unwrapReason` recover or promote nested tagged `reason` fields.
-- `pipe` applies named combinators without changing Result semantics.
+- `pipe` applies named combinators without changing Result or ResultTask semantics.
 
 Let each step expose its narrow error type and let composition infer the union:
 
@@ -175,12 +174,14 @@ See `packages/resultar/README.md#pattern-matching-with-match` for guards and all
 
 Use branch methods inside an algorithm and matching when converting the completed result:
 
-- `isOk()` / `isErr()` narrow for direct control flow.
+- `isOk()` / `isErr()` narrow a synchronous `Result` for direct control flow.
 - `match(onOk, onErr)` handles a simple boundary.
 - `matchTags(onOk, handlers)` exhaustively maps tagged errors.
 - `matchTagsPartial(onOk, handlers, fallback)` handles selected tags with a deliberate fallback.
 - `matchError(error, handlers)` handles an error value directly.
 - `matchErrorPartial(error, handlers, fallback)` partially handles an error value.
+
+On synchronous `Result`, `match`, `matchTags`, and `matchTagsPartial` return `Out`. On `ResultAsync` and `ResultTask`, they fold both channels into `ResultTask<Out, never, R>` (`ResultAsync<Out, never>` when `R = never`). At a terminal boundary where you want the unwrapped value `Out`, either `await` the task first (`(await task).matchTags(...)`) or pass the folded task to `ResultTask.runPromise` / `.unwrapOrThrow()`.
 
 Include an `Error` handler whenever an error union can contain an untagged `Error`. Do not invent
 `partialCatchTags`; `catchTags` already supports partial recovery.
@@ -303,8 +304,7 @@ Use `result.match({ ok: identity, err: constant(fallback) })` for fixed boundary
 ## ResultTask (Lazy Workflows)
 
 `ResultTask<A, E, R>` is a lazy, reusable description of work: building one starts nothing, and
-each `run*` call executes it again. Never substitute `ResultAsync` (already-started) where
-laziness matters.
+each `run*` call (or `await` when `R = never`) executes it again. `ResultAsync<A, E>` is a type alias for `ResultTask<A, E, never>`, and the `ResultAsync` runtime value is an alias for `ResultTask`. Avoid passing an already-created `Promise` to `fromPromise(promise, toError)` when lazy re-execution is needed; pass a factory to `tryResultAsync(() => ...)` or `ResultTask.tryPromise(() => ...)` instead.
 
 - Build: `ok`, `err`, `fromResult`, `sync`, `try`, `tryPromise` (`try`/`tryPromise` map
   external throws into `E`; `sync` treats them as defects; `succeed` / `fail` remain deprecated aliases).
@@ -360,9 +360,7 @@ fallible steps or early errors; `safeTry` retains its final Result contract.
 Task `succeed`, `fail`, `mapError`, `flatMap`, and `catchAll` remain deprecated spellings of `ok`, `err`, `mapErr`, `andThen`,
 and `orElse`. All retain their instance/direct/curried contracts. Task matching accepts
 `{ ok, err }`, `{ ok, error }`, and `{ onSuccess, onFailure }`.
-`ResultTask.toResultAsync(task)` and deprecated `ResultAsync.fromTask(task)` both start a
-requirement-free task immediately. `fromResultAsync` keeps an existing instance eager;
-its factory form defers creation.
+`ResultTask.toResultAsync(task)` and deprecated `ResultAsync.fromTask(task)` return a requirement-free task as `ResultAsync<A, E>` (since `ResultAsync<A, E>` is `ResultTask<A, E, never>`). `fromResultAsync` accepts an existing `ResultAsync` or a `() => ResultAsync` factory.
 For lazy `ResultTask` workflows with typed services and scopes, see `packages/resultar/README.md`
 (Lazy Workflows With ResultTask) and `docs/rfcs/rfc-0001-result-task-core.md`.
 
@@ -375,20 +373,18 @@ Use `findCause(error, ErrorClass)` for a JavaScript Error's own cause chain.
 
 ## Observation And Cleanup
 
-On `Result` and `ResultAsync`, `inspect` / `inspectError` / `inspectBoth` (`{ ok, err }` or
-`{ ok, error }`), deprecated `tap` / `tapError`, and `log` preserve the original result. Callback
-throws and rejected callback Promises are ignored. Returned Resultar values are not composed; use
-`andThen` or `orElse` when their failure must change control flow. Deprecation changes the
-recommended spelling, not observation behavior.
+Across `Result`, `ResultAsync`, and `ResultTask`, `inspect` / `inspectError` / `inspectBoth` (`{ ok, err }` or
+`{ ok, error }`) and `log` preserve the original result. Callback
+throws and rejected callback Promises are ignored, and returned Resultar values are not executed or composed. On synchronous `Result`, deprecated `tap` / `tapError` keep best-effort observation behavior.
 
 `toDisposable` and `toAsyncDisposable` integrate with Node.js `using` / `await using`; their
 cleanup callbacks are also best-effort. `ResultAsync.withResource` preserves its existing
 best-effort release contract.
 
-On `ResultTask`, `tap` / `tapError` / `tapCause` / `tapBoth` remain lazy effectful composition. Returned task errors and
+On `ResultTask` and `ResultAsync`, `tap` / `tapError` / `tapCause` / `tapBoth` provide lazy effectful composition. Returned task errors and
 requirements join the workflow type. Callback throws and rejected Promises become `Die`;
-a returned `ResultTask.err(error)` becomes a typed failure. `inspect` / `inspectError` / `inspectCause` /
+a returned `ResultTask.err(error)` or `err(error)` becomes a typed failure. `inspect` / `inspectError` / `inspectCause` /
 `inspectBoth` (`{ ok, err }`, `{ ok, error }`, or `{ onSuccess, onFailure }`) are the best-effort
 alternative: they ignore observer failures and never execute returned tasks. `runExit` preserves
-every exit; `runResult` can reject. Do not substitute best-effort ResultAsync resource release for
-awaited ResultTask resource ownership.
+every exit; `runResult` (and `await task` when `R = never`) can reject. Do not substitute best-effort `withResource` release for
+awaited `acquireRelease` + `scoped` resource ownership.

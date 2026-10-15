@@ -8,19 +8,22 @@ their usage examples, checker configuration, editor tooling, and workspace valid
 
 Resultar is a small TypeScript library for explicit error handling.
 
-Its eager value primitives are:
+Its core primitives are:
 
 ```ts
 Result<T, E>;
-ResultAsync<T, E>;
+ResultAsync<T, E>; // alias for ResultTask<T, E, never>
+ResultTask<T, E, R>;
 ```
 
 Use them when a function can fail and that failure should be visible in the type signature instead
 of hidden behind `throw`, rejected promises, nullable returns, or ad hoc `T | Error` unions.
 
-Start with these values in ordinary application code. Lazy `ResultTask` workflows add explicit
-execution, time, retry, concurrency, and resource ownership when a use case needs them. Adoption
-can happen one function or workflow at a time; it does not require changing the whole application.
+Start with `Result` and `ResultAsync` in ordinary application code. Because `ResultAsync<T, E>` is
+unified with `ResultTask<T, E, never>`, async workflows are lazy by default, directly `await`able
+when `R = never`, and gain explicit service requirements (`R`), time, retry, structured
+concurrency, and resource ownership whenever a use case needs them. Adoption can happen one
+function or workflow at a time; it does not require changing the whole application.
 
 ## Install
 
@@ -94,11 +97,11 @@ If you are new to Resultar, read these sections in order:
 5. [Composing steps](#composing-steps)
 6. [Handling results at boundaries](#handling-results-at-boundaries)
 
-Start with `Result<T, E>` and stop wherever the current workflow's needs are met. `ResultAsync`
-adds typed failures to existing eager async code. `ResultTask<T, E, R>` adds lazy, repeatable
-execution; `E` is still the expected error type, while `R` tracks requirements. Use the bridges
-to migrate individual workflows, then add `Clock`, `Retry.policy`, or owned Fibers as needed.
-Synchronous domain functions can keep returning `Result` throughout this progression.
+Start with `Result<T, E>` and stop wherever the current workflow's needs are met. `ResultAsync<T, E>`
+(`ResultTask<T, E, never>`) adds typed failures to async code and can be `await`ed directly to
+produce `Result<T, E>`. `ResultTask<T, E, R>` adds the third channel `R` for service and scope
+requirements while keeping `E` as the expected error type. Add `Clock`, `Retry.policy`, or owned
+Fibers as needed. Synchronous domain functions can keep returning `Result` throughout this progression.
 
 If you already know Result-style error handling, jump to:
 
@@ -159,19 +162,21 @@ If you already know Result-style error handling, jump to:
 type Result<T, E> = Ok<T> | Err<E>;
 ```
 
-`ResultAsync<T, E>` is the promise-based version. Conceptually, it wraps this shape:
+`ResultTask<T, E, R>` is the unified asynchronous and effectful primitive, and `ResultAsync<T, E>` is
+a type and runtime alias for a requirement-free task:
 
 ```ts
-Promise<Result<T, E>>;
+type ResultAsync<T, E = never> = ResultTask<T, E, never>;
 ```
 
-The public type is a Resultar wrapper with methods like `map`, `andThen`, and `match`, but the
-mental model is the same:
+When `R = never`, a `ResultTask` / `ResultAsync` implements `.then(...)` and can be `await`ed
+directly to resolve to `Result<T, E>`:
 
 - `Ok<T>` means the operation succeeded.
 - `Err<E>` means the operation failed in an expected way.
 - `T` is the success type.
 - `E` is the expected error type.
+- `R` is the required service/scope environment (`never` when no requirements remain).
 
 For local code, `Result<T, E>` can use strings, enums, or small domain objects as `E`.
 
@@ -250,12 +255,11 @@ the first function's optional/rest parameters and explicit `this`; subsequent fu
 only the previous result. Composition is synchronous: exceptions propagate, Promises remain values,
 and tasks still wait for a run boundary.
 
-`Result` and `ResultAsync` expose direct and curried `map`, `mapErr`, `andThen`, `orElse`,
+`Result` and `ResultAsync` (an alias for `ResultTask`) expose direct and curried `map`, `mapErr`, `andThen`, `orElse`,
 `catchTag`, `catchTags`, `inspect`, `inspectError`, `as`, `filterOrElse`, `match`, `matchTags`,
 and `matchTagsPartial`. For example, `Result.map(result, f)` and `pipe(result, Result.map(f))`
-delegate the same fluent semantics. Result refinements preserve narrowing; ResultAsync operators
-preserve eager Promise callbacks. `Result.asyncMap` / `asyncAndThen` bridge synchronous Results
-into eager async work.
+delegate the same fluent semantics. Result refinements preserve narrowing; `Result.asyncMap` /
+`asyncAndThen` bridge synchronous Results into `ResultAsync` (`ResultTask<T, E, never>`).
 
 ### Identity and constant
 
@@ -389,9 +393,10 @@ before the next task continues.
 
 ### Execution compatibility
 
-`ResultAsync` remains eager, and `ResultTask` remains lazy and repeatable. These additions reuse the
-interpreter, scopes, and contracts of `runExit`, `runResult`, and `runPromise`. Scope-owned fibers,
-task `race`/`raceFirst`/`timeout`, retry, bounded collections and `Cause.Parallel` are additive core capabilities. Existing ResultAsync policies keep their eager execution contracts.
+`ResultAsync<T, E>` is unified with `ResultTask<T, E, never>`, sharing the same lazy and repeatable
+interpreter, scopes, and contracts (`await task` when `R = never`, `runExit`, `runResult`,
+`runPromise`, and `runFork`). Scope-owned fibers, task `race`/`raceFirst`/`timeout`, retry, bounded
+collections and `Cause.Parallel` are available across both `ResultTask` and `ResultAsync`.
 
 Task children finish before parent resources are released. Races and timeouts await losing child
 cleanup, preserving cleanup failures. Retry closes each attempt scope and applies only to simple
@@ -421,10 +426,12 @@ Diagnostics do not consume owned child failures; use `join` or `await` to compos
 
 Return `ResultTask<T, E, R>` directly from lazy services. `runExit` returns `Promise<Exit<T, E>>`,
 `runResult` returns `Promise<Result<T, E>>` and can reject on runtime or composite causes,
-and `runPromise` returns `Promise<T>` and rejects every failure. Root scope release errors join `E`
-at the run boundary. `ResultTask.gen` / `fn` use plain success returns: `return yield* step`
-executes a final step, whereas `return step` succeeds with the unexecuted task as its value.
-`Promise<ResultTask<...>>` and `await task` do not execute lazy work.
+and `runPromise` returns `Promise<T>` and rejects every failure. When `R = never` (i.e.
+`ResultAsync<T, E>`), `await task` delegates to `runResult` and resolves to `Result<T, E>`, whereas
+tasks with pending requirements (`R !== never`) cannot be `await`ed until provided/scoped. Root scope
+release errors join `E` at the run boundary. `ResultTask.gen` / `fn` use plain success returns:
+`return yield* step` executes a final step, whereas `return step` succeeds with the unexecuted task
+as its value.
 
 Long task instruction chains yield every 2048 instructions using `Scheduler.live`. Run options
 `yieldEvery` and `scheduler` configure this policy; `yieldEvery` is a positive safe integer or
@@ -682,7 +689,7 @@ types, and propagate callback exceptions. Use `tryResult` to capture uncontrolle
 
 ## ResultAsync
 
-Use `ResultAsync<T, E>` for promise-based work.
+Use `ResultAsync<T, E>` (`ResultTask<T, E, never>`) for asynchronous work without service requirements.
 
 ```ts
 import { createTaggedError, fromPromise, ok, tryResultAsync } from "resultar";
@@ -743,7 +750,7 @@ const fetchUser = (
     )
     .andThen((input) => decodeUser(input, id));
 
-const label = await fetchUser("usr_123").match(
+const label = (await fetchUser("usr_123")).match(
   (user) => `User ${user.id}`,
   (error) => error.message,
 );
@@ -1346,10 +1353,10 @@ const response = createUser("person@example.com").match({
 });
 ```
 
-`ResultAsync#match` supports both forms and resolves to the selected handler output:
+On `ResultAsync` and `ResultTask`, `match`, `matchTags`, and `matchTagsPartial` fold both channels into `ResultTask<Out, never, R>` (`ResultAsync<Out, never>` when `R = never`). At a boundary where you want the unwrapped value `Out`, either `await` the task first or pass the folded task to `ResultTask.runPromise` / `.unwrapOrThrow()`:
 
 ```ts
-const response = await fetchUser("usr_123").match({
+const response = (await fetchUser("usr_123")).match({
   ok: (user) => ({ body: user, statusCode: 200 }),
   err: (error) => ({ body: { message: error.message }, statusCode: 502 }),
 });
@@ -1624,11 +1631,11 @@ const user = readUser(id).orElse(() =>
 );
 ```
 
-Use `unwrapOr(defaultValue)` only at final edges where returning a plain value is the goal:
+Use `unwrapOr(defaultValue)` only at final edges where returning a plain value is the goal (on `ResultAsync` / `ResultTask`, `task.unwrapOr(defaultValue)` folds into `ResultTask<A | B, never, R>`, so `await` the task first when extracting a plain value):
 
 ```ts
 const port = parsePort(process.env.PORT ?? "").unwrapOr(3000);
-const asyncPort = await loadPort().unwrapOr(3000);
+const asyncPort = (await loadPort()).unwrapOr(3000);
 ```
 
 Use `firstSuccessOf` when fallbacks should be lazy and ordered:
@@ -1891,9 +1898,8 @@ const user = ResultAsync.race(
 );
 ```
 
-When a success wins, still-pending losers are aborted. Tasks that already completed are not aborted
-later. ResultAsync races and timeouts return without waiting for loser settlement or cleanup.
-ResultTask races and timeouts own their children and await cleanup before completing.
+When a success wins, still-pending losers are aborted and interrupted. Tasks that already completed are not aborted
+later. Scoped `ResultTask` children await their registered finalizers before completing.
 
 ### `raceAll`
 
@@ -1961,7 +1967,7 @@ const user = ResultAsync.timeout((signal) => fetchUser(id, { signal }), {
 Timeouts stay in the expected error channel, so response mapping can stay exhaustive:
 
 ```ts
-const response = await user.matchTags((loadedUser) => ({ body: loadedUser, statusCode: 200 }), {
+const response = (await user).matchTags((loadedUser) => ({ body: loadedUser, statusCode: 200 }), {
   FetchUserError: (error) => ({ body: { code: error._tag }, statusCode: 502 }),
   FetchUserTimeoutError: (error) => ({
     body: { code: error._tag, message: error.message },
@@ -2531,11 +2537,11 @@ const result = ResultAsync.if(loadRemoteFlag(), {
 Prefer `match`, `matchTags`, `andThen`, or `Result.gen` in application code. Use unwrapping only at
 tests, scripts, and final edges where throwing or defaulting is intentional.
 
-`unwrapOr(defaultValue)` returns the success value or the provided default:
+`unwrapOr(defaultValue)` returns the success value or the provided default (on `ResultAsync` / `ResultTask`, `task.unwrapOr(defaultValue)` returns `ResultTask<A | B, never, R>`, so `await` the task first when extracting a plain value):
 
 ```ts
 const port = parsePort(process.env.PORT ?? "").unwrapOr(3000);
-const asyncPort = await loadPort().unwrapOr(3000);
+const asyncPort = (await loadPort()).unwrapOr(3000);
 ```
 
 `unwrapOrThrow()` returns the success value or throws the error:
@@ -2676,10 +2682,10 @@ To deliberately convert an `Err` back into a thrown value at a final edge, use `
 const user = await fetchUser("usr_123").unwrapOrThrow();
 ```
 
-For a custom conversion, match and throw:
+For a custom conversion, `await` and match to throw:
 
 ```ts
-const user = fetchUser("usr_123").match(
+const user = (await fetchUser("usr_123")).match(
   (value) => value,
   (error) => {
     throw new Error("Could not fetch user", { cause: error });
@@ -2709,11 +2715,10 @@ Use side-effect helpers for best-effort observation:
 
 - `inspect(fn)` runs only for `Ok`.
 - `inspectError(fn)` runs only for `Err`.
+- `inspectBoth(handlers)` runs the matching handler for `Ok` or `Err`.
 - `log(fn)` runs for both states as `(value, error)`.
 
-They preserve the original result. Existing `tap` / `tapError` callbacks keep the same
-best-effort behavior and are deprecated in favor of `inspect` / `inspectError`.
-Use `andThen` for fallible Result/ResultAsync side operations.
+They preserve the original result and ignore callback errors across `Result`, `ResultAsync`, and `ResultTask`. On synchronous `Result`, deprecated `tap` / `tapError` keep best-effort behavior in favor of `inspect` / `inspectError`. On `ResultAsync` and `ResultTask`, `tap`, `tapError`, `tapCause`, and `tapBoth` are effectful side operations that preserve the original value when the side effect succeeds, or propagate errors/defects when it fails.
 
 ```ts
 const result = fetchUser("usr_123")
@@ -3728,7 +3733,7 @@ These helpers do not execute tasks or change `runExit`, `runResult`, or `runProm
 - `inspect(fn)`
 - `inspectError(fn)`
 - `inspectBoth(handlers)`
-- `tap(fn)` / `tapError(fn)` (deprecated; same best-effort observation)
+- `tap(fn)` / `tapError(fn)` / `tapCause(fn)` / `tapBoth(handlers)` (effectful side operations; use `inspect` / `inspectError` / `inspectBoth` for best-effort observation)
 - `log(fn)`
 - `toAsyncDisposable(fn)`
 - `unwrapOr(defaultValue)`

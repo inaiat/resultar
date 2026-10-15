@@ -22,8 +22,8 @@ import {
   runPromise,
   tryResultAsync,
   unitAsync,
-} from '../src/result/result-async.js'
-import { Result, err, ok, runSync, tryResult, unit } from '../src/result/result.js'
+} from '../src/task/result-task.js'
+import { Result, err, ok, runSync, tryResult, unit } from '../src/result.js'
 import { createTaggedError } from '../src/tagged/tagged-error.js'
 
 const validateUser = (user: Readonly<{ name: string }>): ResultAsync<{ name: string }, string> => {
@@ -933,22 +933,6 @@ describe('ResultAsync', async () => {
       equal(mapErrSyncFn.mock.calls.length, 1)
     })
 
-    it('Maps an error using an asynchronous function', async () => {
-      const asyncErr = errAsync('Wrong format')
-
-      const mapErrAsyncFn = vi.fn(async (str: string) => 'Error: '.concat(str))
-
-      const mappedErr = asyncErr.mapErr(mapErrAsyncFn)
-
-      isTrue(mappedErr instanceof ResultAsync)
-
-      const newVal = await mappedErr
-
-      isTrue(newVal.isErr())
-      equal(newVal._unsafeUnwrapErr(), 'Error: Wrong format')
-      equal(mapErrAsyncFn.mock.calls.length, 1)
-    })
-
     it('Skips a value', async () => {
       const asyncVal = okAsync(12)
 
@@ -1162,7 +1146,7 @@ describe('ResultAsync', async () => {
 
       const matched = await okAsync(12).match(okMapper, errMapper)
 
-      equal(matched, 'weeeeee')
+      deepEqual(matched, ok('weeeeee'))
       equal(okMapper.mock.calls.length, 1)
       equal(errMapper.mock.calls.length, 0)
     })
@@ -1173,39 +1157,39 @@ describe('ResultAsync', async () => {
 
       const matched = await errAsync('bad').match(okMapper, errMapper)
 
-      equal(matched, 'wooooo')
+      deepEqual(matched, ok('wooooo'))
       equal(okMapper.mock.calls.length, 0)
       equal(errMapper.mock.calls.length, 1)
     })
 
     it('Matches with { ok, err } and { ok, error } object handlers', async () => {
-      equal(
+      deepEqual(
         await ResultAsync.ok<number, string>(12).match({
           ok: (value) => `ok:${value}`,
           err: (error) => `err:${error}`,
         }),
-        'ok:12',
+        ok('ok:12'),
       )
-      equal(
+      deepEqual(
         await ResultAsync.err<number, string>('bad').match({
           ok: (value) => `ok:${value}`,
           err: (error) => `err:${error}`,
         }),
-        'err:bad',
+        ok('err:bad'),
       )
-      equal(
+      deepEqual(
         await ResultAsync.err<number, string>('bad').match({
           ok: (value) => `ok:${value}`,
           error: (error) => `err:${error}`,
         }),
-        'err:bad',
+        ok('err:bad'),
       )
-      equal(
+      deepEqual(
         await ResultAsync.match(ResultAsync.err<number, string>('bad'), {
           ok: (value) => `ok:${value}`,
           err: (error) => `err:${error}`,
         }),
-        'err:bad',
+        ok('err:bad'),
       )
     })
 
@@ -1233,9 +1217,9 @@ describe('ResultAsync', async () => {
         () => 'unreachable',
       )
 
-      equal(handled, 'validation:email')
-      equal(fallback, 'fallback:Missing permission admin:read')
-      equal(okValue, '123')
+      deepEqual(handled, ok('validation:email'))
+      deepEqual(fallback, ok('fallback:Missing permission admin:read'))
+      deepEqual(okValue, ok('123'))
 
       if (false) {
         const result = errAsync<number, ValidationError>(validationError)
@@ -1253,14 +1237,14 @@ describe('ResultAsync', async () => {
   })
 
   describe('unwrapOr', async () => {
-    it('returns a promise to the result value on an Ok', async () => {
+    it('returns a ResultTask resolving to the result value on an Ok', async () => {
       const unwrapped = await okAsync(12).unwrapOr(10)
-      equal(unwrapped, 12)
+      deepEqual(unwrapped, ok(12))
     })
 
-    it('returns a promise to the provided default value on an Error', async () => {
+    it('returns a ResultTask resolving to the provided default value on an Error', async () => {
       const unwrapped = await errAsync<number, number>(12).unwrapOr(10)
-      equal(unwrapped, 10)
+      deepEqual(unwrapped, ok(10))
     })
   })
 
@@ -1338,22 +1322,6 @@ describe('ResultAsync', async () => {
       isTrue(res.isErr())
       equal(res._unsafeUnwrapErr(), 'bad')
     })
-  })
-
-  it('Maps a value using an asynchronous function', async () => {
-    const asyncVal = okAsync(12)
-
-    const mapAsyncFn = vi.fn(async (v: number) => v.toString())
-
-    const mapped = asyncVal.map(mapAsyncFn)
-
-    isTrue(mapped instanceof ResultAsync)
-
-    const newVal = await mapped
-
-    isTrue(newVal.isOk())
-    equal(newVal._unsafeUnwrap(), '12')
-    equal(mapAsyncFn.mock.calls.length, 1)
   })
 
   it('Skips an error', async () => {
@@ -1575,7 +1543,7 @@ describe('ResultAsync', async () => {
         (error) => error.message,
       )
 
-      equal(value, 'foo')
+      deepEqual(value, ok('foo'))
     })
 
     it('fromThrowableAsync for readfile not found', async () => {
@@ -1584,7 +1552,7 @@ describe('ResultAsync', async () => {
         (error) => error.message,
       )
 
-      equal(value, 'Oops: Error: File not found')
+      deepEqual(value, ok('Oops: Error: File not found'))
     })
   })
 
@@ -1641,7 +1609,6 @@ describe('ResultAsync', async () => {
 
       const sideEffect = vi.fn((_person) => okAsync({ name: 'Alice' }))
 
-      // @ts-expect-error  Ignoring this to run "dangerous code"
       const mapped = asyncVal.inspect(sideEffect)
 
       isTrue(mapped instanceof ResultAsync)

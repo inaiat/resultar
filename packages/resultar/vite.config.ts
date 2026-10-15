@@ -90,7 +90,7 @@ export default defineConfig({
     },
     overrides: [
       {
-        files: ['src/result/result.ts', 'src/tagged/tagged-error.ts'],
+        files: ['src/result.ts', 'src/tagged/tagged-error.ts'],
         rules: { '@typescript-eslint/no-explicit-any': 'allow' },
       },
       {

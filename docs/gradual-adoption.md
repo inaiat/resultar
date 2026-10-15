@@ -17,8 +17,8 @@ their preferred names; changing those spellings is independent of adopting tasks
 | Adopt when you need | Contract | When work starts |
 | --- | --- | --- |
 | One synchronous validation or domain operation | `Result<T, E>` | When the function is called |
-| Typed errors around existing Promise work | `ResultAsync<T, E>` | When the operation is created |
-| A reusable workflow with runtime policies | `ResultTask<T, E, R>` | At a run boundary, again on each run |
+| Requirement-free async work (`R = never`) | `ResultAsync<T, E>` (`ResultTask<T, E, never>`) | When `await`ed or passed to `run*` (or immediately if wrapping an existing `Promise`) |
+| A reusable workflow with service/scope requirements (`R`) or custom runtime options | `ResultTask<T, E, R>` | At a `run*` boundary (or `await` once `R = never`), again on each run |
 
 The TypeScript blocks below are independent examples. Copy one into an ESM
 module; blocks using `await` use top-level await.
@@ -108,9 +108,9 @@ Runnable example: [domain composition](../examples/resultar/src/domain-workflow.
 
 ## 3. Wrap existing Promises with ResultAsync
 
-Adopt typed asynchronous errors without changing when the application starts its
-work. `tryResultAsync` wraps both synchronous throws while creating a Promise and
-later rejections. Its factory runs immediately. For an already-created Promise,
+Adopt typed asynchronous errors with `ResultAsync<T, E>` (`ResultTask<T, E, never>`).
+`tryResultAsync` wraps both synchronous throws while creating a Promise and
+later rejections, and can be `await`ed directly to produce `Result<T, E>`. For an already-created Promise,
 use `ResultAsync.fromPromise(promise, toError)`.
 
 ```ts
@@ -141,7 +141,8 @@ const greeting = (id: string) =>
     return `Hello, ${user.name}`;
   });
 
-const response = await greeting("user_123").match({
+const result = await greeting("user_123");
+const response = result.match({
   ok: (message) => ({ status: 200, body: { message } }),
   err: (error) => ({ status: 503, body: { message: error.message } }),
 });
@@ -159,9 +160,8 @@ Runnable examples: [edge wrapping](../examples/resultar/src/edge-wrapping.ts) an
 
 ## 4. Move one use case to ResultTask
 
-Introduce a task for a selected use case and reuse its existing Result and
-ResultAsync helpers. Put calls inside the generator or a factory so they happen
-at execution. Task generators return a **plain success value**.
+Introduce `ResultTask.gen` for a selected use case and reuse its existing `Result` and
+`ResultAsync` helpers directly via `yield*`. Task generators return a **plain success value**.
 
 ```ts
 import { ResultTask, createTaggedError, ok, tryResultAsync, type Result } from "resultar";
@@ -188,42 +188,40 @@ const loadUser = (id: string) =>
 const greetingTask = (input: string) =>
   ResultTask.gen(function* () {
     const id = yield* validateId(input);
-    const user = yield* ResultTask.fromResultAsync(() => loadUser(id));
+    const user = yield* loadUser(id);
     return `Hello, ${user.name}`;
   });
 
-// Existing callers keep an eager ResultAsync contract while the implementation migrates.
+// Existing callers keep an awaitable ResultAsync contract (since R = never).
 const greeting = (id: string) => ResultTask.toResultAsync(greetingTask(id));
 
-console.log(await greeting("user_123").unwrapOr("Unavailable"));
+console.log((await greeting("user_123")).unwrapOr("Unavailable"));
 
-// New callers can compose a task and choose its execution boundary themselves.
+// Callers can also pass a task to an explicit execution boundary with runtime options.
 const task = greetingTask("user_123");
 const result = await ResultTask.runResult(task);
 console.log(result.unwrapOr("Unavailable"));
 ```
 
-The compatibility function starts the task immediately on the default runtime.
-`toResultAsync` accepts tasks with no remaining requirements. Provide services
-and wrap scope-dependent work with `ResultTask.scoped` before bridging when
+Because `ResultAsync<T, E>` is `ResultTask<T, E, never>`, `toResultAsync` accepts any
+task with no remaining requirements (`R = never`). Provide services
+and wrap scope-dependent work with `ResultTask.scoped` before bridging or `await`ing when
 needed. Its underlying `runResult` boundary can still reject on defects,
 interruption or composite causes.
 
-For new Promise adapters, prefer `ResultTask.tryPromise({ try: signal => ..., catch })`
-and pass the signal to a cooperative driver. Existing `ResultAsync` adapters only
-gain cancellation if their factory passes the supplied signal to the operation.
+For Promise adapters that need the active cancellation signal, use `ResultTask.tryPromise({ try: signal => ..., catch })`
+or `ResultTask.fromResultAsync(signal => load(signal))` and pass the signal to a cooperative driver.
 
 | Bridge | Execution behavior |
 | --- | --- |
-| `ResultTask.fromResult(result)` | Captures a Result that has already been computed |
-| `ResultTask.fromResultAsync(existing)` | Captures an operation that has already started |
-| `ResultTask.fromResultAsync(signal => load(signal))` | Creates a fresh operation on each task run |
+| `ResultTask.fromResult(result)` | Wraps a synchronous `Result` that has already been computed |
+| `ResultTask.fromResultAsync(existing)` | Wraps an existing `ResultAsync` / `ResultTask<T, E, never>` |
+| `ResultTask.fromResultAsync(signal => load(signal))` | Evaluates the factory with the active `AbortSignal` on each task run |
 | `ResultTask.tryPromise({ try, catch })` | Calls the Promise factory on each task run |
-| `ResultTask.toResultAsync(task)` | Starts the task immediately |
+| `ResultTask.toResultAsync(task)` | Returns the requirement-free `ResultTask<T, E, never>` as `ResultAsync<T, E>` |
 
-Capturing an existing Promise or ResultAsync cannot undo its execution. In
-particular, `fromResultAsync(loadUser(id))` starts `loadUser` while building the
-task, whereas `fromResultAsync(() => loadUser(id))` defers it. `fromResult` has no
+Capturing an already-started `Promise` via `fromPromise` cannot undo its execution; use
+`tryResultAsync` or `ResultTask.tryPromise` so each task run and retry creates a fresh operation. `fromResult` has no
 factory overload; defer a Result-producing call inside `ResultTask.gen` as above.
 
 ## 5. Add services where a task needs them

@@ -241,6 +241,14 @@ const runEffectScopedResources = async (): Promise<readonly number[]> => {
   return releasedOrder;
 };
 
+const resultarNever: ResultTask<never, never> = ResultTask.tryPromise({
+  try: () => new Promise<never>(() => undefined),
+  catch: (): never => {
+    throw new Error("unreachable");
+  },
+  interruption: "detach",
+});
+
 const makeResultarInterruptChild = (
   id: number,
   onReady: () => void,
@@ -258,7 +266,7 @@ const makeResultarInterruptChild = (
             onRelease(id);
           }),
       });
-      return yield* ResultTask.never();
+      return yield* resultarNever;
     }),
   );
 
@@ -311,7 +319,7 @@ const runResultarTreeInterrupt = async (): Promise<number> => {
       for (const id of INTERRUPT_CHILDREN) {
         yield* ResultTask.forkChild(makeResultarInterruptChild(id, markReady, markReleased));
       }
-      return yield* ResultTask.never();
+      return yield* resultarNever;
     }),
   );
 

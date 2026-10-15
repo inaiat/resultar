@@ -1,15 +1,15 @@
 import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
 
 import { pipe } from '../src/core/function.js'
-import { ResultAsync, errAsync, okAsync } from '../src/result/result-async.js'
-import { err, ok } from '../src/result/result.js'
+import { ResultAsync, errAsync, okAsync } from '../src/task/result-task.js'
+import { err, ok } from '../src/result.js'
 import { createTaggedError } from '../src/tagged/tagged-error.js'
 
 describe.each(['direct', 'curried'] as const)('ResultAsync functional operators: %s', (form) => {
-  it('maps only success and awaits asynchronous mappers', async () => {
+  it('maps only success with synchronous mappers', async () => {
     const success = okAsync<number, 'source'>(2)
     const failure = errAsync<number, 'source'>('source')
-    const mapper = (value: number) => Promise.resolve(String(value * 3))
+    const mapper = (value: number) => String(value * 3)
     const map = ResultAsync.map
     const mapped = form === 'direct' ? map(success, mapper) : map(mapper)(success)
     const skipped = form === 'direct' ? map(failure, mapper) : map(mapper)(failure)
@@ -19,10 +19,10 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
     expectTypeOf(mapped).toEqualTypeOf<ResultAsync<string, 'source'>>()
   })
 
-  it('maps only failure and awaits asynchronous error mappers', async () => {
+  it('maps only failure with synchronous error mappers', async () => {
     const success = okAsync<number, 'source'>(2)
     const failure = errAsync<number, 'source'>('source')
-    const mapper = (error: 'source') => Promise.resolve({ source: error })
+    const mapper = (error: 'source') => ({ source: error })
     const mapped =
       form === 'direct' ? ResultAsync.mapErr(failure, mapper) : ResultAsync.mapErr(mapper)(failure)
     const skipped =
@@ -164,7 +164,7 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
     expect(await failure.inspectBoth(handlers.ok, handlers.error)).toEqual(err('source'))
     expect(() =>
       (success as unknown as { inspectBoth: (f: () => void) => void }).inspectBoth(() => undefined),
-    ).toThrow('Result.match requires an error handler')
+    ).toThrow('ResultTask.inspectBoth requires an error handler')
     expect(events).toEqual(['ok:2', 'err:source', 'ok:2', 'err:source', 'ok:2', 'err:source'])
     expectTypeOf(observedObjectOk).toEqualTypeOf<ResultAsync<number, 'source'>>()
     expectTypeOf(observedCallbacksErr).toEqualTypeOf<ResultAsync<number, 'source'>>()
@@ -191,13 +191,10 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
     expect(await failedAll).toEqual(err('e2'))
   })
 
-  it('matches both variants with object handlers and awaits the chosen handler', async () => {
+  it('matches both variants with object handlers', async () => {
     const success = okAsync<number, 'source'>(2)
     const failure = errAsync<number, 'source'>('source')
-    const handlers = {
-      ok: (value: number) => Promise.resolve(String(value)),
-      error: (_error: 'source') => false as const,
-    }
+    const handlers = { ok: String, error: (_error: 'source') => false as const }
     const matched =
       form === 'direct'
         ? ResultAsync.match(success, handlers)
@@ -207,16 +204,16 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
         ? ResultAsync.match(failure, handlers)
         : ResultAsync.match(handlers)(failure)
 
-    expect(await matched).toBe('2')
-    expect(await rejected).toBe(false)
-    expectTypeOf(matched).toEqualTypeOf<Promise<string | false>>()
+    expect(await matched).toEqual(ok('2'))
+    expect(await rejected).toEqual(ok(false))
+    expectTypeOf(matched).toEqualTypeOf<ResultAsync<string | false, never>>()
   })
 
   it('matches both variants with positional handlers', async () => {
     const success = okAsync<number, 'source'>(2)
     const failure = errAsync<number, 'source'>('source')
     const onOk = String
-    const onErr = (error: 'source') => Promise.resolve(error)
+    const onErr = (error: 'source') => error
     const matched =
       form === 'direct'
         ? ResultAsync.match(success, onOk, onErr)
@@ -226,9 +223,9 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
         ? ResultAsync.match(failure, onOk, onErr)
         : ResultAsync.match(onOk, onErr)(failure)
 
-    expect(await matched).toBe('2')
-    expect(await rejected).toBe('source')
-    expectTypeOf(matched).toEqualTypeOf<Promise<string>>()
+    expect(await matched).toEqual(ok('2'))
+    expect(await rejected).toEqual(ok('source'))
+    expectTypeOf(matched).toEqualTypeOf<ResultAsync<string, never>>()
   })
 
   it('replaces only success, preserving constants without executing or unwrapping them', async () => {
@@ -245,11 +242,11 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
     expectTypeOf(replaced).toEqualTypeOf<ResultAsync<ResultAsync<string, never>, 'source'>>()
   })
 
-  it('filters with asynchronous predicates and error factories', async () => {
+  it('filters with synchronous predicates and error factories', async () => {
     const success = okAsync<number, 'source'>(2)
     const failure = errAsync<number, 'source'>('source')
-    const predicate = (value: number) => Promise.resolve(value > 1)
-    const onFalse = (value: number) => Promise.resolve({ rejected: value })
+    const predicate = (value: number) => value > 1
+    const onFalse = (value: number) => ({ rejected: value })
     const kept =
       form === 'direct'
         ? ResultAsync.filterOrElse(success, predicate, onFalse)
@@ -317,12 +314,12 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
     const matchedAll =
       form === 'direct'
         ? ResultAsync.matchTags(source, (value) => `ok:${value}`, {
-            NotFoundError: (error) => Promise.resolve(`nf:${error.id}`),
+            NotFoundError: (error) => `nf:${error.id}`,
             TimeoutError: (error) => `to:${error.ms}`,
           })
         : source.pipe(
             ResultAsync.matchTags((value) => `ok:${value}`, {
-              NotFoundError: (error) => Promise.resolve(`nf:${error.id}`),
+              NotFoundError: (error) => `nf:${error.id}`,
               TimeoutError: (error) => `to:${error.ms}`,
             }),
           )
@@ -333,24 +330,24 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
             source,
             (value) => `ok:${value}`,
             { NotFoundError: (error) => `nf:${error.id}` },
-            (remaining) => Promise.resolve(`other:${remaining._tag}`),
+            (remaining) => `other:${remaining._tag}`,
           )
         : source.pipe(
             ResultAsync.matchTagsPartial(
               (value) => `ok:${value}`,
               { NotFoundError: (error) => `nf:${error.id}` },
-              (remaining) => Promise.resolve(`other:${remaining._tag}`),
+              (remaining) => `other:${remaining._tag}`,
             ),
           )
 
     expect(await caughtSingle).toEqual(ok(7))
     expect(await caughtAll).toEqual(ok(7))
-    expect(await matchedAll).toBe('nf:missing')
-    expect(await matchedPartial).toBe('nf:missing')
+    expect(await matchedAll).toEqual(ok('nf:missing'))
+    expect(await matchedPartial).toEqual(ok('nf:missing'))
     expectTypeOf(caughtSingle).toEqualTypeOf<ResultAsync<number, TimeoutError>>()
     expectTypeOf(caughtAll).toEqualTypeOf<ResultAsync<number, never>>()
-    expectTypeOf(matchedAll).toEqualTypeOf<Promise<string>>()
-    expectTypeOf(matchedPartial).toEqualTypeOf<Promise<string>>()
+    expectTypeOf(matchedAll).toEqualTypeOf<ResultAsync<string, never>>()
+    expectTypeOf(matchedPartial).toEqualTypeOf<ResultAsync<string, never>>()
   })
 
   it('supports static orElseSucceed, catchReason, catchReasons, and unwrapReason', async () => {
@@ -375,7 +372,7 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
     const succeeded =
       form === 'direct'
         ? ResultAsync.orElseSucceed(source, (error) => error._tag.length)
-        : source.pipe(ResultAsync.orElseSucceed((error) => Promise.resolve(error._tag.length)))
+        : source.pipe(ResultAsync.orElseSucceed((error) => error._tag.length))
 
     const caughtSingleReason =
       form === 'direct'
@@ -413,13 +410,13 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
   })
 })
 
-describe('ResultAsync functional inference and eager execution', () => {
+describe('ResultAsync functional inference and lazy composition', () => {
   it('infers inline callbacks through instance and root pipe', async () => {
     const source = okAsync<number, 'source'>(2)
     const transformed = source.pipe(
       ResultAsync.map((value) => {
         expectTypeOf(value).toEqualTypeOf<number>()
-        return Promise.resolve(String(value))
+        return String(value)
       }),
       ResultAsync.andThen((value) => {
         expectTypeOf(value).toEqualTypeOf<string>()
@@ -443,14 +440,14 @@ describe('ResultAsync functional inference and eager execution', () => {
         },
         error: (error) => {
           expectTypeOf(error).toEqualTypeOf<'recovery'>()
-          return Promise.resolve(false as const)
+          return false as const
         },
       }),
     )
 
     expectTypeOf(transformed).toEqualTypeOf<ResultAsync<number | boolean, 'recovery'>>()
-    expectTypeOf(matched).toEqualTypeOf<Promise<string | false>>()
-    expect(await matched).toBe('true')
+    expectTypeOf(matched).toEqualTypeOf<ResultAsync<string | false, never>>()
+    expect(await matched).toEqual(ok('true'))
   })
 
   it('infers inline observer and predicate arguments in a pipeline', async () => {
@@ -475,7 +472,7 @@ describe('ResultAsync functional inference and eager execution', () => {
     expect(await result).toEqual(ok(42))
   })
 
-  it('starts callbacks without requiring a caller to await the composed ResultAsync', async () => {
+  it('defers composed callbacks until the ResultAsync is awaited or run', async () => {
     const values: number[] = []
     const result = okAsync(2).pipe(
       ResultAsync.map((value) => {
@@ -485,8 +482,9 @@ describe('ResultAsync functional inference and eager execution', () => {
     )
 
     await Promise.resolve()
-    expect(values).toEqual([2])
+    expect(values).toEqual([])
     expect(await result).toEqual(ok(3))
+    expect(values).toEqual([2])
   })
 
   it('leaves callback defects outside the typed error channel', async () => {
@@ -494,7 +492,11 @@ describe('ResultAsync functional inference and eager execution', () => {
     const mapDefect = ResultAsync.map(okAsync(2), () => {
       throw defect
     })
-    const errorMapDefect = errAsync('source').pipe(ResultAsync.mapErr(() => Promise.reject(defect)))
+    const errorMapDefect = errAsync('source').pipe(
+      ResultAsync.mapErr(() => {
+        throw defect
+      }),
+    )
     const chainDefect = ResultAsync.andThen(okAsync(2), () => {
       throw defect
     })
@@ -503,11 +505,15 @@ describe('ResultAsync functional inference and eager execution', () => {
     })
     const predicateDefect = ResultAsync.filterOrElse(
       okAsync(2),
-      () => Promise.reject(defect),
+      () => {
+        throw defect
+      },
       () => 'invalid',
     )
     const matchDefect = ResultAsync.match(okAsync(2), {
-      ok: () => Promise.reject(defect),
+      ok: () => {
+        throw defect
+      },
       error: () => 'source',
     })
 

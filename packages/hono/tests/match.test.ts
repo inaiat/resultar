@@ -40,11 +40,13 @@ test("Match.context preserves Hono variables, RPC payloads and statuses with asy
       c.set("traceId", "trace-1");
       return next();
     })
-    .get("/users/:id", di.middleware(["users"]), (c) =>
-      c.var.services.users
-        .find(c.req.param("id"))
-        .match({ ok: (user) => c.json(user, 200), error: (error) => respondError(error, c) }),
-    );
+    .get("/users/:id", di.middleware(["users"]), async (c) => {
+      const result = await c.var.services.users.find(c.req.param("id"));
+      return result.match({
+        ok: (user) => c.json(user, 200),
+        error: (error) => respondError(error, c),
+      });
+    });
   const client = hc<typeof app>("http://localhost", {
     fetch: (input: string | URL | Request, init?: RequestInit) => app.request(input, init),
   });

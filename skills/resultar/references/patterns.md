@@ -245,7 +245,7 @@ const profile = loadProfile(userId).catchTags({
 Unhandled tags remain in the error channel. At the HTTP boundary, map the complete union:
 
 ```ts
-const response = await createUser(input).matchTags((user) => ({ body: user, statusCode: 201 }), {
+const response = (await createUser(input)).matchTags((user) => ({ body: user, statusCode: 201 }), {
   InvalidEmailError: (error) => ({ body: error.toJSON(), statusCode: 400 }),
   UserAlreadyExistsError: (error) => ({ body: error.toJSON(), statusCode: 409 }),
   SaveUserError: (error) => ({ body: error.toJSON(), statusCode: 500 }),
@@ -264,13 +264,9 @@ const observed = loadProfile(userId)
   .log((profile, error) => logger.info({ error, profile }, "profile result"));
 ```
 
-These `ResultAsync` callbacks are best-effort and cannot change the result.
-`ResultTask.tap` and `tapError` instead propagate returned task failures and turn callback
-throws or rejected Promises into defects. Use `andThen` or `orElse` when a
-logging, auditing, publishing, or cleanup failure must affect control flow.
-Deprecated `ResultAsync.tap` / `tapError` calls retain their best-effort behavior.
-For best-effort lazy observation, use `ResultTask.inspect` / `inspectError`; observer failures
-are ignored and returned tasks are not executed.
+`inspect`, `inspectError`, `inspectBoth`, and `log` are best-effort across `Result`, `ResultAsync`, and `ResultTask`: observer failures are ignored, returned tasks are not executed, and the original result is preserved.
+On synchronous `Result`, deprecated `Result.tap` / `tapError` retain their best-effort behavior.
+On `ResultTask` and `ResultAsync`, `tap`, `tapError`, `tapCause`, and `tapBoth` are effectful side operations: they propagate returned task failures and turn callback throws or rejected Promises into defects. Use `tap`, `andThen`, or `orElse` when a logging, auditing, publishing, or cleanup failure must affect control flow.
 
 ## Migrate Incrementally
 

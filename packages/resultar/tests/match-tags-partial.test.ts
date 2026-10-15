@@ -1,7 +1,7 @@
-import { equal } from 'node:assert'
+import { deepEqual, equal } from 'node:assert'
 import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
 
-import type { Result } from '../src/index.js'
+import type { Result, ResultAsync } from '../src/index.js'
 
 import { createTaggedError, err, errAsync, ok, okAsync } from '../src/index.js'
 
@@ -127,7 +127,7 @@ describe('ResultAsync.matchTagsPartial', () => {
       fallback,
     )
 
-    equal(value, 'ok:123')
+    deepEqual(value, ok('ok:123'))
     equal(validationHandler.mock.calls.length, 0)
     equal(fallback.mock.calls.length, 0)
   })
@@ -145,7 +145,7 @@ describe('ResultAsync.matchTagsPartial', () => {
       fallback,
     )
 
-    equal(value, 'validation:email')
+    deepEqual(value, ok('validation:email'))
     equal(fallback.mock.calls.length, 0)
   })
 
@@ -158,7 +158,7 @@ describe('ResultAsync.matchTagsPartial', () => {
       (error) => `fallback:${error.message}`,
     )
 
-    equal(value, 'fallback:Missing permission admin:write')
+    deepEqual(value, ok('fallback:Missing permission admin:write'))
   })
 
   it('uses the Error handler for untagged errors before fallback', async () => {
@@ -172,7 +172,7 @@ describe('ResultAsync.matchTagsPartial', () => {
       fallback,
     )
 
-    equal(value, 'error:plain failure')
+    deepEqual(value, ok('error:plain failure'))
     equal(fallback.mock.calls.length, 0)
   })
 
@@ -198,7 +198,7 @@ describe('ResultAsync.matchTagsPartial', () => {
       },
     )
 
-    expectTypeOf(value).toEqualTypeOf<string | number | boolean>()
+    expectTypeOf(value).toEqualTypeOf<Result<string | number | boolean, never>>()
   })
 
   it('rejects handlers for tags outside the async error union', async () => {
@@ -249,8 +249,8 @@ describe('remaining tagged errors', () => {
       return error.message
     })
 
-    expectTypeOf(value).toEqualTypeOf<string>()
-    equal(value, 'Missing permission read')
+    expectTypeOf(value).toEqualTypeOf<Result<string, never>>()
+    deepEqual(value, ok('Missing permission read'))
   })
 
   it('uses required Error as a catchall for all remaining values, including primitives', () => {
@@ -287,57 +287,62 @@ describe('remaining tagged errors', () => {
 })
 
 describe('asynchronous match return contracts', () => {
-  it('awaits success and error branches in positional and object match', async () => {
+  it('evaluates success and error branches in positional and object match', async () => {
     const positional = okAsync<number, ValidationError>(1).match(
-      async (number) => ({ status: 200 as const, id: number }),
+      (number) => ({ status: 200 as const, id: number }),
       () => ({ status: 400 as const }),
     )
     const object = errAsync<number, ValidationError>(new ValidationError({ field: 'email' })).match(
       {
         ok: () => ({ status: 200 as const }),
-        error: async (error) => ({ status: 400 as const, field: error.field }),
+        error: (error) => ({ status: 400 as const, field: error.field }),
       },
     )
 
-    expectTypeOf(positional).toEqualTypeOf<Promise<{ status: 200; id: number } | { status: 400 }>>()
-    expectTypeOf(object).toEqualTypeOf<
-      Promise<{ status: 200 } | { status: 400; field: string | number }>
+    expectTypeOf(positional).toEqualTypeOf<
+      ResultAsync<{ status: 200; id: number } | { status: 400 }, never>
     >()
-    equal((await positional).status, 200)
-    equal((await object).status, 400)
+    expectTypeOf(object).toEqualTypeOf<
+      ResultAsync<{ status: 200 } | { status: 400; field: string | number }, never>
+    >()
+    equal((await positional)._unsafeUnwrap().status, 200)
+    equal((await object)._unsafeUnwrap().status, 400)
   })
 
-  it('awaits exhaustive tagged-error handlers', async () => {
+  it('evaluates exhaustive tagged-error handlers', async () => {
     const pending = errAsync<number, ValidationError>(
       new ValidationError({ field: 'email' }),
-    ).matchTags(async (id) => ({ status: 200 as const, id }), {
-      ValidationError: async (error) => ({ status: 400 as const, field: error.field }),
+    ).matchTags((id) => ({ status: 200 as const, id }), {
+      ValidationError: (error) => ({ status: 400 as const, field: error.field }),
     })
 
     expectTypeOf(pending).toEqualTypeOf<
-      Promise<{ status: 200; id: number } | { status: 400; field: string | number }>
+      ResultAsync<{ status: 200; id: number } | { status: 400; field: string | number }, never>
     >()
-    equal((await pending).status, 400)
+    equal((await pending)._unsafeUnwrap().status, 400)
   })
 
-  it('awaits partial handlers and the narrowed fallback', async () => {
+  it('evaluates partial handlers and the narrowed fallback', async () => {
     const pending = errAsync<number, ValidationError | PermissionError>(
       new PermissionError({ permission: 'read' }),
     ).matchTagsPartial(
-      async (id) => ({ status: 200 as const, id }),
-      { ValidationError: async () => ({ status: 400 as const }) },
-      async (error) => {
+      (id) => ({ status: 200 as const, id }),
+      { ValidationError: () => ({ status: 400 as const }) },
+      (error) => {
         expectTypeOf(error).toEqualTypeOf<PermissionError>()
         return { status: 403 as const, permission: error.permission }
       },
     )
 
     expectTypeOf(pending).toEqualTypeOf<
-      Promise<
-        { status: 200; id: number } | { status: 400 } | { status: 403; permission: string | number }
+      ResultAsync<
+        | { status: 200; id: number }
+        | { status: 400 }
+        | { status: 403; permission: string | number },
+        never
       >
     >()
-    equal((await pending).status, 403)
+    equal((await pending)._unsafeUnwrap().status, 403)
   })
 })
 
@@ -359,7 +364,7 @@ describe('tagged handler precedence over Error catchall', () => {
     ).matchTagsPartial(String, handlers, fallback)
 
     equal(tagged, 'specific')
-    equal(remaining, 'catchall')
+    deepEqual(remaining, ok('catchall'))
   })
 })
 
@@ -385,14 +390,14 @@ describe('exhaustive Error fallback contracts', () => {
       'primitive failure',
     ).matchTags(String, {
       ValidationError: (error) => String(error.field),
-      Error: async (error) => {
+      Error: (error) => {
         expectTypeOf(error).toEqualTypeOf<string>()
         return error.toUpperCase()
       },
     })
 
     equal(value, 'PRIMITIVE FAILURE')
-    equal(asyncValue, 'PRIMITIVE FAILURE')
+    deepEqual(asyncValue, ok('PRIMITIVE FAILURE'))
     if (false) {
       // @ts-expect-error A tag table alone cannot cover primitive errors.
       input.matchTags(String, { ValidationError: (error) => error.field })
@@ -436,7 +441,7 @@ describe('exhaustive Error fallback contracts', () => {
     })
 
     equal(tagged, 'tagged')
-    equal(fallback, 'primitive')
+    deepEqual(fallback, ok('primitive'))
     equal(contextual, 'tagged')
   })
 })

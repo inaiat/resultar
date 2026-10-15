@@ -1,12 +1,15 @@
 import type { Exit } from './result-task.js'
 import { markCleanupCause } from './cleanup-cause.js'
 
-type Finalizer = (exit: Exit<unknown, unknown>) => Promise<Exit<unknown, unknown>>
+type Finalizer = (
+  exit: Exit<unknown, unknown>,
+) => Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>
 
 /** Children are stopped and awaited before resources belonging to their parent are released. */
 export interface ScopeChild {
   readonly interrupt: (reason: unknown) => void
   readonly close: () => Promise<Exit<unknown, unknown>>
+  owner?: TaskScope | undefined
 }
 
 /** Appends cleanup failures without replacing the original execution outcome. */
@@ -19,21 +22,35 @@ const appendExit = (
   return { _tag: 'Failure', cause: { _tag: 'Sequential', left: exit.cause, right: cleanup.cause } }
 }
 
+const SUCCESS_UNDEFINED: Exit<unknown, unknown> = { _tag: 'Success', value: undefined }
+
 /** Private runtime scope; each run owns its own finalizer stack. */
 export class TaskScope {
-  private static readonly owners = new WeakMap<ScopeChild, TaskScope>()
-  private readonly finalizers: Finalizer[] = []
-  private readonly children = new Set<ScopeChild>()
+  private finalizers: Finalizer[] | undefined
+  private children: Set<ScopeChild> | undefined
   private closing: Promise<Exit<unknown, unknown>> | undefined
-  private cleanup: Exit<unknown, unknown> = { _tag: 'Success', value: undefined }
+  private closedExit: Exit<unknown, unknown> | undefined
+  private isClosing = false
+  private cleanup: Exit<unknown, unknown> = SUCCESS_UNDEFINED
+
+  public registerChild(child: ScopeChild): void {
+    if (this.isClosing) throw new Error('Cannot fork into a closing ResultTask scope')
+    this.children ??= new Set()
+    this.children.add(child)
+    child.owner = this
+  }
+
+  public unregisterChild(child: ScopeChild): void {
+    if (child.owner === this) {
+      this.children?.delete(child)
+      child.owner = undefined
+    }
+  }
 
   public addChild(child: ScopeChild): () => void {
-    if (this.closing !== undefined) throw new Error('Cannot fork into a closing ResultTask scope')
-    this.children.add(child)
-    TaskScope.owners.set(child, this)
+    this.registerChild(child)
     return () => {
-      TaskScope.owners.get(child)?.children.delete(child)
-      TaskScope.owners.delete(child)
+      child.owner?.unregisterChild(child)
     }
   }
 
@@ -42,33 +59,63 @@ export class TaskScope {
   }
 
   public add(finalizer: Finalizer): void {
-    if (this.closing !== undefined)
-      throw new Error('Cannot acquire into a closing ResultTask scope')
+    if (this.isClosing) throw new Error('Cannot acquire into a closing ResultTask scope')
+    this.finalizers ??= []
     this.finalizers.push(finalizer)
   }
 
   public adopt(child: TaskScope): void {
-    if (this.closing !== undefined)
-      throw new Error('Cannot acquire into a closing ResultTask scope')
-    this.finalizers.push(...child.finalizers.splice(0))
-    for (const owned of child.children) {
-      this.children.add(owned)
-      TaskScope.owners.set(owned, this)
+    if (this.isClosing) throw new Error('Cannot acquire into a closing ResultTask scope')
+    if (child.finalizers !== undefined && child.finalizers.length > 0) {
+      this.finalizers ??= []
+      this.finalizers.push(...child.finalizers.splice(0))
     }
-    child.children.clear()
+    if (child.children !== undefined && child.children.size > 0) {
+      this.children ??= new Set()
+      for (const owned of child.children) {
+        this.children.add(owned)
+        owned.owner = this
+      }
+      child.children.clear()
+    }
   }
 
-  public close(exit: Exit<unknown, unknown>, cleanupOnly = false): Promise<Exit<unknown, unknown>> {
-    this.closing ??= this.drain(exit, cleanupOnly)
+  public closeSyncOrAsync(
+    exit: Exit<unknown, unknown>,
+    cleanupOnly = false,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
+    if (this.closedExit !== undefined) return this.closedExit
+    if (this.closing !== undefined) return this.closing
+    this.isClosing = true
+
+    const childrenSet = this.children
+    const hasChildren = childrenSet !== undefined && childrenSet.size > 0
+    const hasFinalizers = this.finalizers !== undefined && this.finalizers.length > 0
+    if (!hasChildren && !hasFinalizers) {
+      const out = cleanupOnly ? this.cleanup : exit
+      this.closedExit = out
+      return out
+    }
+    if (!hasChildren) {
+      return this.drainFinalizersSyncOrAsync(exit, cleanupOnly, appendExit(exit, this.cleanup))
+    }
+    this.closing = this.drain(exit, cleanupOnly, childrenSet)
     return this.closing
   }
 
-  private async closeChildren(): Promise<void> {
-    const children = [...this.children]
+  public close(exit: Exit<unknown, unknown>, cleanupOnly = false): Promise<Exit<unknown, unknown>> {
+    if (this.closing !== undefined) return this.closing
+    const synced = this.closeSyncOrAsync(exit, cleanupOnly)
+    this.closing = '_tag' in synced ? Promise.resolve(synced) : synced
+    return this.closing
+  }
+
+  private async closeChildren(childrenSet: Set<ScopeChild>): Promise<void> {
+    const children = [...childrenSet]
     for (const child of children) child.interrupt('ResultTask parent scope closed')
     const outcomes = await Promise.all(children.map((child) => child.close()))
-    for (const child of children) TaskScope.owners.delete(child)
-    this.children.clear()
+    for (const child of children) child.owner = undefined
+    childrenSet.clear()
     for (const outcome of outcomes) {
       if (outcome._tag === 'Failure') {
         this.cleanup =
@@ -82,13 +129,66 @@ export class TaskScope {
     }
   }
 
-  private async drain(
+  private drainFinalizersSyncOrAsync(
     exit: Exit<unknown, unknown>,
     cleanupOnly: boolean,
+    initialResult: Exit<unknown, unknown>,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
+    const finalizers = this.finalizers
+    let result = initialResult
+    let finalizer = finalizers?.pop()
+    while (finalizer !== undefined) {
+      try {
+        const released = finalizer(exit)
+        if ('_tag' in released) {
+          this.cleanup = appendExit(this.cleanup, released)
+          result = appendExit(result, released)
+        } else {
+          this.closing = this.drainFinalizersAsync(exit, cleanupOnly, {
+            currentResult: result,
+            pendingRelease: released,
+          })
+          return this.closing
+        }
+      } catch (error) {
+        const defect: Exit<unknown, unknown> = {
+          _tag: 'Failure',
+          cause: { _tag: 'Die', defect: error },
+        }
+        this.cleanup = appendExit(this.cleanup, defect)
+        result = appendExit(result, defect)
+      }
+      finalizer = finalizers?.pop()
+    }
+    if (this.cleanup._tag === 'Failure') markCleanupCause(this.cleanup.cause)
+    const out = cleanupOnly ? this.cleanup : result
+    this.closedExit = out
+    return out
+  }
+
+  private async drainFinalizersAsync(
+    exit: Exit<unknown, unknown>,
+    cleanupOnly: boolean,
+    state: {
+      readonly currentResult: Exit<unknown, unknown>
+      readonly pendingRelease: Promise<Exit<unknown, unknown>>
+    },
   ): Promise<Exit<unknown, unknown>> {
-    await this.closeChildren()
-    let result = appendExit(exit, this.cleanup)
-    let finalizer = this.finalizers.pop()
+    let result = state.currentResult
+    try {
+      const released = await state.pendingRelease
+      this.cleanup = appendExit(this.cleanup, released)
+      result = appendExit(result, released)
+    } catch (error) {
+      const defect: Exit<unknown, unknown> = {
+        _tag: 'Failure',
+        cause: { _tag: 'Die', defect: error },
+      }
+      this.cleanup = appendExit(this.cleanup, defect)
+      result = appendExit(result, defect)
+    }
+    const finalizers = this.finalizers
+    let finalizer = finalizers?.pop()
     while (finalizer !== undefined) {
       try {
         // eslint-disable-next-line no-await-in-loop
@@ -103,9 +203,20 @@ export class TaskScope {
         this.cleanup = appendExit(this.cleanup, defect)
         result = appendExit(result, defect)
       }
-      finalizer = this.finalizers.pop()
+      finalizer = finalizers?.pop()
     }
     if (this.cleanup._tag === 'Failure') markCleanupCause(this.cleanup.cause)
-    return cleanupOnly ? this.cleanup : result
+    const out = cleanupOnly ? this.cleanup : result
+    this.closedExit = out
+    return out
+  }
+
+  private async drain(
+    exit: Exit<unknown, unknown>,
+    cleanupOnly: boolean,
+    childrenSet: Set<ScopeChild>,
+  ): Promise<Exit<unknown, unknown>> {
+    await this.closeChildren(childrenSet)
+    return this.drainFinalizersSyncOrAsync(exit, cleanupOnly, appendExit(exit, this.cleanup))
   }
 }
