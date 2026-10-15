@@ -2344,7 +2344,7 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
    * ```ts
    * import { ResultTask, Retry } from 'resultar'
    *
-   * const retried = ResultTask.fail('transient' as const).retry(Retry.policy({ times: 2, delay: 10 }))
+   * const retried = ResultTask.fail('transient' as const).retry(Retry.policy({ times: 2, delayMs: 10 }))
    * ```
    */
   public retry(
@@ -3015,7 +3015,7 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
    * ```ts
    * import { ResultTask, Retry } from 'resultar'
    *
-   * const policy = Retry.policy({ times: 2, delay: ({ attempt }) => attempt * 10 })
+   * const policy = Retry.policy({ times: 2, delayMs: ({ attempt }) => (attempt + 1) * 10 })
    * const resilient = ResultTask.retry(ResultTask.ok('ready'), policy)
    * ```
    */
