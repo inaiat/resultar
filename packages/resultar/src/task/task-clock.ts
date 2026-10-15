@@ -1,9 +1,15 @@
 import { hasScheduledTasks } from './task-scheduler.js'
 
-/** Time and randomness used by task policies. A run uses the live clock by default. */
+/**
+ * Clock and randomness source used by `ResultTask` sleeps, delays, timeouts, `timed`, and retry jitter.
+ * By default, `ResultTask` executions use {@link Clock.live}.
+ */
 export interface TaskClock {
+  /** Returns the current monotonic timestamp in milliseconds. */
   readonly now: () => number
+  /** Suspends until `milliseconds` have elapsed on this clock or `signal` aborts. */
   readonly sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>
+  /** Returns a pseudo-random number in `[0, 1]` used for retry jitter calculations. */
   readonly random: () => number
 }
 
@@ -53,7 +59,19 @@ interface Sleeper {
   readonly wake: () => void
 }
 
-/** A deterministic task clock. Advance it explicitly; no wall-clock timers are created. */
+/**
+ * Deterministic virtual clock for testing time-dependent `ResultTask` workflows without wall-clock timers.
+ *
+ * @example
+ * ```ts
+ * import { Clock, ResultTask } from 'resultar'
+ *
+ * const clock = Clock.virtual()
+ * const running = ResultTask.sleep(5_000).map(() => clock.now()).run({ clock })
+ * await clock.advanceBy(5_000)
+ * const elapsed = (await running).unwrap() // 5000
+ * ```
+ */
 export class VirtualClock implements TaskClock {
   private time: number
   private readonly sleepers = new Set<Sleeper>()
@@ -67,8 +85,10 @@ export class VirtualClock implements TaskClock {
     this.random = random
   }
 
+  /** Returns the current virtual time in milliseconds. */
   public readonly now = (): number => this.time
 
+  /** Registers a virtual sleeper that wakes when virtual time reaches `now() + milliseconds` or `signal` aborts. */
   public readonly sleep = (milliseconds: number, signal: AbortSignal): Promise<void> => {
     duration(milliseconds)
     return new Promise((resolve, reject) => {
@@ -94,11 +114,12 @@ export class VirtualClock implements TaskClock {
     })
   }
 
+  /** Number of active sleepers currently waiting on this virtual clock. */
   public get pending(): number {
     return this.sleepers.size
   }
 
-  /** Lets already queued task continuations register their next virtual sleeps. */
+  /** Drains queued task continuations so newly reached sleeps register before virtual time advances. */
   public flush(): Promise<void> {
     this.flushing ??= new Promise<void>((resolve) => {
       const drained = (): void => {
@@ -114,7 +135,7 @@ export class VirtualClock implements TaskClock {
     return this.flushing
   }
 
-  /** Wakes due sleepers in deadline order, including sleeps scheduled by awakened work. */
+  /** Advances virtual time by `milliseconds`, waking due sleepers in deadline order and flushing cascaded sleeps. */
   public advanceBy(milliseconds: number): Promise<void> {
     duration(milliseconds)
     const advancing = this.advancing.then(() => this.advance(milliseconds))
@@ -149,9 +170,23 @@ export class VirtualClock implements TaskClock {
   }
 }
 
-/** Clock implementations usable in ResultTask run options. */
+/**
+ * Clock factories for `ResultTask` run options (`run`, `runExit`, `runPromise`, `runFork`).
+ *
+ * @example
+ * ```ts
+ * import { Clock, ResultTask } from 'resultar'
+ *
+ * const clock = Clock.virtual(1_000)
+ * const fiber = ResultTask.sleep(250).runFork({ clock })
+ * await clock.advanceBy(250)
+ * const exit = await fiber.join().runExit()
+ * ```
+ */
 export const Clock: {
+  /** Wall-clock implementation backed by `performance.now()`, `setTimeout`, and `Math.random()`. */
   readonly live: TaskClock
+  /** Creates a deterministic {@link VirtualClock} starting at `startTime` (default `0`). */
   readonly virtual: (startTime?: number, random?: () => number) => VirtualClock
 } = Object.freeze({ live, virtual: (startTime, random) => new VirtualClock(startTime, random) })
 import { AbortError } from '../core/abort-error.js'

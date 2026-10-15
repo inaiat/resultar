@@ -1,4 +1,4 @@
-import { Clock, Fiber, ResultTask, Retry, createTaggedError } from "resultar";
+import { Cause, Clock, Fiber, ResultTask, Retry, Semaphore, createTaggedError } from "resultar";
 
 export class TaskProviderError extends createTaggedError({
   name: "TaskProviderError",
@@ -138,6 +138,52 @@ export const runTaskResilience = async () => {
   const backgroundExit = await ResultTask.runPromise(Fiber.await(background));
   unsubscribe();
 
+  const semaphore = Semaphore.make(1);
+  const semaphoreEvents: string[] = [];
+  const guard = semaphore.withPermit(
+    ResultTask.gen(function* () {
+      semaphoreEvents.push("enter");
+      yield* ResultTask.sync(() => undefined);
+      semaphoreEvents.push("exit");
+      return "permit-ok";
+    }),
+  );
+  const semaphoreValues = await ResultTask.runPromise(
+    ResultTask.all([guard, guard], { concurrency: "unbounded" }),
+    { yieldEvery: 1 },
+  );
+
+  const cleanupLog: string[] = [];
+  const sandboxedRecovery = await ResultTask.runPromise(
+    ResultTask.err(new TaskProviderError({ attempt: 9 }))
+      .ensuring(() =>
+        ResultTask.sync(() => {
+          cleanupLog.push("ensured");
+        }),
+      )
+      .sandbox()
+      .mapError(
+        (cause): Cause<string> => ({
+          _tag: "Fail",
+          error: Cause.findError(cause).match({
+            ok: (failure) => `recovered:${failure._tag}:${failure.attempt}`,
+            err: () => "recovered:unknown",
+          }),
+        }),
+      )
+      .unsandbox()
+      .orElse((label) => ResultTask.ok(label)),
+  );
+
+  const validatedErrors = await ResultTask.runResult(
+    ResultTask.validateAll([1, 2, 3], (item) =>
+      item % 2 === 0
+        ? ResultTask.err(new TaskProviderError({ attempt: item }))
+        : ResultTask.ok(item),
+    ),
+    { yieldEvery: 2 },
+  );
+
   return {
     retry: {
       attempts,
@@ -153,6 +199,13 @@ export const runTaskResilience = async () => {
     race: { events: raceEvents, winner },
     fiber: observed,
     rootFiber: { wasRunning: backgroundWasRunning, events: backgroundExits, exit: backgroundExit },
+    semaphore: { events: semaphoreEvents, values: semaphoreValues },
+    sandbox: { cleanup: cleanupLog, value: sandboxedRecovery },
+    validation: validatedErrors.match({
+      ok: (items) => items.map(String),
+      err: (errors) => errors.map((e) => `${e._tag}:${e.attempt}`),
+    }),
     pendingTimers: clock.pending,
   };
 };
+

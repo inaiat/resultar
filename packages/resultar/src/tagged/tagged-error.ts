@@ -280,6 +280,19 @@ export type TaggedErrorClass<
    * channel and cannot be specialized as metadata. String properties, including getters and non-enumerable or inherited fields, are
    * copied as readonly metadata while preserving Error fields and helpers. Input types are checked
    * by TypeScript, without runtime validation. Guards distinguish sibling classes.
+   *
+   * @example
+   * ```ts
+   * import { createTaggedError } from 'resultar'
+   *
+   * class HttpFailure extends createTaggedError({
+   *   name: 'HttpFailure',
+   *   message: 'HTTP $status on $endpoint',
+   * }).withProps<{
+   *   readonly status: 429 | 503
+   *   readonly retryAfterMs?: number
+   * }>() {}
+   * ```
    */
   withProps: <Metadata extends object>(
     ...args: [InvalidMetadataKeys<Metadata, MessageTemplate, Base>] extends [never]

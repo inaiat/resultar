@@ -2,16 +2,50 @@
 import { runPipe } from './pipe.js'
 import type { PipeFn } from './pipe.js'
 
-/** Returns its input, preserving its type and reference. */
+/**
+ * Returns its input value unchanged, preserving its static type and object reference.
+ *
+ * @example
+ * ```ts
+ * import { identity, Result } from 'resultar'
+ *
+ * const label = Result.ok('ready').match(identity, () => 'fallback')
+ * ```
+ */
 export const identity = <A>(value: A): A => value
 
-/** Captures a value and returns it on every call without copying or recomputing it. */
+/**
+ * Captures `value` and returns a zero-argument thunk that yields `value` on every call
+ * without copying or recomputing it.
+ *
+ * @example
+ * ```ts
+ * import { constant, Result } from 'resultar'
+ *
+ * const fallback = constant({ status: 'guest' as const })
+ * const session = Result.err< { readonly status: 'guest' }, string >('missing').unwrapOrElse(fallback)
+ * ```
+ */
 export const constant =
   <A>(value: A): (() => A) =>
   () =>
     value
 
-/** Applies zero through eight synchronous transformations from left to right. */
+/**
+ * Feeds `value` left-to-right through zero to eight unary functions, returning the final result.
+ *
+ * @example
+ * ```ts
+ * import { pipe, Result } from 'resultar'
+ *
+ * const outcome = pipe(
+ *   '  42  ',
+ *   (raw) => raw.trim(),
+ *   (trimmed) => Number.parseInt(trimmed, 10),
+ *   (num) => (Number.isNaN(num) ? Result.err('NaN') : Result.ok(num * 2)),
+ * )
+ * ```
+ */
 export function pipe<A>(value: A): A
 export function pipe<A, B>(value: A, f0: PipeFn<A, B>): B
 export function pipe<A, B, C>(value: A, f0: PipeFn<A, B>, f1: PipeFn<B, C>): C
@@ -65,7 +99,23 @@ export function pipe(value: unknown, ...functions: readonly PipeFn<never, unknow
   return runPipe(value, functions)
 }
 
-/** Composes functions, preserving the arguments and receiver of the first function. */
+/**
+ * Composes one multi-argument entry function with up to eight unary functions from left to right,
+ * preserving the parameter list and `this` receiver of the first function.
+ *
+ * @example
+ * ```ts
+ * import { flow } from 'resultar'
+ *
+ * const formatTotal = flow(
+ *   (price: number, taxRate: number) => price * (1 + taxRate),
+ *   (gross) => gross.toFixed(2),
+ *   (formatted) => `$${formatted}`,
+ * )
+ *
+ * const label = formatTotal(100, 0.15) // "$115.00"
+ * ```
+ */
 export function flow<First extends (...args: never[]) => unknown>(
   first: First,
 ): (this: ThisParameterType<First>, ...args: Parameters<First>) => ReturnType<First>

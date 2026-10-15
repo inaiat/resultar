@@ -117,30 +117,32 @@ If you already know Result-style error handling, jump to:
 | Adopt one function or workflow at a time    | [Gradual adoption](docs/gradual-adoption.md)                                | `Result`, `ResultAsync`, `ResultTask`, `Clock`, `Retry`, `Fiber`           |
 | Declare service dependencies                | [Lazy tasks and service requirements](#lazy-tasks-and-service-requirements) | `ResultTask.service`, `Service.require`, `Service`, `requires`             |
 | Connect services to HTTP routes             | [Services in Fastify and Hono](#services-in-fastify-and-hono)               | `createFastifyApp`, `createHonoApp`, `InferRequestServices`                |
-| Create success or failure values            | [Creating Results](#creating-results)                                       | `ok`, `err`, `unit`, `okAsync`, `errAsync`, `unitAsync`                    |
-| Model expected domain failures              | [Tagged Errors](#tagged-errors)                                             | `createTaggedError`, `.err`, `StrictResult`                                |
+| Create success or failure values            | [Creating Results](#creating-results)                                       | `ok`, `err`, `unit`, `okAsync`, `errAsync`, `unitAsync`, `fromNullishOr`, `liftPredicate` |
+| Model expected domain failures              | [Tagged Errors](#tagged-errors)                                             | `createTaggedError`, `.withProps`, `.err`, `StrictResult`                  |
 | Model lightweight tagged unions             | [Tagged Enums](#tagged-enums)                                               | `TaggedEnum`, `taggedEnum`                                                 |
-| Match values and reuse HTTP mappings        | [Pattern Matching](#pattern-matching)                                       | `Match.type`, `Match.value`, `Match.fn`, `Match.tagsExhaustive`            |
+| Match values and reuse HTTP mappings        | [Pattern Matching](#pattern-matching)                                       | `Match.type`, `Match.value`, `Match.fn`, `Match.context`, `Match.tagsExhaustive` |
 | Keep secrets out of error output            | [Redacted Error Props](#redacted-error-props)                               | `redact`, `isRedacted`, `revealRedacted`                                   |
 | Keep failure channels Error-only            | [Strict Results](#strict-results)                                           | `StrictResult`, `StrictResultAsync`                                        |
-| Wrap code that throws                       | [Wrapping Throwing Or Rejecting Code](#wrapping-throwing-or-rejecting-code) | `tryResult`, `fromThrowable`                                               |
-| Wrap promises or async factories            | [Wrapping Throwing Or Rejecting Code](#wrapping-throwing-or-rejecting-code) | `tryResultAsync`, `fromPromise`, `fromSafePromise`, `fromThrowableAsync`   |
-| Transform successful values                 | [Composing Steps](#composing-steps)                                         | `map`, `asyncMap`, `filterOrElse`                                          |
+| Wrap code that throws                       | [Wrapping Throwing Or Rejecting Code](#wrapping-throwing-or-rejecting-code) | `tryResult`, `fromThrowable`, `Result.fn`                                  |
+| Wrap promises or async factories            | [Wrapping Throwing Or Rejecting Code](#wrapping-throwing-or-rejecting-code) | `tryResultAsync`, `fromPromise`, `fromSafePromise`, `fromThrowableAsync`, `ResultTask.tryPromise` |
+| Transform successful values                 | [Composing Steps](#composing-steps)                                         | `map`, `asyncMap`, `filterOrElse`, `pipe`, `flow`                          |
 | Chain fallible steps                        | [Composing Steps](#composing-steps)                                         | `andThen`, `asyncAndThen`                                                  |
 | Recover from failures                       | [Recovering Tagged Errors Locally](#recovering-tagged-errors-locally)       | `orElse`, `catchTag`, `catchTags`                                          |
 | Recover nested tagged reasons               | [Reasoned Tagged Errors](#reasoned-tagged-errors)                           | `catchReason`, `catchReasons`, `unwrapReason`                              |
+| Inspect or recover runtime causes           | [Structured Task Concurrency, Fibers, And Semaphores](#structured-task-concurrency-fibers-and-semaphores) | `Cause`, `catchCause`, `sandbox`, `unsandbox`, `ensuring`, `onExit` |
 | Choose fallback behavior                    | [Fallbacks](#fallbacks)                                                     | `orElse`, `mapErr`, `unwrapOr`, `firstSuccessOf`                           |
 | Choose the right error-catching API         | [Catching And Recovering Errors](#catching-and-recovering-errors)           | `tryResult`, `fromPromise`, `mapErr`, `orElse`, `catchTag`, `matchError`   |
 | Convert results into responses              | [Handling Results At Boundaries](#handling-results-at-boundaries)           | `match`, `matchTags`, `matchTagsPartial`                                   |
 | Match an error value directly               | [Handling Results At Boundaries](#handling-results-at-boundaries)           | `matchError`, `matchErrorPartial`                                          |
-| Write linear result code                    | [Result Generators](#result-generators)                                     | `Result.gen`, supported `safeTry`, `yield* result`, object-form generators |
-| Branch without throwing                     | [Conditional Helpers](#conditional-helpers)                                 | `Result.if`, `Result.when`, `Result.unless`, `whenResult`, `unlessResult`  |
-| Combine many independent results            | [Combining And Iterating](#combining-and-iterating)                         | `all`, `combine`, `combineWithAllErrors`, `firstSuccessOf`                  |
-| Control async traversal concurrency         | [Async Concurrency Mapping](#async-concurrency-mapping)                     | `ResultAsyncConcurrency`, `{ concurrency }`                                |
-| Race concurrent async work                  | [Concurrent Racing And Timeouts](#concurrent-racing-and-timeouts)           | `ResultAsync.race`, `raceAll`, `raceFirst`, `raceWith`, `timeout`          |
-| Retry transient async work                  | [Retrying Async Work](#retrying-async-work)                                 | `ResultAsync.retry`, `ResultAsync.retryOrElse`                             |
-| Pair async acquisition with cleanup         | [Resourceful Async Iterables](#resourceful-async-iterables)                 | `ResultAsync.withResource`                                                 |
-| Loop or process collections                 | [Combining And Iterating](#combining-and-iterating)                         | `loop`, `iterate`, `forEach`                                               |
+| Write linear result code                    | [Result Generators](#result-generators)                                     | `Result.gen`, `ResultTask.gen`, supported `safeTry`, `yield* result`       |
+| Branch without throwing                     | [Conditional Helpers](#conditional-helpers)                                 | `Result.if`, `Result.when`, `Result.unless`, `ResultTask.if`, `ResultTask.when`, `ResultTask.unless` |
+| Combine many independent results            | [Combining And Iterating](#combining-and-iterating)                         | `all`, `combine`, `combineWithAllErrors`, `firstSuccessOf`, `ResultTask.all`, `ResultTask.validateAll` |
+| Control async traversal concurrency         | [Async Concurrency Mapping](#async-concurrency-mapping)                     | `ResultAsyncConcurrency`, `{ concurrency }`, `ResultTask.forEach`          |
+| Coordinate fibers, semaphores, and yields   | [Structured Task Concurrency, Fibers, And Semaphores](#structured-task-concurrency-fibers-and-semaphores) | `ResultTask.forkChild`, `ResultTask.runFork`, `Fiber`, `Semaphore`, `yieldNow`, `yieldEvery` |
+| Race concurrent async work                  | [Concurrent Racing And Timeouts](#concurrent-racing-and-timeouts)           | `ResultAsync.race`, `raceAll`, `raceFirst`, `ResultTask.race`, `ResultTask.raceFirst`, `ResultTask.timeout`, `Clock.virtual` |
+| Retry transient async work                  | [Retrying Async Work](#retrying-async-work)                                 | `Retry.policy`, `ResultTask.retry`, `ResultAsync.retry`, `ResultAsync.retryOrElse` |
+| Pair async acquisition with cleanup         | [Resourceful Async Iterables](#resourceful-async-iterables)                 | `ResultTask.acquireRelease`, `ResultTask.acquireDisposable`, `ResultTask.scoped`, `ResultAsync.withResource` |
+| Loop or process collections                 | [Combining And Iterating](#combining-and-iterating)                         | `loop`, `iterate`, `forEach`, `ResultTask.loop`, `ResultTask.iterate`      |
 | Detect cancellation errors                  | [Concurrent Racing And Timeouts](#concurrent-racing-and-timeouts)           | `AbortError`, `isAbortError`                                               |
 | Normalize validation issues                 | [Validation Error Recipes](#validation-error-recipes)                       | tagged validation errors with `issues`                                     |
 | Add logging or cleanup                      | [Observation And Cleanup](#observation-and-cleanup)                         | `inspect`, `inspectError`, `inspectBoth`, `log`, `toDisposable`, `toAsyncDisposable` |
@@ -1261,7 +1263,43 @@ immediately. Only the first matching handler runs. `fn(selector)` forwards the n
 and all original arguments to each handler, so a reusable HTTP mapper can retain Hono `Context`
 or Fastify's typed `reply`. `Match.context<Input, [context: Context]>()` instead passes
 `(narrowedInput, context)` once, without repeating the input. Native Hono RPC response unions and
-Fastify schemas are preserved.
+Fastify schemas are preserved:
+
+```ts
+type DomainEvent =
+  | { readonly _tag: "UserCreated"; readonly id: string; readonly role: "admin" | "member" }
+  | { readonly _tag: "UserSuspended"; readonly id: string; readonly reason: string }
+  | { readonly _tag: "HealthPing"; readonly region: string };
+
+// Immediate evaluation on a concrete value with tag table:
+const summary = Match.valueTags(
+  { _tag: "UserCreated", id: "usr_1", role: "admin" } as DomainEvent,
+  {
+    UserCreated: (event) => `created:${event.id}:${event.role}`,
+    UserSuspended: (event) => `suspended:${event.id}:${event.reason}`,
+    HealthPing: (event) => `ping:${event.region}`,
+  },
+);
+
+// Reusable contextual matcher forwarding extra parameters without repeating the input:
+const formatWithEnv = Match.context<DomainEvent, [env: "dev" | "prod"]>().pipe(
+  Match.tagsExhaustive({
+    UserCreated: (event, env) => `[${env}] user ${event.id} (${event.role})`,
+    UserSuspended: (event, env) => `[${env}] suspended ${event.id}`,
+    HealthPing: (event, env) => `[${env}] ok (${event.region})`,
+  }),
+);
+
+// Combinators (`whenOr`, `whenAnd`, `not`) and non-exhaustive finalizers (`orElse`, `result`, `option`):
+const adminOrPing = Match.type<DomainEvent>()
+  .whenOr(
+    { _tag: "UserCreated", role: "admin" },
+    { _tag: "HealthPing" },
+    (event) => `priority:${event._tag}`,
+  )
+  .not({ _tag: "UserSuspended" }, (event) => `member:${event.id}`)
+  .result(); // returns Result<string, { readonly _tag: "UserSuspended"; ... }>
+```
 
 For ordinary route handlers, prefer inline `result.matchTags` and capture the native context or
 reply in the closure. Extract a contextual matcher when several routes reuse the same mapping.
@@ -1510,8 +1548,21 @@ const response = reasonResult.match(
 );
 ```
 
-`ResultAsync` provides the same three methods. Async reason handlers may return either `Result` or
-`ResultAsync`.
+`ResultAsync` and `ResultTask` provide the same three methods (`catchReason`, `catchReasons`, and
+`unwrapReason`). In `ResultTask`, reason handlers may return either a synchronous `Result` or a
+`ResultTask` (whose service requirements and error types are merged automatically), and static
+curried forms (`ResultTask.catchReason`, `ResultTask.catchReasons`, `ResultTask.unwrapReason`)
+work in `.pipe(...)`:
+
+```ts
+import { ResultTask } from "resultar";
+
+const task = ResultTask.fromResult(completePrompt())
+  .catchReason("AiError", "RateLimitError", (reason) =>
+    ResultTask.sleep(reason.retryAfterMs).as("retried-ok"),
+  )
+  .unwrapReason("AiError");
+```
 
 ## Fallbacks
 
@@ -1970,6 +2021,39 @@ isAbortError({ code: "ABORT_ERR" }); // true
 Resultar racing uses cooperative abort. If a task ignores the signal, Resultar stops observing the
 loser and returns the winner, but it cannot force the underlying work to stop.
 
+### Task Racing, Timeouts, Timing, And Virtual Clock
+
+`ResultTask` provides structured racing and time helpers (`ResultTask.race`, `ResultTask.raceFirst`,
+`ResultTask.timeout`, `ResultTask.sleep`, `ResultTask.delay`, `ResultTask.now`, and
+`ResultTask.timed`) that own their child scopes, interrupt losers, and await loser finalizers before
+resolving:
+
+```ts
+import { Clock, ResultTask, createTaggedError } from "resultar";
+
+class QueryDeadlineError extends createTaggedError({
+  name: "QueryDeadlineError",
+  message: "Query exceeded $ms ms",
+}).withProps<{ readonly ms: number }>() {}
+
+const clock = Clock.virtual();
+
+const replicaRace = ResultTask.race(
+  ResultTask.sleep(10).as("primary"),
+  ResultTask.sleep(50).as("replica"),
+)
+  .timed()
+  .timeout(100, () => new QueryDeadlineError({ ms: 100 }));
+
+const running = ResultTask.runResult(replicaRace, { clock });
+await clock.advanceBy(10);
+const outcome = await running; // Ok([10, "primary"])
+```
+
+`Clock.virtual()` provides a deterministic virtual clock (`advanceBy`, `runToNext`, `runAll`,
+`pendingCount`) that drives `sleep`, `delay`, `timed`, `timeout`, and `retry` without real wall-clock
+timers.
+
 ## Retrying Async Work
 
 `ResultAsync.retry(task, options)` re-runs a lazy async task when it returns `Err`. The task receives
@@ -2056,6 +2140,36 @@ Invalid `times` values and invalid retry delays reject with an `IllegalArgumentE
 `Error`. An external `ResultAsyncAbortSignal`-compatible signal aborts before a new attempt or
 during retry delay and returns a typed `AbortError`.
 
+### Portable Retry Policies And ResultTask Retry
+
+`Retry.policy(options)` constructs an immutable, reusable retry policy that works with both
+`ResultTask.retry` and `ResultAsync.retry`. When used with `ResultTask.retry`, each attempt runs in
+its own resource scope and closes all acquired resources before the retry delay or the next attempt:
+
+```ts
+import { Clock, ResultTask, Retry } from "resultar";
+
+const transientPolicy = Retry.policy<{ readonly _tag: string }>({
+  times: 2,
+  delay: ({ attempt }) => attempt * 10,
+  while: (error) => error._tag === "TransientError",
+});
+
+const clock = Clock.virtual();
+let attempts = 0;
+
+const task = ResultTask.defer(() => {
+  attempts += 1;
+  return attempts < 3
+    ? ResultTask.err({ _tag: "TransientError" as const })
+    : ResultTask.ok("ready");
+}).retry(transientPolicy);
+
+const running = ResultTask.runResult(task, { clock });
+await clock.runAll();
+const result = await running; // Ok("ready") after 10ms + 20ms virtual time
+```
+
 ## Async Concurrency Mapping
 
 Resultar provides concurrency controls for plain `ResultAsync` values without adding a runtime
@@ -2114,6 +2228,66 @@ errors in input order.
 
 ResultAsync does not include inherited concurrency, fibers, standalone interruption hooks, detached
 background interruption, or runtime cause trees.
+
+## Structured Task Concurrency, Fibers, And Semaphores
+
+When you need structured child tasks, background fiber handles, shared concurrency permits,
+cooperative yielding, or lossless failure cause trees, use `ResultTask` together with `Fiber`,
+`Semaphore`, `Cause`, and `Scheduler`:
+
+```ts
+import { Cause, Fiber, ResultTask, Scheduler, Semaphore } from "resultar";
+
+const semaphore = Semaphore.make(2); // or ResultTask.makeSemaphore(2)
+
+const workflow = ResultTask.scoped(
+  ResultTask.gen(function* () {
+    // Fork a child fiber owned by the enclosing scope:
+    const background = yield* ResultTask.forkChild(
+      semaphore.withPermit(ResultTask.sleep(10).as("indexed")),
+    );
+
+    // Run bounded collection work sharing the same semaphore:
+    const items = yield* ResultTask.forEach(
+      [1, 2, 3, 4],
+      (item) => semaphore.withPermit(ResultTask.sync(() => item * 10)),
+      { concurrency: "unbounded" },
+    );
+
+    const status = yield* Fiber.join(background);
+    return { items, status };
+  }),
+).ensuring((exit) =>
+  ResultTask.sync(() => {
+    if (exit._tag === "Failure") {
+      console.error(Cause.pretty(exit.cause));
+    }
+  }),
+);
+
+const result = await ResultTask.runResult(workflow, {
+  yieldEvery: 2,
+  scheduler: Scheduler.live,
+});
+```
+
+- **Fibers (`ResultTask.forkChild`, `ResultTask.runFork`, `Fiber`)**: `forkChild` starts a child
+  fiber attached to the current `ResultTaskScope`; closing the scope interrupts and awaits any
+  still-running children. `runFork` starts an independent root fiber and returns a `FiberHandle`
+  supporting `.join()`, `.await()`, `.interrupt()`, `.poll()`, `.isRunning()`, and
+  `.addObserver(listener)`.
+- **Semaphores (`Semaphore.make`, `ResultTask.makeSemaphore`)**: `withPermit` and `withPermits(n)`
+  gate task execution across arbitrary fibers or collection workers and automatically release
+  permits on `Success`, `Fail`, `Die`, or `Interrupt`.
+- **Cooperative Yielding (`yieldEvery`, `scheduler`, `Scheduler`)**: pass `{ yieldEvery, scheduler }`
+  in `ResultTaskRunOptions` (`ResultTask.runResult`, `runPromise`, `runExit`, `runFork`) to yield
+  the worker back to the runtime `TaskScheduler` (`Scheduler.live` by default) every `N` steps so
+  long-running pipelines can observe interruption signals and interleave with sibling fibers.
+- **Causes, Sandboxing, and Finalizers (`Cause`, `catchCause`, `sandbox`, `unsandbox`, `ensuring`, `onExit`)**:
+  `exit.cause` preserves `Fail`, `Die`, `Interrupt`, `Sequential` (e.g. body failure + finalizer
+  failure), and `Parallel` (e.g. dual race failure or `validateAll`). Use `Cause.failures`,
+  `Cause.defects`, `Cause.findError`, and `Cause.pretty` to inspect cause trees, or
+  `task.sandbox()` / `task.catchCause(...)` to recover from composite causes inside the pipeline.
 
 ## Resourceful Async Iterables
 
@@ -3095,10 +3269,74 @@ For loops and collections, use:
 - `ResultAsync.loop(initial, options)`
 - `ResultAsync.iterate(initial, options)`
 - `ResultAsync.forEach(iterable, fn, options?)`
+- `ResultTask.loop(initial, options)`
+- `ResultTask.iterate(initial, options)`
+- `ResultTask.forEach(iterable, fn, options?)`
+- `ResultTask.all(tasks, options?)` / `ResultTask.combine(tasks, options?)`
+- `ResultTask.validateAll(tasksOrItems, fnOrOptions?, options?)`
 
 `ResultAsync.loop` and `ResultAsync.iterate` run sequentially. `ResultAsync.forEach` runs
 sequentially by default, can be bounded with `{ concurrency: n }`, and short-circuits scheduling on
 the first `Err` while waiting for already-started work to settle.
+
+### ResultTask Collections And Loops
+
+`ResultTask` provides lazy, scope-aware collection and loop operators that preserve service
+requirements (`R`) and interrupt in-flight siblings on fail-fast errors:
+
+```ts
+import { ResultTask } from "resultar";
+
+// Record or tuple combination (sequential by default; pass { concurrency: n | "unbounded" })
+const dashboard = ResultTask.all(
+  {
+    profile: loadProfile(userId),
+    orders: loadRecentOrders(userId),
+    quotas: loadQuotas(userId),
+  },
+  { concurrency: 2 },
+);
+
+// Pair two tasks concurrently
+const pair = loadProfile(userId).zip(loadQuotas(userId), { concurrent: true });
+
+// Lazy bounded traversal (fail-fast: interrupts active siblings and awaits finalizers on first Err)
+const synced = ResultTask.forEach(
+  accounts,
+  (account, index) => syncAccount(account, index),
+  { concurrency: 4, discard: true },
+);
+
+// Accumulated validation (runs every item and collects all Err values in input order)
+const validated = ResultTask.validateAll(
+  rows,
+  (row, index) => validateRowTask(row, index),
+  { concurrency: 8 },
+);
+
+// Sequential fallback across lazy candidate tasks
+const resolvedConfig = ResultTask.firstSuccessOf([
+  loadRemoteConfig(),
+  loadCachedConfig(),
+  loadDefaultConfigTask(),
+]);
+
+// Lazy stateful loops
+const pages = ResultTask.loop(
+  { cursor: 0, items: [] as string[] },
+  {
+    while: (state) => state.cursor < 3,
+    step: (state) => ({ ...state, cursor: state.cursor + 1 }),
+    body: (state) => ResultTask.ok(`page:${state.cursor + 1}`),
+  },
+);
+
+const finalCursor = ResultTask.iterate(0, {
+  while: (cursor) => cursor < 3,
+  body: (cursor) => ResultTask.ok(cursor + 1),
+});
+```
+
 
 ## Coming From Other Styles
 

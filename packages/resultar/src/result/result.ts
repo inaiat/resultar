@@ -1300,12 +1300,37 @@ interface ResultStatic {
   /**
    * Runs a generator workflow that unwraps yielded Results and wraps the returned value in Ok,
    * matching `ResultTask.gen`.
+   *
+   * @example
+   * ```ts
+   * import { Result } from 'resultar'
+   *
+   * const outcome = Result.gen(function* () {
+   *   const a = yield* Result.ok(10)
+   *   const b = yield* Result.ok(32)
+   *   return a + b
+   * })
+   * ```
    */
   gen: typeof resultGen
   /**
    * Wraps a synchronous or asynchronous generator function so each call runs a `Result.gen`
    * workflow, optionally piping the resulting `Result` or `ResultAsync` through post-body
    * operators.
+   *
+   * @example
+   * ```ts
+   * import { Result } from 'resultar'
+   *
+   * const parsePair = Result.fn(
+   *   function* (rawA: string, rawB: string) {
+   *     const a = yield* Result.liftPredicate(Number(rawA), Number.isFinite, () => 'BadA' as const)
+   *     const b = yield* Result.liftPredicate(Number(rawB), Number.isFinite, () => 'BadB' as const)
+   *     return a + b
+   *   },
+   *   Result.map((sum) => sum * 2),
+   * )
+   * ```
    */
   fn: typeof resultFn
   /**
@@ -1327,15 +1352,27 @@ interface ResultStatic {
     errorFn?: (e: any) => E,
   ) => (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E>
   /**
-   * Converts null or undefined to an Err; all other values become Ok.
-   * Supports direct and curried forms. The error callback receives the original input.
-   * Callback exceptions propagate.
+   * Converts `null` or `undefined` to an `Err`; all other values (including `0`, `false`, and `""`)
+   * become `Ok(NonNullable<A>)`. Supports direct and curried forms.
+   *
+   * @example
+   * ```ts
+   * import { Result } from 'resultar'
+   *
+   * const host = Result.fromNullishOr(process.env.HOST, () => 'MissingHost' as const)
+   * ```
    */
   fromNullishOr: ResultFromNullishOr
   /**
-   * Constructs a Result from a predicate or narrowing refinement.
-   * Supports direct and curried forms. Only a rejected input invokes onFalse.
-   * Callback exceptions propagate.
+   * Constructs a `Result` from a boolean predicate or TypeScript type-guard refinement.
+   * Supports direct and curried forms; only a rejected input invokes `onFalse`.
+   *
+   * @example
+   * ```ts
+   * import { Result } from 'resultar'
+   *
+   * const positive = Result.liftPredicate(42, (n): n is number => n > 0, (n) => `non-positive:${n}`)
+   * ```
    */
   liftPredicate: ResultLiftPredicate
   /**

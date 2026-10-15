@@ -31,8 +31,11 @@ and use these samples in order:
 
 1. `sync-validation.ts` and `domain-workflow.ts`: start with typed Results and composition.
 2. `edge-wrapping.ts` and `async-resilience.ts`: adapt existing async work with `ResultAsync`.
-3. `functional-ergonomics.ts`: build lazy task workflows and introduce service requirements.
-4. `task-resilience.ts`: add `Clock.virtual`, shared retry policies, and owned Fibers.
+3. `functional-ergonomics.ts`: build lazy task workflows, introduce service requirements, and use
+   `.withProps<Props>()`, `Result.fromNullishOr`, `Result.liftPredicate`, `Result.fn`, `Result.gen`,
+   and `Match` (`Match.context`, `Match.tagsExhaustive`, `Match.value`).
+4. `task-resilience.ts`: add `Clock.virtual`, shared retry policies, `Semaphore`, `ensuring`,
+   `sandbox`/`unsandbox`, `Cause.findError`, `yieldEvery`, and owned Fibers.
 5. `application-lifecycle.ts`: extend scope ownership to resources and application shutdown.
 
 These are independent adoption steps. Existing Result functions and ResultAsync adapters can
@@ -51,11 +54,16 @@ remain in use while a selected workflow moves to ResultTask.
 - [`src/collections-and-control-flow.ts`](src/collections-and-control-flow.ts): `filterOrElse`, `as`,
   `unit`, `asyncMap`, `asyncAndThen`, `zip`, `combine`, `combineWithAllErrors`, mapped validation,
   loops, conditionals, async concurrency, observation, and disposable cleanup.
+- [`src/functional-ergonomics.ts`](src/functional-ergonomics.ts): `pipe`, `flow`, `Result.fn`,
+  `Result.gen`, `Result.fromNullishOr`, `Result.liftPredicate`, `.withProps<Props>()`,
+  `ResultTask.fn`, `ResultTask.acquireDisposable`, and `Match` (`Match.context`,
+  `Match.tagsExhaustive`, `Match.value`).
 - [`src/async-resilience.ts`](src/async-resilience.ts): `ResultAsync.fromPromise`, cooperative
   `timeout`, retry policies, race variants, custom race handling, and abort detection.
 - [`src/task-resilience.ts`](src/task-resilience.ts): portable `Retry.policy`, scoped retry,
-  bounded collections, `Fiber.await`, timeout of a detached external Promise and losing-replica
-  cleanup, all exercised with a deterministic virtual clock.
+  bounded collections, `Semaphore.make` (`withPermit`), `ensuring`, `sandbox`/`unsandbox`,
+  `Cause.findError`, `yieldEvery`, `Fiber.await`, `ResultTask.runFork`, timeout of a detached
+  external Promise and losing-replica cleanup, all exercised with a deterministic virtual clock.
 - [`src/resource-cleanup.ts`](src/resource-cleanup.ts): `ResultAsync.withResource` with release
   assertions for success and failure paths.
 - [`src/application-lifecycle.ts`](src/application-lifecycle.ts): a `ResultTask.scoped` server

@@ -1,6 +1,6 @@
 # RFC 0001: ResultTask and the next core architecture
 
-- Status: Draft
+- Status: Implemented (Phases 0–5 Done)
 - Date: 2026-09-01
 - Scope: `resultar` package
 - Intended compatibility: incremental evolution before an eventual major
@@ -509,43 +509,56 @@ change would be observable even when the types keep compiling.
 
 ## Module organization
 
-Suggested target structure:
+Implemented 5-domain directory layout in `packages/resultar/src/`:
 
 ```text
 packages/resultar/src/
+  index.ts
+  core/
+    abort-error.ts
+    dual.ts
+    fn-contract.ts
+    function.ts
+    pipeable.ts
+    redacted.ts
+    retry.ts
+    symbol.ts
   result/
-    model.ts
-    constructors.ts
-    combinators.ts
-    collections.ts
-    match.ts
-  task/
-    model.ts
-    constructors.ts
-    combinators.ts
-    generator.ts
-    runtime.ts
-    exit.ts
-    cause.ts
-    fiber.ts
-    scope.ts
-    schedule.ts
-    services.ts
-  async/
+    collection-utils.ts
     result-async.ts
-    adapters.ts
-  errors/
+    result-combinators.ts
+    result-conditional.ts
+    result-constructors.ts
+    result-loops.ts
+    result-reason-types.ts
+    result-retry.ts
+    result-shared.ts
+    result-types.ts
+    result.ts
+  task/
+    cause-transform.ts
+    cause.ts
+    cleanup-cause.ts
+    exit.ts
+    fiber-runtime.ts
+    fiber.ts
+    promise-interruption.ts
+    result-task.ts
+    scope.ts
+    semaphore.ts
+    task-clock.ts
+    task-scheduler.ts
+  match/
+    match-pattern.ts
+    match.ts
+  tagged/
+    tagged-enum.ts
     tagged-error.ts
     tagged-match.ts
-    abort-error.ts
-  internal/
-    pipe.ts
-    type-utils.ts
+    tagged-types.ts
 ```
 
-This structure is a destination, not a prerequisite for starting. The first implementation may
-land in `src/task/` and reuse the current core via imports. Moving existing files must happen
-separately, after the new API is stable, to keep diffs reviewable.
+This layout groups the core package by cohesive domain (`core/`, `result/`, `task/`, `match/`, `tagged/`) while preserving the single public root barrel (`packages/resultar/src/index.ts`).
 
 ## Implementation strategy
 

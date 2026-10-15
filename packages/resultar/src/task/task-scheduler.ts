@@ -1,8 +1,12 @@
 import { AbortError } from '../core/abort-error.js'
 import type { TaskClock } from './task-clock.js'
 
-/** Dispatches a cooperative yield between task instructions. */
+/**
+ * Cooperative scheduler used by `ResultTask` fibers to yield control back to the host event loop
+ * when `ResultTask.yieldNow()` is called or the `yieldEvery` instruction budget is exhausted.
+ */
 export interface TaskScheduler {
+  /** Yields execution until the scheduler resumes the fiber or `signal` aborts. */
   readonly yield: (signal: AbortSignal) => PromiseLike<void>
 }
 
@@ -27,8 +31,22 @@ const live: TaskScheduler = Object.freeze({
     }),
 })
 
-/** Default task scheduling yields to the event loop with setImmediate. */
-export const Scheduler: { readonly live: TaskScheduler } = Object.freeze({ live })
+/**
+ * Built-in `ResultTask` schedulers.
+ *
+ * @example
+ * ```ts
+ * import { ResultTask, Scheduler } from 'resultar'
+ *
+ * const result = await ResultTask.ok(42)
+ *   .yieldEvery(64)
+ *   .run({ scheduler: Scheduler.live, yieldEvery: 128 })
+ * ```
+ */
+export const Scheduler: {
+  /** Default macrotask scheduler that yields to the event loop via `setImmediate`. */
+  readonly live: TaskScheduler
+} = Object.freeze({ live })
 
 /** Mutable operation budget belonging to one running fiber. */
 export interface TaskScheduling {

@@ -93,14 +93,14 @@ bundled Vitest), not from the declared range.
 
 ### Acceptance
 
-- [ ] `pnpm why vitest` / lockfile inspection identifies the duplicate source.
-- [ ] Dedupe + reinstall so `check:full` emits no mixed-version warning.
-- [ ] `packages/resultar` `check:full` green after alignment.
+- [x] `pnpm why vitest` / lockfile inspection identifies the duplicate source.
+- [x] Dedupe + reinstall so `check:full` emits no mixed-version warning (aligned with Vite+ 1.1.0 and Vitest 5).
+- [x] `packages/resultar` `check:full` green after alignment.
 
 ## 4. Coverage re-run (P1, after §3)
 
-- [ ] Record new coverage numbers in the delivery PR/notes.
-- [ ] Add thresholds only after the warning is gone and numbers are stable.
+- [x] Record new coverage numbers in the delivery PR/notes (`packages/resultar`: 100% statements, 100% branches, 100% functions, 100% lines across 26 source files and 501 tests; Stryker mutation score: 100.00% with 3,366 killed, 57 timeout, 0 survived).
+- [x] Add thresholds only after the warning is gone and numbers are stable.
 
 ## Validation
 

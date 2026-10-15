@@ -129,7 +129,26 @@ export type MatchOption<Value> =
   | { readonly _tag: 'Some'; readonly value: Value }
   | { readonly _tag: 'None' }
 
-/** Immutable matcher. Value cases execute immediately; type/function cases execute per invocation. */
+/**
+ * Immutable pattern-matching builder supporting both fluent method chaining and `pipe(matcher, Match.*)`.
+ *
+ * In `Match.value(input)` mode, the first matching handler executes eagerly as soon as its case is added;
+ * in `Match.type()`, `Match.fn()`, and `Match.context()` modes, cases are compiled once and evaluated per call.
+ *
+ * @example
+ * ```ts
+ * import { Match } from 'resultar'
+ *
+ * type Event =
+ *   | { readonly _tag: 'Created'; readonly id: string }
+ *   | { readonly _tag: 'Deleted'; readonly id: string }
+ *
+ * const describe = Match.type<Event>().tagsExhaustive({
+ *   Created: (e) => `created:${e.id}`,
+ *   Deleted: (e) => `deleted:${e.id}`,
+ * })
+ * ```
+ */
 export interface MatchMatcher<
   Input,
   Remaining = Input,
@@ -139,10 +158,12 @@ export interface MatchMatcher<
   Target = unknown,
 >
   extends Pipeable, MatchState<Input, Remaining, Matched, Kind, Args, Target> {
+  /** Matches inputs satisfying `pattern` (literal, predicate/refinement, nested object, or tuple/array prefix). */
   when: <const Pattern extends MatchPattern<Remaining>, Next extends Target>(
     pattern: Pattern,
     handler: (value: MatchNarrowed<Remaining, Pattern>, ...args: Args) => Next,
   ) => MatchMatcher<Input, MatchRemaining<Remaining, Pattern>, Matched | Next, Kind, Args, Target>
+  /** Matches inputs satisfying at least one of the supplied `patterns`. */
   whenOr: <
     const Patterns extends readonly [MatchPattern<Remaining>, ...MatchPattern<Remaining>[]],
     Next extends Target,
@@ -152,6 +173,7 @@ export interface MatchMatcher<
       (value: MatchNarrowed<Remaining, Patterns[number]>, ...args: Args) => Next,
     ]
   ) => MatchMatcher<Input, OrRemaining<Remaining, Patterns>, Matched | Next, Kind, Args, Target>
+  /** Matches inputs satisfying every supplied pattern in `patterns`. */
   whenAnd: <
     const Patterns extends readonly [MatchPattern<Remaining>, ...MatchPattern<Remaining>[]],
     Next extends Target,
@@ -161,10 +183,12 @@ export interface MatchMatcher<
       (value: AndNarrowed<Remaining, Patterns>, ...args: Args) => Next,
     ]
   ) => MatchMatcher<Input, AndRemaining<Remaining, Patterns>, Matched | Next, Kind, Args, Target>
+  /** Matches inputs that do *not* satisfy `pattern`, narrowing the handler parameter to the complement. */
   not: <const Pattern extends MatchPattern<Remaining>, Next extends Target>(
     pattern: Pattern,
     handler: (value: MatchRemaining<Remaining, Pattern>, ...args: Args) => Next,
   ) => MatchMatcher<Input, MatchNarrowed<Remaining, Pattern>, Matched | Next, Kind, Args, Target>
+  /** Matches one or more `_tag` discriminant values with a single narrowed handler. */
   tag: <
     const Tags extends readonly [TagsOf<Remaining> & string, ...(TagsOf<Remaining> & string)[]],
     Next extends Target,
@@ -181,6 +205,7 @@ export interface MatchMatcher<
     Args,
     Target
   >
+  /** Adds a partial handler table keyed by `_tag`; omitted tags remain in the unhandled union. */
   tags: <const Cases extends object>(
     handlers: Cases &
       PartialTable<Remaining, '_tag', Target, Args> &
@@ -193,21 +218,27 @@ export interface MatchMatcher<
     Args,
     Target
   >
+  /** Completes the matcher with an exhaustive handler table covering every remaining `_tag`. */
   tagsExhaustive: <const Cases extends object>(
     handlers: Cases &
       Table<Remaining, '_tag', Target, Args> &
       ExactHandlers<Cases, TagsOf<Remaining>> &
       ([Remaining] extends [TableInput<Remaining, '_tag'>] ? unknown : never),
   ) => Output<Input, Matched | HandlerOutput<Cases>, Kind, Args>
+  /** Completes the matcher only when `Remaining` has been narrowed to `never`. */
   exhaustive: (
     this: MatchMatcher<Input, Remaining, Matched, Kind, Args, Target> &
       ([Remaining] extends [never] ? unknown : MatchMissingCases<Remaining>),
   ) => Output<Input, Matched, Kind, Args>
+  /** Completes the matcher with a fallback handler receiving any unhandled `Remaining` input. */
   orElse: <Next extends Target>(
     handler: (value: NoInfer<Remaining>, ...args: HandlerArgs<Args>) => Next,
   ) => Output<Input, Matched | Next, Kind, Args>
+  /** Completes the matcher by throwing a `TypeError` at runtime if an unmatched value is reached. */
   orElseAbsurd: () => Output<Input, Matched, Kind, Args>
+  /** Completes the matcher as `Ok(matchedValue)` or `Err(unmatchedRemainingInput)`. */
   result: () => Output<Input, Result<Matched, Remaining>, Kind, Args>
+  /** Completes the matcher as `{ _tag: 'Some', value }` or `{ _tag: 'None' }`. */
   option: () => Output<Input, MatchOption<Matched>, Kind, Args>
 }
 
@@ -729,11 +760,28 @@ const is = <
     CoveredLiterals<Literals>
   >
 
-/** Typed pattern matching with native Resultar finalization and fluent methods. */
+/**
+ * Typed pattern matching with native `Result` finalization, pipeable combinators, and fluent methods.
+ *
+ * @example
+ * ```ts
+ * import { Match } from 'resultar'
+ *
+ * type Shape =
+ *   | { readonly _tag: 'Circle'; readonly radius: number }
+ *   | { readonly _tag: 'Square'; readonly side: number }
+ *
+ * const area = (shape: Shape): number =>
+ *   Match.valueTags(shape, {
+ *     Circle: ({ radius }) => Math.PI * radius ** 2,
+ *     Square: ({ side }) => side ** 2,
+ *   })
+ * ```
+ */
 export const Match: {
   /** Match one value eagerly; the first matching handler executes as its case is added. */
   readonly value: typeof value
-  /** Build a reusable matcher without executing any cases. */
+  /** Build a reusable matcher without executing any cases until invoked. */
   readonly type: typeof type
   /** Select from original arguments; handlers receive the selection followed by those arguments. */
   readonly fn: typeof fn
@@ -751,12 +799,13 @@ export const Match: {
   readonly whenAnd: typeof whenAnd
   /** Add a case for inputs that do not match the supplied pattern. */
   readonly not: typeof not
-  /** Handle one or several tags with a narrowed callback. */
+  /** Handle one or several `_tag` values with a narrowed callback. */
   readonly tag: typeof tag
-  /** Add a partial tag table; absent handlers leave their inputs unmatched. */
+  /** Add a partial `_tag` table; absent handlers leave their inputs unmatched. */
   readonly tags: typeof tags
-  /** Complete with a table covering every remaining tag. */
+  /** Complete with a table covering every remaining `_tag`. */
   readonly tagsExhaustive: typeof tagsExhaustive
+  /** Match `_tag` values starting with a string literal prefix (`${Prefix}${string}`). */
   readonly tagStartsWith: typeof tagStartsWith
   /** Match exact values of a chosen discriminant property. */
   readonly discriminator: typeof discriminator
@@ -764,6 +813,7 @@ export const Match: {
   readonly discriminators: typeof discriminators
   /** Complete with every remaining value of a chosen discriminant property. */
   readonly discriminatorsExhaustive: typeof discriminatorsExhaustive
+  /** Match string values of a chosen discriminant property starting with a literal prefix. */
   readonly discriminatorStartsWith: typeof discriminatorStartsWith
   /** Complete only when every input case has been proved handled. */
   readonly exhaustive: typeof exhaustive
@@ -771,9 +821,9 @@ export const Match: {
   readonly orElse: typeof orElse
   /** Complete with a runtime exception on unmatched input, without a coverage proof. */
   readonly orElseAbsurd: typeof orElseAbsurd
-  /** Complete as a native Resultar Ok or Err containing the original unmatched input. */
+  /** Complete as a native Resultar `Ok` or `Err` containing the original unmatched input. */
   readonly result: typeof result
-  /** Complete as a plain Some or None tagged value. */
+  /** Complete as a plain `Some` or `None` tagged value. */
   readonly option: typeof option
   /** Require subsequent handlers and existing branches to satisfy an output contract. */
   readonly withReturnType: typeof withReturnType
@@ -781,17 +831,29 @@ export const Match: {
   readonly instanceOf: typeof instanceOf
   /** Opt into excluding structural class types after nominal instance matching. */
   readonly instanceOfUnsafe: typeof instanceOfUnsafe
+  /** Match any of the supplied primitive literal values with full coverage tracking. */
   readonly is: typeof is
+  /** Built-in refinement matching any `string`. */
   readonly string: (input: unknown) => input is string
+  /** Built-in refinement matching any `number` (including `NaN` and infinities). */
   readonly number: (input: unknown) => input is number
+  /** Built-in refinement matching any `boolean`. */
   readonly boolean: (input: unknown) => input is boolean
+  /** Built-in refinement matching any `bigint`. */
   readonly bigint: (input: unknown) => input is bigint
+  /** Built-in refinement matching any `symbol`. */
   readonly symbol: (input: unknown) => input is symbol
+  /** Built-in refinement matching `null`. */
   readonly null: (input: unknown) => input is null
+  /** Built-in refinement matching `Date` instances. */
   readonly date: (input: unknown) => input is Date
+  /** Built-in refinement matching non-null, non-array objects without subtracting structural records. */
   readonly record: MatchRefinement<Record<PropertyKey, unknown>, never>
+  /** Built-in refinement matching non-empty strings without subtracting `string`. */
   readonly nonEmptyString: MatchRefinement<string, never>
+  /** Built-in refinement matching any non-nullish value (`!== null && !== undefined`). */
   readonly defined: (input: unknown) => input is DefinedValue
+  /** Built-in refinement matching every input value (`unknown`). */
   readonly any: (input: unknown) => input is unknown
 } = {
   value,

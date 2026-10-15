@@ -547,6 +547,15 @@ assert.deepEqual(resilience, {
     events: ["Success"],
     exit: { _tag: "Success", value: "background ready" },
   },
+  semaphore: {
+    events: ["enter", "exit", "enter", "exit"],
+    values: ["permit-ok", "permit-ok"],
+  },
+  sandbox: {
+    cleanup: ["ensured"],
+    value: "recovered:TaskProviderError:9",
+  },
+  validation: ["TaskProviderError:2"],
   pendingTimers: 0,
 });
 assert.deepEqual(summary.resilience, resilience);
@@ -555,6 +564,10 @@ assert.deepEqual(summary.ergonomics, {
   second: "session:guest:missing",
   normalized: "user:ada:42",
   events: ["open", "close", "open", "close"],
+  roleSummary: "role:admin",
+  invalidRole: "InvalidRoleError:guest",
+  matchedAccess: "[req_1] allow:admin",
+  matchedNumber: 84,
   status: "Ready",
 });
 assert.equal(summary.signup.statusCode, 201);

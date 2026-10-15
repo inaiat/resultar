@@ -1085,10 +1085,21 @@ const executeInstruction = async (
 }
 
 /**
- * A lazy, composable workflow that can succeed with `A` or fail with `E`.
+ * A lazy, composable workflow that can succeed with `A`, fail with a typed error `E`,
+ * and declare execution requirements `R` (such as `ServiceTag`s or `ResultTaskScope`).
  *
- * Constructing a `ResultTask` never runs its work. Use `runResult`, `runExit`, or `runPromise` at an
+ * Constructing a `ResultTask` never starts its work. Use `ResultTask.runResult`,
+ * `ResultTask.runExit`, `ResultTask.runPromise`, or `ResultTask.runFork` at an
  * explicit application boundary to execute it.
+ *
+ * @example
+ * ```ts
+ * import { ResultTask } from 'resultar'
+ *
+ * const task = ResultTask.ok(21).map((n) => n * 2)
+ * const result = await ResultTask.runResult(task)
+ * // Ok(42)
+ * ```
  */
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export interface ResultTask<out A, out E = never, out R = never> {
@@ -1099,6 +1110,22 @@ export interface ResultTask<out A, out E = never, out R = never> {
   }
 }
 
+/**
+ * Lazy, structured-concurrency workflow implementation for Resultar.
+ *
+ * @example
+ * ```ts
+ * import { ResultTask } from 'resultar'
+ *
+ * const workflow = ResultTask.gen(function* () {
+ *   const a = yield* ResultTask.ok(20)
+ *   const b = yield* ResultTask.ok(22)
+ *   return a + b
+ * })
+ * const result = await ResultTask.runResult(workflow)
+ * // Ok(42)
+ * ```
+ */
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   declare private readonly typeWitness: {
@@ -1372,9 +1399,35 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
-  /** Creates a lazy task that preserves synchronous throws and promise rejections as unknown. */
+  /**
+   * Creates a lazy task that preserves synchronous throws and promise rejections as `unknown`.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const fetchStatus = ResultTask.tryPromise((signal) =>
+   *   fetch('https://example.com/health', { signal }).then((r) => r.status),
+   * )
+   * ```
+   */
   public static tryPromise<A>(run: (signal: AbortSignal) => PromiseLike<A>): ResultTask<A, unknown>
-  /** Creates a lazy task that maps synchronous throws and promise rejections into `E`. */
+  /**
+   * Creates a lazy task that maps synchronous throws and promise rejections into `E`.
+   * Pass `interruption: 'detach'` when wrapping foreign promises that ignore `AbortSignal`
+   * so timeouts and races can stop waiting immediately.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const loadUser = ResultTask.tryPromise({
+   *   try: (signal) => fetch('https://example.com/user', { signal }).then((r) => r.json()),
+   *   catch: (cause) => new Error('Request failed', { cause }),
+   *   interruption: 'detach',
+   * })
+   * ```
+   */
   public static tryPromise<A, E>(options: ResultTaskTryPromiseOptions<A, E>): ResultTask<A, E>
   public static tryPromise<A, E>(
     options: ResultTaskTryPromiseOptions<A, E> | ((signal: AbortSignal) => PromiseLike<A>),
@@ -1402,7 +1455,17 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
 
   /**
    * Acquires lazily and registers release in the current scope. Release failures remain in the
-   * scope requirement until `scoped` or a run boundary closes it; catchAll cannot erase them early.
+   * scope requirement until `scoped` or a run boundary closes it; `orElse` / `catchAll` cannot erase them early.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const connection = ResultTask.acquireRelease({
+   *   acquire: ResultTask.sync(() => ({ id: 'conn-1', closed: false })),
+   *   release: (conn) => ResultTask.sync(() => { conn.closed = true }),
+   * })
+   * ```
    */
   public static acquireRelease<A, E, R, ReleaseError = never, ReleaseR = never>(
     options: ResultTaskAcquireReleaseOptions<A, E, R, ReleaseError, ReleaseR>,
@@ -1431,7 +1494,21 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
-  /** Acquires a native disposable lazily and releases it in the owning scope. */
+  /**
+   * Acquires a native `Disposable` or `AsyncDisposable` lazily and releases it when the owning scope closes.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const handle = ResultTask.acquireDisposable(
+   *   ResultTask.sync(() => ({
+   *     value: 'leased',
+   *     [Symbol.dispose]() {},
+   *   })),
+   * )
+   * ```
+   */
   public static acquireDisposable<A extends Disposable | AsyncDisposable, E, R>(
     acquire: ResultTask<A, E, R>,
   ): ResultTask<A, E, R | ResultTaskScope<never>> {
@@ -1446,7 +1523,25 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
-  /** Closes a child scope before continuing, adding its deferred release errors to E. */
+  /**
+   * Closes a child scope before continuing, running all registered LIFO finalizers and folding
+   * any deferred release errors into `E`.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const workflow = ResultTask.scoped(
+   *   ResultTask.gen(function* () {
+   *     const resource = yield* ResultTask.acquireRelease({
+   *       acquire: ResultTask.ok('open'),
+   *       release: () => ResultTask.ok(undefined),
+   *     })
+   *     return resource.toUpperCase()
+   *   }),
+   * )
+   * ```
+   */
   public static scoped<A, E, R>(
     task: ResultTask<A, E, R>,
   ): ResultTask<A, E | ScopeError<R>, WithoutScope<R>> {
@@ -1460,7 +1555,17 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
-  /** Creates a service tag that can be requested with `yield*` inside `ResultTask.gen`. */
+  /**
+   * Creates a service tag that can be requested with `yield*` inside `ResultTask.gen` or `ResultTask.fn`.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * interface ClockService { readonly now: () => number }
+   * const ClockTag = ResultTask.service<ClockService, 'Clock'>('Clock')
+   * ```
+   */
   public static service<Service, const Identifier extends string>(
     identifier: Identifier,
   ): ServiceTag<Identifier, Service>
@@ -1474,7 +1579,23 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   }
 
   /* eslint-disable max-params */
-  /** Wraps a generator function without executing it until each task run, optionally piping through post-body operators. */
+  /**
+   * Wraps a generator function into a reusable function that returns a lazy `ResultTask` on each call,
+   * optionally piping the resulting task through post-body operators that also receive the original arguments.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask, ok } from 'resultar'
+   *
+   * const loadGreeting = ResultTask.fn(
+   *   function* (name: string) {
+   *     const trimmed = yield* ok(name.trim())
+   *     return `Hello, ${trimmed}!`
+   *   },
+   *   (task, name) => task.map((msg) => `${msg} (${name.length} chars)`),
+   * )
+   * ```
+   */
   public static fn<
     Body extends (...args: never[]) => Generator<ResultTaskYieldable, unknown, never>,
   >(body: Body): (this: ThisParameterType<Body>, ...args: Parameters<Body>) => FunctionTask<Body>
@@ -1605,7 +1726,21 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     }
   }
 
-  /** Builds a task from a generator and short-circuits on the first failed task. */
+  /**
+   * Builds a lazy `ResultTask` from a generator that yields `ResultTask`, synchronous `Result`,
+   * or `ServiceTag` values, short-circuiting on the first failure.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask, ok } from 'resultar'
+   *
+   * const task = ResultTask.gen(function* () {
+   *   const a = yield* ok(10)
+   *   const b = yield* ResultTask.ok(32)
+   *   return a + b
+   * })
+   * ```
+   */
   public static gen<Yield extends ResultTaskYieldable = never, Return = unknown, Next = unknown>(
     body: () => Generator<Yield, Return, Next>,
   ): ResultTask<Return, GeneratorError<Yield>, GeneratorRequirements<Yield>> {
@@ -1920,6 +2055,15 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   /**
    * Recovers from any failure `Cause<E>` (including `Fail`, `Die`, `Sequential`, and `Parallel`)
    * with another `ResultTask` or synchronous `Result`. External fiber interruption still propagates.
+   *
+   * @example
+   * ```ts
+   * import { Cause, ResultTask } from 'resultar'
+   *
+   * const recovered = ResultTask.fail('boom' as const).catchCause((cause) =>
+   *   ResultTask.ok(`recovered: ${Cause.pretty(cause)}`),
+   * )
+   * ```
    */
   public catchCause<B = never, E2 = never, R2 = never>(
     f: (cause: Cause<E>) => ResultTask<B, E2, R2> | Result<B, E2>,
@@ -1946,6 +2090,15 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
    * Exposes the full failure `Cause<E>` in the typed error channel (`ResultTask<A, Cause<E>, R>`)
    * so composite causes (`Sequential`, `Parallel`, `Die`) can be matched with `catchTag`, `orElse`,
    * or `runResult` without leaving the task pipeline.
+   *
+   * @example
+   * ```ts
+   * import { Cause, ResultTask } from 'resultar'
+   *
+   * const inspected = ResultTask.fail('boom' as const)
+   *   .sandbox()
+   *   .orElse((cause) => ResultTask.ok(Cause.failures(cause)))
+   * ```
    */
   public sandbox(): ResultTask<A, Cause<E>, R> {
     return new ResultTask<A, Cause<E>, R>(async (context) => {
@@ -1961,7 +2114,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
-  /** Restores a sandboxed `Cause<E2>` from the typed error channel back into the task's `Cause` tree. */
+  /**
+   * Restores a sandboxed `Cause<E2>` from the typed error channel back into the task's `Cause` tree.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const task = ResultTask.fail('boom' as const).sandbox().unsandbox()
+   * ```
+   */
   public unsandbox<E2>(this: ResultTask<A, Cause<E2>, R>): ResultTask<A, E2, R> {
     return new ResultTask<A, E2, R>(async (context) => {
       const exit = interruptSuccess(await this.execute(context), context.signal)
@@ -2156,6 +2318,17 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     return this.inspect(onSuccess).inspectError(onFailure)
   }
 
+  /**
+   * Races this task against a deadline of `milliseconds`, failing with `onTimeout()` after
+   * interrupting this task and awaiting its scope finalizers.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const timed = ResultTask.sleep(500).timeout(100, () => ({ _tag: 'TimeoutError' as const }))
+   * ```
+   */
   public timeout<TimeoutError>(
     milliseconds: number,
     onTimeout: () => TimeoutError,
@@ -2163,18 +2336,47 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     return ResultTask.timeout(this, milliseconds, onTimeout)
   }
 
+  /**
+   * Retries this task according to a portable `RetryPolicy` or retry options object, closing the
+   * attempt's scope before starting the next retry.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask, Retry } from 'resultar'
+   *
+   * const retried = ResultTask.fail('transient' as const).retry(Retry.policy({ times: 2, delay: 10 }))
+   * ```
+   */
   public retry(
     options: ResultTaskRetryInput<E | ScopeError<R>>,
   ): ResultTask<A, E | ScopeError<R>, WithoutScope<R>> {
     return ResultTask.retry(this, options)
   }
 
-  /** Delays execution of this task by `milliseconds` using the current run's clock. */
+  /**
+   * Delays execution of this task by `milliseconds` using the current run's clock.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const delayed = ResultTask.ok('ready').delay(50)
+   * ```
+   */
   public delay(milliseconds: number): ResultTask<A, E, R> {
     return ResultTask.delay(this, milliseconds)
   }
 
-  /** Measures the execution duration of this task in milliseconds using the current run's clock. */
+  /**
+   * Measures the execution duration of this task in milliseconds using the current run's clock.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const measured = ResultTask.sleep(25).as('done').timed()
+   * ```
+   */
   public timed(): ResultTask<[durationMs: number, value: A], E, R> {
     return ResultTask.timed<readonly [ResultTask<A, E, R>]>(this)
   }
@@ -2182,6 +2384,13 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   /**
    * Runs `finalizer` unconditionally after this task finishes with `Success`, `Fail`, `Die`, or
    * `Interrupt`. Finalizer failures and defects are combined sequentially with the task outcome.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const tracked = ResultTask.ok(42).ensuring(() => ResultTask.sync(() => console.log('closed')))
+   * ```
    */
   public ensuring<ReleaseError = never, ReleaseR = never>(
     finalizer: (
@@ -2217,6 +2426,13 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   /**
    * Combines this task with another task or synchronous `Result` into a tuple `[A, B]`.
    * Runs sequentially by default, or concurrently when `{ concurrent: true }` is passed.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const pair = ResultTask.ok('a').zip(ResultTask.ok(1), { concurrent: true })
+   * ```
    */
   public zip<B, E2 = never, R2 = never>(
     other: ResultTask<B, E2, R2> | Result<B, E2>,
@@ -2525,7 +2741,17 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     )
   }
 
-  /** Creates a concurrency semaphore with `permits` total permits that can be shared across fibers and tasks. */
+  /**
+   * Creates a concurrency semaphore with `permits` total permits that can be shared across fibers and tasks.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const semaphore = ResultTask.makeSemaphore(2)
+   * const limited = semaphore.withPermit(ResultTask.ok('done'))
+   * ```
+   */
   public static makeSemaphore(permits: number): Semaphore {
     return Semaphore.make(permits)
   }
@@ -2547,7 +2773,22 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
-  /** Forks only at execution. The current scope owns, interrupts and awaits the child. */
+  /**
+   * Forks a child fiber lazily at execution time. The enclosing scope owns, interrupts, and awaits
+   * the child fiber when the scope closes.
+   *
+   * @example
+   * ```ts
+   * import { Fiber, ResultTask } from 'resultar'
+   *
+   * const program = ResultTask.scoped(
+   *   ResultTask.gen(function* () {
+   *     const child = yield* ResultTask.forkChild(ResultTask.sleep(10).as('done'))
+   *     return yield* Fiber.join(child)
+   *   }),
+   * )
+   * ```
+   */
   public static forkChild<A, E, R>(
     task: ResultTask<A, E, R>,
   ): ResultTask<
@@ -2560,7 +2801,17 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     )
   }
 
-  /** A cancelable sleep using the clock supplied to the current run. */
+  /**
+   * A cancelable sleep using the clock supplied to the current run (`Clock.live` by default or
+   * `Clock.virtual()` in tests).
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const delayed = ResultTask.sleep(50).as('ready')
+   * ```
+   */
   public static sleep(milliseconds: number): ResultTask<void> {
     checkedDuration(milliseconds)
     return new ResultTask(async (context) => {
@@ -2573,7 +2824,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
-  /** Reads monotonic time lazily from the current run's clock. */
+  /**
+   * Reads monotonic time lazily from the current run's clock.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const startedAt = ResultTask.now()
+   * ```
+   */
   public static now(): ResultTask<number> {
     return new ResultTask((context) => Promise.resolve(success(context.clock.now())))
   }
@@ -2606,7 +2866,20 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     return finishRace(winner, winnerIndex, children)
   }
 
-  /** Returns the first success. If both fail, preserves their causes in Parallel. */
+  /**
+   * Races two tasks concurrently and returns the first `Success`, interrupting the loser and
+   * awaiting its scope finalizers. If both tasks fail, preserves both causes in `Parallel`.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const fastest = ResultTask.race(
+   *   ResultTask.sleep(10).as('primary'),
+   *   ResultTask.sleep(50).as('replica'),
+   * )
+   * ```
+   */
   public static race<
     Left extends ResultTask<unknown, unknown, unknown>,
     Right extends ResultTask<unknown, unknown, unknown>,
@@ -2641,7 +2914,20 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     return new ResultTask((context) => ResultTask.#race([left, right], context, true))
   }
 
-  /** Returns the first outcome, interrupts the other child and awaits its finalizers. */
+  /**
+   * Races two tasks concurrently and returns the first completed outcome (`Success` or `Failure`),
+   * interrupting the other child and awaiting its finalizers.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const firstOutcome = ResultTask.raceFirst(
+   *   ResultTask.sleep(10).as('fast'),
+   *   ResultTask.sleep(50).as('slow'),
+   * )
+   * ```
+   */
   public static raceFirst<
     Left extends ResultTask<unknown, unknown, unknown>,
     Right extends ResultTask<unknown, unknown, unknown>,
@@ -2676,7 +2962,21 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     return new ResultTask((context) => ResultTask.#race([left, right], context, false))
   }
 
-  /** Times out with a typed error after interruption and cleanup have completed. */
+  /**
+   * Times out `task` after `milliseconds` with a typed error from `onTimeout()`, interrupting the
+   * task and awaiting its finalizers before completing.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const timed = ResultTask.timeout(
+   *   ResultTask.sleep(500).as('slow'),
+   *   100,
+   *   () => ({ _tag: 'TimeoutError' as const }),
+   * )
+   * ```
+   */
   public static timeout<Task extends ResultTask<unknown, unknown, unknown>, TimeoutError>(
     task: Task,
     milliseconds: number,
@@ -2707,7 +3007,18 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     return ResultTask.raceFirst(task, timer)
   }
 
-  /** Each retry closes its attempt scope before evaluating the next attempt. */
+  /**
+   * Retries `task` using a portable `RetryPolicy` or retry options object. Each attempt runs in its
+   * own scope and closes its finalizers before the next retry begins.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask, Retry } from 'resultar'
+   *
+   * const policy = Retry.policy({ times: 2, delay: ({ attempt }) => attempt * 10 })
+   * const resilient = ResultTask.retry(ResultTask.ok('ready'), policy)
+   * ```
+   */
   public static retry<A, E, R>(
     task: ResultTask<A, E, R>,
     options: ResultTaskRetryInput<E | ScopeError<R>>,
@@ -2808,7 +3119,17 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     return combined
   }
 
-  /** Maps lazily, preserving input order. Failure stops scheduling and awaits active children. */
+  /**
+   * Maps `items` lazily into tasks, preserving input order. Any failure stops new scheduling,
+   * interrupts active children, and awaits their finalizers.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const doubled = ResultTask.forEach([1, 2, 3], (n) => ResultTask.ok(n * 2), { concurrency: 2 })
+   * ```
+   */
   public static forEach<Item, A, E, R>(
     items: Iterable<Item>,
     mapper: (item: Item, index: number) => ResultTask<A, E, R>,
@@ -2824,7 +3145,21 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     )
   }
 
-  /** Collects independent typed errors in input order; defects and interruptions still stop work. */
+  /**
+   * Collects all independent typed errors in input order across `items`; defects and interruptions
+   * still stop scheduling and interrupt active children.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const validated = ResultTask.validateAll(
+   *   [1, -2, 3, -4],
+   *   (n) => (n > 0 ? ResultTask.ok(n) : ResultTask.err(`neg:${n}`)),
+   *   { concurrency: 2 },
+   * )
+   * ```
+   */
   public static validateAll<Item, A, E, R>(
     items: Iterable<Item>,
     mapper: (item: Item, index: number) => ResultTask<A, E, R>,
@@ -2840,6 +3175,20 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     )
   }
 
+  /**
+   * Runs a tuple, record, or iterable of tasks and preserves tuple/record types.
+   * Defaults to sequential execution (`concurrency: 1`); pass `{ concurrency }` for parallel execution.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const summary = ResultTask.all(
+   *   { count: ResultTask.ok(3), status: ResultTask.ok('complete' as const) },
+   *   { concurrency: 'unbounded' },
+   * )
+   * ```
+   */
   public static all<const Tasks extends readonly ResultTask<unknown, unknown, unknown>[]>(
     tasks: Tasks,
     options?: ResultTaskConcurrencyOptions,
@@ -4024,6 +4373,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   /**
    * Runs candidate tasks sequentially until the first `Success`, or fails with the last candidate's
    * typed error when all candidates fail. Empty candidate collections defect with `EmptyResultsCollectionError`.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const resolved = ResultTask.firstSuccessOf([
+   *   () => ResultTask.fail('cache-miss' as const),
+   *   () => ResultTask.ok('primary-value'),
+   * ])
+   * ```
    */
   public static firstSuccessOf<
     const Candidates extends Iterable<
@@ -4057,7 +4416,19 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
-  /** Chooses between `onTrue` and `onFalse` based on a boolean, `Result<boolean>`, or `ResultTask<boolean>` condition. */
+  /**
+   * Chooses between `onTrue` and `onFalse` based on a boolean, `Result<boolean>`, or `ResultTask<boolean>` condition.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const routed = ResultTask.if(ResultTask.ok(true), {
+   *   onTrue: () => ResultTask.ok('enabled'),
+   *   onFalse: () => ResultTask.ok('disabled'),
+   * })
+   * ```
+   */
   public static if<
     Cond extends ResultTaskCondition<unknown, unknown>,
     TrueTask extends ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>,
@@ -4119,7 +4490,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
-  /** Runs `body` only when `condition` resolves to `true`; otherwise succeeds with `undefined`. */
+  /**
+   * Runs `body` only when `condition` resolves to `true`; otherwise succeeds with `undefined`.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const maybeAudit = ResultTask.when(true, () => ResultTask.ok('audited'))
+   * ```
+   */
   public static when<
     Cond extends ResultTaskCondition<unknown, unknown>,
     Body extends ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>,
@@ -4157,7 +4537,16 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     return ResultTask.#whenByPredicate(condition, body, (value) => value)
   }
 
-  /** Runs `body` only when `condition` resolves to `false`; otherwise succeeds with `undefined`. */
+  /**
+   * Runs `body` only when `condition` resolves to `false`; otherwise succeeds with `undefined`.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const maybeSeed = ResultTask.unless(false, () => ResultTask.ok('seeded'))
+   * ```
+   */
   public static unless<
     Cond extends ResultTaskCondition<unknown, unknown>,
     Body extends ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>,
@@ -4238,6 +4627,17 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
   /**
    * Repeats a task-producing body while `while(state)` holds, advancing state with `step(state)`.
    * Pass `discard: true` to return `void` instead of collecting step values.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const pages = ResultTask.loop(1, {
+   *   while: (page) => page <= 3,
+   *   step: (page) => page + 1,
+   *   body: (page) => ResultTask.ok(`page:${page}`),
+   * })
+   * ```
    */
   public static loop<
     State,
@@ -4345,7 +4745,19 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
-  /** Repeatedly transforms state with `body(state)` while `while(state)` holds. */
+  /**
+   * Repeatedly transforms state with `body(state)` while `while(state)` holds.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const total = ResultTask.iterate(1, {
+   *   while: (n) => n < 8,
+   *   body: (n) => ResultTask.ok(n * 2),
+   * })
+   * ```
+   */
   public static iterate<
     State,
     BodyState extends WidenTaskLiteral<State>,
@@ -4586,7 +4998,18 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     throw new ResultTaskCauseError(exit.cause)
   }
 
-  /** Starts an independent root run immediately. Its handle owns interruption and finalization. */
+  /**
+   * Starts an independent root fiber immediately. Its returned `FiberHandle` owns interruption,
+   * status inspection, and finalization.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const fiber = ResultTask.runFork(ResultTask.sleep(10).as('done'))
+   * const exit = await ResultTask.runExit(fiber.await())
+   * ```
+   */
   public static runFork<Task>(
     task: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
     ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
@@ -4638,7 +5061,17 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     })
   }
 
-  /** Runs a task and preserves success, typed failure, and runtime defects in an `Exit`. */
+  /**
+   * Runs a task and preserves success, typed failure, interruption, and runtime defects in an `Exit`
+   * without rejecting the returned `Promise`.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const exit = await ResultTask.runExit(ResultTask.ok(42))
+   * ```
+   */
   public static runExit<Task>(
     task: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
     ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
@@ -4655,7 +5088,17 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     return ResultTask.runExitInternal(task, args[0])
   }
 
-  /** Returns single typed failures as Err; rejects defects, interruption, and composite causes. */
+  /**
+   * Runs a task and returns single typed failures as `Err<E>`; rejects defects (`Die`),
+   * interruptions (`AbortError`), and composite causes (`ResultTaskCauseError`).
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const result = await ResultTask.runResult(ResultTask.ok(42))
+   * ```
+   */
   public static runResult<Task>(
     task: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
     ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
@@ -4672,7 +5115,17 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     return ResultTask.runResultInternal(task, args[0])
   }
 
-  /** Runs a task and returns the success value, rejecting on typed failures or defects. */
+  /**
+   * Runs a task and resolves to the success value `A`, rejecting on typed failures, interruptions,
+   * or runtime defects.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const value = await ResultTask.runPromise(ResultTask.ok(42))
+   * ```
+   */
   public static runPromise<Task>(
     task: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
     ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>

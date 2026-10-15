@@ -1,7 +1,14 @@
 import { err, ok } from '../result/result.js'
 import type { Result } from '../result/result.js'
 
-/** A failure cause produced by a ResultTask execution. */
+/**
+ * Lossless failure tree produced by a `ResultTask` execution (`Exit` failure channel,
+ * `ResultTask.sandbox`, `ResultTask.catchCause`, and `ResultTask.onExit`).
+ *
+ * Leaves distinguish expected domain errors (`Fail`), unexpected defects (`Die`), and cancellation
+ * (`Interrupt`), while `Sequential` and `Parallel` nodes preserve combined failures from finalizers
+ * and concurrent children.
+ */
 export type Cause<E> =
   | { readonly _tag: 'Fail'; readonly error: E }
   | { readonly _tag: 'Die'; readonly defect: unknown }
@@ -157,23 +164,41 @@ const pretty = <E>(cause: Cause<E>): string => {
   return lines.join('\n')
 }
 
-/** Inspection and diagnostic formatting for sequential and parallel cause trees. */
+/**
+ * Inspection and diagnostic formatting utilities for sequential and parallel {@link Cause} trees.
+ *
+ * @example
+ * ```ts
+ * import { Cause, ResultTask } from 'resultar'
+ *
+ * const recovered = await ResultTask.err('PrimaryFailed' as const)
+ *   .sandbox()
+ *   .mapError((cause) => ({
+ *     firstError: Cause.findError(cause).unwrapOr('none' as const),
+ *     report: Cause.pretty(cause),
+ *   }))
+ *   .run()
+ * ```
+ */
 export const Cause: {
-  /** Type guard for Cause values. */
+  /** Stack-safe structural type guard for {@link Cause} trees (rejects cyclic objects). */
   readonly isCause: (value: unknown) => value is Cause<unknown>
-  /** Whether any leaf contains a typed failure. */
+  /** Returns `true` if any leaf in `cause` is a typed `Fail` node. */
   readonly hasFails: <E>(cause: Cause<E>) => boolean
-  /** Whether any leaf contains a defect. */
+  /** Returns `true` if any leaf in `cause` is an unexpected `Die` defect node. */
   readonly hasDies: <E>(cause: Cause<E>) => boolean
-  /** Whether any leaf contains an interruption. */
+  /** Returns `true` if any leaf in `cause` is an `Interrupt` node. */
   readonly hasInterrupts: <E>(cause: Cause<E>) => boolean
-  /** All typed failures in left-to-right leaf order. */
+  /** Collects all typed `Fail` errors from `cause` in left-to-right leaf order. */
   readonly failures: <E>(cause: Cause<E>) => readonly E[]
-  /** All defects in left-to-right leaf order. */
+  /** Collects all `Die` defects from `cause` in left-to-right leaf order. */
   readonly defects: <E>(cause: Cause<E>) => readonly unknown[]
-  /** First typed error in left-to-right order, or the original failure-free tree. */
+  /**
+   * Returns `Ok(firstError)` for the first `Fail` leaf in left-to-right order,
+   * or `Err(causeWithoutFails)` typed as `Cause<never>` when no `Fail` leaf exists.
+   */
   readonly findError: <E>(cause: Cause<E>) => Result<E, Cause<never>>
-  /** Formats every leaf in order, including Error stacks, without changing the tree. */
+  /** Formats every leaf in left-to-right order (including `Error` stacks) for human diagnostics. */
   readonly pretty: <E>(cause: Cause<E>) => string
 } = Object.freeze({
   isCause,

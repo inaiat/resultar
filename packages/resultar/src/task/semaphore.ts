@@ -36,7 +36,23 @@ const assertPositiveSafeInteger = (permits: number, label: string): void => {
   }
 }
 
-/** Cooperative, shareable permit limiter for `ResultTask` workflows. */
+/**
+ * Cooperative, FIFO-ordered permit limiter for bounding concurrency across `ResultTask` workflows.
+ *
+ * Permits are acquired only when the wrapped `ResultTask` runs, and are guaranteed to be released
+ * when the task completes, fails, dies, or is interrupted (including while waiting in the queue).
+ *
+ * @example
+ * ```ts
+ * import { ResultTask, Semaphore } from 'resultar'
+ *
+ * const limiter = Semaphore.make(2)
+ * const tasks = [1, 2, 3, 4].map((id) =>
+ *   limiter.withPermit(ResultTask.of(() => `processed-${id}`)),
+ * )
+ * const results = await ResultTask.all(tasks, { concurrency: 'unbounded' }).run()
+ * ```
+ */
 export interface Semaphore {
   /** Returns the number of currently available permits. */
   readonly available: () => number
@@ -186,12 +202,22 @@ function withPermit<A, E, R>(
   return semaphore.withPermit(task)
 }
 
-/** Operations for creating and applying cooperative semaphores across `ResultTask` pipelines. */
+/**
+ * Operations for creating and applying cooperative {@link Semaphore} limiters across `ResultTask` pipelines.
+ *
+ * @example
+ * ```ts
+ * import { pipe, ResultTask, Semaphore } from 'resultar'
+ *
+ * const sem = Semaphore.make(3)
+ * const guarded = pipe(ResultTask.ok('work'), Semaphore.withPermits(sem, 2))
+ * ```
+ */
 export const Semaphore: {
-  /** Creates a semaphore with `permits` available permits. */
+  /** Creates a new cooperative {@link Semaphore} with `permits` total capacity (`permits >= 1`). */
   readonly make: (permits: number) => Semaphore
-  /** Acquires `permits` on `semaphore` for the duration of `task`. */
+  /** Data-first or data-last helper that acquires `permits` on `semaphore` for the duration of `task`. */
   readonly withPermits: typeof withPermits
-  /** Acquires 1 permit on `semaphore` for the duration of `task`. */
+  /** Data-first or data-last helper that acquires `1` permit on `semaphore` for the duration of `task`. */
   readonly withPermit: typeof withPermit
 } = Object.freeze({ make, withPermits, withPermit })

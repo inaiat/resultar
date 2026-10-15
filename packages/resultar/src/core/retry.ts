@@ -1,32 +1,41 @@
-/** Metadata shared by canonical retry predicates, delays, and observers. */
+/**
+ * Attempt metadata passed to retry predicates (`while`), dynamic delay callbacks (`delayMs`),
+ * and retry observers (`onRetry`).
+ */
 export interface RetryContext {
-  /** Current attempt number, starting at zero. */
+  /** Zero-based index of the attempt that just failed (`0` on the initial failure). */
   readonly attempt: number
-  /** Next attempt number when another retry is scheduled. */
+  /** One-based index of the retry attempt about to be scheduled (`attempt + 1`). */
   readonly nextAttempt: number
-  /** Retries available after the current failure, before scheduling the next attempt. */
+  /** Number of retries remaining after the current failure, before scheduling `nextAttempt`. */
   readonly retriesRemaining: number
 }
 
-/** A portable retry policy for both eager ResultAsync and lazy ResultTask operations. */
+/**
+ * Configuration for creating a portable {@link RetryPolicy} shared by both eager `ResultAsync.retry`
+ * and lazy `ResultTask.retry` / `ResultTask.retryOrElse`.
+ */
 export interface RetryPolicyOptions<E = unknown> {
-  /** Number of retries after the initial attempt. */
+  /** Maximum number of retry attempts after the initial execution (`0` means no retries). */
   readonly times: number
-  /** Delay in milliseconds, before applying backoff and jitter. */
+  /** Base delay in milliseconds (or a function of {@link RetryContext}) before backoff and jitter. */
   readonly delayMs?: number | ((context: RetryContext) => number)
-  /** Exponential multiplier, at least one, applied once per completed retry. */
+  /** Exponential multiplier (`>= 1`) applied per retry (`base * backoff ** attempt`). */
   readonly backoff?: number
-  /** Symmetric jitter factor. A factor of 0.5 varies delay by up to 50% in either direction. */
+  /** Symmetric jitter factor (`>= 0`). A factor of `0.5` varies delay within `[0.5 * d, 1.5 * d]`. */
   readonly jittered?: number
-  /** Evaluated only for failures with retry budget remaining. */
+  /** Predicate evaluated when retry budget remains; returning `false` stops retrying immediately. */
   readonly while?: (error: E, context: RetryContext) => boolean | Promise<boolean>
-  /** Awaited before the retry delay; observer failures do not change the operation outcome. */
+  /** Observer awaited before sleeping for the next retry; thrown errors are swallowed. */
   readonly onRetry?: (error: E, context: RetryContext) => void | Promise<void>
 }
 
 const RetryPolicyTypeId: unique symbol = Symbol.for('resultar/RetryPolicy')
 
-/** Branded policy created by Retry.policy; legacy callback signatures remain unambiguous. */
+/**
+ * Immutable, branded retry policy created by {@link Retry.policy}.
+ * Policies hold pure configuration and can be safely reused across concurrent runs.
+ */
 export interface RetryPolicy<E = unknown> extends RetryPolicyOptions<E> {
   readonly [RetryPolicyTypeId]: typeof RetryPolicyTypeId
 }
@@ -55,8 +64,29 @@ export const validateRetryPolicy = <E>(options: RetryPolicyOptions<E>): void => 
   }
 }
 
-/** Canonical retry construction; policies hold configuration and never retain attempt state. */
+/**
+ * Namespace for constructing portable, reusable {@link RetryPolicy} instances.
+ *
+ * @example
+ * ```ts
+ * import { Retry, ResultTask } from 'resultar'
+ *
+ * const transientPolicy = Retry.policy<{ readonly retryable: boolean }>({
+ *   times: 3,
+ *   delayMs: 100,
+ *   backoff: 2,
+ *   jittered: 0.2,
+ *   while: (err) => err.retryable,
+ * })
+ *
+ * const task = ResultTask.of(() => ({ status: 200 })).retry(transientPolicy)
+ * ```
+ */
 export const Retry: {
+  /**
+   * Validates and freezes a portable {@link RetryPolicy} that can be passed to `ResultTask.retry`,
+   * `ResultTask.retryOrElse`, and `ResultAsync.retry`.
+   */
   readonly policy: <E = unknown>(options: RetryPolicyOptions<E>) => RetryPolicy<E>
 } = Object.freeze({
   policy: <E = unknown>(options: RetryPolicyOptions<E>): RetryPolicy<E> => {

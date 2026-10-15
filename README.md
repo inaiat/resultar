@@ -74,31 +74,29 @@ The [v4 migration notes](docs/migrations/v4.md) cover release compatibility and 
 
 ## New features
 
-These additions are implemented in the workspace and prepared for minor releases through Changesets.
-Versioning and publication follow the project's release workflow.
+These additions are implemented in the workspace and covered by unit, type, mutation, and smoke tests:
 
 | Feature | What it enables | Guide |
 | --- | --- | --- |
+| `Match` (`value`, `type`, `context`, `fn`, `valueTags`, `typeTags`) | Exhaustive and partial pattern matching over values, tagged unions, discriminators, predicates, and HTTP route contexts. | [Pattern Matching](DOCUMENTATION.md#pattern-matching) |
+| Structured task concurrency (`forkChild`, `runFork`, `Fiber`, `Semaphore`) | Scope-owned child fibers, detached join (`{ interruption: 'detach' }`), root background fibers, and bounded permits (`withPermit`, `withPermits`). | [Structured Task Concurrency](DOCUMENTATION.md#structured-task-concurrency-fibers-and-semaphores) |
+| Task races, timeouts, timing, and `Clock.virtual` | Structured `race` / `raceFirst` / `timeout` with awaited loser finalizers, `delay` / `timed`, and deterministic virtual-clock testing. | [Task Racing and Timeouts](DOCUMENTATION.md#task-racing-timeouts-timing-and-virtual-clock) |
+| Portable `Retry.policy` & `ResultTask.retry` / `retryOrElse` | Reusable exponential/jittered retry policies shared across `ResultAsync` and `ResultTask`. | [Portable Retry Policies](DOCUMENTATION.md#portable-retry-policies-and-resulttask-retry) |
+| `ResultTask` collections & loops (`all`, `forEach`, `validateAll`, `zip`, `loop`, `iterate`) | Sequential, bounded (`{ concurrency: n }`), or unbounded task collections with fail-fast sibling interruption or error accumulation. | [ResultTask Collections](DOCUMENTATION.md#resulttask-collections-and-loops) |
+| `Cause` helpers, `sandbox` / `unsandbox` / `catchCause`, `ensuring` / `onExit` | Inspect sequential/parallel causes, expose full `Cause<E>` on the error channel for selective recovery, and register unconditional finalizers. | [Structured Task Concurrency](DOCUMENTATION.md#structured-task-concurrency-fibers-and-semaphores) |
+| Cooperative `Scheduler` & `yieldEvery` | Configure fiber batch budgets (`Scheduler.live`, custom `TaskScheduler`) and insert cooperative yield points in CPU-bound loops. | [Structured Task Concurrency](DOCUMENTATION.md#structured-task-concurrency-fibers-and-semaphores) |
+| `Result.gen` & `Result.fn` plain-value returns | Write linear synchronous or async generators that return plain success values and compose post-body pipeline operators. | [Result Generators](DOCUMENTATION.md#result-generators) |
+| `createTaggedError(...).withProps<Props>()` | Declare explicit typed payload properties on tagged errors even when the message template is static, enforced by `resultar-check`. | [Tagged Errors](DOCUMENTATION.md#tagged-errors) |
+| `Result.fromNullishOr` & `Result.liftPredicate` | Construct `Result` values or reusable curried validators from nullable values, predicates, and TypeScript refinements. | [Creating Results](DOCUMENTATION.md#creating-results) |
 | `pipe`, `flow`, `identity`, `constant` | Reusable synchronous function composition, typed callbacks, and fixed fallbacks. | [Function composition](DOCUMENTATION.md#function-composition-and-parameterized-tasks) |
-| `ResultTask.fn` | Parameterized lazy generators with inferred success, errors, services, and preserved arguments/receiver. | [Task functions](DOCUMENTATION.md#parameterized-task-functions) |
-| `ResultTask.catchTag` / `catchTags` | Recover selected error tags while keeping unhandled errors and handler requirements in the type. | [Tagged task recovery](DOCUMENTATION.md#tagged-task-recovery) |
-| `ResultTask.acquireDisposable` | Own native `Disposable` / `AsyncDisposable` resources with awaited scoped cleanup. | [Native disposal](DOCUMENTATION.md#native-disposable-resources) |
-| Task requirement checks | Detect `any`/`unknown` requirements and assertions that hide services or pending scope errors. | [Requirements safety](DOCUMENTATION.md#task-requirement-safety) |
-| Unused suppression diagnostics | Find obsolete suppression entries and unknown rule IDs. | [Suppression checks](DOCUMENTATION.md#unused-suppression-diagnostics) |
-| Updated LSP | Analyze unsaved buffers, explain `T`/`E`/`R` in hover, and preview generator/recovery refactors. | [Editor tooling](DOCUMENTATION.md#editor-diagnostics-and-refactors) |
-| `overview` / `quickfixes` CLI | Inventory exported workflows, errors, and services; inspect proposed edits. | [Inspection commands](DOCUMENTATION.md#inspection-commands) |
-| Vite+ 1.1.0 and corrected mutation testing | Keep the test toolchain aligned and run Stryker's selected tests correctly with Vitest 5. | [Workspace validation](DOCUMENTATION.md#workspace-toolchain-and-validation) |
+| `ResultTask.fn`, `catchTag` / `catchTags`, ` catchReason` / `catchReasons`, `acquireDisposable` | Parameterized lazy task generators, tagged/reasoned error recovery, and native `Disposable` / `AsyncDisposable` ownership. | [Task functions](DOCUMENTATION.md#parameterized-task-functions) |
+| `resultar-check` diagnostics, LSP, and `overview` / `quickfixes` CLI | Enforce `resultTaskRequirementsSafety`, `unusedSuppression`, `taggedErrorPropsMismatch`, and `matchExhaustive` in CLI and editor. | [No-Discard Validation](DOCUMENTATION.md#no-discard-validation) |
 
-The two new checker rules default to `suggestion`, which the default `failOn: "message"` includes
-in CI failures. See the guide for gradual-adoption settings.
+`ResultAsync` remains eager; `ResultTask` remains lazy and repeatable. See the
+[gradual adoption guide](docs/gradual-adoption.md), [v4 migration notes](docs/migrations/v4.md),
+[task resilience example](examples/resultar/src/task-resilience.ts), and
+[functional ergonomics example](examples/resultar/src/functional-ergonomics.ts) (`pnpm run example:resultar`).
 
-`ResultAsync` remains eager; `ResultTask` remains lazy and repeatable. Scope-owned fibers,
-task races/timeouts, retries, bounded collections and virtual clocks are included in the next major.
-See the [gradual adoption guide](docs/gradual-adoption.md), [v4 migration notes](docs/migrations/v4.md),
-and [resilience example](examples/resultar/src/task-resilience.ts).
-Function `memoize` / `memoizeIdempotent` await a separate evaluation, and `dual`
-is an internal helper. Try the [functional ergonomics example](examples/resultar/src/functional-ergonomics.ts)
-with `pnpm run example:resultar`.
 
 ## Documentation Map
 
