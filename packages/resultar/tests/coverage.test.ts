@@ -1,10 +1,10 @@
 import { deepEqual, equal, ok as isTrue, rejects, throws } from 'node:assert'
 import { describe, it } from 'vite-plus/test'
 
-import { createResultarError } from '../src/error.js'
+import { createResultarError } from '../src/core/error.js'
 import type { Result, TaggedEnum } from '../src/index.js'
 import * as resultar from '../src/index.js'
-import type * as ResultAsyncAdapter from '../src/result-async-adapter.js'
+import type * as ResultAsyncAdapter from '../src/result/result-async-adapter.js'
 
 const resultAsyncForEach: typeof resultar.ResultAsync.forEach = resultar.ResultAsync.forEach
 
@@ -91,6 +91,7 @@ describe('coverage-focused public behavior', () => {
     equal(yielded.value, errResult)
     deepEqual(iterator.next(), { done: true, value: errResult })
 
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported legacy API compatibility assertion.
     const safeUnwrapIterator = errResult.safeUnwrap()
     const safeYielded = safeUnwrapIterator.next()
 
@@ -104,7 +105,7 @@ describe('coverage-focused public behavior', () => {
       .false(() => resultar.ok('no'))
 
     equal(ifResult._unsafeUnwrapErr(), 'failure')
-    const okTapError = resultar.ok('value').tapError(() => {
+    const okTapError = resultar.ok('value').inspectError(() => {
       throw new Error('should not run')
     })
 
@@ -229,7 +230,7 @@ describe('coverage-focused public behavior', () => {
 
     equal(ifResult._unsafeUnwrapErr(), 'async failure')
 
-    const okTapError = await resultar.okAsync('value').tapError(() => {
+    const okTapError = await resultar.okAsync('value').inspectError(() => {
       throw new Error('should not run')
     })
 
@@ -613,7 +614,7 @@ describe('coverage-focused public behavior', () => {
 
   it('covers ResultAsync adapter registration failure in isolation', async () => {
     const adapter = (await import(
-      new URL('../src/result-async-adapter.ts?coverage', import.meta.url).href
+      new URL('../src/result/result-async-adapter.ts?coverage', import.meta.url).href
     )) as typeof ResultAsyncAdapter
 
     throws(() => adapter.createResultAsync(Promise.resolve(resultar.ok(1))), /not registered/u)
@@ -625,7 +626,7 @@ describe('coverage-focused public behavior', () => {
 
     throws(
       () =>
-        resultar.safeTry(function* () {
+        resultar.Result.gen(function* () {
           yield* [] as Iterable<Result<never, Error>>
           throw thrown
         }),
@@ -633,10 +634,10 @@ describe('coverage-focused public behavior', () => {
     )
     await rejects(
       async () =>
-        await resultar.safeTry(async function* () {
+        await resultar.Result.gen(async function* () {
           yield* [] as Iterable<Result<never, Error>>
           await Promise.reject(rejected)
-          return resultar.ok(1)
+          return 1
         }),
       rejected,
     )
@@ -739,6 +740,7 @@ describe('coverage-focused public behavior', () => {
     equal(typeof resultar.ok, 'function')
     equal(typeof resultar.err, 'function')
     equal(typeof resultar.unit, 'function')
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported legacy API compatibility assertion.
     equal(typeof resultar.tryCatch, 'function')
     equal(typeof resultar.fromThrowable, 'function')
     equal(typeof resultar.okAsync, 'function')
@@ -749,7 +751,9 @@ describe('coverage-focused public behavior', () => {
     equal(typeof resultar.fromThrowableAsync, 'function')
     equal(typeof resultar.runPromise, 'function')
     equal(typeof resultar.runSync, 'function')
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported legacy API compatibility assertion.
     equal(typeof resultar.tryCatchAsync, 'function')
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported legacy API compatibility assertion.
     equal(typeof resultar.safeTry, 'function')
     equal(typeof resultar.createTaggedError, 'function')
     equal(typeof resultar.findCause, 'function')

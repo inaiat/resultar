@@ -312,16 +312,16 @@ export declare const unknownResultTask: ResultTask<User, unknown>;
 // resultar/prefer-and-then: map should return plain values, not another
 // ResultTask. Use andThen/flatMap for lazy fallible composition.
 export const preferResultTaskAndThenExample = () =>
-  loadUserTask("prefer-task-and-then").map(() => ResultTask.succeed("nested"));
+  loadUserTask("prefer-task-and-then").map(() => ResultTask.ok("nested"));
 
 // resultar/prefer-map: andThen is unnecessary when the callback only creates a
 // successful ResultTask. A direct map keeps the transformation non-fallible.
 export const preferResultTaskMapExample = () =>
-  loadUserTask("prefer-task-map").andThen((user) => ResultTask.succeed(user.email));
+  loadUserTask("prefer-task-map").andThen((user) => ResultTask.ok(user.email));
 
 // resultar/no-useless-recovery: catchAll cannot recover an infallible task.
 export const noUselessResultTaskRecoveryExample = () =>
-  ResultTask.succeed("infallible-task").catchAll(() => ResultTask.succeed("unreachable"));
+  ResultTask.ok("infallible-task").catchAll(() => ResultTask.ok("unreachable"));
 
 // resultar/unsafe-result-type-assertion: narrowing a ResultTask error channel
 // discards possible failures from the type system.
@@ -330,9 +330,9 @@ export const unsafeResultTaskTypeAssertionExample = (
 ): ResultTask<User, SaveUserError> => task as ResultTask<User, SaveUserError>;
 
 // resultar/yield-star-in-result-task-gen: ResultTask.gen only composes tasks
-// and services through yield*. A plain yield is rejected as an unsupported
-// runtime value.
+// and services through yield*. A plain yield is rejected at compile time and runtime.
 export const yieldStarInResultTaskGenExample = () =>
+  // @ts-expect-error plain yield is rejected by ResultTaskYieldable; use yield* instead.
   ResultTask.gen(function* () {
     yield loadUserTask("plain-yield");
 
@@ -354,7 +354,7 @@ export const unscopedAcquireReleaseExample = () =>
   ResultTask.gen(function* () {
     yield* ResultTask.acquireRelease({
       acquire: loadUserTask("unscoped"),
-      release: () => ResultTask.succeed(undefined),
+      release: () => ResultTask.ok(undefined),
     });
 
     return { email: "unreachable@example.com", id: "unreachable" };
@@ -436,6 +436,7 @@ export const obsoleteWildcardSuppression = 42;
 export const unknownRuleSuppression = "unknown-rule";
 
 // resultar/yield-star-in-result-task-gen also recognizes parameterized fn bodies.
+// @ts-expect-error plain yield is rejected by ResultTaskYieldable; use yield* instead.
 export const yieldStarInResultTaskFnExample = ResultTask.fn(function* (id: string) {
   yield loadUserTask(id);
 

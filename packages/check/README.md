@@ -162,7 +162,7 @@ version immediately. Stale document versions are ignored. Save, close, and watch
 refresh the snapshot; closing a buffer restores its disk contents.
 
 Hover separates success `T`, errors `E`, and requirements `R`, including `yield*` task
-operands. Service hover shows its identifier and contract. Quick fixes and refactors use UTF-16
+operands. Match hover shows its input, remaining cases, and matched output. Service hover shows its identifier and contract. Quick fixes and refactors use UTF-16
 ranges from the analyzed text and versioned document edits, so editors can reject stale actions.
 
 For Zed, the project-local setup is generated and checked with:
@@ -306,7 +306,9 @@ The new requirements and suppression rules default to `suggestion`; the default
 
 Rules understand both method and static composition forms where applicable. ResultTask-aware checks
 cover ignored tasks, unknown or narrowed error and requirements channels, nested tasks returned from `map`, Promises
-stored in task successes, useless `catchAll`, and generator composition.
+stored in task successes, useless recovery, and generator composition. Task checks and recovery refactors
+understand both `mapError` / `flatMap` / `catchAll` and `mapErr` / `andThen` / `orElse`, so existing
+workflows remain valid during gradual adoption of the consistent method names.
 
 Generator rules also cover `Result.gen` and `ResultTask.fn`. Static ResultTask and Result namespace recognition and
 generator recognition resolve imported symbols, including renamed imports, namespace imports,

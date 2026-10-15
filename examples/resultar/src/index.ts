@@ -9,6 +9,7 @@ export * from "./resource-cleanup.js";
 export * from "./recovery-and-fallbacks.js";
 export * from "./sync-validation.js";
 export * from "./tagged-enum.js";
+export * from "./task-resilience.js";
 
 import { fastestPrice, loadCatalogWithFallback, loadUserWithTimeout } from "./async-resilience.js";
 import { createPaidAccountResponse } from "./domain-workflow.js";
@@ -16,6 +17,7 @@ import { runFunctionalErgonomics } from "./functional-ergonomics.js";
 import { importRowsWithCleanup } from "./resource-cleanup.js";
 import { createSignupResponse } from "./sync-validation.js";
 import { decidePaymentState, paymentStateLabel, settlePayment } from "./tagged-enum.js";
+import { runTaskResilience } from "./task-resilience.js";
 
 const errorCode = (error: unknown): string => {
   if (typeof error === "object" && error !== null && "_tag" in error) {
@@ -34,6 +36,7 @@ export const runCookbook = async () => {
 
   return {
     ergonomics: await runFunctionalErgonomics(),
+    resilience: await runTaskResilience(),
     account: createPaidAccountResponse({
       cardToken: "card_4242",
       email: "ada@example.com",

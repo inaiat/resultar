@@ -47,7 +47,7 @@ export function startSession(
     catch: sessionError,
   }).mapErr(sessionError);
   const task = use((services) =>
-    ResultTask.sync(() => readiness.resolve(services)).flatMap(() =>
+    ResultTask.sync(() => readiness.resolve(services)).andThen(() =>
       ResultTask.fromResultAsync(() => finished),
     ),
   );
@@ -71,6 +71,7 @@ export function startSession(
 
 export function hasFailure(cause: Cause<unknown>): boolean {
   if (cause._tag === "Interrupt") return false;
-  if (cause._tag === "Sequential") return hasFailure(cause.left) || hasFailure(cause.right);
+  if (cause._tag === "Sequential" || cause._tag === "Parallel")
+    return hasFailure(cause.left) || hasFailure(cause.right);
   return true;
 }

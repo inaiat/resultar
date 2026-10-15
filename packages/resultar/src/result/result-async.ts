@@ -14,12 +14,21 @@ import type {
   InferAsyncOkTypes,
   InferErrTypes,
   InferOkTypes,
-} from './utils.js'
+} from '../core/utils.js'
 
-import { AbortError } from './abort-error.js'
-import { Pipeable } from './pipe.js'
+import { AbortError } from '../core/abort-error.js'
+import { dual } from '../core/dual.js'
+import { Pipeable } from '../core/pipe.js'
 import { registerResultAsyncFactory } from './result-async-adapter.js'
-import { ResultTask } from './result-task.js'
+import { ResultTask } from '../task/result-task.js'
+import {
+  isRetryPolicy,
+  observeRetry,
+  retryContext,
+  retryPolicyDelay,
+  validateRetryPolicy,
+} from '../core/retry.js'
+import type { RetryContext, RetryPolicy } from '../core/retry.js'
 import {
   Result,
   createEmptyResultsCollectionError,
@@ -27,10 +36,16 @@ import {
   getMatchErrorHandler,
   ok as resultOk,
 } from './result.js'
-import { isError } from './tagged-error.js'
-import { callTaggedHandler, hasTag, isTaggedHandlerMatch, matchTaggedOr } from './tagged-match.js'
+import { isError } from '../tagged/tagged-error.js'
+import {
+  callTaggedHandler,
+  hasTag,
+  isTaggedHandlerMatch,
+  matchTaggedOr,
+} from '../tagged/tagged-match.js'
 import type {
   CatchTagHandlerResult,
+  CoveredHandlerKeys,
   CatchReasonHandlerResult,
   ErrorForTag,
   ExcludeReasonTag,
@@ -38,6 +53,7 @@ import type {
   MatchTagHandlerResult,
   MatchTagHandlers,
   PartialMatchTagHandlers,
+  RemainingMatchTagErrors,
   ReasonForTag,
   ReasonTagsOf,
   ReasonsOf,
@@ -45,7 +61,7 @@ import type {
   ResultAsyncCatchTagHandlers as CatchTagHandlers,
   TagsOf,
   TagsWithReasonOf,
-} from './tagged-types.js'
+} from '../tagged/tagged-types.js'
 
 type ResultAsyncFinalizer<T, E> = (
   value: T | undefined,
@@ -212,7 +228,7 @@ export interface ResultAsyncTimeoutOptions<E> {
 /**
  * Metadata passed to retry predicates, delays, callbacks, and fallback handlers.
  */
-export interface ResultAsyncRetryContext {
+export interface ResultAsyncRetryContext extends RetryContext {
   /**
    * Current attempt number, starting at 0.
    */
@@ -234,8 +250,11 @@ export type ResultAsyncRetryTask<T, E> = (
   attempt: number,
   signal: ResultAsyncAbortSignal,
 ) => ResultAsync<T, E>
-type ResultAsyncRetryTaskOk<Task> = Task extends ResultAsyncRetryTask<infer T, unknown> ? T : never
-type ResultAsyncRetryTaskErr<Task> = Task extends ResultAsyncRetryTask<unknown, infer E> ? E : never
+type ResultAsyncRetryTaskOk<Task> = Task extends ResultAsyncRetryTask<infer T, infer _E> ? T : never
+type ResultAsyncRetryTaskErr<Task> =
+  Task extends ResultAsyncRetryTask<infer _T, infer E> ? E : never
+// eslint-disable-next-line typescript/no-explicit-any -- Unknown contextual returns erase concrete errors in inline factories; outputs are inferred from Task.
+type ResultAsyncRetryCandidate = ResultAsyncRetryTask<any, any>
 type ResultAsyncRetryDelay = number | ((context: ResultAsyncRetryContext) => number)
 /** Retry policy for `ResultAsync.retry` and related helpers. */
 export interface ResultAsyncRetryOptions<E> {
@@ -274,6 +293,13 @@ export interface ResultAsyncRetryOrElseOptions<E, F, U> extends ResultAsyncRetry
   /**
    * Fallback Resultar operation used after retry exhaustion.
    */
+  readonly orElse: (error: E, context: ResultAsyncRetryContext) => Result<U, F> | ResultAsync<U, F>
+}
+
+type ResultAsyncRetryInput<E> =
+  | ResultAsyncRetryOptions<E>
+  | (RetryPolicy<E> & { readonly signal?: ResultAsyncAbortSignal })
+type ResultAsyncRetryOrElseInput<E, F, U> = ResultAsyncRetryInput<E> & {
   readonly orElse: (error: E, context: ResultAsyncRetryContext) => Result<U, F> | ResultAsync<U, F>
 }
 
@@ -375,6 +401,13 @@ type ResultAsyncZipped<
 type ResultAsyncBooleanCondition = boolean | (() => boolean)
 type ResultAsyncConditional = Result<unknown, unknown> | ResultAsync<unknown, unknown>
 type ResultAsyncConditionResult = Result<boolean, unknown> | ResultAsync<boolean, unknown>
+type ResultAsyncCondition =
+  | ResultAsyncBooleanCondition
+  | ResultAsyncConditionResult
+  | (() => ResultAsyncConditionResult)
+type ResultAsyncConditionError<Condition> = Condition extends () => infer Value
+  ? HandlerErr<Value>
+  : HandlerErr<Condition>
 type ResultAsyncIf<
   ConditionErr,
   OnTrue extends ResultAsyncConditional,
@@ -383,14 +416,14 @@ type ResultAsyncIf<
   HandlerOk<OnTrue> | HandlerOk<OnFalse>,
   ConditionErr | HandlerErr<OnTrue> | HandlerErr<OnFalse>
 >
-type ResultAsyncWhen<R extends ResultAsyncConditional> = ResultAsync<
+type ResultAsyncWhen<R extends ResultAsyncConditional, ConditionErr = never> = ResultAsync<
   HandlerOk<R> | undefined,
-  HandlerErr<R>
+  ConditionErr | HandlerErr<R>
 >
 type ResultAsyncWhenWithCondition<
   Condition extends ResultAsyncConditionResult,
   R extends ResultAsyncConditional,
-> = ResultAsync<HandlerOk<R> | undefined, HandlerErr<Condition> | HandlerErr<R>>
+> = ResultAsyncWhen<R, HandlerErr<Condition>>
 type WidenLiteral<T> = T extends string
   ? string
   : T extends number
@@ -507,20 +540,13 @@ const combineResultAsyncList = <T, E>(
 const collectResultAsyncRecord = async (
   asyncResultRecord: ResultAsyncRecord,
 ): Promise<Record<string, Result<unknown, unknown>>> => {
-  const entries = Object.entries(asyncResultRecord)
-  const resultList = await Promise.all(entries.map((entry) => entry[1]))
-  const resultRecord: Record<string, Result<unknown, unknown>> = {}
+  const entries = await Promise.all(
+    Object.entries(asyncResultRecord).map(
+      async ([key, asyncResult]) => [key, await asyncResult] as const,
+    ),
+  )
 
-  for (const [index, [key]] of entries.entries()) {
-    const result = resultList[index]
-
-    // Stryker disable next-line all: Promise.all preserves one result for each Object.entries item.
-    if (result !== undefined) {
-      resultRecord[key] = result
-    }
-  }
-
-  return resultRecord
+  return Object.fromEntries(entries)
 }
 
 const combineResultAsyncRecord = <T extends ResultAsyncRecord>(
@@ -551,7 +577,6 @@ const combineResultAsyncRecordWithAllErrors = <T extends ResultAsyncRecord>(
 const isIterable = (value: unknown): value is Iterable<unknown> =>
   // Stryker disable next-line all: invalid null input still fails outside the iterable branch; this guard keeps the hot check explicit.
   value !== null &&
-  // Stryker disable next-line all: iterable functions are valid iterables, but normal collection tests cover object iterables.
   (typeof value === 'object' || typeof value === 'function') &&
   typeof (value as { readonly [Symbol.iterator]?: unknown })[Symbol.iterator] === 'function'
 
@@ -637,28 +662,18 @@ const runConcurrentResultAsyncItems = <Item, T, E, Output, Failure>(
       let settled = false
 
       const rejectOnce = (error: unknown): void => {
-        // Stryker disable next-line all: idempotent Promise rejection guard; repeated reject calls are ignored.
-        if (!settled) {
-          // Stryker disable next-line all: setting the guard prevents later state updates after rejection.
-          settled = true
-          reject(toResultAsyncRejectionError(error))
-        }
-      }
-
-      const resolveOnce = (result: Result<Output, Failure>): void => {
-        // Stryker disable next-line all: idempotent Promise resolution guard; repeated resolve calls are ignored.
-        if (!settled) {
-          // Stryker disable next-line all: setting the guard prevents later state updates after resolution.
-          settled = true
-          resolve(result)
-        }
+        // Stryker disable next-line all: setting the guard prevents later state updates after rejection.
+        settled = true
+        reject(toResultAsyncRejectionError(error))
       }
 
       const finishIfDone = (): void => {
         const result = options.finish(state)
 
         if (result !== undefined) {
-          resolveOnce(result)
+          // Stryker disable next-line all: setting the guard prevents later state updates after resolution.
+          settled = true
+          resolve(result)
         }
       }
 
@@ -672,11 +687,6 @@ const runConcurrentResultAsyncItems = <Item, T, E, Output, Failure>(
       }
 
       const schedule = (): void => {
-        // Stryker disable next-line all: avoid rescheduling after rejectOnce/resolveOnce settled the traversal.
-        if (settled) {
-          return
-        }
-
         while (!state.stopScheduling && !state.iteratorDone && state.activeCount < concurrency) {
           const next = readNext()
 
@@ -898,6 +908,36 @@ const validateResultAsyncRetryStaticDelay = (delay: ResultAsyncRetryDelay | unde
   }
 }
 
+const validateResultAsyncRetry = <E>(options: ResultAsyncRetryInput<E>): void => {
+  if (isRetryPolicy<E>(options)) {
+    validateRetryPolicy(options)
+  } else {
+    validateResultAsyncRetryTimes(options.times)
+    validateResultAsyncRetryStaticDelay(options.delayMs)
+    validateResultAsyncRetryStaticJittered(options.jittered)
+  }
+}
+
+const resultAsyncRetryDelay = <E>(
+  options: ResultAsyncRetryInput<E>,
+  context: ResultAsyncRetryContext,
+): number => {
+  if (isRetryPolicy<E>(options)) return retryPolicyDelay(options, context, Math.random)
+  let delayMs =
+    typeof options.delayMs === 'function' ? options.delayMs(context) : (options.delayMs ?? 0)
+  validateResultAsyncRetryDelayValue(delayMs)
+  const jittered = options.jittered
+  if (jittered !== undefined && jittered !== 0 && delayMs !== 0) {
+    const random = Math.random()
+    validateResultAsyncRetryJitterRandomValue(random)
+    const range = delayMs * jittered
+    const min = Math.max(0, delayMs - range)
+    const max = delayMs + range
+    delayMs = min + (max - min) * random
+  }
+  return delayMs
+}
+
 const waitResultAsyncRetryDelay = async (
   delayMs: number,
   signal: ResultAsyncAbortSignal,
@@ -924,16 +964,27 @@ const waitResultAsyncRetryDelay = async (
   })
 }
 
-// Retry keeps branches inline to avoid helper calls in the retry loop.
-// fallow-ignore-next-line complexity
+const canRetryResultAsyncAttempt = async <E>(
+  options: ResultAsyncRetryInput<E>,
+  error: E,
+  context: ResultAsyncRetryContext,
+): Promise<boolean> => {
+  if (context.attempt >= options.times) {
+    if (options.while !== undefined && !isRetryPolicy<E>(options)) {
+      await options.while(error, context)
+    }
+    return false
+  }
+  return options.while === undefined ? true : options.while(error, context)
+}
+
+// Expected failures stay in Result; unexpected callback failures reject the eager operation.
 const runResultAsyncRetryAttempts = async <T, E, U, F>(
   task: ResultAsyncRetryTask<T, E>,
-  options: ResultAsyncRetryOptions<E>,
+  options: ResultAsyncRetryInput<E>,
   recover: (error: E, context: ResultAsyncRetryContext) => Result<U, F> | ResultAsync<U, F>,
 ): Promise<Result<T | U, F | AbortError>> => {
-  validateResultAsyncRetryTimes(options.times)
-  validateResultAsyncRetryStaticDelay(options.delayMs)
-  validateResultAsyncRetryStaticJittered(options.jittered)
+  validateResultAsyncRetry(options)
 
   const signal: ResultAsyncAbortSignal = options.signal ?? new AbortController().signal
   let attempt = 0
@@ -950,51 +1001,22 @@ const runResultAsyncRetryAttempts = async <T, E, U, F>(
       return Result.ok(result.value)
     }
 
-    const context: ResultAsyncRetryContext = {
-      attempt,
-      nextAttempt: attempt + 1,
-      retriesRemaining: Math.max(0, options.times - attempt),
-    }
+    const context = retryContext(attempt, options.times)
 
-    const shouldRetry = options.while
-    const canRetryError =
-      shouldRetry === undefined
-        ? true
-        : // eslint-disable-next-line no-await-in-loop
-          await shouldRetry(result.error, context)
-
-    if (!canRetryError || attempt >= options.times) {
-      const recovered = recover(result.error, context)
-      return recovered instanceof ResultAsync ? recovered : recovered
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await canRetryResultAsyncAttempt(options, result.error, context))) {
+      return recover(result.error, context)
     }
 
     const onRetry = options.onRetry
 
     // Stryker disable next-line all: skip a needless function call and await when no retry hook exists.
     if (onRetry !== undefined) {
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        await onRetry(result.error, context)
-      } catch {
-        /* empty */
-      }
+      // eslint-disable-next-line no-await-in-loop
+      await observeRetry(options, result.error, context)
     }
 
-    let delayMs =
-      typeof options.delayMs === 'function' ? options.delayMs(context) : (options.delayMs ?? 0)
-    validateResultAsyncRetryDelayValue(delayMs)
-
-    const jittered = options.jittered
-
-    if (jittered !== undefined && jittered !== 0 && delayMs !== 0) {
-      const random = Math.random()
-      validateResultAsyncRetryJitterRandomValue(random)
-
-      const range = delayMs * jittered
-      const min = Math.max(0, delayMs - range)
-      const max = delayMs + range
-      delayMs = min + (max - min) * random
-    }
+    const delayMs = resultAsyncRetryDelay(options, context)
 
     // eslint-disable-next-line no-await-in-loop
     const delayResult = await waitResultAsyncRetryDelay(delayMs, signal)
@@ -1009,7 +1031,7 @@ const runResultAsyncRetryAttempts = async <T, E, U, F>(
 
 const retryResultAsyncTask = <T, E>(
   task: ResultAsyncRetryTask<T, E>,
-  options: ResultAsyncRetryOptions<E>,
+  options: ResultAsyncRetryInput<E>,
 ): ResultAsync<T, E | AbortError> =>
   new ResultAsync(
     runResultAsyncRetryAttempts<T, E, never, E>(task, options, (error) => Result.err(error)),
@@ -1017,7 +1039,7 @@ const retryResultAsyncTask = <T, E>(
 
 const retryOrElseResultAsyncTask = <T, E, U, F>(
   task: ResultAsyncRetryTask<T, E>,
-  options: ResultAsyncRetryOrElseOptions<E, F, U>,
+  options: ResultAsyncRetryOrElseInput<E, F, U>,
 ): ResultAsync<T | U, F | AbortError> =>
   new ResultAsync(
     runResultAsyncRetryAttempts<T, E, U, F>(task, options, (error, context) =>
@@ -1216,14 +1238,8 @@ const observeRaceFirstTask = <Tasks extends readonly ResultAsyncRaceTask<unknown
     context.state.settled = true
     const startedTasks = context.startedTasks
 
-    // Stryker disable next-line all: `<= length` only adds one guarded undefined iteration for noUncheckedIndexedAccess.
-    for (let loserIndex = 0; loserIndex < startedTasks.length; loserIndex += 1) {
-      const loser = startedTasks[loserIndex]
-
-      // Stryker disable next-line all: loop bounds guarantee the task; guard satisfies noUncheckedIndexedAccess without tuple allocation.
-      if (loser === undefined) {
-        /* empty */
-      } else if (loserIndex !== index) {
+    for (const [loserIndex, loser] of startedTasks.entries()) {
+      if (loserIndex !== index) {
         loser.controller.abort(createRaceAbortReason())
       }
     }
@@ -1249,14 +1265,8 @@ const observeRaceSuccessTask = <Tasks extends readonly ResultAsyncRaceTask<unkno
       context.state.settled = true
       const startedTasks = context.startedTasks
 
-      // Stryker disable next-line all: `<= length` only adds one guarded undefined iteration for noUncheckedIndexedAccess.
-      for (let loserIndex = 0; loserIndex < startedTasks.length; loserIndex += 1) {
-        const loser = startedTasks[loserIndex]
-
-        // Stryker disable next-line all: loop bounds guarantee the task; guard satisfies noUncheckedIndexedAccess without tuple allocation.
-        if (loser === undefined) {
-          /* empty */
-        } else if (!context.state.completedIndexes.has(loserIndex)) {
+      for (const [loserIndex, loser] of startedTasks.entries()) {
+        if (!context.state.completedIndexes.has(loserIndex)) {
           loser.controller.abort(createRaceAbortReason())
         }
       }
@@ -1544,93 +1554,65 @@ const ifResultAsyncWithCondition = <
   return new ResultAsync(promise) as ResultAsyncIf<HandlerErr<Condition>, OnTrue, OnFalse>
 }
 
-const whenResultAsync = <R extends ResultAsyncConditional>(
-  condition: ResultAsyncBooleanCondition,
-  body: () => R,
-): ResultAsyncWhen<R> => {
-  const promise: Promise<Result<HandlerOk<R> | undefined, HandlerErr<R>>> = Promise.try(
-    async () => {
-      if (!resolveResultAsyncBooleanCondition(condition)) {
-        return Result.ok<HandlerOk<R> | undefined, HandlerErr<R>>(undefined)
-      }
-
-      return (await toResultAsync(body())) as Result<HandlerOk<R> | undefined, HandlerErr<R>>
-    },
-  )
-
-  return new ResultAsync(promise) as ResultAsyncWhen<R>
-}
-
-const whenResultAsyncWithConditionByPredicate = <
-  Condition extends ResultAsyncConditionResult,
+const whenResultAsyncByPredicate = <
+  Condition extends ResultAsyncCondition,
   R extends ResultAsyncConditional,
 >(
   condition: Condition,
-  body: () => R,
+  body: R | (() => R),
   predicate: (condition: boolean) => boolean,
-): ResultAsyncWhenWithCondition<Condition, R> => {
-  const promise: Promise<Result<HandlerOk<R> | undefined, HandlerErr<Condition> | HandlerErr<R>>> =
-    Promise.try(async () => {
-      const conditionResult = await toResultAsync(condition)
+): ResultAsyncWhen<R, ResultAsyncConditionError<Condition>> => {
+  const promise: Promise<
+    Result<HandlerOk<R> | undefined, ResultAsyncConditionError<Condition> | HandlerErr<R>>
+  > = Promise.try(async () => {
+    const rawCondition: ResultAsyncCondition = condition
+    const evaluatedCondition = typeof rawCondition === 'function' ? rawCondition() : rawCondition
+    const conditionResult =
+      typeof evaluatedCondition === 'boolean'
+        ? Result.ok(evaluatedCondition)
+        : await toResultAsync(evaluatedCondition)
 
-      if (conditionResult.isErr()) {
-        return Result.err(conditionResult.error)
-      }
+    if (conditionResult.isErr()) {
+      return Result.err(conditionResult.error as ResultAsyncConditionError<Condition>)
+    }
 
-      if (!predicate(conditionResult.value)) {
-        return Result.ok<HandlerOk<R> | undefined, HandlerErr<Condition> | HandlerErr<R>>(undefined)
-      }
+    const conditionValue = conditionResult.value
 
-      return (await toResultAsync(body())) as Result<
+    if (!predicate(conditionValue)) {
+      return Result.ok<
         HandlerOk<R> | undefined,
-        HandlerErr<Condition> | HandlerErr<R>
-      >
-    })
+        ResultAsyncConditionError<Condition> | HandlerErr<R>
+      >(undefined)
+    }
 
-  return new ResultAsync(promise) as ResultAsyncWhenWithCondition<Condition, R>
+    const evaluatedBody = typeof body === 'function' ? body() : body
+    return (await toResultAsync(evaluatedBody)) as Result<
+      HandlerOk<R> | undefined,
+      ResultAsyncConditionError<Condition> | HandlerErr<R>
+    >
+  })
+
+  return new ResultAsync(promise) as ResultAsyncWhen<R, ResultAsyncConditionError<Condition>>
 }
 
-const whenResultAsyncWithCondition = <
-  Condition extends ResultAsyncConditionResult,
-  R extends ResultAsyncConditional,
->(
-  condition: Condition,
-  body: () => R,
-): ResultAsyncWhenWithCondition<Condition, R> =>
-  whenResultAsyncWithConditionByPredicate(condition, body, (value) => value)
-
-const unlessResultAsync = <R extends ResultAsyncConditional>(
-  condition: ResultAsyncBooleanCondition,
-  body: () => R,
-): ResultAsyncWhen<R> => whenResultAsync(() => !resolveResultAsyncBooleanCondition(condition), body)
-
-const unlessResultAsyncWithCondition = <
-  Condition extends ResultAsyncConditionResult,
-  R extends ResultAsyncConditional,
->(
-  condition: Condition,
-  body: () => R,
-): ResultAsyncWhenWithCondition<Condition, R> =>
-  whenResultAsyncWithConditionByPredicate(condition, body, (value) => !value)
-
-interface MatchResolvedResultTagsOptions<T, E, A, F> {
-  readonly fallback: (error: E) => F
+interface MatchResolvedResultTagsOptions<T, E, A, F, Remaining = E> {
+  readonly fallback: (error: Remaining) => F
   readonly handlers: object
   readonly ok: (value: T) => A
   readonly result: Result<T, E>
 }
 
-const matchResolvedResultTags = <T, E, A, R, F>({
+const matchResolvedResultTags = <T, E, A, R, F, Remaining = E>({
   fallback,
   handlers,
   ok,
   result,
-}: MatchResolvedResultTagsOptions<T, E, A, F>): A | R | F => {
+}: MatchResolvedResultTagsOptions<T, E, A, F, Remaining>): A | R | F => {
   if (result.isOk()) {
     return ok(result.value)
   }
 
-  return matchTaggedOr<E, R, F>(result.error, handlers, fallback)
+  return matchTaggedOr<E, R, F, Remaining>(result.error, handlers, fallback)
 }
 
 const callAsyncSideEffect = async (effect: () => void | Promise<void>): Promise<void> => {
@@ -1728,6 +1710,643 @@ export class DisposableResultAsync<T, E> implements PromiseLike<Result<T, E>>, A
  * - Combining multiple ResultAsync instances (combine, combineWithAllErrors)
  */
 export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T, E>> {
+  /** Maps the success value directly or as a reusable operator for `pipe`. */
+  public static map<Input, ErrorValue, Output>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    f: (value: Input) => Output | Promise<Output>,
+  ): ResultAsync<Output, ErrorValue>
+  public static map<Input, Output>(
+    this: void,
+    f: (value: Input) => Output | Promise<Output>,
+  ): <ErrorValue>(self: ResultAsync<Input, ErrorValue>) => ResultAsync<Output, ErrorValue>
+  public static map(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 2,
+      (self: ResultAsync<unknown, unknown>, f: (value: unknown) => unknown) => self.map(f),
+    )(...args)
+  }
+
+  /** Maps the error value directly or as a reusable operator for `pipe`. */
+  public static mapErr<Input, ErrorValue, ErrorOutput>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    f: (error: ErrorValue) => ErrorOutput | Promise<ErrorOutput>,
+  ): ResultAsync<Input, ErrorOutput>
+  public static mapErr<ErrorValue, ErrorOutput>(
+    this: void,
+    f: (error: ErrorValue) => ErrorOutput | Promise<ErrorOutput>,
+  ): <Input>(self: ResultAsync<Input, ErrorValue>) => ResultAsync<Input, ErrorOutput>
+  public static mapErr(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 2,
+      (self: ResultAsync<unknown, unknown>, f: (error: unknown) => unknown) => self.mapErr(f),
+    )(...args)
+  }
+
+  /** Chains a Result or ResultAsync directly or as a reusable operator for `pipe`. */
+  public static andThen<
+    Input,
+    ErrorValue,
+    Next extends Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+  >(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    f: (value: Input) => Next,
+  ): ResultAsync<HandlerOk<Next>, ErrorValue | HandlerErr<Next>>
+  public static andThen<
+    Input,
+    Next extends Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+  >(
+    this: void,
+    f: (value: Input) => Next,
+  ): <ErrorValue>(
+    self: ResultAsync<Input, ErrorValue>,
+  ) => ResultAsync<HandlerOk<Next>, ErrorValue | HandlerErr<Next>>
+  public static andThen(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 2,
+      (
+        self: ResultAsync<unknown, unknown>,
+        f: (value: unknown) => Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+      ) => self.andThen(f),
+    )(...args)
+  }
+
+  /** Recovers the error channel directly or as a reusable operator for `pipe`. */
+  public static orElse<
+    Input,
+    ErrorValue,
+    Next extends Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+  >(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    f: (error: ErrorValue) => Next,
+  ): ResultAsync<Input | HandlerOk<Next>, HandlerErr<Next>>
+  public static orElse<
+    ErrorValue,
+    Next extends Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+  >(
+    this: void,
+    f: (error: ErrorValue) => Next,
+  ): <Input>(
+    self: ResultAsync<Input, ErrorValue>,
+  ) => ResultAsync<Input | HandlerOk<Next>, HandlerErr<Next>>
+  public static orElse(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 2,
+      (
+        self: ResultAsync<unknown, unknown>,
+        f: (error: unknown) => Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+      ) => self.orElse(f),
+    )(...args)
+  }
+
+  /** Recovers the error channel with a plain or async success value directly or in `pipe`. */
+  public static orElseSucceed<Input, ErrorValue, Output>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    f: (error: ErrorValue) => Output | Promise<Output>,
+  ): ResultAsync<Input | Output, never>
+  public static orElseSucceed<ErrorValue, Output>(
+    this: void,
+    f: (error: ErrorValue) => Output | Promise<Output>,
+  ): <Input>(self: ResultAsync<Input, ErrorValue>) => ResultAsync<Input | Output, never>
+  public static orElseSucceed(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 2,
+      (self: ResultAsync<unknown, unknown>, f: (error: unknown) => unknown) =>
+        self.orElseSucceed(f),
+    )(...args)
+  }
+
+  /** Resolves to the Ok value or `defaultValue` when Err, directly or in `pipe`. */
+  public static unwrapOr<Input, ErrorValue, Output>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    defaultValue: Output,
+  ): Promise<Input | Output>
+  public static unwrapOr<Output>(
+    this: void,
+    defaultValue: Output,
+  ): <Input, ErrorValue>(self: ResultAsync<Input, ErrorValue>) => Promise<Input | Output>
+  public static unwrapOr(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 2,
+      (self: ResultAsync<unknown, unknown>, defaultValue: unknown) => self.unwrapOr(defaultValue),
+    )(...args)
+  }
+
+  /** Recovers from a specific tagged error directly or as a reusable operator for `pipe`. */
+  public static catchTag<
+    Input,
+    ErrorValue,
+    const Tag extends TagsOf<ErrorValue>,
+    Next extends Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+  >(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    tag: Tag,
+    f: (error: NoInfer<ErrorForTag<ErrorValue, Tag>>) => Next,
+  ): ResultAsync<Input | HandlerOk<Next>, ExcludeTag<ErrorValue, Tag> | HandlerErr<Next>>
+  public static catchTag<
+    Input,
+    ErrorValue,
+    const Tag extends TagsOf<ErrorValue>,
+    Next extends Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+  >(
+    this: void,
+    tag: Tag,
+    f: (error: NoInfer<ErrorForTag<ErrorValue, Tag>>) => Next,
+  ): (
+    self: ResultAsync<Input, ErrorValue>,
+  ) => ResultAsync<Input | HandlerOk<Next>, ExcludeTag<ErrorValue, Tag> | HandlerErr<Next>>
+  public static catchTag<
+    const Tag extends string,
+    Handled extends { readonly _tag: Tag },
+    Next extends Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+  >(
+    this: void,
+    tag: Tag,
+    f: (error: Handled) => Next,
+  ): <Input, ErrorValue>(
+    self: ResultAsync<Input, ErrorValue> &
+      (Tag extends TagsOf<ErrorValue>
+        ? ErrorForTag<ErrorValue, Tag> extends Handled
+          ? unknown
+          : never
+        : never),
+  ) => ResultAsync<Input | HandlerOk<Next>, ExcludeTag<ErrorValue, Tag> | HandlerErr<Next>>
+  public static catchTag(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 3,
+      (
+        self: ResultAsync<unknown, unknown>,
+        tag: string,
+        f: (error: never) => Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+      ) => self.catchTag(tag as never, f),
+    )(...args)
+  }
+
+  /** Recovers from multiple tagged errors directly or as a reusable operator for `pipe`. */
+  public static catchTags<Input, ErrorValue, const Handlers extends object>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    handlers: Handlers & CatchTagHandlers<ErrorValue, Handlers>,
+  ): ResultAsync<
+    Input | HandlerOk<CatchTagHandlerResult<Handlers>>,
+    | ExcludeTag<ErrorValue, CoveredHandlerKeys<Handlers> & string>
+    | HandlerErr<CatchTagHandlerResult<Handlers>>
+  >
+  public static catchTags<Input, ErrorValue, const Handlers extends object>(
+    this: void,
+    handlers: Handlers & CatchTagHandlers<ErrorValue, Handlers>,
+  ): (
+    self: ResultAsync<Input, ErrorValue>,
+  ) => ResultAsync<
+    Input | HandlerOk<CatchTagHandlerResult<Handlers>>,
+    | ExcludeTag<ErrorValue, CoveredHandlerKeys<Handlers> & string>
+    | HandlerErr<CatchTagHandlerResult<Handlers>>
+  >
+  public static catchTags<const Handlers extends object>(
+    this: void,
+    handlers: Handlers,
+  ): <Input, ErrorValue>(
+    self: ResultAsync<Input, ErrorValue> &
+      (Handlers extends CatchTagHandlers<ErrorValue, Handlers> ? unknown : never),
+  ) => ResultAsync<
+    Input | HandlerOk<CatchTagHandlerResult<Handlers>>,
+    | ExcludeTag<ErrorValue, CoveredHandlerKeys<Handlers> & string>
+    | HandlerErr<CatchTagHandlerResult<Handlers>>
+  >
+  public static catchTags(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 2,
+      (self: ResultAsync<unknown, unknown>, handlers: Record<string, never>) =>
+        self.catchTags(handlers),
+    )(...args)
+  }
+
+  /* eslint-disable max-params */
+  /** Recovers from a nested tagged reason on a specific tagged error directly or in `pipe`. */
+  public static catchReason<
+    Input,
+    ErrorValue,
+    const ErrorTag extends TagsWithReasonOf<ErrorValue>,
+    const ReasonTag extends ReasonTagsOf<ErrorValue, ErrorTag>,
+    Next extends Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+  >(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    errorTag: ErrorTag,
+    reasonTag: ReasonTag,
+    f: (
+      reason: NoInfer<ReasonForTag<ErrorValue, ErrorTag, ReasonTag>>,
+      error: NoInfer<ErrorForTag<ErrorValue, ErrorTag>>,
+    ) => Next,
+  ): ResultAsync<
+    Input | HandlerOk<Next>,
+    ExcludeReasonTag<ErrorValue, ErrorTag, ReasonTag> | HandlerErr<Next>
+  >
+  public static catchReason<
+    Input,
+    ErrorValue,
+    const ErrorTag extends TagsWithReasonOf<ErrorValue>,
+    const ReasonTag extends ReasonTagsOf<ErrorValue, ErrorTag>,
+    Next extends Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+  >(
+    this: void,
+    errorTag: ErrorTag,
+    reasonTag: ReasonTag,
+    f: (
+      reason: NoInfer<ReasonForTag<ErrorValue, ErrorTag, ReasonTag>>,
+      error: NoInfer<ErrorForTag<ErrorValue, ErrorTag>>,
+    ) => Next,
+  ): (
+    self: ResultAsync<Input, ErrorValue>,
+  ) => ResultAsync<
+    Input | HandlerOk<Next>,
+    ExcludeReasonTag<ErrorValue, ErrorTag, ReasonTag> | HandlerErr<Next>
+  >
+  public static catchReason<
+    const ErrorTag extends string,
+    const ReasonTag extends string,
+    HandledReason extends { readonly _tag: ReasonTag },
+    HandledError extends { readonly _tag: ErrorTag; readonly reason: unknown } = {
+      readonly _tag: ErrorTag
+      readonly reason: HandledReason
+    },
+    Next extends Result<unknown, unknown> | ResultAsync<unknown, unknown> =
+      | Result<unknown, unknown>
+      | ResultAsync<unknown, unknown>,
+  >(
+    this: void,
+    errorTag: ErrorTag,
+    reasonTag: ReasonTag,
+    f: (reason: HandledReason, error: HandledError) => Next,
+  ): <Input, ErrorValue>(
+    self: ResultAsync<Input, ErrorValue> &
+      (ErrorTag extends TagsWithReasonOf<ErrorValue>
+        ? ReasonTag extends ReasonTagsOf<ErrorValue, ErrorTag>
+          ? ReasonForTag<ErrorValue, ErrorTag, ReasonTag> extends HandledReason
+            ? ErrorForTag<ErrorValue, ErrorTag> extends HandledError
+              ? unknown
+              : never
+            : never
+          : never
+        : never),
+  ) => ResultAsync<
+    Input | HandlerOk<Next>,
+    ExcludeReasonTag<ErrorValue, ErrorTag, ReasonTag> | HandlerErr<Next>
+  >
+  public static catchReason(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 4,
+      (
+        self: ResultAsync<unknown, unknown>,
+        errorTag: string,
+        reasonTag: string,
+        f: (
+          reason: never,
+          error: never,
+        ) => Result<unknown, unknown> | ResultAsync<unknown, unknown>,
+      ) => self.catchReason(errorTag as never, reasonTag as never, f),
+    )(...args)
+  }
+  /* eslint-enable max-params */
+
+  /** Recovers from multiple nested tagged reasons on a specific tagged error directly or in `pipe`. */
+  public static catchReasons<
+    Input,
+    ErrorValue,
+    const ErrorTag extends TagsWithReasonOf<ErrorValue>,
+    const Handlers extends object,
+  >(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    errorTag: ErrorTag,
+    handlers: Handlers & CatchReasonHandlers<ErrorValue, ErrorTag, Handlers>,
+  ): ResultAsync<
+    Input | HandlerOk<CatchReasonHandlerResult<Handlers>>,
+    | ExcludeReasonTag<ErrorValue, ErrorTag, CoveredHandlerKeys<Handlers> & string>
+    | HandlerErr<CatchReasonHandlerResult<Handlers>>
+  >
+  public static catchReasons<
+    Input,
+    ErrorValue,
+    const ErrorTag extends TagsWithReasonOf<ErrorValue>,
+    const Handlers extends object,
+  >(
+    this: void,
+    errorTag: ErrorTag,
+    handlers: Handlers & CatchReasonHandlers<ErrorValue, ErrorTag, Handlers>,
+  ): (
+    self: ResultAsync<Input, ErrorValue>,
+  ) => ResultAsync<
+    Input | HandlerOk<CatchReasonHandlerResult<Handlers>>,
+    | ExcludeReasonTag<ErrorValue, ErrorTag, CoveredHandlerKeys<Handlers> & string>
+    | HandlerErr<CatchReasonHandlerResult<Handlers>>
+  >
+  public static catchReasons<const ErrorTag extends string, const Handlers extends object>(
+    this: void,
+    errorTag: ErrorTag,
+    handlers: Handlers,
+  ): <Input, ErrorValue>(
+    self: ResultAsync<Input, ErrorValue> &
+      (ErrorTag extends TagsWithReasonOf<ErrorValue>
+        ? Handlers extends CatchReasonHandlers<ErrorValue, ErrorTag, Handlers>
+          ? unknown
+          : never
+        : never),
+  ) => ResultAsync<
+    Input | HandlerOk<CatchReasonHandlerResult<Handlers>>,
+    | ExcludeReasonTag<ErrorValue, ErrorTag, CoveredHandlerKeys<Handlers> & string>
+    | HandlerErr<CatchReasonHandlerResult<Handlers>>
+  >
+  public static catchReasons(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 3,
+      (self: ResultAsync<unknown, unknown>, errorTag: string, handlers: Record<string, never>) =>
+        self.catchReasons(errorTag as never, handlers),
+    )(...args)
+  }
+
+  /** Moves the nested reason of a tagged error into the error channel directly or in `pipe`. */
+  public static unwrapReason<
+    Input,
+    ErrorValue,
+    const ErrorTag extends TagsWithReasonOf<ErrorValue>,
+  >(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    errorTag: ErrorTag,
+  ): ResultAsync<Input, ExcludeTag<ErrorValue, ErrorTag> | ReasonsOf<ErrorValue, ErrorTag>>
+  public static unwrapReason<const ErrorTag extends string>(
+    this: void,
+    errorTag: ErrorTag,
+  ): <Input, ErrorValue>(
+    self: ResultAsync<Input, ErrorValue> &
+      (ErrorTag extends TagsWithReasonOf<ErrorValue> ? unknown : never),
+  ) => ResultAsync<Input, ExcludeTag<ErrorValue, ErrorTag> | ReasonsOf<ErrorValue, ErrorTag>>
+  public static unwrapReason(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 2,
+      (self: ResultAsync<unknown, unknown>, errorTag: string) =>
+        self.unwrapReason(errorTag as never),
+    )(...args)
+  }
+
+  /** Observes success, ignoring callback failures, directly or as an operator for `pipe`. */
+  public static inspect<Input, ErrorValue>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    f: (value: Input) => void | Promise<void>,
+  ): ResultAsync<Input, ErrorValue>
+  public static inspect<Input>(
+    this: void,
+    f: (value: Input) => void | Promise<void>,
+  ): <ErrorValue>(self: ResultAsync<Input, ErrorValue>) => ResultAsync<Input, ErrorValue>
+  public static inspect(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 2,
+      (self: ResultAsync<unknown, unknown>, f: (value: unknown) => void | Promise<void>) =>
+        self.inspect(f),
+    )(...args)
+  }
+
+  /** Observes failure, ignoring callback failures, directly or as an operator for `pipe`. */
+  public static inspectError<Input, ErrorValue>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    f: (error: ErrorValue) => void | Promise<void>,
+  ): ResultAsync<Input, ErrorValue>
+  public static inspectError<ErrorValue>(
+    this: void,
+    f: (error: ErrorValue) => void | Promise<void>,
+  ): <Input>(self: ResultAsync<Input, ErrorValue>) => ResultAsync<Input, ErrorValue>
+  public static inspectError(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 2,
+      (self: ResultAsync<unknown, unknown>, f: (error: unknown) => void | Promise<void>) =>
+        self.inspectError(f),
+    )(...args)
+  }
+
+  /** Observes both branches, ignoring callback failures, directly or as an operator for `pipe`. */
+  public static inspectBoth<Input, ErrorValue>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    handlers: MatchHandlers<Input, ErrorValue, void | Promise<void>, void | Promise<void>>,
+  ): ResultAsync<Input, ErrorValue>
+  public static inspectBoth<Input, ErrorValue>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    onOk: (value: Input) => void | Promise<void>,
+    onErr: (error: ErrorValue) => void | Promise<void>,
+  ): ResultAsync<Input, ErrorValue>
+  public static inspectBoth<Input, ErrorValue>(
+    this: void,
+    handlers: MatchHandlers<Input, ErrorValue, void | Promise<void>, void | Promise<void>>,
+  ): (self: ResultAsync<Input, ErrorValue>) => ResultAsync<Input, ErrorValue>
+  public static inspectBoth<Input, ErrorValue>(
+    this: void,
+    onOk: (value: Input) => void | Promise<void>,
+    onErr: (error: ErrorValue) => void | Promise<void>,
+  ): (self: ResultAsync<Input, ErrorValue>) => ResultAsync<Input, ErrorValue>
+  public static inspectBoth(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input[0] instanceof ResultAsync,
+      (
+        self: ResultAsync<unknown, unknown>,
+        handlers:
+          | MatchHandlers<unknown, unknown, void | Promise<void>, void | Promise<void>>
+          | ((value: unknown) => void | Promise<void>),
+        onErr?: (error: unknown) => void | Promise<void>,
+      ) =>
+        self.inspectBoth(
+          handlers as (value: unknown) => void | Promise<void>,
+          onErr as (error: unknown) => void | Promise<void>,
+        ),
+    )(...args)
+  }
+
+  /** Converts either variant to a Promise of a plain value, directly or in `pipe`. */
+  public static match<Input, ErrorValue, Output, FailureOutput = Output>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    handlers: MatchHandlers<Input, ErrorValue, Output, FailureOutput>,
+  ): Promise<Awaited<Output | FailureOutput>>
+  public static match<Input, ErrorValue, Output, FailureOutput = Output>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    onOk: (value: Input) => Output,
+    onErr: (error: ErrorValue) => FailureOutput,
+  ): Promise<Awaited<Output | FailureOutput>>
+  public static match<Input, ErrorValue, Output, FailureOutput = Output>(
+    this: void,
+    handlers: MatchHandlers<Input, ErrorValue, Output, FailureOutput>,
+  ): (self: ResultAsync<Input, ErrorValue>) => Promise<Awaited<Output | FailureOutput>>
+  public static match<Input, ErrorValue, Output, FailureOutput = Output>(
+    this: void,
+    onOk: (value: Input) => Output,
+    onErr: (error: ErrorValue) => FailureOutput,
+  ): (self: ResultAsync<Input, ErrorValue>) => Promise<Awaited<Output | FailureOutput>>
+  public static match(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input[0] instanceof ResultAsync,
+      (
+        self: ResultAsync<unknown, unknown>,
+        handlers: MatchHandlers<unknown, unknown, unknown> | ((value: unknown) => unknown),
+        onErr?: (error: unknown) => unknown,
+      ) =>
+        self.match(handlers as (value: unknown) => unknown, onErr as (error: unknown) => unknown),
+    )(...args)
+  }
+
+  /** Exhaustively matches tagged errors into a Promise directly or in `pipe`. */
+  public static matchTags<Input, ErrorValue, Output, const Handlers extends object>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    onOk: (value: Input) => Output,
+    handlers: Handlers & MatchTagHandlers<ErrorValue, Handlers>,
+  ): Promise<Awaited<Output | MatchTagHandlerResult<Handlers>>>
+  public static matchTags<Input, ErrorValue, Output, const Handlers extends object>(
+    this: void,
+    onOk: (value: Input) => Output,
+    handlers: Handlers & MatchTagHandlers<ErrorValue, Handlers>,
+  ): (
+    self: ResultAsync<Input, ErrorValue>,
+  ) => Promise<Awaited<Output | MatchTagHandlerResult<Handlers>>>
+  public static matchTags(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 3,
+      (self: ResultAsync<unknown, unknown>, onOk: (value: unknown) => unknown, handlers: never) =>
+        self.matchTags(onOk, handlers),
+    )(...args)
+  }
+
+  /* eslint-disable max-params */
+  /** Partially matches tagged errors with a narrowed fallback into a Promise directly or in `pipe`. */
+  public static matchTagsPartial<
+    Input,
+    ErrorValue,
+    Output,
+    FallbackOutput,
+    const Handlers extends object,
+  >(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    onOk: (value: Input) => Output,
+    handlers: Handlers & PartialMatchTagHandlers<ErrorValue, Handlers>,
+    fallback: (error: RemainingMatchTagErrors<ErrorValue, Handlers>) => FallbackOutput,
+  ): Promise<Awaited<Output | MatchTagHandlerResult<Handlers> | FallbackOutput>>
+  public static matchTagsPartial<
+    Input,
+    ErrorValue,
+    Output,
+    FallbackOutput,
+    const Handlers extends object,
+  >(
+    this: void,
+    onOk: (value: Input) => Output,
+    handlers: Handlers & PartialMatchTagHandlers<ErrorValue, Handlers>,
+    fallback: (error: RemainingMatchTagErrors<ErrorValue, Handlers>) => FallbackOutput,
+  ): (
+    self: ResultAsync<Input, ErrorValue>,
+  ) => Promise<Awaited<Output | MatchTagHandlerResult<Handlers> | FallbackOutput>>
+  public static matchTagsPartial(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 4,
+      (
+        self: ResultAsync<unknown, unknown>,
+        onOk: (value: unknown) => unknown,
+        handlers: never,
+        fallback: (error: unknown) => unknown,
+      ) => self.matchTagsPartial(onOk, handlers, fallback),
+    )(...args)
+  }
+  /* eslint-enable max-params */
+
+  /** Replaces success with a constant directly or as a reusable operator for `pipe`. */
+  public static as<Input, ErrorValue, Output>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    value: Output,
+  ): ResultAsync<Output, ErrorValue>
+  public static as<Output>(
+    this: void,
+    value: Output,
+  ): <Input, ErrorValue>(self: ResultAsync<Input, ErrorValue>) => ResultAsync<Output, ErrorValue>
+  public static as(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 2,
+      (self: ResultAsync<unknown, unknown>, value: unknown) => self.as(value),
+    )(...args)
+  }
+
+  /** Replaces success with `undefined` (`void`) directly or as a reusable operator for `pipe`. */
+  public static asVoid<
+    Args extends readonly [self: ResultAsync<unknown, unknown>] | readonly [] = readonly [],
+  >(
+    this: void,
+    ...args: Args
+  ): Args extends readonly [ResultAsync<unknown, infer ErrorValue>]
+    ? ResultAsync<void, ErrorValue>
+    : <Input, ErrorValue>(self: ResultAsync<Input, ErrorValue>) => ResultAsync<void, ErrorValue> {
+    if (args.length === 0) {
+      return ((self: ResultAsync<unknown, unknown>) => self.asVoid()) as never
+    }
+    return args[0].asVoid() as never
+  }
+
+  /** Validates or narrows success directly or as a reusable operator for `pipe`. */
+  public static filterOrElse<Input, Narrowed extends Input, ErrorValue, Failure>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    predicate: (value: Input) => value is Narrowed,
+    onFalse: (value: Input) => Failure | Promise<Failure>,
+  ): ResultAsync<Narrowed, ErrorValue | Failure>
+  public static filterOrElse<Input, ErrorValue, Failure>(
+    this: void,
+    self: ResultAsync<Input, ErrorValue>,
+    predicate: (value: Input) => boolean | Promise<boolean>,
+    onFalse: (value: Input) => Failure | Promise<Failure>,
+  ): ResultAsync<Input, ErrorValue | Failure>
+  public static filterOrElse<Input, Narrowed extends Input, Failure>(
+    this: void,
+    predicate: (value: Input) => value is Narrowed,
+    onFalse: (value: Input) => Failure | Promise<Failure>,
+  ): <ErrorValue>(
+    self: ResultAsync<Input, ErrorValue>,
+  ) => ResultAsync<Narrowed, ErrorValue | Failure>
+  public static filterOrElse<Input, Failure>(
+    this: void,
+    predicate: (value: Input) => boolean | Promise<boolean>,
+    onFalse: (value: Input) => Failure | Promise<Failure>,
+  ): <ErrorValue>(self: ResultAsync<Input, ErrorValue>) => ResultAsync<Input, ErrorValue | Failure>
+  public static filterOrElse(this: void, ...args: readonly unknown[]): unknown {
+    return dual(
+      (input) => input.length === 3,
+      (
+        self: ResultAsync<unknown, unknown>,
+        predicate: (value: unknown) => boolean | Promise<boolean>,
+        onFalse: (value: unknown) => unknown,
+      ) => self.filterOrElse(predicate, onFalse),
+    )(...args)
+  }
+
+  /**
+   * Returns a ResultAsync instance that is immediately resolved with a Result.ok(value).
+   *
+   * @param {T} value - The value to be wrapped in a Result.ok.
+   * @return {ResultAsync<T, E>} A ResultAsync instance with the given value and error type E.
+   */
+  public static ok<T, E = never>(this: void, value: T): ResultAsync<T, E>
+  public static ok<E = never>(this: void, value: void): ResultAsync<void, E>
+  public static ok<T, E = never>(this: void, value: T): ResultAsync<T, E> {
+    return ResultAsync.okAsync<T, E>(value)
+  }
+
   /**
    * Returns a ResultAsync instance that is immediately resolved with a Result.ok(value).
    *
@@ -1747,6 +2366,18 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
    */
   public static unitAsync<E = never>(this: void): ResultAsync<undefined, E> {
     return new ResultAsync<undefined, E>(Promise.resolve(Result.unit()))
+  }
+
+  /**
+   * Returns a ResultAsync instance that is immediately resolved with a Result.err(error).
+   *
+   * @param {E} error - The error to be wrapped in a Result.err.
+   * @return {ResultAsync<T, E>} A ResultAsync instance with the given error and value type T.
+   */
+  public static err<T = never, E = unknown>(this: void, err: E): ResultAsync<T, E>
+  public static err<T = never>(this: void, err: void): ResultAsync<T, void>
+  public static err<T = never, E = unknown>(this: void, error: E): ResultAsync<T, E> {
+    return ResultAsync.errAsync<T, E>(error)
   }
 
   /**
@@ -1819,6 +2450,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
 
   /**
    * Eagerly executes a ResultTask using the standard runtime and wraps it in a ResultAsync.
+   * @deprecated Use ResultTask.toResultAsync. Both execute the task eagerly.
    */
   public static fromTask<T, E>(this: void, task: ResultTask<T, E, never>): ResultAsync<T, E> {
     return ResultTask.toResultAsync(task)
@@ -1909,6 +2541,44 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     }
 
     return combineResultAsyncRecord(input)
+  }
+
+  /**
+   * Combines many ResultAsync values and stops at the first Err, matching `ResultTask.all` and `Promise.all`.
+   *
+   * Arrays return an Ok array, records return an Ok record with the same keys, and iterables return
+   * an Ok readonly array.
+   */
+  public static all<
+    T extends readonly [ResultAsync<unknown, unknown>, ...ResultAsync<unknown, unknown>[]],
+  >(this: void, asyncResultList: T): CombineResultAsyncs<T>
+  public static all<T extends readonly ResultAsync<unknown, unknown>[]>(
+    this: void,
+    asyncResultList: T,
+  ): CombineResultAsyncs<T>
+  public static all<T extends ResultAsyncRecord>(
+    this: void,
+    asyncResultRecord: T,
+  ): CombineResultAsyncsRecord<T>
+  public static all<R extends ResultAsync<unknown, unknown>>(
+    this: void,
+    asyncResults: Iterable<R>,
+  ): CombineResultAsyncsIterable<R>
+  public static all<
+    T extends
+      | readonly ResultAsync<unknown, unknown>[]
+      | ResultAsyncRecord
+      | Iterable<ResultAsync<unknown, unknown>>,
+  >(
+    this: void,
+    input: T,
+  ):
+    | CombineResultAsyncs<T & readonly ResultAsync<unknown, unknown>[]>
+    | CombineResultAsyncsRecord<ResultAsyncRecord>
+    | CombineResultAsyncsIterable<ResultAsync<unknown, unknown>> {
+    return ResultAsync.combine(
+      input as readonly ResultAsync<unknown, unknown>[],
+    ) as CombineResultAsyncs<T & readonly ResultAsync<unknown, unknown>[]>
   }
 
   /**
@@ -2013,29 +2683,51 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
    *
    * The returned error channel includes the task error and `AbortError`.
    */
+  public static retry<Task extends ResultAsyncRetryCandidate>(
+    this: void,
+    task: Task,
+    policy: RetryPolicy<NoInfer<ResultAsyncRetryTaskErr<Task>>> & {
+      readonly signal?: ResultAsyncAbortSignal
+    },
+  ): ResultAsync<ResultAsyncRetryTaskOk<Task>, ResultAsyncRetryTaskErr<Task> | AbortError>
   public static retry<Task extends ResultAsyncRetryTask<unknown, unknown>>(
     this: void,
     task: Task,
     options: ResultAsyncRetryOptions<ResultAsyncRetryTaskErr<Task>>,
-  ): ResultAsync<ResultAsyncRetryTaskOk<Task>, ResultAsyncRetryTaskErr<Task> | AbortError> {
-    return retryResultAsyncTask(
-      task as ResultAsyncRetryTask<ResultAsyncRetryTaskOk<Task>, ResultAsyncRetryTaskErr<Task>>,
-      options,
-    )
+  ): ResultAsync<ResultAsyncRetryTaskOk<Task>, ResultAsyncRetryTaskErr<Task> | AbortError>
+  public static retry<T, E>(
+    this: void,
+    task: ResultAsyncRetryTask<T, E>,
+    options: ResultAsyncRetryInput<E>,
+  ): ResultAsync<T, E | AbortError> {
+    return retryResultAsyncTask(task, options)
   }
 
   /**
    * Retries a ResultAsync task and falls back to another Resultar operation after retry exhaustion.
    */
+  public static retryOrElse<Task extends ResultAsyncRetryCandidate, U, F>(
+    this: void,
+    task: Task,
+    policy: RetryPolicy<NoInfer<ResultAsyncRetryTaskErr<Task>>> & {
+      readonly signal?: ResultAsyncAbortSignal
+      readonly orElse: (
+        error: NoInfer<ResultAsyncRetryTaskErr<Task>>,
+        context: ResultAsyncRetryContext,
+      ) => Result<U, F> | ResultAsync<U, F>
+    },
+  ): ResultAsync<ResultAsyncRetryTaskOk<Task> | U, F | AbortError>
   public static retryOrElse<Task extends ResultAsyncRetryTask<unknown, unknown>, U, F>(
     this: void,
     task: Task,
     options: ResultAsyncRetryOrElseOptions<ResultAsyncRetryTaskErr<Task>, F, U>,
-  ): ResultAsync<ResultAsyncRetryTaskOk<Task> | U, F | AbortError> {
-    return retryOrElseResultAsyncTask(
-      task as ResultAsyncRetryTask<ResultAsyncRetryTaskOk<Task>, ResultAsyncRetryTaskErr<Task>>,
-      options,
-    )
+  ): ResultAsync<ResultAsyncRetryTaskOk<Task> | U, F | AbortError>
+  public static retryOrElse<T, E, U, F>(
+    this: void,
+    task: ResultAsyncRetryTask<T, E>,
+    options: ResultAsyncRetryOrElseInput<E, F, U>,
+  ): ResultAsync<T | U, F | AbortError> {
+    return retryOrElseResultAsyncTask(task, options)
   }
 
   /**
@@ -2052,7 +2744,10 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   }
 
   /**
-   * Races two cooperative ResultAsync tasks and returns the first settled Result.
+   * Races two cooperative ResultAsync tasks and returns the first successful Ok.
+   *
+   * Earlier Err results do not finish the race. If both tasks fail, returns the last completed Err.
+   * Pending losers are aborted without waiting for their settlement or cleanup.
    */
   public static race<
     Left extends ResultAsyncRaceTask<unknown, unknown>,
@@ -2069,7 +2764,10 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   }
 
   /**
-   * Races multiple cooperative ResultAsync tasks and returns the first settled Result.
+   * Races multiple cooperative ResultAsync tasks and returns the first successful Ok.
+   *
+   * Earlier Err results do not finish the race. If every task fails, returns the last completed Err.
+   * Pending losers are aborted without waiting for their settlement or cleanup.
    */
   public static raceAll<
     Tasks extends readonly [
@@ -2084,9 +2782,9 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   }
 
   /**
-   * Races two cooperative ResultAsync tasks and returns the first successful Ok.
+   * Races two cooperative ResultAsync tasks and returns the first settled Result, whether Ok or Err.
    *
-   * If both fail, the returned error is the final observed Err.
+   * Remaining tasks are aborted without waiting for their settlement or cleanup.
    */
   public static raceFirst<
     Left extends ResultAsyncRaceTask<unknown, unknown>,
@@ -2231,11 +2929,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
         return result
       },
       onRightDone: (result, taskHandle) => {
-        // Stryker disable next-line all: timeoutTask has Ok type never and only resolves Err.
-        if (result.isErr()) {
-          taskHandle.abort(result.error)
-        }
-
+        taskHandle.abort((result as { readonly error: TimeoutError }).error)
         return result
       },
     })
@@ -2285,14 +2979,34 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   }
 
   /**
-   * Runs `body` only when the condition is true; otherwise returns Ok(undefined).
+   * Runs `body` only when the condition resolves to `true`; otherwise returns `Ok(undefined)`.
    */
-  public static when<R extends ResultAsyncConditional>(
+  public static when<Condition extends ResultAsyncCondition, R extends ResultAsyncConditional>(
     this: void,
-    condition: ResultAsyncBooleanCondition,
-    body: () => R,
-  ): ResultAsyncWhen<R> {
-    return whenResultAsync(condition, body)
+    condition: Condition,
+    body: R | (() => R),
+  ): ResultAsyncWhen<R, ResultAsyncConditionError<Condition>>
+  public static when<Condition extends ResultAsyncCondition>(
+    this: void,
+    condition: Condition,
+  ): <R extends ResultAsyncConditional>(
+    body: R | (() => R),
+  ) => ResultAsyncWhen<R, ResultAsyncConditionError<Condition>>
+  public static when<Condition extends ResultAsyncCondition, R extends ResultAsyncConditional>(
+    this: void,
+    condition: Condition,
+    body?: R | (() => R),
+  ):
+    | ResultAsyncWhen<R, ResultAsyncConditionError<Condition>>
+    | (<Body extends ResultAsyncConditional>(
+        target: Body | (() => Body),
+      ) => ResultAsyncWhen<Body, ResultAsyncConditionError<Condition>>) {
+    if (body === undefined) {
+      return <Body extends ResultAsyncConditional>(target: Body | (() => Body)) =>
+        whenResultAsyncByPredicate(condition, target, (value) => value)
+    }
+
+    return whenResultAsyncByPredicate(condition, body, (value) => value)
   }
 
   /**
@@ -2301,19 +3015,43 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   public static whenResult<
     Condition extends ResultAsyncConditionResult,
     R extends ResultAsyncConditional,
-  >(this: void, condition: Condition, body: () => R): ResultAsyncWhenWithCondition<Condition, R> {
-    return whenResultAsyncWithCondition(condition, body)
+  >(
+    this: void,
+    condition: Condition,
+    body: R | (() => R),
+  ): ResultAsyncWhenWithCondition<Condition, R> {
+    return whenResultAsyncByPredicate(condition, body, (value) => value)
   }
 
   /**
-   * Runs `body` only when the condition is false; otherwise returns Ok(undefined).
+   * Runs `body` only when the condition resolves to `false`; otherwise returns `Ok(undefined)`.
    */
-  public static unless<R extends ResultAsyncConditional>(
+  public static unless<Condition extends ResultAsyncCondition, R extends ResultAsyncConditional>(
     this: void,
-    condition: ResultAsyncBooleanCondition,
-    body: () => R,
-  ): ResultAsyncWhen<R> {
-    return unlessResultAsync(condition, body)
+    condition: Condition,
+    body: R | (() => R),
+  ): ResultAsyncWhen<R, ResultAsyncConditionError<Condition>>
+  public static unless<Condition extends ResultAsyncCondition>(
+    this: void,
+    condition: Condition,
+  ): <R extends ResultAsyncConditional>(
+    body: R | (() => R),
+  ) => ResultAsyncWhen<R, ResultAsyncConditionError<Condition>>
+  public static unless<Condition extends ResultAsyncCondition, R extends ResultAsyncConditional>(
+    this: void,
+    condition: Condition,
+    body?: R | (() => R),
+  ):
+    | ResultAsyncWhen<R, ResultAsyncConditionError<Condition>>
+    | (<Body extends ResultAsyncConditional>(
+        target: Body | (() => Body),
+      ) => ResultAsyncWhen<Body, ResultAsyncConditionError<Condition>>) {
+    if (body === undefined) {
+      return <Body extends ResultAsyncConditional>(target: Body | (() => Body)) =>
+        whenResultAsyncByPredicate(condition, target, (value) => !value)
+    }
+
+    return whenResultAsyncByPredicate(condition, body, (value) => !value)
   }
 
   /**
@@ -2322,8 +3060,12 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   public static unlessResult<
     Condition extends ResultAsyncConditionResult,
     R extends ResultAsyncConditional,
-  >(this: void, condition: Condition, body: () => R): ResultAsyncWhenWithCondition<Condition, R> {
-    return unlessResultAsyncWithCondition(condition, body)
+  >(
+    this: void,
+    condition: Condition,
+    body: R | (() => R),
+  ): ResultAsyncWhenWithCondition<Condition, R> {
+    return whenResultAsyncByPredicate(condition, body, (value) => !value)
   }
 
   /**
@@ -2515,6 +3257,13 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   }
 
   /**
+   * Replaces the Ok value with `undefined` (`void`) while preserving the error channel.
+   */
+  public asVoid(): ResultAsync<void, E> {
+    return this.as(undefined)
+  }
+
+  /**
    * Keeps the Ok value only when the predicate passes; otherwise returns an Err from `onFalse`.
    */
   public filterOrElse<U extends T, F>(
@@ -2597,6 +3346,24 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   }
 
   /**
+   * Keeps this ResultAsync only when `condition` resolves to `true`; otherwise returns `Ok(undefined)`.
+   */
+  public when<Condition extends ResultAsyncCondition>(
+    condition: Condition,
+  ): ResultAsync<T | undefined, E | ResultAsyncConditionError<Condition>> {
+    return ResultAsync.when(condition, this as ResultAsync<T, E>)
+  }
+
+  /**
+   * Keeps this ResultAsync only when `condition` resolves to `false`; otherwise returns `Ok(undefined)`.
+   */
+  public unless<Condition extends ResultAsyncCondition>(
+    condition: Condition,
+  ): ResultAsync<T | undefined, E | ResultAsyncConditionError<Condition>> {
+    return ResultAsync.unless(condition, this as ResultAsync<T, E>)
+  }
+
+  /**
    * Recovers from Err with another Result or ResultAsync.
    */
   public orElse<R extends Result<unknown, unknown>>(
@@ -2615,6 +3382,21 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
         }
 
         return resultOk<U | T, A>(res.value)
+      }),
+    )
+  }
+
+  /**
+   * Recovers from Err with a plain or async success value.
+   */
+  public orElseSucceed<A>(f: (e: E) => A | Promise<A>): ResultAsync<T | A, never> {
+    return new ResultAsync<T | A, never>(
+      this.innerPromise.then(async (res) => {
+        if (res.isErr()) {
+          return resultOk<T | A, never>(await f(res.error))
+        }
+
+        return resultOk<T | A, never>(res.value)
       }),
     )
   }
@@ -2661,11 +3443,13 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     handlers: Handlers & CatchTagHandlers<E, Handlers>,
   ): ResultAsync<
     T | HandlerOk<CatchTagHandlerResult<Handlers>>,
-    ExcludeTag<E, keyof Handlers & string> | HandlerErr<CatchTagHandlerResult<Handlers>>
+    | ExcludeTag<E, CoveredHandlerKeys<Handlers> & string>
+    | HandlerErr<CatchTagHandlerResult<Handlers>>
   > {
     return new ResultAsync<
       T | HandlerOk<CatchTagHandlerResult<Handlers>>,
-      ExcludeTag<E, keyof Handlers & string> | HandlerErr<CatchTagHandlerResult<Handlers>>
+      | ExcludeTag<E, CoveredHandlerKeys<Handlers> & string>
+      | HandlerErr<CatchTagHandlerResult<Handlers>>
     >(
       this.innerPromise.then((res) => {
         if (res.isOk()) {
@@ -2680,11 +3464,12 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
           return next instanceof ResultAsync ? next.innerPromise : next
         }
 
-        return Result.err(error as ExcludeTag<E, keyof Handlers & string>)
+        return Result.err(error as ExcludeTag<E, CoveredHandlerKeys<Handlers> & string>)
       }) as Promise<
         Result<
           T | HandlerOk<CatchTagHandlerResult<Handlers>>,
-          ExcludeTag<E, keyof Handlers & string> | HandlerErr<CatchTagHandlerResult<Handlers>>
+          | ExcludeTag<E, CoveredHandlerKeys<Handlers> & string>
+          | HandlerErr<CatchTagHandlerResult<Handlers>>
         >
       >,
     )
@@ -2772,12 +3557,12 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
     handlers: Handlers & CatchReasonHandlers<E, ErrorTag, Handlers>,
   ): ResultAsync<
     T | HandlerOk<CatchReasonHandlerResult<Handlers>>,
-    | ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>
+    | ExcludeReasonTag<E, ErrorTag, CoveredHandlerKeys<Handlers> & string>
     | HandlerErr<CatchReasonHandlerResult<Handlers>>
   > {
     return new ResultAsync<
       T | HandlerOk<CatchReasonHandlerResult<Handlers>>,
-      | ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>
+      | ExcludeReasonTag<E, ErrorTag, CoveredHandlerKeys<Handlers> & string>
       | HandlerErr<CatchReasonHandlerResult<Handlers>>
     >(
       this.innerPromise.then((res) => {
@@ -2805,11 +3590,13 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
           }
         }
 
-        return Result.err(res.error as ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>)
+        return Result.err(
+          res.error as ExcludeReasonTag<E, ErrorTag, CoveredHandlerKeys<Handlers> & string>,
+        )
       }) as Promise<
         Result<
           T | HandlerOk<CatchReasonHandlerResult<Handlers>>,
-          | ExcludeReasonTag<E, ErrorTag, keyof Handlers & string>
+          | ExcludeReasonTag<E, ErrorTag, CoveredHandlerKeys<Handlers> & string>
           | HandlerErr<CatchReasonHandlerResult<Handlers>>
         >
       >,
@@ -2840,30 +3627,27 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
   /**
    * Converts this ResultAsync into a Promise of a plain value by handling both Ok and Err.
    */
-  public async match<A, B = A>(handlers: MatchHandlers<T, E, A, B>): Promise<A | B>
-  public async match<A, B = A>(ok: (t: T) => A, fnErr: (e: E) => B): Promise<A | B>
+  public async match<A, B = A>(handlers: MatchHandlers<T, E, A, B>): Promise<Awaited<A | B>>
+  public async match<A, B = A>(ok: (t: T) => A, fnErr: (e: E) => B): Promise<Awaited<A | B>>
   public async match<A, B = A>(
     input: MatchHandlers<T, E, A, B> | ((t: T) => A),
     fnErr?: (e: E) => B,
-  ): Promise<A | B> {
-    return this.innerPromise.then((res) =>
-      // Stryker disable next-line all: positional match avoids allocating a handlers object.
-      typeof input === 'function'
-        ? res.match(input, getMatchErrorHandler(input, fnErr))
-        : res.match(input),
-    )
+  ): Promise<Awaited<A | B>> {
+    const result = await this.innerPromise
+    const errorHandler = getMatchErrorHandler(input, fnErr)
+    const matched = await Promise.resolve(result.match(input as (t: T) => A, errorHandler))
+    return matched
   }
 
-  /**
-   * Converts this ResultAsync into a Promise of a plain value with exhaustive tagged-error handlers.
-   */
+  /** Converts this ResultAsync into a Promise with exhaustive tagged-error handlers. */
   public async matchTags<A, const Handlers extends object>(
-    ok: (t: T) => A,
+    ok: (value: T) => A,
     handlers: Handlers & MatchTagHandlers<E, Handlers>,
-  ): Promise<A | MatchTagHandlerResult<Handlers>> {
-    return this.innerPromise.then((res) =>
+  ): Promise<Awaited<A | MatchTagHandlerResult<Handlers>>> {
+    const result = await this.innerPromise
+    const matched = await Promise.resolve(
       matchResolvedResultTags<T, E, A, MatchTagHandlerResult<Handlers>, never>({
-        result: res,
+        result,
         ok,
         handlers,
         fallback: (error) => {
@@ -2872,25 +3656,27 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
         },
       }),
     )
+    return matched
   }
 
-  /**
-   * Converts this ResultAsync into a Promise of a plain value with partial tagged-error handlers and
-   * a fallback.
-   */
+  /** Converts this ResultAsync into a Promise with partial handlers and a narrowed fallback. */
   public async matchTagsPartial<A, B, const Handlers extends object>(
-    ok: (t: T) => A,
+    ok: (value: T) => A,
     handlers: Handlers & PartialMatchTagHandlers<E, Handlers>,
-    fallback: (error: E) => B,
-  ): Promise<A | MatchTagHandlerResult<Handlers> | B> {
-    return this.innerPromise.then((res) =>
-      matchResolvedResultTags<T, E, A, MatchTagHandlerResult<Handlers>, B>({
-        result: res,
-        ok,
-        handlers,
-        fallback,
-      }),
+    fallback: (error: RemainingMatchTagErrors<E, Handlers>) => B,
+  ): Promise<Awaited<A | MatchTagHandlerResult<Handlers> | B>> {
+    const result = await this.innerPromise
+    const matched = await Promise.resolve(
+      matchResolvedResultTags<
+        T,
+        E,
+        A,
+        MatchTagHandlerResult<Handlers>,
+        B,
+        RemainingMatchTagErrors<E, Handlers>
+      >({ result, ok, handlers, fallback }),
     )
+    return matched
   }
 
   /**
@@ -2941,7 +3727,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
    * Callback errors and rejected callback promises are intentionally ignored.
    * Use `map` or `andThen` when the callback should transform the value.
    */
-  public tap(f: (t: T) => void | Promise<void>): ResultAsync<T, E> {
+  public inspect(f: (t: T) => void | Promise<void>): ResultAsync<T, E> {
     return new ResultAsync(
       this.innerPromise.then(async (res) => {
         if (res.isErr()) {
@@ -2961,7 +3747,7 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
    * Callback errors and rejected callback promises are intentionally ignored.
    * Use `mapErr` or `orElse` when the callback should transform the error.
    */
-  public tapError(f: (e: E) => void | Promise<void>): ResultAsync<T, E> {
+  public inspectError(f: (e: E) => void | Promise<void>): ResultAsync<T, E> {
     return new ResultAsync(
       this.innerPromise.then(async (res) => {
         if (res.isErr()) {
@@ -2973,6 +3759,52 @@ export class ResultAsync<T, E> extends Pipeable implements PromiseLike<Result<T,
         return okAsync(res.value)
       }),
     )
+  }
+
+  /**
+   * Runs a side effect for either variant and preserves the original async result.
+   *
+   * Callback errors and rejected callback promises are intentionally ignored.
+   */
+  public inspectBoth(
+    handlers: MatchHandlers<T, E, void | Promise<void>, void | Promise<void>>,
+  ): ResultAsync<T, E>
+  public inspectBoth(
+    onOk: (t: T) => void | Promise<void>,
+    onErr: (e: E) => void | Promise<void>,
+  ): ResultAsync<T, E>
+  public inspectBoth(
+    input:
+      | MatchHandlers<T, E, void | Promise<void>, void | Promise<void>>
+      | ((t: T) => void | Promise<void>),
+    onErr?: (e: E) => void | Promise<void>,
+  ): ResultAsync<T, E> {
+    const fnOk = typeof input === 'function' ? input : input.ok
+    const fnErr = getMatchErrorHandler(input, onErr)
+
+    return new ResultAsync(
+      this.innerPromise.then(async (res) => {
+        if (res.isOk()) {
+          await callAsyncSideEffect(() => fnOk(res.value))
+
+          return okAsync(res.value)
+        }
+
+        await callAsyncSideEffect(() => fnErr(res.error))
+
+        return errAsync(res.error)
+      }),
+    )
+  }
+
+  /** @deprecated Use inspect; the original best-effort behavior is preserved. */
+  public tap(f: (value: T) => void | Promise<void>): ResultAsync<T, E> {
+    return this.inspect(f)
+  }
+
+  /** @deprecated Use inspectError; the original best-effort behavior is preserved. */
+  public tapError(f: (error: E) => void | Promise<void>): ResultAsync<T, E> {
+    return this.inspectError(f)
   }
 
   /**
@@ -3112,7 +3944,7 @@ export function tryResultAsync<T, E = unknown>(
  */
 export const runPromise = <T, E>(result: ResultAsync<T, E>): Promise<T> => result.unwrapOrThrow()
 
-/** Compatibility alias. Prefer `tryResultAsync` in new code. */
+/** @deprecated Use tryResultAsync; this alias retains its existing behavior. */
 export const tryCatchAsync: typeof tryResultAsync = tryResultAsync
 
 // Combines the array of async results into one result.

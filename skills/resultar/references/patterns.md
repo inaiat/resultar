@@ -60,7 +60,7 @@ const createUser = (input: CreateUserInput): StrictResultAsync<User, CreateUserE
     yield* ensureEmailAvailable(email);
     const user = yield* saveUser({ ...input, email });
 
-    return ok(user);
+    return user;
   });
 ```
 
@@ -136,11 +136,69 @@ Forward the supplied signal into the underlying operation. Confirm whether the d
 covers each attempt or the complete retry budget, then nest the policies accordingly. Use
 `retryOrElse` only when fallback after exhaustion is domain policy.
 
+For a policy reused across eager and lazy workflows, construct the portable contract explicitly:
+
+```ts
+import { Retry } from "resultar";
+
+const retryPolicy = Retry.policy({
+  times: 2,
+  delayMs: 100,
+  backoff: 2,
+  jittered: 0.2,
+});
+
+const lazy = loadProfileTask(userId).retry(retryPolicy);
+const eager = ResultAsync.retry(
+  (attempt, signal) => loadProfile(userId, { attempt, signal }),
+  { ...retryPolicy, signal: requestSignal },
+);
+```
+
+Both use zero-based context in `delayMs`, `while`, and `onRetry` callbacks; `times` counts retries
+after the initial attempt. With `times: 2`, the first failure has two retries remaining. Canonical
+`while` is called only when another retry can run, and `onRetry` is awaited but best-effort. Reuse
+shares configuration, not progress. Do not copy legacy options from one execution model to another:
+their existing callback arguments and jitter behavior differ.
+
+For a task adapter, choose how interruption handles an uncooperative promise:
+
+```ts
+const read = ResultTask.tryPromise({
+  try: (signal) => client.read(signal),
+  catch: (cause) => new ReadError({ cause }),
+  interruption: "detach",
+});
+```
+
+The default is `"wait"`. `"detach"` allows interruption to finish without waiting for the promise,
+while registered scope finalizers are still awaited. It does not stop the client. Keep resource
+acquisition on `"wait"` when its completion must precede release; a detached adapter owns anything
+it acquires after the task has stopped waiting.
+
+At execution, configure cooperative yields when a long instruction chain must share the event loop:
+
+```ts
+const exit = await ResultTask.runExit(lazy, { yieldEvery: 256 });
+```
+
+The default is 2048 instructions with `Scheduler.live`. A custom `TaskScheduler` receives the
+execution signal in `yield(signal)`. `Infinity` disables automatic yields. This does not interrupt
+a synchronous client callback midway; it is separate from `clock` and retry timing.
+
 Choose races deliberately:
 
-- `race` / `raceAll`: first settled `Ok` or `Err` wins.
-- `raceFirst`: first `Ok` wins; both must fail before an `Err` is returned.
-- `raceWith`: winner-specific logic needs access to the still-running task.
+- `ResultAsync.race` / `raceAll`: first `Ok` wins; if every task fails, return the last completed `Err`.
+- `ResultAsync.raceFirst`: first completed `Result` wins, whether `Ok` or `Err`.
+- `ResultAsync.raceWith`: custom logic needs access to the still-running task.
+
+ResultAsync races and timeouts abort pending losers without waiting for their settlement or
+cleanup. ResultTask races use the same first-success/first-outcome naming, own their children,
+and await loser cleanup.
+
+For a scope-owned child, use `Fiber.await(child)` to observe its full Exit without requesting
+interruption. Use `Fiber.join(child)` to compose its result, and `Fiber.interrupt(child)` to request
+cancellation and await cleanup. Keep the parent scope open until child consumers finish.
 
 ## Process Batches
 
@@ -201,8 +259,8 @@ domain functions.
 
 ```ts
 const observed = loadProfile(userId)
-  .tap((profile) => metrics.increment("profile.loaded", { userId: profile.userId }))
-  .tapError((error) => metrics.increment("profile.failed", { tag: error._tag }))
+  .inspect((profile) => metrics.increment("profile.loaded", { userId: profile.userId }))
+  .inspectError((error) => metrics.increment("profile.failed", { tag: error._tag }))
   .log((profile, error) => logger.info({ error, profile }, "profile result"));
 ```
 
@@ -210,6 +268,9 @@ These `ResultAsync` callbacks are best-effort and cannot change the result.
 `ResultTask.tap` and `tapError` instead propagate returned task failures and turn callback
 throws or rejected Promises into defects. Use `andThen` or `orElse` when a
 logging, auditing, publishing, or cleanup failure must affect control flow.
+Deprecated `ResultAsync.tap` / `tapError` calls retain their best-effort behavior.
+For best-effort lazy observation, use `ResultTask.inspect` / `inspectError`; observer failures
+are ignored and returned tasks are not executed.
 
 ## Migrate Incrementally
 

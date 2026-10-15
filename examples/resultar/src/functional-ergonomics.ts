@@ -13,7 +13,7 @@ export const normalizeUserId = flow(
 
 export const loadUserLabel = ResultTask.fn(function* (id: string, prefix = "user") {
   const clock = yield* WorkflowClock;
-  if (id === "missing") yield* ResultTask.fail(new UserNotFound({ id }));
+  if (id === "missing") yield* ResultTask.err(new UserNotFound({ id }));
   return `${prefix}:${normalizeUserId(id)}:${clock.now()}`;
 });
 
@@ -21,7 +21,7 @@ export const recoverUserLabel = (id: string) =>
   pipe(
     loadUserLabel(id),
     ResultTask.catchTags({
-      UserNotFound: (error: UserNotFound) => ResultTask.succeed(`guest:${error.id}`),
+      UserNotFound: (error: UserNotFound) => ResultTask.ok(`guest:${error.id}`),
     }),
   );
 
@@ -57,7 +57,7 @@ export const runFunctionalErgonomics = async () => {
     events,
     status: ok<string, UserNotFound>("Ready").match({
       ok: identity,
-      error: constant("Unavailable"),
+      err: constant("Unavailable"),
     }),
   };
 };

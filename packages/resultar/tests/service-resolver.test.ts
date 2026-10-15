@@ -18,7 +18,7 @@ describe('service resolver guarantees', () => {
       name: () =>
         ResultTask.gen(function* provideName() {
           yield* External
-          return yield* ResultTask.fail('offline' as const)
+          return yield* ResultTask.err('offline' as const)
         }),
     })
     expectTypeOf(resolved).toEqualTypeOf<
@@ -29,7 +29,7 @@ describe('service resolver guarantees', () => {
       cause: { _tag: 'Fail', error: 'offline' },
     })
     // @ts-expect-error The provider must return the required contract.
-    ResultTask.provideServiceResolver(task, { name: () => ResultTask.succeed(123) })
+    ResultTask.provideServiceResolver(task, { name: () => ResultTask.ok(123) })
     // @ts-expect-error Every required service needs a provider.
     ResultTask.provideServiceResolver(task, {})
   })
@@ -72,7 +72,7 @@ describe('service resolver guarantees', () => {
       cause: { _tag: 'Die', defect: new MissingServiceError('external') },
     })
     const provided = resolved.provideServiceResolver({
-      external: () => ResultTask.succeed('outer provider'),
+      external: () => ResultTask.ok('outer provider'),
     })
     expect(await ResultTask.runPromise(provided)).toBe('outer provider')
   })

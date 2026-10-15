@@ -47,7 +47,7 @@ for (const [name, run] of [
 }
 
 const generated = ResultTask.fn(function* (value: number) {
-  return yield* ResultTask.succeed(value);
+  return yield* ResultTask.ok(value);
 });
 let task = generated(0);
 measure("fn construction", () => {
@@ -56,7 +56,7 @@ measure("fn construction", () => {
 measure("manual gen construction", () => {
   for (let i = 0; i < iterations; i++)
     task = ResultTask.gen(function* () {
-      return yield* ResultTask.succeed(i);
+      return yield* ResultTask.ok(i);
     });
 });
 strictEqual(await ResultTask.runPromise(task), iterations - 1);

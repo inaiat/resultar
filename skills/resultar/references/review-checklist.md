@@ -26,7 +26,7 @@ validation. Report only issues supported by the installed Resultar version and r
 - `filterOrElse` represents predicate validation.
 - `andThen` composes fallible steps; `asyncAndThen` is used for the sync-to-async bridge.
 - `orElse` recovers the whole error channel; `catchTag` / `catchTags` recover selected domain cases.
-- `safeTry` uses `yield*` for Resultar values and contains no raw `await` or broad `try/catch`.
+- `Result.gen` / `safeTry` use `yield*` for Resultar values and contains no raw `await` or broad `try/catch`.
 - Returned `Result`, `ResultAsync`, and `ResultTask` values are handled or explicitly discarded by supported policy.
 - Type assertions do not narrow away possible errors.
 
@@ -38,8 +38,18 @@ validation. Report only issues supported by the installed Resultar version and r
 - `fromSafePromise` is used only when rejection is impossible by contract.
 - Callback integrations provide cleanup and model `AbortError` where applicable.
 - Retry policy defines bounded attempts, delay/jitter, retryable errors, and cancellation.
+- Retry configuration shared across ResultAsync and ResultTask uses `Retry.policy`, preserving
+  each execution model. Canonical predicates use zero-based context and only run with budget;
+  legacy option callbacks keep their existing signatures and behavior.
+- Task promise adapters choose `'wait'` or `'detach'` deliberately. Detachment stops waiting,
+  while the adapter owns resources acquired by underlying work after interruption.
 - Timeout scope is explicit: per attempt or across the complete retry budget.
-- `race`/`raceAll` are used for first settlement; `raceFirst` for first success.
+- `ResultAsync.race` / `raceAll` select the first `Ok`; if every task fails, return the last completed `Err`. `ResultAsync.raceFirst` selects the first completed `Result`.
+- ResultAsync races and timeouts abort pending losers without waiting for their settlement or cleanup.
+- `ResultTask.race` selects the first success; `ResultTask.raceFirst` selects the first outcome. Both await loser cleanup.
+- `Fiber.await` observes completion; `join` composes the result and `interrupt` requests cancellation.
+- `yieldEvery` / `scheduler` configure instruction scheduling, not synchronous preemption or time.
+  Tests use a deterministic scheduler when ordering across yields matters.
 - Signals reach the underlying client so cancellation is cooperative rather than cosmetic.
 - Batch concurrency is bounded when workload size or dependency capacity requires it.
 - `validateAll` is used only when collecting all independent failures is desired.
@@ -70,9 +80,12 @@ validation. Report only issues supported by the installed Resultar version and r
 
 ## Observability And Cleanup
 
-- `Result` / `ResultAsync` observation failures are best-effort; `ResultTask.tap` / `tapError`
-  can introduce typed failures or defects.
+- `Result` / `ResultAsync.inspect` / `inspectError` and deprecated `tap` / `tapError` are best-effort.
+- `ResultTask.tap` / `tapError` can introduce typed failures or defects; `inspect` / `inspectError`
+  are best-effort and never execute returned tasks.
 - Resource cleanup and observation use the semantics of the concrete execution model.
+- `Result.gen` / `safeTry` do not close a suspended generator on early `Err`; cleanup does not rely
+  on `finally` on that path. `ResultTask.gen` interprets yielded generator cleanup.
 - Audits, publishes, or cleanup that must succeed use `andThen`, `orElse`, or another Resultar
   boundary.
 - Logs expose stable tags and safe context without leaking redacted values.
@@ -87,7 +100,9 @@ validation. Report only issues supported by the installed Resultar version and r
 - Documentation examples compile or have a matching runnable example.
 - Core request, TypeBox, and Zod docs link to one another as alternatives/adapters.
 - API names, package links, and version claims match current source.
-- `Result.gen` returns a Result; `ResultTask.gen` returns a plain success value.
+- `Result.gen` and `ResultTask.gen` return plain success values and compose fallible steps or early
+  errors via `yield*`; `safeTry` retains its final-Result contract.
+- Deprecated calls remain behavior-compatible; migration changes names without changing contracts.
 - `runResult` rejection paths and deferred release errors are handled at the owning boundary.
 - An intentional-discard fix is not mistaken for executing or handling a lazy task.
 
@@ -110,7 +125,7 @@ validation. Report only issues supported by the installed Resultar version and r
 - `map` returns another `Result` or `ResultAsync`.
 - `orElse` only replaces one error with another and should be `mapErr`.
 - A raw promise is awaited inside a Resultar workflow without a typed mapper.
-- `safeTry` contains raw `await`, plain `yield`, `try/catch`, or legacy `safeUnwrap()`.
+- `Result.gen` / `safeTry` contain raw `await`, plain `yield`, or broad `try/catch` instead of supported Result composition.
 - A Resultar value is created and ignored.
 - `_unsafeUnwrap()` appears in production code.
 - An assertion makes an error union narrower than the implementation can guarantee.

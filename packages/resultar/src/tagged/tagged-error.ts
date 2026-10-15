@@ -1,7 +1,10 @@
-import type { ErrResult } from './result.js'
+import type { ResultAsync } from '../result/result-async.js'
+import type { ErrResult } from '../result/result.js'
 
-import { isRedacted, stringifyRedacted } from './redacted.js'
-import { err as resultErr } from './result.js'
+import { isRedacted, stringifyRedacted } from '../core/redacted.js'
+import { createResultAsync } from '../result/result-async-adapter.js'
+import { ResultTask } from '../task/result-task.js'
+import { err as resultErr } from '../result/result.js'
 
 type Alpha =
   | 'a'
@@ -113,14 +116,62 @@ type ErrorClass<Base extends Error = Error> = new (...args: readonly any[]) => B
 type ErrorClassInstance<This> = This extends new (...args: readonly any[]) => infer Instance
   ? Instance
   : never
-type ConstructorProps<Template extends string> = TemplateProps<Template> & {
-  readonly cause?: unknown
-}
-type TaggedErrorConstructorArgs<Template extends string> = [
-  ExtractTemplateVariables<Template>,
-] extends [never]
-  ? [props?: { readonly cause?: unknown }]
-  : [props: ConstructorProps<Template>]
+type MergeProps<Current, Next> = Next extends unknown
+  ? Current extends unknown
+    ? Omit<Current, keyof Next> & Next
+    : never
+  : never
+type ConstructorProps<Template extends string, Props extends object = object> = MergeProps<
+  TemplateProps<Template> & { readonly cause?: unknown },
+  Props
+>
+type TaggedErrorConstructorArgs<Template extends string, Props extends object = object> =
+  object extends ConstructorProps<Template, Props>
+    ? [props?: ConstructorProps<Template, Props>]
+    : [props: ConstructorProps<Template, Props>]
+type InstanceProps<Props> = Props extends unknown
+  ? { readonly [Key in keyof Props]: Key extends 'message' ? string : Props[Key] }
+  : never
+type ReservedMetadataKeys<Template extends string, Base extends Error> = Exclude<
+  | keyof Base
+  | 'constructor'
+  | 'toString'
+  | 'valueOf'
+  | 'hasOwnProperty'
+  | 'isPrototypeOf'
+  | 'propertyIsEnumerable'
+  | 'toLocaleString'
+  | '__defineGetter__'
+  | '__defineSetter__'
+  | '__lookupGetter__'
+  | '__lookupSetter__'
+  | '_tag'
+  | 'fingerprint'
+  | 'messageTemplate'
+  | 'findCause'
+  | 'toJSON'
+  | 'err'
+  | 'is'
+  | 'tag'
+  | 'withProps'
+  | '__proto__'
+  | 'prototype'
+  | 'then',
+  Template extends typeof defaultMessageTemplate ? 'message' : never
+>
+type InvalidMetadataKeys<Props, Template extends string, Base extends Error> = Props extends unknown
+  ?
+      | Extract<keyof Props, ReservedMetadataKeys<Template, Base> | symbol>
+      | (string extends keyof Props ? string : never)
+      | (number extends keyof Props ? number : never)
+      | {
+          [Key in keyof Props]-?: Key extends ExtractTemplateVariables<Template>
+            ? object extends Pick<Props, Key>
+              ? Key
+              : never
+            : never
+        }[keyof Props]
+  : never
 
 /** Configuration used to create a tagged `Error` class. */
 export interface TaggedErrorOptions<
@@ -149,8 +200,9 @@ export type TaggedErrorInstance<
   Tag extends string,
   MessageTemplate extends string,
   Base extends Error = Error,
+  Props extends object = object,
 > = Base &
-  Readonly<TemplateProps<MessageTemplate>> & {
+  InstanceProps<MergeProps<TemplateProps<MessageTemplate>, Props>> & {
     /**
      * Stable runtime tag.
      */
@@ -180,10 +232,11 @@ export type TaggedErrorClass<
   Tag extends string,
   MessageTemplate extends string,
   Base extends Error = Error,
+  Props extends object = object,
 > = {
   new (
-    ...args: TaggedErrorConstructorArgs<MessageTemplate>
-  ): TaggedErrorInstance<Tag, MessageTemplate, Base>
+    ...args: TaggedErrorConstructorArgs<MessageTemplate, Props>
+  ): TaggedErrorInstance<Tag, MessageTemplate, Base, Props>
   /**
    * Stable runtime tag.
    */
@@ -191,14 +244,48 @@ export type TaggedErrorClass<
   /**
    * Creates an Err containing this tagged error.
    */
-  err: <This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate>) => Error>(
+  err: <This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate, Props>) => Error>(
     this: This,
-    ...args: TaggedErrorConstructorArgs<MessageTemplate>
+    ...args: TaggedErrorConstructorArgs<MessageTemplate, Props>
   ) => ErrResult<never, ErrorClassInstance<This>>
+  /**
+   * Creates a failed ResultAsync containing this tagged error.
+   */
+  errAsync: <
+    This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate, Props>) => Error,
+  >(
+    this: This,
+    ...args: TaggedErrorConstructorArgs<MessageTemplate, Props>
+  ) => ResultAsync<never, ErrorClassInstance<This>>
+  /**
+   * Creates a failed ResultTask containing this tagged error.
+   */
+  taskErr: <
+    This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate, Props>) => Error,
+  >(
+    this: This,
+    ...args: TaggedErrorConstructorArgs<MessageTemplate, Props>
+  ) => ResultTask<never, ErrorClassInstance<This>>
   /**
    * Narrows a value to this tagged error class.
    */
-  is: (value: unknown) => value is TaggedErrorInstance<Tag, MessageTemplate, Base>
+  is: {
+    <This extends ErrorClass>(this: This, value: unknown): value is ErrorClassInstance<This>
+    (value: unknown): value is TaggedErrorInstance<Tag, MessageTemplate, Base, Props>
+  }
+  /**
+   * Creates a fresh sibling constructor with explicit metadata types. Specified fields replace
+   * template defaults; unspecified template fields keep their inferred types. Template fields
+   * must stay required; additional metadata may be optional. Cause uses the existing constructor
+   * channel and cannot be specialized as metadata. String properties, including getters and non-enumerable or inherited fields, are
+   * copied as readonly metadata while preserving Error fields and helpers. Input types are checked
+   * by TypeScript, without runtime validation. Guards distinguish sibling classes.
+   */
+  withProps: <Metadata extends object>(
+    ...args: [InvalidMetadataKeys<Metadata, MessageTemplate, Base>] extends [never]
+      ? []
+      : [invalidMetadata: never]
+  ) => TaggedErrorClass<Tag, MessageTemplate, Base, MergeProps<Props, Metadata>>
 }
 
 /**
@@ -363,6 +450,28 @@ const assignReadonly = (target: object, key: PropertyKey, value: unknown): void 
   })
 }
 
+const reservedMetadataProperties = new Set(['err', 'is', 'tag', 'withProps', 'prototype', 'then'])
+
+const shouldCopyMetadata = (target: object, owner: object, key: string): boolean =>
+  !reservedTemplateVariables.has(key as ReservedTemplateVariable) &&
+  !reservedMetadataProperties.has(key) &&
+  owner !== Function.prototype &&
+  !(key in target)
+
+const copyVisibleMetadata = (target: object, props: object): void => {
+  let current: object | null = props
+
+  while (current !== null) {
+    for (const key of Object.getOwnPropertyNames(current)) {
+      if (shouldCopyMetadata(target, current, key)) {
+        assignReadonly(target, key, Reflect.get(props, key))
+      }
+    }
+
+    current = Object.getPrototypeOf(current) as object | null
+  }
+}
+
 const serializeTaggedValue = (value: unknown): unknown =>
   isRedacted(value) ? stringifyRedacted(value) : value
 
@@ -439,6 +548,17 @@ export function createTaggedError<
     readonly message?: RejectReservedTemplateVariables<MessageTemplate>
   },
 ): TaggedErrorClass<Tag, MessageTemplate, Base> {
+  return createTaggedErrorClass(options, false)
+}
+
+const createTaggedErrorClass = <
+  Tag extends string,
+  MessageTemplate extends string,
+  Base extends Error,
+>(
+  options: TaggedErrorOptions<Tag, MessageTemplate, Base>,
+  explicitProps: boolean,
+): TaggedErrorClass<Tag, MessageTemplate, Base> => {
   const BaseError = options.extends ?? defaultBaseError
   const messageTemplate = options.message ?? (defaultMessageTemplate as MessageTemplate)
   assertNoReservedTemplateVariables(options.name, messageTemplate)
@@ -457,9 +577,13 @@ export function createTaggedError<
       this.name = options.name
 
       if (props) {
-        for (const [key, value] of Object.entries(props)) {
-          if (!reservedTemplateVariables.has(key as ReservedTemplateVariable)) {
-            assignReadonly(this, key, value)
+        if (explicitProps) {
+          copyVisibleMetadata(this, props)
+        } else {
+          for (const [key, value] of Object.entries(props)) {
+            if (!reservedTemplateVariables.has(key as ReservedTemplateVariable)) {
+              assignReadonly(this, key, value)
+            }
           }
         }
       }
@@ -468,8 +592,16 @@ export function createTaggedError<
     /**
      * Narrows a value to this tagged error class.
      */
-    public static is(value: unknown): value is TaggedErrorInstance<Tag, MessageTemplate, Base> {
+    public static is<This extends ErrorClass>(
+      this: This,
+      value: unknown,
+    ): value is ErrorClassInstance<This> {
       return value instanceof this
+    }
+
+    /** Creates a distinct constructor from this factory's configuration, without runtime validation. */
+    public static withProps(): TaggedErrorClass<Tag, MessageTemplate, Base> {
+      return createTaggedErrorClass(options, true)
     }
 
     /**
@@ -483,6 +615,34 @@ export function createTaggedError<
     ): ErrResult<never, InstanceType<This>> {
       const error = new this(...args) as InstanceType<This>
       return resultErr<never, InstanceType<This>>(error)
+    }
+
+    /**
+     * Creates a failed ResultAsync containing this tagged error.
+     */
+    public static errAsync<
+      This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate>) => Error,
+    >(
+      this: This,
+      ...args: TaggedErrorConstructorArgs<MessageTemplate>
+    ): ResultAsync<never, InstanceType<This>> {
+      const error = new this(...args) as InstanceType<This>
+      return createResultAsync<ResultAsync<never, InstanceType<This>>>(
+        Promise.resolve(resultErr<never, InstanceType<This>>(error)),
+      )
+    }
+
+    /**
+     * Creates a failed ResultTask containing this tagged error.
+     */
+    public static taskErr<
+      This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate>) => Error,
+    >(
+      this: This,
+      ...args: TaggedErrorConstructorArgs<MessageTemplate>
+    ): ResultTask<never, InstanceType<This>> {
+      const error = new this(...args) as InstanceType<This>
+      return ResultTask.err<never, InstanceType<This>>(error)
     }
 
     /**
@@ -518,7 +678,7 @@ export function createTaggedError<
     }
   }
 
-  return GeneratedTaggedError as TaggedErrorClass<Tag, MessageTemplate, Base>
+  return GeneratedTaggedError as unknown as TaggedErrorClass<Tag, MessageTemplate, Base>
 }
 
 /**

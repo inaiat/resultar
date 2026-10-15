@@ -65,7 +65,7 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
 
     it('rejects forged yieldables without ResultTaskYieldTypeId in ResultTask.gen', async () => {
       const forged = ResultTask.gen(function* () {
-        return yield { _tag: 'ResultTask', task: ResultTask.succeed(123) } as never
+        return yield { _tag: 'ResultTask', task: ResultTask.ok(123) } as never
       })
       const exit = await ResultTask.runExit(forged)
       equal(exit._tag, 'Failure')
@@ -78,7 +78,7 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
     })
 
     it('identifies tasks using isResultTask', () => {
-      const task = ResultTask.succeed(10)
+      const task = ResultTask.ok(10)
       equal(isResultTask(task), true)
       equal(isResultTask({ [ResultTaskTypeId]: true }), true)
       equal(isResultTask({}), false)
@@ -87,7 +87,7 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
     })
 
     it('attaches ResultTaskYieldTypeId to yielded values from ResultTask and ServiceTag', () => {
-      const task = ResultTask.succeed('val')
+      const task = ResultTask.ok('val')
       const taskGen = task[Symbol.iterator]()
       const taskYield = taskGen.next()
       equal(taskYield.done, false)
@@ -157,10 +157,10 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
 
     it('combines Result and ResultTask error types in union', async () => {
       const okResult: Result<number, 'ok-err'> = ok(10)
-      const failedTask: ResultTask<number, 'task-err', never> = ResultTask.fail('task-err')
+      const failedTask: ResultTask<number, 'task-err', never> = ResultTask.err('task-err')
       const task = ResultTask.gen(function* () {
         const a = yield* ok(5)
-        const b = yield* ResultTask.succeed(15)
+        const b = yield* ResultTask.ok(15)
         const c = yield* okResult
         const d = yield* failedTask
         return a + b + c + d
@@ -318,7 +318,7 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
       const resolved = lazyWorkflow.provideServiceResolver({
         Database: () => {
           resolvedCount += 1
-          return ResultTask.succeed<Database>({ query: async () => ['resolved-db'] })
+          return ResultTask.ok<Database>({ query: async () => ['resolved-db'] })
         },
       })
 
@@ -502,7 +502,7 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
     it('reusable curried provideServices preserves scope requirements and unprovided services', async () => {
       let released = false
       const scopedTask = ResultTask.acquireRelease({
-        acquire: ResultTask.succeed('resource'),
+        acquire: ResultTask.ok('resource'),
         release: () =>
           ResultTask.sync(() => {
             released = true
@@ -543,14 +543,14 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
 
       // Curried in pipe
       const resolved = workflow.pipe(
-        ResultTask.provideServiceResolver({ Clock: () => ResultTask.succeed({ now: () => 99 }) }),
+        ResultTask.provideServiceResolver({ Clock: () => ResultTask.ok({ now: () => 99 }) }),
       )
       expectTypeOf(resolved).toEqualTypeOf<ResultTask<number, never, never>>()
       equal(await ResultTask.runPromise(resolved), 99)
 
       // Reusable curried resolver
       const resolverFn = ResultTask.provideServiceResolver({
-        Clock: () => ResultTask.succeed({ now: () => 100 }),
+        Clock: () => ResultTask.ok({ now: () => 100 }),
       })
       const reusableResolved = workflow.pipe(resolverFn)
       expectTypeOf(reusableResolved).toEqualTypeOf<ResultTask<number, never, never>>()
@@ -562,16 +562,14 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
       expectTypeOf(unresolvedMissing).toEqualTypeOf<ResultTask<number, never, typeof Clock>>()
 
       // Incompatible resolver contract is rejected at application time
-      const wrongResolver = ResultTask.provideServiceResolver({
-        Clock: () => ResultTask.succeed(123),
-      })
+      const wrongResolver = ResultTask.provideServiceResolver({ Clock: () => ResultTask.ok(123) })
       if (false) {
         // @ts-expect-error Incompatible resolver contract is rejected when applied to workflow
         void workflow.pipe(wrongResolver)
 
         void workflow.pipe(
           // @ts-expect-error Incompatible resolver contract is rejected directly in pipe
-          ResultTask.provideServiceResolver({ Clock: () => ResultTask.succeed(123) }),
+          ResultTask.provideServiceResolver({ Clock: () => ResultTask.ok(123) }),
         )
       }
     })
@@ -585,7 +583,7 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
 
       // F2-R2: Curried resolver returning typed failure without explicit generics
       const failingResolver = ResultTask.provideServiceResolver({
-        Clock: () => ResultTask.fail('offline' as const),
+        Clock: () => ResultTask.err('offline' as const),
       })
       const failedResult = workflow.pipe(failingResolver)
       expectTypeOf(failedResult).toEqualTypeOf<ResultTask<number, 'offline', never>>()
@@ -625,7 +623,7 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
         return c.now() + x
       })
       const multiResolver = ResultTask.provideServiceResolver({
-        Clock: () => ResultTask.fail('clock-err' as const),
+        Clock: () => ResultTask.err('clock-err' as const),
         TagX: () =>
           ResultTask.gen(function* () {
             yield* External
@@ -638,7 +636,7 @@ describe('ResultTask — Phase 2: Generators and Services', () => {
       // F2-R2: Preserves scope requirements from providers
       let resourceClosed = false
       const scopedProviderTask = ResultTask.acquireRelease({
-        acquire: ResultTask.succeed('db-conn'),
+        acquire: ResultTask.ok('db-conn'),
         release: () =>
           ResultTask.sync(() => {
             resourceClosed = true

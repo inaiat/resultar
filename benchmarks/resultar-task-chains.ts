@@ -19,9 +19,9 @@ const run = async (): Promise<void> => {
   console.log('1. Lazy Task Construction (without running):')
   for (const n of [10, 100, 1_000, 10_000]) {
     await measure(`Build ${n} flatMaps`, async () => {
-      let t = ResultTask.succeed(0)
+      let t = ResultTask.ok(0)
       for (let i = 0; i < n; i++) {
-        t = t.flatMap((x) => ResultTask.succeed(x + 1))
+        t = t.andThen((x) => ResultTask.ok(x + 1))
       }
     })
   }
@@ -29,9 +29,9 @@ const run = async (): Promise<void> => {
   console.log('\n2. Sequential Execution (ResultTask flatMap chains):')
   for (const n of [10, 100, 1_000, 10_000]) {
     await measure(`Run ${n} flatMaps`, async () => {
-      let t = ResultTask.succeed(0)
+      let t = ResultTask.ok(0)
       for (let i = 0; i < n; i++) {
-        t = t.flatMap((x) => ResultTask.succeed(x + 1))
+        t = t.andThen((x) => ResultTask.ok(x + 1))
       }
       const result = await ResultTask.runPromise(t)
       strictEqual(result, n)
@@ -41,7 +41,7 @@ const run = async (): Promise<void> => {
   console.log('\n3. Sequential Execution (ResultTask map chains):')
   for (const n of [10, 100, 1_000, 10_000]) {
     await measure(`Run ${n} maps`, async () => {
-      let t = ResultTask.succeed(0)
+      let t = ResultTask.ok(0)
       for (let i = 0; i < n; i++) {
         t = t.map((x) => x + 1)
       }
@@ -52,9 +52,9 @@ const run = async (): Promise<void> => {
 
   console.log('\n4. Comparison: ResultTask vs ResultAsync (1,000 chained andThen):')
   await measure('ResultTask 1,000 flatMaps', async () => {
-    let t = ResultTask.succeed(0)
+    let t = ResultTask.ok(0)
     for (let i = 0; i < 1_000; i++) {
-      t = t.flatMap((x) => ResultTask.succeed(x + 1))
+      t = t.andThen((x) => ResultTask.ok(x + 1))
     }
     strictEqual(await ResultTask.runPromise(t), 1_000)
   })

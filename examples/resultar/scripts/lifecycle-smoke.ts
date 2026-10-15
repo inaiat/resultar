@@ -21,13 +21,13 @@ const fixture = (failSchema = false, failDatabaseClose = false) => {
             ResultTask.gen(function* () {
               events.push('schema')
               if (failSchema)
-                yield* ResultTask.fail(new DatabaseLifecycleError({ operation: 'schema' }))
+                yield* ResultTask.err(new DatabaseLifecycleError({ operation: 'schema' }))
             }),
           close: () =>
             ResultTask.gen(function* () {
               events.push('close database')
               if (failDatabaseClose)
-                yield* ResultTask.fail(new DatabaseLifecycleError({ operation: 'close' }))
+                yield* ResultTask.err(new DatabaseLifecycleError({ operation: 'close' }))
             }),
         }
       }),

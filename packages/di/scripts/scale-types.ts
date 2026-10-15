@@ -30,7 +30,7 @@ try {
       const args =
         deep && i > 0 ? `{ previous: s${i - 1} }, ({ previous }) => previous + 1` : "{}, () => 1";
       const value = deep && i > 0 ? "previous + 1" : "1";
-      const construction = style === "sync-requires" ? value : `ResultTask.succeed(${value})`;
+      const construction = style === "sync-requires" ? value : `ResultTask.ok(${value})`;
       const required =
         deep && i > 0
           ? `{ requires: { previous: s${i - 1} }, make: ({ previous }) => ${construction} }`
@@ -42,7 +42,7 @@ try {
       lines.push(declaration, `const m${i + 1} = m${i}.singleton(s${i});`);
     }
     lines.push(
-      `const program: ResultTask<number> = m${size}.use(["s${size - 1}"], (services) => ResultTask.succeed(services.s${size - 1}));`,
+      `const program: ResultTask<number> = m${size}.use(["s${size - 1}"], (services) => ResultTask.ok(services.s${size - 1}));`,
       "void program;",
     );
     const file = join(directory, `graph-${style}-${size}-${deep}.mts`);

@@ -60,7 +60,7 @@ describe("framework service access", () => {
       ResultTask.gen(function* acquireConsumer() {
         const database = yield* dependency;
         return yield* ResultTask.acquireRelease({
-          acquire: ResultTask.succeed({ database }),
+          acquire: ResultTask.ok({ database }),
           release: () =>
             ResultTask.sync(() => {
               events.push("consumer");
@@ -94,17 +94,15 @@ describe("framework service access", () => {
   });
 
   it("reports missing, cyclic, asynchronous and lifetime-invalid reads, and rejects closed access", async () => {
-    const base = createModule().singleton(service("async", ResultTask.succeed(1)));
+    const base = createModule().singleton(service("async", ResultTask.ok(1)));
     const cyclic = withProvider(base, "cycle", {
       create: (access) => access.get("cycle").unwrapOrThrow(),
     });
     const scopedModule = withProvider(cyclic, "scoped", { lifetime: "scoped", create: () => 1 });
-    const module = withProvider(scopedModule, "asyncFactory", {
-      create: () => ResultTask.succeed(1),
-    });
+    const module = withProvider(scopedModule, "asyncFactory", { create: () => ResultTask.ok(1) });
     const root = module.scope();
     const access = await ResultTask.runPromise(
-      useServiceAccess(root, (view) => ResultTask.succeed(view), { application: true }),
+      useServiceAccess(root, (view) => ResultTask.ok(view), { application: true }),
     );
     expect(access.get("missing").isErr()).toBe(true);
     expect(() => access.get("cycle").unwrapOrThrow()).toThrow("Circular dependency");
@@ -144,7 +142,7 @@ describe("framework service access", () => {
     expect(inspectModule(module)).toEqual([{ name: "value", lifetime: "singleton" }]);
     expect(() => inspectModule({})).toThrow("createModule");
     await expect(
-      ResultTask.runPromise(useServiceAccess({}, (view) => ResultTask.succeed(view))),
+      ResultTask.runPromise(useServiceAccess({}, (view) => ResultTask.ok(view))),
     ).rejects.toThrow("scope");
   });
 });

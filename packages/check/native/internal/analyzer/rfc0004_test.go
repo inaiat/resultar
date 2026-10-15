@@ -15,6 +15,7 @@ export declare class ResultTask<A, E = never, R = never> {
  readonly value: A; readonly error: E; readonly requirements: R
  static gen<Y,A>(body: () => Generator<Y,A,unknown>): ResultTask<A>
  static fn<Y,A>(body: () => Generator<Y,A,unknown>): () => ResultTask<A>
+ static err<E>(error:E):ResultTask<never,E>
  static fail<E>(error:E):ResultTask<never,E>
  static acquireDisposable<A,E,R>(task:ResultTask<A,E,R>):ResultTask<A,E,R>
  catchAll<B,E2,R2>(handler:(error:E)=>ResultTask<B,E2,R2>):ResultTask<A|B,E2,R|R2>
@@ -133,13 +134,13 @@ func TestOverviewHoverAndSafeRefactors(t *testing.T) {
 	source := taskToolingFixture + `
 export const simplified = ResultTask.gen(function*(){return yield* task})
 export const retained = ResultTask.gen(function*(){try{return yield* task}finally{void 1}})
-export const byTag = task.catchAll((error: Missing|Denied)=>error._tag==='Missing'?recover(error):ResultTask.fail(error))
+export const byTag = task.catchAll((error: Missing|Denied)=>error._tag==='Missing'?recover(error):ResultTask.err(error))
 const handleMissing = recover
 const handleDenied = recover
 export const merged = task.catchTag('Missing',handleMissing).catchTag('Denied',handleDenied)
-const introducesDenied = (_error:Missing|Denied):ResultTask<number,Denied>=>ResultTask.fail({_tag:'Denied'})
+const introducesDenied = (_error:Missing|Denied):ResultTask<number,Denied>=>ResultTask.err({_tag:'Denied'})
 export const retainedRecovery = task.catchTag('Missing',introducesDenied).catchTag('Denied',handleDenied)
-const broad = (_error:Missing|Denied):ResultTask<number,Error>=>ResultTask.fail(new Error())
+const broad = (_error:Missing|Denied):ResultTask<number,Error>=>ResultTask.err(new Error())
 const handleAnyError = (_error:Error)=>task
 export const retainedBroadRecovery = task.catchTag('Missing',broad).catchTag('Denied',handleAnyError)
 export const later = ResultTask.gen(function*(){return yield* future})
@@ -214,6 +215,47 @@ export function workflow(): ResultTask<number,Missing|Denied,Clock>{return task}
 		}
 		if diagnostics := next.Program.GetSemanticDiagnostics(context.Background(), nil); len(diagnostics) > 0 {
 			t.Fatalf("invalid refactor %s: %v", fix.Title, diagnostics)
+		}
+	}
+}
+func TestMatchHoverShowsRemainingCoverage(t *testing.T) {
+	source := `
+interface MatchMatcher<Input,Remaining,Matched,Kind,Args,Target> {
+ readonly input: Input; readonly remaining: Remaining; readonly matched: Matched
+ readonly kind: Kind; readonly args: Args; readonly target: Target
+}
+type Event = {readonly _tag:'Created';readonly id:string}|{readonly _tag:'Deleted';readonly id:string}
+declare const matcher: MatchMatcher<Event,Extract<Event,{_tag:'Deleted'}>,string,'type',[],unknown>
+void matcher
+`
+	directory := writeFixture(t, source)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil || len(diagnostics) > 0 {
+		t.Fatalf("open: %v %v", err, diagnostics)
+	}
+	hover, err := HoverAt(context.Background(), opened.Program, filepath.Join(directory, "fixture.ts"), strings.LastIndex(source, "matcher"))
+	if err != nil || !strings.Contains(hover, "Remaining cases") || !strings.Contains(hover, "Deleted") || !strings.Contains(hover, "Matched output") {
+		t.Fatalf("Match hover: %s %v", hover, err)
+	}
+}
+
+func TestTaskRecoveryRefactorsRecognizeBothNames(t *testing.T) {
+	for _, method := range []string{"catchAll", "orElse"} {
+		for _, ctor := range []string{"err", "fail"} {
+			t.Run(method+"_"+ctor, func(t *testing.T) {
+				source := strings.Replace(taskToolingFixture, " catchAll<", " "+method+"<", 1) + `
+export const recovered = task.` + method + `((error:Missing|Denied)=>error._tag==='Missing'?recover(error):ResultTask.` + ctor + `(error))
+`
+				directory := writeFixture(t, source)
+				opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+				if err != nil || len(diagnostics) > 0 {
+					t.Fatalf("open: %v %v", err, diagnostics)
+				}
+				fixes, err := Refactors(context.Background(), opened.Program, filepath.Join(directory, "fixture.ts"))
+				if err != nil || len(fixes) != 1 || !strings.Contains(fixes[0].Edits[0].NewText, ".catchTags({") {
+					t.Fatalf("recovery %s (%s): %v %#v", method, ctor, err, fixes)
+				}
+			})
 		}
 	}
 }

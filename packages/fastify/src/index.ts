@@ -385,7 +385,7 @@ export function createFastifyPlugin<const Options extends FastifyServicesOptions
                           state.cleanup();
                           return exit;
                         })
-                        .tap((exit) => {
+                        .inspect((exit) => {
                           if (state.exposed && exit._tag === "Failure" && hasFailure(exit.cause)) {
                             request.log.error(
                               { err: new ResultTaskCauseError(exit.cause) },

@@ -64,10 +64,11 @@ assert.ok(exhausted.isErr()); assert.equal(calls, 3)`,
   {
     id: 3,
     contract: `Export observeAsync(value: ResultAsync<number, string>, observer: () => void) and
-observeTask(value: ResultTask<number, string>, observer: () => void). Use the native tap semantics of
-each execution model and preserve the success and typed error channels. Do not start a task early.`,
+observeTask(value: ResultTask<number, string>, observer: () => void). Use inspect for best-effort
+ResultAsync observation and tap for the existing ResultTask side-effect semantics. Preserve success
+and typed error channels, and do not start a task early.`,
     reference: `import type {ResultAsync, ResultTask} from 'resultar'
-export const observeAsync = (value: ResultAsync<number, string>, observer: () => void) => value.tap(observer)
+export const observeAsync = (value: ResultAsync<number, string>, observer: () => void) => value.inspect(observer)
 export const observeTask = (value: ResultTask<number, string>, observer: () => void) => value.tap(observer)`,
     types: `import {observeAsync, observeTask} from './solution.mjs'
 import type {ResultAsync, ResultTask} from 'resultar'
@@ -78,14 +79,14 @@ const defect = new Error('observation')
 const asyncResult = await solution.observeAsync(okAsync(7), () => { throw defect })
 assert.ok(asyncResult.isOk()); assert.equal(asyncResult.value, 7)
 let calls = 0
-const task = solution.observeTask(ResultTask.succeed(7), () => { calls++; throw defect })
+const task = solution.observeTask(ResultTask.ok(7), () => { calls++; throw defect })
 assert.equal(calls, 0)
 const exit = await ResultTask.runExit(task)
 assert.equal(calls, 1); assert.equal(exit._tag, 'Failure')
 if (exit._tag === 'Failure') { assert.equal(exit.cause._tag, 'Die'); if (exit.cause._tag === 'Die') assert.equal(exit.cause.defect, defect) }
-const good = await ResultTask.runResult(solution.observeTask(ResultTask.succeed(9), () => {}))
+const good = await ResultTask.runResult(solution.observeTask(ResultTask.ok(9), () => {}))
 assert.ok(good.isOk()); assert.equal(good.value, 9)`,
-    mutate: source => source.replace('=> value.tap(observer)', '=> value').replace('=> value.tap(observer)', '=> value'),
+    mutate: source => source.replace('=> value.inspect(observer)', '=> value').replace('=> value.tap(observer)', '=> value'),
   },
   {
     id: 4,
@@ -133,7 +134,7 @@ assert.equal(solution.commands.check, 'resultar-check --project tsconfig.json')
 assert.equal(solution.commands.editor, 'resultar-check lsp --project tsconfig.json')
 const directory = join(process.cwd(), 'configured'); mkdirSync(directory)
 writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({...solution.tsconfig, include: ['bad.mts']}))
-writeFileSync(join(directory, 'bad.mts'), "import {ok, okAsync, Result} from 'resultar'; ok(1); void Result.gen(async function* () { await okAsync(1); return ok(1) })")
+writeFileSync(join(directory, 'bad.mts'), "import {ok, okAsync, Result} from 'resultar'; ok(1); void Result.gen(async function* () { await okAsync(1); return 1 })")
 const check = spawnSync(process.execPath, [process.env['RESULTAR_EVAL_CHECKER']!, '--project', join(directory, 'tsconfig.json'), '--json'], {encoding: 'utf8'})
 assert.equal(check.status, 1, check.stderr)
 const findings = check.stdout.trim().split('\\n').map(line => JSON.parse(line))
@@ -167,7 +168,7 @@ reading its value and prepending Prefix, then awaiting close exactly once. Map e
 with their original cause into the supplied error classes. Preserve body plus release failures at
 runExit, and keep errors and Prefix requirements inferred and concrete.`,
     support: `import {createTaggedError, ResultTask} from 'resultar'
-export const Prefix = ResultTask.service<string, 'prefix'>('prefix')
+export const Prefix = ResultTask.service<string>()('prefix')
 export class AcquireError extends createTaggedError({name: 'AcquireError', message: 'Acquire failed'}) {}
 export class ReadError extends createTaggedError({name: 'ReadError', message: 'Read failed'}) {}
 export class CloseError extends createTaggedError({name: 'CloseError', message: 'Close failed'}) {}

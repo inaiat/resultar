@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-deprecated -- These compatibility tests exercise supported legacy APIs. */
 import { equal } from 'node:assert'
 import { describe, it } from 'vite-plus/test'
 

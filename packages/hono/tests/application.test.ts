@@ -63,7 +63,7 @@ test("rolls back application resources when optional startup fails", async () =>
       services: createModule().singleton(Connection),
       startup: ResultTask.gen(function* failStartup() {
         yield* Connection;
-        return yield* ResultTask.fail("offline" as const);
+        return yield* ResultTask.err("offline" as const);
       }),
       bindings: [],
     },
@@ -255,7 +255,7 @@ test("handles empty responses, 404, Hono errors and overrides", async () => {
 });
 
 test("provider errors reject fetch and cleanup errors remain typed at close", async () => {
-  const Failing = service("failing", ResultTask.fail("offline" as const));
+  const Failing = service("failing", ResultTask.err("offline" as const));
   const broken = createHonoApp(
     { services: createModule().scoped(Failing), bindings: ["failing"] },
     (app) => app.get("/", (c) => c.text("unreachable")),
@@ -263,8 +263,8 @@ test("provider errors reject fetch and cleanup errors remain typed at close", as
   await expect(broken.request("/")).rejects.toThrow("Request scope failed");
   await broken.close();
   const Shared = resource("shared", {
-    acquire: ResultTask.succeed(1),
-    release: () => ResultTask.fail("cleanup" as const),
+    acquire: ResultTask.ok(1),
+    release: () => ResultTask.err("cleanup" as const),
   });
   const app = createHonoApp(
     { services: createModule().singleton(Shared), bindings: ["shared"] },
@@ -297,8 +297,8 @@ test("stream errors and child cleanup failures surface to the body consumer", as
   await app.close();
   expect(events).toEqual(["open root", "close child", "close root"]);
   const Local = resource("local", {
-    acquire: ResultTask.succeed(1),
-    release: () => ResultTask.fail("cleanup"),
+    acquire: ResultTask.ok(1),
+    release: () => ResultTask.err("cleanup"),
   });
   const other = createHonoApp(
     { services: createModule().scoped(Local), bindings: ["local"] },

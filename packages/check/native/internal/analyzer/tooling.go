@@ -218,6 +218,15 @@ func HoverAt(ctx context.Context, program *compiler.Program, path string, offset
 		if id, contract, ok := serviceDetails(c, t, selected); ok {
 			return fmt.Sprintf("**Service** `%s`\n\nContract: `%s`", id, contract), nil
 		}
+		if typeSymbolName(t) == "MatchMatcher" || (t.Symbol() != nil && t.Symbol().Name == "MatchMatcher") {
+			arguments := typeArguments(c, t)
+			if len(arguments) >= 3 {
+				render := func(channel *checker.Type) string {
+					return c.TypeToStringEx(channel, selected, checker.TypeFormatFlagsNoTruncation, nil)
+				}
+				return fmt.Sprintf("**Match input**\n```ts\n%s\n```\n**Remaining cases**\n```ts\n%s\n```\n**Matched output**\n```ts\n%s\n```", render(arguments[0]), render(arguments[1]), render(arguments[2])), nil
+			}
+		}
 		channels, ok := typeChannels(c, t, selected)
 		if !ok {
 			for _, signature := range c.GetCallSignatures(t) {
@@ -310,7 +319,7 @@ func Refactors(ctx context.Context, program *compiler.Program, path string) ([]F
 			if receiver == nil || !isResultTaskLikeType(c.GetTypeAtLocation(receiver)) {
 				return
 			}
-			if method == "catchAll" && len(call.Arguments.Nodes) == 1 {
+			if (method == "catchAll" || method == "orElse") && len(call.Arguments.Nodes) == 1 {
 				callback := unwrapExpression(call.Arguments.Nodes[0])
 				if callback == nil || callback.Kind != ast.KindArrowFunction {
 					return
@@ -356,7 +365,7 @@ func Refactors(ctx context.Context, program *compiler.Program, path string) ([]F
 					return
 				}
 				fallback := expression.AsCallExpression()
-				if !a.isResultTaskStaticCall(fallback.Expression, "fail") || len(fallback.Arguments.Nodes) != 1 || fallback.Arguments.Nodes[0].Kind != ast.KindIdentifier || fallback.Arguments.Nodes[0].Text() != name {
+				if (!a.isResultTaskStaticCall(fallback.Expression, "err") && !a.isResultTaskStaticCall(fallback.Expression, "fail")) || len(fallback.Arguments.Nodes) != 1 || fallback.Arguments.Nodes[0].Kind != ast.KindIdentifier || fallback.Arguments.Nodes[0].Text() != name {
 					return
 				}
 				add(node, "Recover task failures by tag", source(receiver)+".catchTags({ "+strings.Join(handlers, ", ")+" })")

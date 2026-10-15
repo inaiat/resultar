@@ -53,12 +53,12 @@ const callTaggedOrErrorHandler = <E, R>(error: E, handlers: object): TaggedHandl
   return callErrorHandler(error, handlers as { readonly Error?: (error: E) => R })
 }
 
-export const matchTaggedOr = <E, R, F>(
+export const matchTaggedOr = <E, R, F, Remaining = E>(
   error: E,
   handlers: object,
-  fallback: (error: E) => F,
+  fallback: (error: Remaining) => F,
 ): R | F => {
   const handled = callTaggedOrErrorHandler<E, R>(error, handlers)
 
-  return isTaggedHandlerMatch(handled) ? handled.value : fallback(error)
+  return isTaggedHandlerMatch(handled) ? handled.value : fallback(error as unknown as Remaining)
 }

@@ -1,7 +1,8 @@
 # Resultar
 
-> Typed, composable error handling for TypeScript: explicit `Result` values, lazy `ResultTask`
-> workflows with typed services and scopes, awaitable `ResultAsync`, tagged errors, and
+> Typed, composable error handling for TypeScript: start with explicit `Result` values, keep
+> eager async workflows with `ResultAsync`, and adopt lazy `ResultTask` workflows with typed
+> services, scopes, clocks, retry, and fibers as needed. Tagged errors and
 > compiler-backed diagnostics. Node.js 24+, ESM-only.
 
 ## Installed version first
@@ -13,9 +14,15 @@ The links below follow development on `main`; they are not a substitute for vers
 
 ## Start here
 
+- [Gradual adoption](https://raw.githubusercontent.com/inaiat/resultar/main/docs/gradual-adoption.md): start with Result, migrate existing eager async boundaries with ResultAsync, introduce ResultTask per use case, and add Clock, retry, and fibers when needed.
 - [Agent skill](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/SKILL.md): opinionated defaults and pointers for coding agents.
 - [Core package README](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): model, ResultTask, services, scopes, decision guide.
 - [Full guide](https://raw.githubusercontent.com/inaiat/resultar/main/DOCUMENTATION.md): complete API map and recipes.
+
+`Result<T, E>` models a success value and expected errors. `ResultTask<T, E, R>` additionally
+tracks unresolved requirements in `R`. These models coexist: adopting tasks does not require
+rewriting existing Result helpers, eager adapters, or the whole application. Preserve existing
+execution contracts when bridging between them.
 
 ## Packages
 
@@ -34,7 +41,7 @@ The links below follow development on `main`; they are not a substitute for vers
 
 ## Design records (history, not usage truth)
 
-- [RFC 0001](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0001-result-task-core.md): ResultTask architecture. Phases 0-2 done; Phase 3 partial (no fibers, race, timeout, or scheduler on ResultTask).
+- [RFC 0001](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0001-result-task-core.md): ResultTask architecture. Design history; see current package README and the next-major adoption guide for implemented APIs.
 - [RFC 0002](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0002-di-lifetimes-scopes.md): DI lifetimes and request scopes (implemented).
 - [RFC 0003](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0003-phase-3-remainder-and-validation.md): remaining work tracker.
 
@@ -42,3 +49,5 @@ The links below follow development on `main`; they are not a substitute for vers
 
 Package READMEs override `DOCUMENTATION.md`; both override the
 skill; RFCs are design history. The installed `node_modules` types always win over any document.
+
+- [Next major adoption](https://raw.githubusercontent.com/inaiat/resultar/main/docs/migrations/v4.md): Preserved public APIs, Match contexts, structured task concurrency and policy clocks.

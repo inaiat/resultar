@@ -22,9 +22,9 @@ import {
   runPromise,
   tryResultAsync,
   unitAsync,
-} from '../src/result-async.js'
-import { Result, err, ok, runSync, tryResult, unit } from '../src/result.js'
-import { createTaggedError } from '../src/tagged-error.js'
+} from '../src/result/result-async.js'
+import { Result, err, ok, runSync, tryResult, unit } from '../src/result/result.js'
+import { createTaggedError } from '../src/tagged/tagged-error.js'
 
 const validateUser = (user: Readonly<{ name: string }>): ResultAsync<{ name: string }, string> => {
   if (user.name === 'superadmin') {
@@ -376,6 +376,37 @@ describe('Result.Ok', async () => {
     equal(errMapper.mock.calls.length, 0)
   })
 
+  it('Matches with { ok, err } and { ok, error } object handlers', () => {
+    equal(
+      ok<number, string>(12).match({
+        ok: (value) => `ok:${value}`,
+        err: (error) => `err:${error}`,
+      }),
+      'ok:12',
+    )
+    equal(
+      err<number, string>('bad').match({
+        ok: (value) => `ok:${value}`,
+        err: (error) => `err:${error}`,
+      }),
+      'err:bad',
+    )
+    equal(
+      err<number, string>('bad').match({
+        ok: (value) => `ok:${value}`,
+        error: (error) => `err:${error}`,
+      }),
+      'err:bad',
+    )
+    equal(
+      Result.match(err<number, string>('bad'), {
+        ok: (value) => `ok:${value}`,
+        err: (error) => `err:${error}`,
+      }),
+      'err:bad',
+    )
+  })
+
   it('matches tagged errors from a result boundary', () => {
     const result = err<{ readonly id: string }, ValidationError | PermissionError>(
       new PermissionError({ permission: 'admin:read' }),
@@ -439,7 +470,7 @@ describe('Result.Ok', async () => {
     const okValue = ok<number, ValidationError>(123).matchTagsPartial(
       String,
       { ValidationError: (error) => `validation:${error.field}` },
-      (error) => `fallback:${error.message}`,
+      () => 'unreachable',
     )
 
     equal(handled, 'validation:email')
@@ -466,7 +497,7 @@ describe('Result.Ok', async () => {
     const message = result.matchTagsPartial(
       String,
       { Error: (error) => `plain:${error.message}` },
-      (error) => `fallback:${error.message}`,
+      () => 'unreachable',
     )
 
     equal(message, 'plain:plain failure')
@@ -566,7 +597,7 @@ describe('Result.Ok', async () => {
       console.log(number)
     })
 
-    const mapped = okVal.tap(sideEffect)
+    const mapped = okVal.inspect(sideEffect)
 
     isTrue(mapped.isOk())
     equal(mapped._unsafeUnwrap(), 12)
@@ -580,7 +611,7 @@ describe('Result.Ok', async () => {
     // value can be accessed, but is not changed
     const sideEffect = vi.fn((_person) => ({ name: 'Alice' }))
 
-    const mapped = okVal.tap(sideEffect)
+    const mapped = okVal.inspect(sideEffect)
 
     isTrue(mapped.isOk())
     equal(mapped._unsafeUnwrap(), original)
@@ -598,7 +629,7 @@ describe('Result.Ok', async () => {
       console.log('noooo')
     })
 
-    const hopefullyNotMapped = errVal.tap(sideEffect).tapError(sideEffectErr)
+    const hopefullyNotMapped = errVal.inspect(sideEffect).inspectError(sideEffectErr)
 
     isTrue(hopefullyNotMapped.isErr())
     equal(sideEffect.mock.calls.length, 0)
@@ -619,7 +650,7 @@ describe('Result.Ok', async () => {
       return { name: 'Alice' }
     })
 
-    const mapped = okVal.tap((_x) => sideEffect(12))
+    const mapped = okVal.inspect((_x) => sideEffect(12))
 
     isTrue(mapped.isOk())
     equal(mapped._unsafeUnwrap(), original)
@@ -1147,6 +1178,37 @@ describe('ResultAsync', async () => {
       equal(errMapper.mock.calls.length, 1)
     })
 
+    it('Matches with { ok, err } and { ok, error } object handlers', async () => {
+      equal(
+        await ResultAsync.ok<number, string>(12).match({
+          ok: (value) => `ok:${value}`,
+          err: (error) => `err:${error}`,
+        }),
+        'ok:12',
+      )
+      equal(
+        await ResultAsync.err<number, string>('bad').match({
+          ok: (value) => `ok:${value}`,
+          err: (error) => `err:${error}`,
+        }),
+        'err:bad',
+      )
+      equal(
+        await ResultAsync.err<number, string>('bad').match({
+          ok: (value) => `ok:${value}`,
+          error: (error) => `err:${error}`,
+        }),
+        'err:bad',
+      )
+      equal(
+        await ResultAsync.match(ResultAsync.err<number, string>('bad'), {
+          ok: (value) => `ok:${value}`,
+          err: (error) => `err:${error}`,
+        }),
+        'err:bad',
+      )
+    })
+
     it('partially matches tagged async errors with a fallback', async () => {
       const validationError = new ValidationError({ field: 'email' })
       const permissionError = new PermissionError({ permission: 'admin:read' })
@@ -1168,7 +1230,7 @@ describe('ResultAsync', async () => {
       const okValue = await okAsync<number, ValidationError>(123).matchTagsPartial(
         String,
         { ValidationError: (error) => `validation:${error.field}` },
-        (error) => `fallback:${error.message}`,
+        () => 'unreachable',
       )
 
       equal(handled, 'validation:email')
@@ -1554,7 +1616,7 @@ describe('ResultAsync', async () => {
     })
   })
 
-  describe('tap', async () => {
+  describe('inspect', async () => {
     it('Taps into an async value', async () => {
       const asyncVal = okAsync(12)
 
@@ -1562,7 +1624,7 @@ describe('ResultAsync', async () => {
         console.log(number)
       })
 
-      const mapped = asyncVal.tap(sideEffect)
+      const mapped = asyncVal.inspect(sideEffect)
 
       isTrue(mapped instanceof ResultAsync)
 
@@ -1580,7 +1642,7 @@ describe('ResultAsync', async () => {
       const sideEffect = vi.fn((_person) => okAsync({ name: 'Alice' }))
 
       // @ts-expect-error  Ignoring this to run "dangerous code"
-      const mapped = asyncVal.tap(sideEffect)
+      const mapped = asyncVal.inspect(sideEffect)
 
       isTrue(mapped instanceof ResultAsync)
 
@@ -1602,7 +1664,7 @@ describe('ResultAsync', async () => {
         console.error(number)
       })
 
-      const notMapped = asyncErr.tap(sideEffect).tapError(sideEffectErr)
+      const notMapped = asyncErr.inspect(sideEffect).inspectError(sideEffectErr)
 
       isTrue(notMapped instanceof ResultAsync)
 
@@ -1682,7 +1744,7 @@ describe('Side effects and disposal', async () => {
   it('Log should be called for err results', () => {
     const foo = err('foo')
     const arrayResult = new Array<string>()
-    void foo.map((_p) => 'boo').tap((x) => x)
+    void foo.map((_p) => 'boo').inspect((x) => x)
     const result = foo
       .map((_p) => 'boo')
       .log((x, y) => {

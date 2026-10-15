@@ -44,10 +44,10 @@ test("ResultAsync session consumers share eager acquisition and one completion",
 
 test("readiness failures remain Err values when observed after composite cleanup completes", async () => {
   const Local = resource("local", {
-    acquire: ResultTask.succeed(1),
-    release: () => ResultTask.fail("release failed"),
+    acquire: ResultTask.ok(1),
+    release: () => ResultTask.err("release failed"),
   });
-  const Failing = service("failing", ResultTask.fail("acquisition failed"));
+  const Failing = service("failing", ResultTask.err("acquisition failed"));
   const root = createModule().scoped(Local).scoped(Failing).scope();
   const session = startSession((hold) => root.use(["local", "failing"], hold));
   const cause = {
@@ -69,8 +69,8 @@ test("readiness failures remain Err values when observed after composite cleanup
 
 test("release failure stays in completion while successful readiness is preserved", async () => {
   const Local = resource("local", {
-    acquire: ResultTask.succeed(1),
-    release: () => ResultTask.fail("release failed"),
+    acquire: ResultTask.ok(1),
+    release: () => ResultTask.err("release failed"),
   });
   const root = createModule().scoped(Local).scope();
   const session = startSession((hold) => root.use(["local"], hold));

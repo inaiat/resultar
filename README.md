@@ -7,6 +7,7 @@ contains the core library, HTTP request adapters, compiler-backed diagnostics, a
 If you are evaluating or using the main library, start with:
 
 - [resultar package README](packages/resultar/README.md)
+- [gradual adoption: Result to ResultTask](docs/gradual-adoption.md)
 - [full Resultar guide](DOCUMENTATION.md)
 - [new features](#new-features)
 - [API map](DOCUMENTATION.md#api-map)
@@ -49,6 +50,28 @@ selling points and quick-start examples for:
 - `ResultAsync.timeout`, `retry`, `retryOrElse`, `race`, `raceAll`, and `withResource`
 - `Result.gen`/`safeTry`, `matchTags`, local recovery, and boundary response mapping
 
+## Adopt gradually
+
+Start with `Result<T, E>` in one function and handle its `Ok` / `Err` at the caller. Keep using
+ordinary application code around it. Add `ResultAsync<T, E>` where existing Promise-based work
+needs typed failures, then introduce `ResultTask<T, E, R>` in individual workflows that need lazy,
+repeatable execution. `E` names expected errors; the task's third parameter `R` names requirements.
+
+| When the workflow needs... | Add... |
+| --- | --- |
+| Explicit success and failure | `Result`, `ok`, `err`, `match` |
+| Composition across fallible steps | `andThen`, `mapErr`, `Result.gen` |
+| Typed failures around existing async work | `ResultAsync`, `tryResultAsync` |
+| Deferred execution and a reusable workflow | `ResultTask`, `fromResultAsync`, an explicit `run*` boundary |
+| Controlled time and transient-failure policy | `Clock`, `Retry.policy`, task `retry` / `timeout` |
+| Concurrent work owned by a scope | `forkChild`, `Fiber`, `scoped` |
+
+Each stage is useful on its own. Synchronous domain functions can keep returning `Result` inside
+task workflows, and existing async callers can consume a task through `toResultAsync`. Services
+and DI are optional; introduce them when dependencies or resource lifetimes call for them.
+The [gradual adoption guide](docs/gradual-adoption.md) walks through these boundaries with examples.
+The [v4 migration notes](docs/migrations/v4.md) cover release compatibility and retained APIs.
+
 ## New features
 
 These additions are implemented in the workspace and prepared for minor releases through Changesets.
@@ -69,8 +92,11 @@ Versioning and publication follow the project's release workflow.
 The two new checker rules default to `suggestion`, which the default `failOn: "message"` includes
 in CI failures. See the guide for gradual-adoption settings.
 
-`ResultAsync` remains eager; `ResultTask` remains lazy and repeatable. Fibers and task concurrency
-remain deferred. Function `memoize` / `memoizeIdempotent` await a separate evaluation, and `dual`
+`ResultAsync` remains eager; `ResultTask` remains lazy and repeatable. Scope-owned fibers,
+task races/timeouts, retries, bounded collections and virtual clocks are included in the next major.
+See the [gradual adoption guide](docs/gradual-adoption.md), [v4 migration notes](docs/migrations/v4.md),
+and [resilience example](examples/resultar/src/task-resilience.ts).
+Function `memoize` / `memoizeIdempotent` await a separate evaluation, and `dual`
 is an internal helper. Try the [functional ergonomics example](examples/resultar/src/functional-ergonomics.ts)
 with `pnpm run example:resultar`.
 
@@ -80,6 +106,7 @@ Use the full guide when you need a specific recipe:
 
 | Topic                          | Link                                                                                        |
 | ------------------------------ | ------------------------------------------------------------------------------------------- |
+| Gradual adoption                | [Result to ResultTask](docs/gradual-adoption.md)                                            |
 | Core model                     | [The Model](DOCUMENTATION.md#the-model)                                                     |
 | Tagged errors                  | [Tagged Errors](DOCUMENTATION.md#tagged-errors)                                             |
 | Redacted error props           | [Redacted Error Props](DOCUMENTATION.md#redacted-error-props)                               |
@@ -91,7 +118,7 @@ Use the full guide when you need a specific recipe:
 | Async retry policies           | [Retrying Async Work](DOCUMENTATION.md#retrying-async-work)                                 |
 | Bounded async mapping          | [Async Concurrency Mapping](DOCUMENTATION.md#async-concurrency-mapping)                     |
 | Resource cleanup               | [Resourceful Async Iterables](DOCUMENTATION.md#resourceful-async-iterables)                 |
-| Safe linear result code        | [Safe Try](DOCUMENTATION.md#safe-try)                                                       |
+| Safe linear result code        | [Result Generators](DOCUMENTATION.md#result-generators)                                     |
 | Validation error recipes       | [Validation Error Recipes](DOCUMENTATION.md#validation-error-recipes)                       |
 | No-discard diagnostics         | [No-Discard Validation](DOCUMENTATION.md#no-discard-validation)                             |
 | Public exports                 | [Public Entry Point](DOCUMENTATION.md#public-entry-point)                                   |

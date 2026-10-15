@@ -4,7 +4,7 @@ import type { StrictResult } from 'resultar'
 export class InvalidEmailError extends createTaggedError({
   name: 'InvalidEmailError',
   message: 'Invalid email $email',
-}) {}
+}).withProps<{ email: string }>() {}
 
 export const validateEmail = (email: string): StrictResult<string, InvalidEmailError> => {
   const normalized = email.trim().toLowerCase()
@@ -14,7 +14,7 @@ export const validateEmail = (email: string): StrictResult<string, InvalidEmailE
 export const account = (email: string): StrictResult<{ email: string }, InvalidEmailError> =>
   Result.gen(function* () {
     const normalized = yield* validateEmail(email)
-    return ok({ email: normalized })
+    return { email: normalized }
   })
 
 export const Greeting = ResultTask.service<string, 'greeting'>('greeting')

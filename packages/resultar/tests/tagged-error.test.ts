@@ -1,10 +1,11 @@
 import { deepEqual, equal, ok as isTrue, throws } from 'node:assert'
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import type { ErrResult, TaggedEnum } from '../src/index.js'
+import type { ErrResult, ResultAsync, ResultTask, TaggedEnum } from '../src/index.js'
 
 import {
   Result,
+  ResultTask as ResultTaskValue,
   createTaggedError,
   findCause,
   isError,
@@ -126,6 +127,32 @@ describe('tagged errors', async () => {
     isTrue(result.isErr())
     isTrue(result.error instanceof StaticMessageError)
     equal(result.error.message, 'Static failure')
+  })
+
+  it('creates ResultAsync and ResultTask failures from static errAsync and taskErr helpers', async () => {
+    const asyncResult = UserNotFoundError.errAsync({ id: '123', source: 'users' })
+    const resolvedAsync = await asyncResult
+
+    isTrue(resolvedAsync.isErr())
+    isTrue(resolvedAsync.error instanceof UserNotFoundError)
+    equal(resolvedAsync.error.message, 'User 123 not found in users')
+    equal(resolvedAsync.error.id, '123')
+
+    const staticAsyncResult = await StaticMessageError.errAsync()
+    isTrue(staticAsyncResult.isErr())
+    equal(staticAsyncResult.error.message, 'Static failure')
+
+    const task = UserNotFoundError.taskErr({ id: '456', source: 'accounts' })
+    const resolvedTask = await ResultTaskValue.runResult(task)
+
+    isTrue(resolvedTask.isErr())
+    isTrue(resolvedTask.error instanceof UserNotFoundError)
+    equal(resolvedTask.error.message, 'User 456 not found in accounts')
+    equal(resolvedTask.error.id, '456')
+
+    const staticTaskResult = await ResultTaskValue.runResult(StaticMessageError.taskErr())
+    isTrue(staticTaskResult.isErr())
+    equal(staticTaskResult.error.message, 'Static failure')
   })
 
   it('supports dynamic messages when the message template is omitted', () => {
@@ -334,6 +361,8 @@ describe('tagged error types', async () => {
   it('infers template props and narrows handlers', () => {
     const error = new UserNotFoundError({ id: '123', source: 'users' })
     const defaultResult = UserNotFoundError.err({ id: '123', source: 'users' })
+    const defaultAsyncResult = UserNotFoundError.errAsync({ id: '123', source: 'users' })
+    const defaultTaskResult = UserNotFoundError.taskErr({ id: '123', source: 'users' })
     const assignableResult: Result<string, UserNotFoundError> = UserNotFoundError.err({
       id: '123',
       source: 'users',
@@ -343,6 +372,8 @@ describe('tagged error types', async () => {
     expectTypeOf(error.source).toEqualTypeOf<string | number>()
     expectTypeOf(defaultResult).toEqualTypeOf<ErrResult<never, UserNotFoundError>>()
     expectTypeOf(defaultResult.error).toEqualTypeOf<UserNotFoundError>()
+    expectTypeOf(defaultAsyncResult).toEqualTypeOf<ResultAsync<never, UserNotFoundError>>()
+    expectTypeOf(defaultTaskResult).toEqualTypeOf<ResultTask<never, UserNotFoundError, never>>()
     if (assignableResult.isErr()) {
       expectTypeOf(assignableResult.error).toEqualTypeOf<UserNotFoundError>()
     }
@@ -373,6 +404,12 @@ describe('tagged error types', async () => {
 
       // @ts-expect-error source is required by the message template.
       void UserNotFoundError.err({ id: '123' })
+
+      // @ts-expect-error id and source are required by the message template.
+      void UserNotFoundError.errAsync()
+
+      // @ts-expect-error id and source are required by the message template.
+      void UserNotFoundError.taskErr()
 
       const union = new UserNotFoundError({ id: '123', source: 'users' }) as
         | UserNotFoundError

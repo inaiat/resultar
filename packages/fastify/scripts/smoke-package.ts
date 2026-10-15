@@ -61,7 +61,7 @@ class Answer extends Service("answer", {
  make: ({ base }) => ResultTask.sync(() => base + 2),
 }) {}
 const Lease = resource("lease", {
- acquire: ResultTask.succeed("open"),
+ acquire: ResultTask.ok("open"),
  release: () => ResultTask.sync(() => { released += 1; }),
 });
 const lifetime: ServiceLifetime = "singleton";

@@ -10,7 +10,7 @@ import (
 
 var consumerMethods = map[string]struct{}{
 	"_unsafeUnwrap": {}, "_unsafeUnwrapErr": {}, "isErr": {}, "isOk": {}, "match": {},
-	"catchAll": {}, "matchTags": {}, "matchTagsPartial": {}, "unwrapOr": {}, "unwrapOrThrow": {},
+	"catchAll": {}, "catchCause": {}, "orElse": {}, "orElseSucceed": {}, "matchTags": {}, "matchTagsPartial": {}, "unwrapOr": {}, "unwrapOrThrow": {},
 }
 
 var consumerProperties = map[string]struct{}{"error": {}, "value": {}}
@@ -21,17 +21,21 @@ var tryMapperCallNames = map[string]struct{}{
 }
 
 var recoveryMethods = map[string]struct{}{
-	"catchAll": {}, "catchReason": {}, "catchReasons": {}, "catchTag": {}, "catchTags": {},
-	"mapErr": {}, "orElse": {}, "unwrapReason": {},
+	"catchAll": {}, "catchCause": {}, "orElse": {}, "orElseSucceed": {}, "catchReason": {}, "catchReasons": {}, "catchTag": {}, "catchTags": {},
+	"mapErr": {}, "mapError": {}, "unwrapReason": {},
 }
 
 var asyncAwaitBoundaryCallNames = map[string]struct{}{
-	"fromThrowableAsync": {}, "tryAsync": {}, "tryCatchAsync": {}, "tryPromise": {}, "tryResultAsync": {},
+	"fromThrowableAsync": {}, "tryAsync": {}, "tryCatchAsync": {}, "tryCatch": {}, "tryPromise": {}, "tryResultAsync": {},
 }
 
 var resultTaskStaticConsumerMethods = map[string]struct{}{
-	"catchAll": {}, "flatMap": {}, "map": {}, "provideService": {}, "provideServices": {},
-	"runExit": {}, "runPromise": {}, "runResult": {},
+	"catchAll": {}, "catchCause": {}, "orElse": {}, "orElseSucceed": {}, "unwrapOr": {}, "catchReason": {}, "catchReasons": {}, "unwrapReason": {}, "catchTag": {}, "catchTags": {}, "sandbox": {}, "unsandbox": {}, "flatMap": {}, "andThen": {}, "map": {}, "mapError": {}, "mapErr": {}, "filterOrElse": {}, "match": {}, "matchTags": {}, "matchTagsPartial": {}, "tap": {}, "tapError": {}, "tapCause": {}, "tapBoth": {}, "as": {}, "asVoid": {},
+	"scoped": {}, "forkChild": {}, "all": {}, "zip": {}, "firstSuccessOf": {}, "race": {}, "raceFirst": {}, "retry": {}, "timeout": {}, "delay": {}, "timed": {}, "ensuring": {}, "onExit": {},
+	"when": {}, "whenResult": {}, "unless": {}, "unlessResult": {},
+	"inspect": {}, "inspectError": {}, "inspectCause": {}, "inspectBoth": {}, "provideService": {}, "provideServices": {}, "provideServiceResolver": {},
+	"acquireDisposable": {}, "memoize": {},
+	"runExit": {}, "runFork": {}, "runPromise": {}, "runResult": {}, "toResultAsync": {},
 }
 
 type trackedResult struct {
@@ -302,7 +306,7 @@ func (a *Analyzer) typedCatchMapper(file *ast.SourceFile) []Finding {
 			return
 		}
 		call := node.AsCallExpression()
-		callName := expressionName(call.Expression)
+		callName := a.canonicalExpressionName(call.Expression)
 		if _, ok := tryMapperCallNames[callName]; !ok || hasMapperArgument(node) {
 			return
 		}
@@ -399,7 +403,12 @@ func (a *Analyzer) preferResultForEach(file *ast.SourceFile) []Finding {
 			return
 		}
 		call := node.AsCallExpression()
+		combinator := "combine"
 		namespace := a.resultarStaticNamespace(call.Expression, "combine")
+		if namespace == "" {
+			combinator = "all"
+			namespace = a.resultarStaticNamespace(call.Expression, "all")
+		}
 		if namespace == "" || len(call.Arguments.Nodes) != 1 {
 			return
 		}
@@ -414,7 +423,7 @@ func (a *Analyzer) preferResultForEach(file *ast.SourceFile) []Finding {
 			return
 		}
 		findings = append(findings, newFinding(file, nameNode, "prefer-result-for-each", a.options.PreferResultForEach,
-			fmt.Sprintf("Use %s.forEach instead of %s.combine over an intermediate map result list.", namespace, namespace), ""))
+			fmt.Sprintf("Use %s.forEach instead of %s.%s over an intermediate map result list.", namespace, namespace, combinator), ""))
 	})
 	return findings
 }
@@ -611,10 +620,15 @@ func (a *Analyzer) noUselessRecovery(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
 		method, receiver, nameNode := methodCall(node)
-		if _, ok := recoveryMethods[method]; !ok {
+		_, isRecovery := recoveryMethods[method]
+		if !isRecovery && method != "unwrapOr" {
 			return
 		}
-		errorTypes := resultErrorTypes(a.checker, a.checker.GetTypeAtLocation(receiver))
+		receiverType := a.checker.GetTypeAtLocation(receiver)
+		if !isRecovery && !isResultTaskLikeType(receiverType) {
+			return
+		}
+		errorTypes := resultErrorTypes(a.checker, receiverType)
 		if len(errorTypes) == 0 {
 			return
 		}
@@ -769,6 +783,9 @@ func (a *Analyzer) resultarAwaitBoundaryBody(node *ast.Node) *ast.Node {
 	call := node.AsCallExpression()
 	name := a.canonicalExpressionName(call.Expression)
 	if _, ok := asyncAwaitBoundaryCallNames[name]; !ok || len(call.Arguments.Nodes) == 0 {
+		return nil
+	}
+	if name == "tryCatch" && a.staticNamespace(call.Expression, "tryCatch") != "ResultAsync" {
 		return nil
 	}
 	if name == "tryPromise" && !a.isResultTaskStaticCall(call.Expression, "tryPromise") {
@@ -1096,7 +1113,7 @@ func (a *Analyzer) safeTryBody(node *ast.Node) *ast.Node {
 		return nil
 	}
 	call := node.AsCallExpression()
-	if (a.canonicalExpressionName(call.Expression) != "safeTry" && a.staticNamespace(call.Expression, "gen") != "Result") || len(call.Arguments.Nodes) == 0 {
+	if (a.canonicalExpressionName(call.Expression) != "safeTry" && a.staticNamespace(call.Expression, "gen") != "Result" && a.staticNamespace(call.Expression, "fn") != "Result") || len(call.Arguments.Nodes) == 0 {
 		return nil
 	}
 	first := unwrapExpression(call.Arguments.Nodes[0])
@@ -1175,7 +1192,7 @@ func createTaggedErrorOptions(class *ast.Node) *ast.Node {
 			continue
 		}
 		for _, heritageType := range clause.Types.Nodes {
-			expression := heritageType.AsExpressionWithTypeArguments().Expression
+			expression := unwrapTaggedErrorProps(heritageType.AsExpressionWithTypeArguments().Expression)
 			if expression == nil || expression.Kind != ast.KindCallExpression ||
 				expressionName(expression.AsCallExpression().Expression) != "createTaggedError" {
 				continue
@@ -1187,6 +1204,20 @@ func createTaggedErrorOptions(class *ast.Node) *ast.Node {
 		}
 	}
 	return nil
+}
+
+func unwrapTaggedErrorProps(expression *ast.Node) *ast.Node {
+	expression = unwrapExpression(expression)
+	for expression != nil && expression.Kind == ast.KindCallExpression {
+		call := expression.AsCallExpression()
+		member := unwrapExpression(call.Expression)
+		if member == nil || member.Kind != ast.KindPropertyAccessExpression ||
+			member.Name() == nil || member.Name().Text() != "withProps" || len(call.Arguments.Nodes) != 0 {
+			break
+		}
+		expression = unwrapExpression(member.AsPropertyAccessExpression().Expression)
+	}
+	return expression
 }
 
 func taggedErrorName(options *ast.Node) *ast.Node {
@@ -1310,6 +1341,9 @@ func referenceChainRoot(identifier *ast.Node) (*ast.Node, *ast.Node) {
 
 func (a *Analyzer) isHandledReference(identifier *ast.Node) bool {
 	root, parent := referenceChainRoot(identifier)
+	if parent != nil && parent.Kind == ast.KindYieldExpression && parent.AsYieldExpression().AsteriskToken != nil && parent.Expression() == root {
+		return true
+	}
 	if parent != nil && parent.Kind == ast.KindReturnStatement && parent.AsReturnStatement().Expression == root {
 		return true
 	}
@@ -1341,7 +1375,7 @@ func (a *Analyzer) isHandledReference(identifier *ast.Node) bool {
 func (a *Analyzer) isConsumedByResultTaskStaticCall(identifier *ast.Node) bool {
 	current := identifier
 	for parent := current.Parent; parent != nil; parent = current.Parent {
-		if isWrapperParent(parent, current) || (parent.Kind == ast.KindAwaitExpression && parent.Expression() == current) {
+		if isReturnValueContainer(parent, current) || (parent.Kind == ast.KindAwaitExpression && parent.Expression() == current) {
 			current = parent
 			continue
 		}
@@ -1352,6 +1386,21 @@ func (a *Analyzer) isConsumedByResultTaskStaticCall(identifier *ast.Node) bool {
 		if parent.Kind == ast.KindCallExpression {
 			call := parent.AsCallExpression()
 			if len(call.Arguments.Nodes) > 0 && call.Arguments.Nodes[0] == current && a.isResultTaskStaticConsumerCall(call.Expression) {
+				return true
+			}
+			if len(call.Arguments.Nodes) > 1 && call.Arguments.Nodes[1] == current &&
+				(a.isResultTaskStaticCall(call.Expression, "race") ||
+					a.isResultTaskStaticCall(call.Expression, "raceFirst") ||
+					a.isResultTaskStaticCall(call.Expression, "zip") ||
+					a.isResultTaskStaticCall(call.Expression, "when") ||
+					a.isResultTaskStaticCall(call.Expression, "unless") ||
+					a.isResultTaskStaticCall(call.Expression, "ensuring") ||
+					a.isResultTaskStaticCall(call.Expression, "onExit") ||
+					a.resultarStaticNamespace(call.Expression, "zip") != "" ||
+					a.resultarStaticNamespace(call.Expression, "when") != "" ||
+					a.resultarStaticNamespace(call.Expression, "whenResult") != "" ||
+					a.resultarStaticNamespace(call.Expression, "unless") != "" ||
+					a.resultarStaticNamespace(call.Expression, "unlessResult") != "") {
 				return true
 			}
 			if call.Expression == current {
@@ -1366,7 +1415,7 @@ func (a *Analyzer) isConsumedByResultTaskStaticCall(identifier *ast.Node) bool {
 
 func (a *Analyzer) isResultTaskStaticConsumerCall(expression *ast.Node) bool {
 	for method := range resultTaskStaticConsumerMethods {
-		if a.isResultTaskStaticCall(expression, method) {
+		if a.isResultTaskStaticCall(expression, method) || a.resultarStaticNamespace(expression, method) != "" {
 			return true
 		}
 	}
@@ -1556,8 +1605,16 @@ func (a *Analyzer) acquiresScopeOwner(node *ast.Node) bool {
 			if a.isResultTaskStaticCall(call.Expression, "scoped") {
 				return true
 			}
-			if method, _, _ := methodCall(parent); method == "task" || method == "resource" {
+			method, _, _ := methodCall(parent)
+			if method == "task" || method == "resource" {
 				return true
+			}
+			if a.isResultTaskStaticCall(call.Expression, "fn") || method == "pipe" || a.canonicalExpressionName(call.Expression) == "pipe" {
+				for _, arg := range call.Arguments.Nodes {
+					if a.isResultTaskStaticCall(arg, "scoped") {
+						return true
+					}
+				}
 			}
 		}
 		if (parent.Kind == ast.KindPropertyAssignment || parent.Kind == ast.KindMethodDeclaration) && parent.Name() != nil {

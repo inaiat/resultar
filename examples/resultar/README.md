@@ -26,6 +26,18 @@ does not build packages; run `build:deps` before a standalone `check`.
 
 ## Samples
 
+For incremental adoption, follow the [Result-to-ResultTask guide](../../docs/gradual-adoption.md)
+and use these samples in order:
+
+1. `sync-validation.ts` and `domain-workflow.ts`: start with typed Results and composition.
+2. `edge-wrapping.ts` and `async-resilience.ts`: adapt existing async work with `ResultAsync`.
+3. `functional-ergonomics.ts`: build lazy task workflows and introduce service requirements.
+4. `task-resilience.ts`: add `Clock.virtual`, shared retry policies, and owned Fibers.
+5. `application-lifecycle.ts`: extend scope ownership to resources and application shutdown.
+
+These are independent adoption steps. Existing Result functions and ResultAsync adapters can
+remain in use while a selected workflow moves to ResultTask.
+
 - [`src/sync-validation.ts`](src/sync-validation.ts): field validation with `Result.validateAll`,
   tagged errors, redacted props, validation adapter issues, and HTTP-style boundary mapping.
 - [`src/domain-workflow.ts`](src/domain-workflow.ts): a linear domain flow using `andThen`, `mapErr`,
@@ -41,6 +53,9 @@ does not build packages; run `build:deps` before a standalone `check`.
   loops, conditionals, async concurrency, observation, and disposable cleanup.
 - [`src/async-resilience.ts`](src/async-resilience.ts): `ResultAsync.fromPromise`, cooperative
   `timeout`, retry policies, race variants, custom race handling, and abort detection.
+- [`src/task-resilience.ts`](src/task-resilience.ts): portable `Retry.policy`, scoped retry,
+  bounded collections, `Fiber.await`, timeout of a detached external Promise and losing-replica
+  cleanup, all exercised with a deterministic virtual clock.
 - [`src/resource-cleanup.ts`](src/resource-cleanup.ts): `ResultAsync.withResource` with release
   assertions for success and failure paths.
 - [`src/application-lifecycle.ts`](src/application-lifecycle.ts): a `ResultTask.scoped` server
@@ -51,14 +66,11 @@ The `src/index.ts` barrel re-exports every sample except `application-lifecycle.
 them together via `runCookbook`. The smoke scripts check the expected `Ok` and `Err` branches
 so this example stays executable as the library evolves.
 
-## Resultar 3.6 Additions
+## Next major workflows
 
-`Result.gen` is now the canonical name for generator-based Result composition; `safeTry` remains an
-exact compatibility alias, so the cookbook's existing sample keeps the same behavior and inference.
-
-The new `ResultTask<T, E, R>` surface adds reusable lazy workflows, typed services, cooperative
-abort signals, generator composition, and explicit `runExit`, `runResult`, and `runPromise`
-boundaries:
+`Result.gen` returns plain success values and uses `yield*` for fallible steps and early
+errors; `safeTry` retains its Result-returning signatures. `yield*` composes both sync and async Results.
+Use `ResultTask.gen` for lazy workflows with typed services, scopes and concurrency.
 
 ```ts
 import { ResultTask } from 'resultar'
@@ -74,12 +86,10 @@ const result = await ResultTask.runResult(task)
 ```
 
 See the [ResultTask package guide](../../packages/resultar/README.md#lazy-workflows-with-resulttask)
-and the [core RFC](../../docs/rfcs/rfc-0001-result-task-core.md) for the complete API and the
-planned runtime phases.
+and [major adoption guide](../../docs/migrations/v4.md) for the new runtime capabilities.
 
 ## Limitations
 
-This is a cookbook of `Result`/`ResultAsync`/`ResultTask` patterns, not a platform: there is no
-`Stream`, STM, cache, cluster, or RPC coverage, and DI lifetimes, Hono request scopes, and HTTP
-client validation live in their own packages (`resultar-di`, `resultar-hono`,
-`resultar-request-*`) with their own examples.
+This cookbook covers `Result`/`ResultAsync`/`ResultTask` patterns. DI lifetimes, Hono request scopes,
+and HTTP client validation live in their own packages (`resultar-di`, `resultar-hono`,
+`resultar-request-*`) with their own examples. Stream, STM, cache, cluster and RPC are outside its scope.

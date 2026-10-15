@@ -1,6 +1,11 @@
 /* eslint-disable max-params */
 export type PipeFn<Input, Output> = (input: Input) => Output
 
+export type FnPipe<Input, Args extends readonly unknown[], Output> = (
+  input: Input,
+  ...args: Args
+) => Output
+
 export const runPipe = <Self>(self: Self, fns: readonly PipeFn<never, unknown>[]): unknown => {
   let input: unknown = self
   const length = fns.length
@@ -8,6 +13,22 @@ export const runPipe = <Self>(self: Self, fns: readonly PipeFn<never, unknown>[]
     const transform = fns[index]
     if (transform === undefined) throw new TypeError('pipe requires transformation functions')
     input = transform(input as never)
+  }
+
+  return input
+}
+
+export const runFnPipe = <Self>(
+  self: Self,
+  args: readonly unknown[],
+  fns: readonly FnPipe<never, readonly never[], unknown>[],
+): unknown => {
+  let input: unknown = self
+  const length = fns.length
+  for (let index = 0; index < length; index += 1) {
+    const transform = fns[index]
+    if (transform === undefined) throw new TypeError('pipe requires transformation functions')
+    input = transform(input as never, ...(args as readonly never[]))
   }
 
   return input

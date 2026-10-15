@@ -218,7 +218,7 @@ export const scopedAcquireRelease = (): ResultTask<User, FetchUserError> =>
     ResultTask.gen(function* () {
       const resource = yield* ResultTask.acquireRelease({
         acquire: loadUserTask("resource"),
-        release: () => ResultTask.succeed(undefined),
+        release: () => ResultTask.ok(undefined),
       });
 
       return resource;

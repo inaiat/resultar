@@ -67,8 +67,12 @@ const entrypoint = (await import(
 )) as Record<string, unknown>
 const expectedExports = [
   'AbortError',
+  'Cause',
+  'Clock',
   'DisposableResult',
   'DisposableResultAsync',
+  'Fiber',
+  'Match',
   'MissingServiceError',
   'Result',
   'ResultAsync',
@@ -76,7 +80,11 @@ const expectedExports = [
   'ResultTaskCauseError',
   'ResultTaskTypeId',
   'ResultTaskYieldTypeId',
+  'Retry',
+  'Scheduler',
+  'Semaphore',
   'ServiceTagTypeId',
+  'VirtualClock',
   'constant',
   'createTaggedError',
   'default',
@@ -157,7 +165,52 @@ execFileSync(
     '--input-type=module',
     '-e',
     `import assert from 'node:assert/strict';
-import {constant, flow, identity, ok, pipe, ResultTask} from './dist/index.js';
+import * as resultar from './dist/index.js';
+import {Cause, constant, createTaggedError, Fiber, flow, identity, Match, ok, pipe, Result, ResultAsync, ResultTask, Retry, safeTry, Scheduler} from './dist/index.js';
+const UntypedMissing = createTaggedError({ name: 'Missing', message: 'Missing $id' });
+const TypedMissing = UntypedMissing.withProps();
+const missing = new TypedMissing({ id: 'user_1', details: { source: 'database' } });
+assert.equal(missing.id, 'user_1');
+assert.equal(missing.message, 'Missing user_1');
+assert.equal(TypedMissing.is(missing), true);
+assert.equal(TypedMissing.is(new UntypedMissing({ id: 1 })), false);
+assert.equal(TypedMissing.err({ id: 'user_2' })._unsafeUnwrapErr().id, 'user_2');
+assert.deepEqual(missing.toJSON().details, { source: 'database' });
+class GetterProps { get id() { return 'user_getter'; } }
+const getterMissing = new TypedMissing(new GetterProps());
+assert.equal(getterMissing.id, 'user_getter');
+assert.equal(getterMissing.message, 'Missing user_getter');
+assert.equal(TypedMissing.is(getterMissing), true);
+assert.equal(getterMissing.toJSON().id, 'user_getter');
+assert.equal(resultar.default, resultar.tryResult);
+assert.equal(resultar.try, resultar.tryResult);
+assert.equal(resultar.tryCatch, resultar.tryResult);
+assert.equal(resultar.tryAsync, resultar.tryResultAsync);
+assert.equal(resultar.tryCatchAsync, resultar.tryResultAsync);
+const returned = ok('same-result');
+assert.equal(Result.gen(function* () { return 'plain-success'; })._unsafeUnwrap(), 'plain-success');
+assert.equal((await Result.gen(async function* () { const value = yield* resultar.okAsync('async-success'); return value; }))._unsafeUnwrap(), 'async-success');
+assert.equal(Result.gen(function* () { yield* resultar.err('early-error'); return 'unreachable'; })._unsafeUnwrapErr(), 'early-error');
+assert.equal(Result.gen(function* () { return yield* returned; })._unsafeUnwrap(), 'same-result');
+assert.equal(safeTry(function* () { return returned; }), returned);
+assert.equal(returned.tap(() => { throw new Error('observer'); }), returned);
+assert.equal(returned.inspect(() => { throw new Error('observer'); }), returned);
+assert.equal(await ResultTask.runPromise(ResultTask.ok(1).flatMap(value => ResultTask.ok(value + 1))), 2);
+assert.equal(await ResultTask.runPromise(ResultTask.err('old').catchAll(() => ResultTask.ok('kept'))), 'kept');
+assert.equal((await ResultAsync.fromTask(ResultTask.ok('eager')))._unsafeUnwrap(), 'eager');
+assert.equal(Result.fromNullishOr(undefined, () => 'missing')._unsafeUnwrapErr(), 'missing');
+assert.equal(pipe(0, Result.fromNullishOr(() => 'missing'))._unsafeUnwrap(), 0);
+assert.equal(Result.liftPredicate(2, (value) => value > 0, () => 'invalid')._unsafeUnwrap(), 2);
+assert.equal(pipe(-1, Result.liftPredicate((value) => value > 0, () => 'invalid'))._unsafeUnwrapErr(), 'invalid');
+const cause = {_tag:'Sequential', left: {_tag:'Fail', error:'query'}, right: {_tag:'Die', defect:'close'}};
+assert.equal(Cause.hasFails(cause), true);
+assert.equal(Cause.hasDies(cause), true);
+assert.equal(Cause.hasInterrupts(cause), false);
+assert.equal(Cause.findError(cause)._unsafeUnwrap(), 'query');
+assert.equal(Cause.pretty(cause), 'Fail: query\\nDie: close');
+assert.equal(pipe(ok(2), Result.map(value => value * 3), Result.andThen(value => ok(String(value))), Result.match({ok: value => value, err: () => 'failed'})), '6');
+assert.equal((await pipe(ResultAsync.ok(2), ResultAsync.map(async value => value * 3), ResultAsync.andThen(value => ok(String(value)))))._unsafeUnwrap(), '6');
+assert.equal((await ResultAsync.err('boom').match({ok: () => 'ok', err: error => error})), 'boom');
 import {account, welcome} from './dist/agent/examples/workflow.mjs';
 assert.equal(account('invalid').isErr(), true);
 const result = await ResultTask.runResult(welcome(' ADA@EXAMPLE.COM '), {services: {greeting: 'Hello'}});
@@ -165,14 +218,43 @@ assert.equal(result.isOk(), true);
 assert.equal(result.value, 'Hello, ada@example.com');
 const normalize = flow((value) => value.trim(), (value) => value.toLowerCase());
 assert.equal(pipe(' ADA ', normalize), 'ada');
+assert.equal(ok('Ready').match({ok: identity, err: constant('Unavailable')}), 'Ready');
 assert.equal(ok('Ready').match({ok: identity, error: constant('Unavailable')}), 'Ready');
-const lazy = ResultTask.fn(function* (value) { return yield* ResultTask.succeed(value); });
+assert.equal(Match.value('Ada').pipe(Match.when(Match.string, (value) => value.length), Match.exhaustive), 3);
+const label = Match.fn((prefix, input) => input).pipe(Match.tagsExhaustive({Created: (event, prefix) => prefix + event.id}));
+assert.equal(label('id:', {_tag: 'Created', id: '1'}), 'id:1');
+assert.equal(Match.value(0).when(1, () => true).result().isErr(), true);
+const lazy = ResultTask.fn(function* (value) { return yield* ResultTask.ok(value); });
 const task = lazy(42);
 assert.equal(await ResultTask.runPromise(task), 42);
 assert.equal(await ResultTask.runPromise(task), 42);
-assert.equal(await ResultTask.runPromise(ResultTask.fail({_tag:'Missing'}).catchTags({Missing: () => ResultTask.succeed('guest')})), 'guest');
+assert.equal(typeof Scheduler.live.yield, 'function');
+const observedFiber = ResultTask.gen(function* () {
+  const fiber = yield* ResultTask.forkChild(ResultTask.err('child-failure'));
+  return yield* Fiber.await(fiber);
+});
+assert.deepEqual(await ResultTask.runPromise(observedFiber), {_tag: 'Failure', cause: {_tag: 'Fail', error: 'child-failure'}});
+const rootFiber = ResultTask.runFork(ResultTask.ok('root-fiber'));
+assert.equal(Number.isSafeInteger(rootFiber.id), true);
+let rootSnapshot;
+const removeRootObserver = Fiber.addObserver(rootFiber, exit => { rootSnapshot = exit; });
+assert.equal(await ResultTask.runPromise(Fiber.join(rootFiber, {interruption: 'detach'})), 'root-fiber');
+assert.deepEqual(Fiber.poll(rootFiber), {_tag: 'Success', value: 'root-fiber'});
+assert.deepEqual(rootSnapshot, Fiber.poll(rootFiber));
+removeRootObserver();
+const retryPolicy = Retry.policy({times: 1, delayMs: 0, backoff: 2, jittered: 0.2});
+assert.equal(Object.isFrozen(retryPolicy), true);
+let taskAttempts = 0;
+assert.equal(await ResultTask.runPromise(ResultTask.sync(() => ++taskAttempts).andThen(attempt => attempt === 1 ? ResultTask.err('retry') : ResultTask.ok('ready')).retry(retryPolicy)), 'ready');
+assert.equal((await ResultAsync.retry(attempt => attempt === 0 ? resultar.errAsync('retry') : resultar.okAsync('ready'), retryPolicy))._unsafeUnwrap(), 'ready');
+const timeoutClock = resultar.Clock.virtual();
+const detached = ResultTask.tryPromise({try: () => new Promise(() => {}), catch: () => 'unexpected', interruption: 'detach'}).timeout(1, () => 'timed-out');
+const detachedRun = ResultTask.runResult(detached, {clock: timeoutClock});
+await timeoutClock.advanceBy(1);
+assert.equal((await detachedRun)._unsafeUnwrapErr(), 'timed-out');
+assert.equal(await ResultTask.runPromise(ResultTask.err({_tag:'Missing'}).catchTags({Missing: () => ResultTask.ok('guest')})), 'guest');
 let disposed = 0;
-await ResultTask.runPromise(ResultTask.acquireDisposable(ResultTask.succeed({[Symbol.asyncDispose]: async () => {disposed++;}})));
+await ResultTask.runPromise(ResultTask.acquireDisposable(ResultTask.ok({[Symbol.asyncDispose]: async () => {disposed++;}})));
 assert.equal(disposed, 1);`,
   ],
   { cwd: rootDir, stdio: 'inherit' },

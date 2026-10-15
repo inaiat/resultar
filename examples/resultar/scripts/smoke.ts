@@ -57,6 +57,7 @@ import {
   reserveInventory,
   reserveValidatedLine,
   runCookbook,
+  runTaskResilience,
   saveAuditTrail,
   validateCheckout,
   validateInventory,
@@ -525,6 +526,30 @@ assert.deepEqual(importFailed.events, [
 ]);
 
 const summary = await runCookbook();
+const resilience = await runTaskResilience();
+assert.deepEqual(resilience, {
+  retry: {
+    attempts: 3,
+    elapsedMs: 15,
+    events: ["open:1", "close:1", "open:2", "close:2", "open:3", "close:3"],
+    value: "ready",
+  },
+  batch: {
+    maxConcurrency: 2,
+    record: { count: 3, status: "complete" },
+    values: [2, 4, 6],
+  },
+  timeout: { events: ["close:connection"], tag: "TaskDeadlineError" },
+  race: { events: ["close:fast", "close:slow"], winner: "fast" },
+  fiber: { _tag: "Success", value: "observed" },
+  rootFiber: {
+    wasRunning: true,
+    events: ["Success"],
+    exit: { _tag: "Success", value: "background ready" },
+  },
+  pendingTimers: 0,
+});
+assert.deepEqual(summary.resilience, resilience);
 assert.deepEqual(summary.ergonomics, {
   first: "session:guest:missing",
   second: "session:guest:missing",

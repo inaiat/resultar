@@ -74,9 +74,13 @@ describe('tryResult', async () => {
   })
 
   it('exposes sync aliases and the default export as the same function', () => {
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported alias identity is part of the compatibility contract.
     strictEqual(tryCatch, tryResult)
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported alias identity is part of the compatibility contract.
     strictEqual(result.try, tryResult)
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported alias identity is part of the compatibility contract.
     strictEqual(tryResultDefault, tryResult)
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported alias identity is part of the compatibility contract.
     strictEqual(result.default, tryResult)
   })
 })
@@ -156,7 +160,9 @@ describe('tryResultAsync', async () => {
   })
 
   it('exposes async aliases as the same function', () => {
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported alias identity is part of the compatibility contract.
     strictEqual(tryCatchAsync, tryResultAsync)
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported alias identity is part of the compatibility contract.
     strictEqual(result.tryAsync, tryResultAsync)
   })
 })

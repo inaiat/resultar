@@ -8,9 +8,9 @@ metadata:
 
 # Resultar Engineering
 
-Use Resultar to keep expected failures explicit in TypeScript without introducing an application
-runtime. Produce code that preserves concrete success and error types from the domain boundary to
-the final transport, job, CLI, or integration boundary.
+Use Resultar to keep expected failures explicit in TypeScript, starting with Result values and
+adding task execution where the workflow needs it. Preserve concrete success and error types from
+the domain boundary to the final transport, job, CLI, or integration boundary.
 
 ## Start From Repository Truth
 
@@ -27,15 +27,43 @@ the final transport, job, CLI, or integration boundary.
 4. Adapt examples when the consumer uses an older Resultar version; do not silently emit APIs
    that are absent locally.
 
+## Adopt Gradually
+
+Choose the smallest model that solves the current use case. Resultar does not require a whole
+application rewrite or a move to services, scopes, clocks, or fibers before typed errors are useful.
+
+1. Start with `Result<T, E>` in one synchronous validation, parser, or domain operation. `T` is
+   the success value and `E` is the expected error type; Result's second parameter is not a
+   service requirement.
+2. Use `ResultAsync<T, E>` at existing eager, Promise-shaped boundaries. Migrate one adapter or
+   use case at a time and preserve the execution contract of its callers.
+3. Introduce `ResultTask<T, E, R>` only where reusable lazy work, typed service requirements,
+   owned resource lifetimes, or structured cancellation and concurrency are needed. `R` tracks
+   unresolved requirements; ordinary requirement-free tasks use its default `never`.
+4. Add retry when an operation has a retryable error policy. `Retry.policy` works with both
+   ResultAsync factories and ResultTask; retry does not require migrating every async call.
+5. Add a custom `Clock` when task time policies need explicit time control or deterministic tests,
+   and owned fibers when child lifetimes and cancellation need supervision. Task runs already
+   supply a live clock; sequential tasks do not need explicit fibers.
+
+Keep existing Result helpers and ResultAsync adapters in use as tasks are adopted. A task can
+compose Results directly and use `ResultTask.fromResultAsync(factory)` to defer an existing eager
+adapter until a run. Passing an existing ResultAsync captures work that has already started.
+`ResultTask.toResultAsync(task)` starts a requirement-free task immediately, so it can preserve an
+existing ResultAsync boundary while the implementation changes. Supply service requirements and
+wrap resource workflows in `ResultTask.scoped` before that bridge. Read the
+[gradual adoption guide](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md).
+
 ## Choose The Execution Model
 
-| Contract | `Result` / `Result.gen` | `ResultAsync` | `ResultTask` |
-| --- | --- | --- | --- |
-| Execution | Sync values; `Result.gen` also accepts async generators | Starts immediately | Building/composing starts nothing; each `run*` executes again |
-| Generator return | `return ok(value)`; `yield*` short-circuits failures | Compose through `Result.gen` with `yield*` | `return value`; compose tasks, services and Results with `yield*` |
-| Error transform / recovery | `mapErr` / `orElse` | `mapErr` / `orElse` | `mapError` / `catchAll` |
-| `tap` / `tapError` failure | Ignored observation failure | Ignored observation failure | Returned task failures join `E`; throws/rejected Promises become `Die` |
-| Cleanup | Disposal callbacks are best-effort | `withResource` release is best-effort | `acquireRelease` + `scoped` await release and preserve failures |
+| Contract                   | `Result` / `Result.gen`                                                | `ResultAsync`                              | `ResultTask`                                                                |
+| -------------------------- | ---------------------------------------------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------- |
+| Execution                  | Sync values; `Result.gen` also accepts async generators                | Starts immediately                         | Building/composing starts nothing; each `run*` executes again               |
+| Generator return           | `return value`; `yield*` short-circuits failures                       | Compose through async `Result.gen` with `yield*` | `return value`; compose tasks, services and Results with `yield*`           |
+| Error transform / recovery | `mapErr` / `orElse` / `orElseSucceed` / `unwrapOr`                     | `mapErr` / `orElse` / `orElseSucceed` / `unwrapOr` | `mapErr` / `orElse` / `orElseSucceed` / `unwrapOr`                          |
+| Observation                | `inspect` / `inspectError` / `inspectBoth` ignore callback failures    | Same, including rejected Promises          | Same, lazily; returned tasks are not executed                               |
+| Fallible side operations   | `andThen`                                                              | `andThen`                                  | `tap` / `tapError` / `tapBoth`; returned task errors and requirements join the workflow |
+| Cleanup                    | Disposal callbacks are best-effort                                     | `withResource` release is best-effort      | `acquireRelease` + `scoped` await release and preserve failures             |
 
 Use `ResultAsync` for existing Promise-shaped use cases. Choose `ResultTask` for reusable lazy
 work, typed service requirements, or owned resource lifetimes. Preserve existing eager/lazy
@@ -50,17 +78,21 @@ remains available. Check installed versions before using these overloads.
 
 ## Apply Opinionated Defaults
 
-- Return `Result<T, E>` for synchronous fallible work and `ResultAsync<T, E>` for asynchronous
-  fallible work.
-- Prefer `StrictResult<T, E extends Error>` and `StrictResultAsync<T, E extends Error>` at
-  application, service, HTTP, job, queue, CLI, and integration boundaries.
-- Return `ResultAsync` / `StrictResultAsync` directly from async services and repositories instead
-  of `Promise<T>`, `Promise<Result>` or `Promise<StrictResult>`. Map external driver failures to
-  typed errors in the repository adapter; services compose that result directly. Remove the
-  function's `async` wrapper; changing only its return annotation cannot change the runtime value.
-- Use `preferResultAsync: "error"` with `preferResultAsyncMode: "all"` to enforce these application
-  contracts. Document local rule suppressions for native framework/driver callbacks that require
-  Promise interoperability.
+- Return `Result<T, E>` for synchronous fallible work. For existing eager, Promise-shaped work,
+  use `ResultAsync<T, E>`; use `ResultTask<T, E, R>` where the chosen contract is lazy or needs
+  requirements, owned resources, or structured cancellation and concurrency.
+- Prefer `StrictResult<T, E extends Error>` and `StrictResultAsync<T, E extends Error>` at eager
+  application boundaries when errors extend `Error`. Keep concrete `E` and `R` on task boundaries.
+- When migrating an eager async service or repository, return `ResultAsync` / `StrictResultAsync`
+  directly instead of `Promise<T>`, `Promise<Result>` or `Promise<StrictResult>`. Map external
+  driver failures to typed errors in the adapter; services compose that result directly. Remove
+  the function's `async` wrapper; changing only its return annotation cannot change the runtime
+  value. This is a migration target for that contract, not a prerequisite to start using Resultar.
+- Enable `preferResultAsync` for the existing eager application contracts being migrated. Choose
+  its mode and file scope deliberately; `preferResultAsync: "error"` with
+  `preferResultAsyncMode: "all"` enforces a project-wide eager boundary policy, not a universal
+  requirement for Resultar adoption. Document local rule suppressions for native framework/driver
+  callbacks that require Promise interoperability.
 - Prefer `createTaggedError` for expected domain and application failures that need stable identity,
   metadata, causes, serialization, or exhaustive handling.
 - Keep error unions specific. Let composition widen them naturally; do not collapse them to `Error`
@@ -76,26 +108,56 @@ remains available. Check installed versions before using these overloads.
 
 For reusable synchronous transformations, use root `pipe` / `flow`. `identity` preserves
 its callback input; `constant(value)` captures a fallback. These utilities do not await or
-execute tasks. Use `ResultTask.fn` for parameterized lazy generators and `catchTag` / partial
-`catchTags` for typed task recovery. Native disposables use `acquireDisposable` in a scope;
-async disposal is awaited and disposal failures become defects.
+execute tasks. Use `Result.fn` and `ResultTask.fn` (including optional post-body pipeline
+operators) for parameterized generator workflows, and `catchTag` / partial `catchTags` /
+`catchReason` / `catchReasons` / `unwrapReason` for typed
+recovery. Native disposables use `acquireDisposable` in a scope; async disposal is awaited and
+disposal failures become defects. For unconditional task cleanup without a scoped resource, use
+`ensuring(finalizer)`.
+
+`Result` and `ResultAsync` expose direct and curried `map`, `mapErr`, `andThen`, `orElse`,
+`orElseSucceed`, `unwrapOr`, `catchTag`, `catchTags`, `catchReason`, `catchReasons`,
+`unwrapReason`, `inspect`, `inspectError`, `inspectBoth`, `as`, `asVoid`, `when`, `unless`, `filterOrElse`, `match`,
+`matchTags`, and `matchTagsPartial` for `pipe`; these delegate the existing fluent semantics. Result
+also exposes `asyncMap` / `asyncAndThen` for eager async steps.
+
+For value and domain-union pattern matching, use root `Match` (check installed exports first).
+`Match.type<Input>().pipe(...)` and fluent methods
+build reusable functions; `Match.value` evaluates cases immediately. `Match.fn(selector)` passes
+the narrowed selected value followed by every original argument to handlers, preserving native
+HTTP contexts. `Match.context<Input, [context: Context]>()` passes `(narrowedInput, context)` without repeating
+the input. `tagsExhaustive` / `exhaustive` require full coverage; `orElse` receives the remaining
+type. `Match.result` returns a native Resultar Result for matched/unmatched input, whereas
+`result.match` / `matchTags` consume domain Results. Boolean predicates and safe partial refinements
+do not prove exhaustive coverage. See [API details](references/api.md#pattern-matching).
+
+Existing API spellings remain callable for gradual migration. Task `succeed`, `fail`, `mapError`, `flatMap`,
+and `catchAll` are deprecated in favor of equivalent `ok`, `err`, `mapErr`, `andThen`, and `orElse` calls.
+`ResultAsync.fromTask` remains the same eager bridge as `ResultTask.toResultAsync`.
+Prefer named `tryResult` / `tryResultAsync`; their existing aliases and the default export
+remain supported with deprecation annotations.
 
 ## Choose The Composition Operator
 
-| Need                                      | Prefer                   |
-| ----------------------------------------- | ------------------------ |
-| Transform an `Ok` without failure         | `map`                    |
-| Transform an `Err`                        | `mapErr`                 |
-| Validate an `Ok` with a predicate         | `filterOrElse`           |
-| Continue with a sync fallible step        | `andThen`                |
-| Continue from `Result` into `ResultAsync` | `asyncAndThen`           |
-| Recover the whole error channel           | `orElse`                 |
-| Recover selected tagged errors            | `catchTag` / `catchTags` |
-| Branch directly                           | `isOk()` / `isErr()`     |
-| Convert a result at a boundary            | `match` / `matchTags`    |
-| Map selected tagged errors with fallback  | `matchTagsPartial`       |
-| Reuse a named Result combinator           | `pipe`                   |
-| Write a readable linear pipeline          | `safeTry` with `yield*`  |
+Use `Result.fromNullishOr` to turn missing values into typed errors and `Result.liftPredicate`
+to construct a Result from a predicate or refinement. Both support direct and curried forms;
+callbacks that throw propagate their exceptions. Inspect task cause trees with `Cause.isCause`, `hasFails`,
+`hasDies`, `hasInterrupts`, `failures`, `defects`, `findError`, and `pretty`; keep `findCause` for Error cause chains.
+
+| Need                                      | Prefer                     |
+| ----------------------------------------- | -------------------------- |
+| Transform an `Ok` without failure         | `map`                      |
+| Transform an `Err`                        | `mapErr`                   |
+| Validate an `Ok` with a predicate         | `filterOrElse`             |
+| Continue with a sync fallible step        | `andThen`                  |
+| Continue from `Result` into `ResultAsync` | `asyncAndThen`             |
+| Recover the whole error channel           | `orElse`                   |
+| Recover selected tagged errors            | `catchTag` / `catchTags`   |
+| Branch directly                           | `isOk()` / `isErr()`       |
+| Convert a result at a boundary            | `match` / `matchTags`      |
+| Map selected tagged errors with fallback  | `matchTagsPartial`         |
+| Reuse a named Result combinator           | `pipe`                     |
+| Write a readable linear pipeline          | `Result.gen` with `yield*` |
 
 Use `catchTags` for partial pipeline recovery; unhandled tags stay in the error channel. Do not
 invent `partialCatchTags`. Use `matchTagsPartial` only for boundary matching with a deliberate
@@ -117,6 +179,11 @@ const validateEmail = (email: string): StrictResult<string, InvalidEmailError> =
 ```
 
 - Let message-template variables define required constructor props.
+- Use `createTaggedError(options).withProps<Props>()` for precise metadata types, such as
+  `{ id: string }`, and optional or structured fields. Template fields remain required; other
+  template fields keep their defaults.
+  The typed declaration creates a fresh nominal class with compile-time metadata types.
+  Pass `cause` to the constructor as usual; its type follows `Error` or the custom base.
 - Preserve `cause` when converting an external failure.
 - Treat `ErrorClass.is(value)` as nominal; do not rely on spoofed `_tag` objects.
 - Use `TaggedEnum` only for lightweight tagged domain variants that do not need to be real errors.
@@ -133,7 +200,7 @@ Wrap uncontrolled async work with the helper that matches how it is created:
 - Use `fromCallback` for callback or subscription APIs with explicit cleanup.
 - Use `runPromise` only at a terminal boundary that intentionally resolves or throws.
 
-Prefer lazy Resultar policies over ad hoc timers or `Promise.race`:
+Add built-in Resultar policies as each use case needs retry, timers, or racing:
 
 - Use `ResultAsync.retry` / `retryOrElse` for typed retry and fallback policy.
 - Use `timeout`, `race`, `raceAll`, or `raceFirst` for signal-aware concurrency.
@@ -142,9 +209,40 @@ Prefer lazy Resultar policies over ad hoc timers or `Promise.race`:
 - Use `withResource` when successful acquisition must always trigger best-effort release.
 - Pass the provided abort signal into the underlying client; cancellation is cooperative.
 
-On `Result` and `ResultAsync`, use `tap`, `tapError`, and `log` for best-effort observation.
-`ResultTask.tap` and `tapError` participate in failure handling; they do not swallow failures. Use `andThen`, `orElse`, or a
-Resultar wrapper when callback failure must change control flow.
+Use `Retry.policy(options)` for retry configuration shared by ResultAsync and ResultTask. It keeps
+attempt state per execution and supplies the same zero-based callback context in both models;
+legacy options retain their existing signatures. See [retry patterns](references/patterns.md#apply-retry-and-timeout-policy).
+
+Task retry, sleeps, and timeouts use the run clock automatically. Keep the default `Clock.live`
+for ordinary execution; pass `clock: Clock.virtual()` at a task run for deterministic time tests.
+For structured parallel work, start with `ResultTask.all` or `forEach` and explicit concurrency.
+Use `forkChild` with `Fiber.join`, `Fiber.await`, or `Fiber.interrupt` only when the use case needs
+to manage a child handle inside its owning scope.
+
+`ResultTask.tryPromise` waits for in-flight work on interruption by default. Set
+`interruption: 'detach'` in its options only when the run should stop waiting; underlying work can
+continue, so an adapter must own resources acquired after detachment. Task scope finalizers still run.
+`Fiber.await(fiber)` observes the full child Exit without requesting interruption; `join` unwraps
+the child result and `interrupt` requests cancellation. Task runs yield every 2048 instructions by
+default; `yieldEvery` / `scheduler` run options configure cooperative scheduling, not preemption of
+synchronous callbacks. See [task API semantics](references/api.md#resulttask-lazy-workflows).
+
+Use `ResultTask.runFork(task, options)` when a terminal boundary needs an immediately running
+root fiber. Its native `FiberHandle` exposes `id`, `poll()` and removable `addObserver` diagnostics
+after finalizers; diagnostics do not consume owned failures. `forkChild` returns the same native
+handle within its scope. `Fiber.join(fiber, { interruption: 'detach' })` cancels the wait without
+canceling the native target; default join behavior remains `'wait'`. Closing an owning scope still
+interrupts and awaits its children.
+
+Return `ResultTask<A, E, R>` directly from lazy service functions and plain success values inside
+`ResultTask.gen` / `fn`. Compose a final step with `return yield* step`; `return step` leaves that
+task unexecuted as the success value. `Promise<ResultTask<...>>` and `await task` do not run it.
+
+On `Result` and `ResultAsync`, `inspect` / `inspectError` and the deprecated `tap` / `tapError`
+spellings provide the same best-effort observation. `log` also preserves the original result.
+`ResultTask.tap` / `tapError` compose fallible task side operations; `inspect` / `inspectError`
+ignore observer failures and never execute returned tasks. Use `andThen`, `orElse`,
+or a Resultar wrapper when a Result/ResultAsync callback failure must change control flow.
 
 ## Use `Result.gen` For Linear Result Flows
 
@@ -155,15 +253,29 @@ const createUser = (input: CreateUserInput): StrictResultAsync<User, CreateUserE
     const available = yield* ensureEmailAvailable(email);
     const user = yield* insertUser({ ...input, email: available });
 
-    return ok(user);
+    return user;
   });
 ```
 
-- `safeTry` is the top-level alias of `Result.gen`; both have the same rules.
+- Return the plain success value (`return value`): `Result.gen` wraps plain successes in `Ok`
+  automatically without inspecting properties or prototypes.
+- Short-circuit early errors and final fallible steps via `yield*` (`return yield* err(...)` or
+  `return yield* step()`). Returning a `Result`, `ResultAsync`, `Promise` (in sync generators), or
+  `ResultTask` directly from `Result.gen` is rejected at compile time.
+- A missing success return becomes `Ok(undefined)`; annotate concrete workflow output types where a
+  value is required.
+- `safeTry` remains the deprecated runtime function with its original Result-returning signatures
+  and behavior.
+- `Result.safeUnwrap()` remains callable; prefer `yield* result` for direct composition.
+- `Result.fn` wraps a sync or async generator function (plus up to eight post-body pipeline
+  operators receiving `(result, ...args)`) with the same `yield*` and plain-value return contract.
+- `ResultTask.gen` and `ResultTask.fn` share the same plain-value return contract with lazy execution. Annotate generator returns with `ResultGenerator`, `ResultAsyncGenerator`, `ResultTaskGenerator`, or `ResultTaskYieldOf`.
 - Use `yield*` for both `Result` and `ResultAsync` values.
 - Wrap raw promises before yielding them.
-- Do not use raw `await` or broad `try/catch` inside a Resultar `safeTry` workflow.
-- Prefer `yield* result` over legacy `safeUnwrap()`.
+- Do not use raw `await` or broad `try/catch` inside a Resultar `Result.gen` / `safeTry` workflow.
+- `Result.gen` / `safeTry` return the first yielded `Err` without closing the generator; do not
+  rely on `finally` for cleanup after early failure. `ResultTask.gen` closes its generator and
+  executes yielded cleanup tasks before completion.
 
 ## Keep Boundaries Concrete
 
@@ -172,6 +284,8 @@ const createUser = (input: CreateUserInput): StrictResultAsync<User, CreateUserE
 - Keep transport concerns out of domain code. Convert tagged errors to HTTP responses, CLI exit
   codes, job outcomes, or logs at the outer boundary.
 - Use exhaustive `matchTags` when every tagged error needs a distinct mapping.
+- Prefer inline `matchTags` in ordinary route handlers. Capture the native context or reply in
+  the handler closure and let error types be inferred. Extract a mapper when its policy is reused.
 - Use local `catchTag` / `catchTags` only when recovery belongs to domain policy.
 
 ## Handle HTTP JSON Requests

@@ -30,7 +30,7 @@ test("constructs synchronous services lazily after ordered dependency resolution
     .singleton(First)
     .scoped(Second)
     .scoped(Total)
-    .use(["total"], ({ total }) => ResultTask.succeed(total));
+    .use(["total"], ({ total }) => ResultTask.ok(total));
   expect(events).toEqual([]);
   expect(Total.make).toBeInstanceOf(ResultTask);
   expect(await ResultTask.runPromise(task)).toEqual({ value: 3 });
@@ -80,7 +80,7 @@ test("missing dependencies prevent a synchronous factory from running", async ()
   });
   const task = createModule()
     .scoped(Dependent)
-    .use(["dependent"], ({ dependent }) => ResultTask.succeed(dependent));
+    .use(["dependent"], ({ dependent }) => ResultTask.ok(dependent));
   expect(await ResultTask.runExit(task, { services: {} as never })).toMatchObject({
     _tag: "Failure",
     cause: { _tag: "Die", defect: { message: "Missing ResultTask service: missing" } },
@@ -114,7 +114,7 @@ test.each(["defect", "interrupt"] as const)(
     const task = createModule()
       .scoped(Connection)
       .scoped(Broken)
-      .use(["broken"], ({ broken }) => ResultTask.succeed(broken));
+      .use(["broken"], ({ broken }) => ResultTask.ok(broken));
     expect(events).toEqual([]);
     const exit = await ResultTask.runExit(task, { signal: controller.signal });
     expect(exit).toMatchObject({
@@ -145,7 +145,7 @@ test("accepts synchronous null, undefined, functions and non-callable then prope
     .scoped(Empty)
     .scoped(Callable)
     .scoped(Data)
-    .use(["nil", "empty", "callable", "data"], (values) => ResultTask.succeed(values));
+    .use(["nil", "empty", "callable", "data"], (values) => ResultTask.ok(values));
   const values = await ResultTask.runPromise(task);
   expect(values.nil).toBeNull();
   expect(values.empty).toBeUndefined();

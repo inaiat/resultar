@@ -70,13 +70,13 @@ test("default selection propagates acquisition failure and rolls back request re
   let released = 0;
   let handled = 0;
   const Lease = resource("lease", {
-    acquire: ResultTask.succeed("open"),
+    acquire: ResultTask.ok("open"),
     release: () =>
       ResultTask.sync(() => {
         released += 1;
       }),
   });
-  const Broken = service("broken", ResultTask.fail(new Error("offline")));
+  const Broken = service("broken", ResultTask.err(new Error("offline")));
   const app = createHonoApp({ services: createModule().scoped(Lease).scoped(Broken) }, (router) => {
     router.get("/health", (c) => {
       handled += 1;
@@ -91,7 +91,7 @@ test("default selection propagates acquisition failure and rolls back request re
 test("default bindings keep streaming resources until cancellation", async () => {
   let released = 0;
   const Lease = resource("lease", {
-    acquire: ResultTask.succeed("open"),
+    acquire: ResultTask.ok("open"),
     release: () =>
       ResultTask.sync(() => {
         released += 1;
@@ -185,8 +185,8 @@ const checkTypes = () => {
     /* Types only. */
   });
   const cleanup = resource("cleanup", {
-    acquire: ResultTask.succeed(1),
-    release: () => ResultTask.fail("cleanup" as const),
+    acquire: ResultTask.ok(1),
+    release: () => ResultTask.err("cleanup" as const),
   });
   const app = createHonoApp({ services: createModule().singleton(cleanup) }, () => {
     /* Types only. */
