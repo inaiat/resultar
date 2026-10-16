@@ -3,7 +3,7 @@ import { describe, expectTypeOf, it } from 'vite-plus/test'
 import { Fiber, ResultTask, ResultTaskCauseError } from '../src/task/result-task.js'
 import type { Exit, FiberHandle, ResultTaskScope } from '../src/task/result-task.js'
 import { Clock } from '../src/task/task-clock.js'
-import { err, ok } from '../src/result.js'
+import { err, ok } from '../src/result/result.js'
 
 describe('ResultTask observation and clocks', () => {
   it('ignores observation throws and rejections, without executing returned tasks', async () => {

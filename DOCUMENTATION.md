@@ -447,9 +447,9 @@ Existing retry numbers/options preserve their original callback and jitter contr
 [portable retry policies](packages/resultar/README.md#portable-retry-policies) for field semantics.
 
 See the [core reference](packages/resultar/README.md#parameterized-tasks-and-tagged-recovery)
-and the runnable [ergonomics example](examples/resultar/src/functional-ergonomics.ts), which combines
+and the runnable [ergonomics example](examples/cookbook/src/functional-ergonomics.ts), which combines
 functions, tagged recovery, services, disposal, and repeated execution. Run it with
-`pnpm run example:resultar`. Design history is in [RFC 0004](docs/rfcs/rfc-0004-effect-v4-ergonomics-and-tooling.md).
+`pnpm run example:cookbook`. Design history is in [RFC 0004](docs/rfcs/rfc-0004-effect-v4-ergonomics-and-tooling.md).
 
 ## Services in Fastify and Hono
 
@@ -3811,7 +3811,7 @@ This repository is a pnpm workspace:
 - `packages/resultar`: the Resultar runtime package.
 - `packages/check`: native TypeScript 7 checks plus type-aware Resultar diagnostics.
 - `benchmarks`: benchmark workspace package.
-- `examples/resultar`: runnable core Resultar cookbook.
+- `examples/cookbook`: runnable core Resultar cookbook.
 
 Common commands:
 

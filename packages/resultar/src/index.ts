@@ -60,11 +60,11 @@ export {
   tryCatch,
   tryResult,
   unit,
-} from './result.js'
+} from './result/result.js'
 
 /** @deprecated Import the named `tryResult` export instead. */
 // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated exports.
-export { tryCatch as default, tryCatch as try } from './result.js'
+export { tryCatch as default, tryCatch as try } from './result/result.js'
 
 export type {
   AsyncResultGenOptions,
@@ -78,7 +78,7 @@ export type {
   SafeTryOptions,
   StrictResult,
   TryResultOptions,
-} from './result.js'
+} from './result/result.js'
 export { AbortError, isAbortError } from './core/abort-error.js'
 export { Cause } from './task/cause.js'
 export { Fiber } from './task/fiber.js'

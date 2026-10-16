@@ -28,7 +28,7 @@ import {
   type MembersToUnion,
   ok,
   Result,
-} from '../result.js'
+} from '../result/result.js'
 import { isError } from '../tagged/tagged-error.js'
 import type {
   CatchReasonHandlerResult,

@@ -25,13 +25,13 @@ import type {
 } from '../tagged/tagged-types.js'
 import { dual } from '../core/dual.js'
 import { type FnPipe, Pipeable, runFnPipe } from '../core/pipe.js'
-import type { Result } from '../result.js'
+import type { Result } from '../result/result.js'
 import {
   createEmptyResultsCollectionError,
   err,
   ok,
   registerResultAsyncFactory,
-} from '../result.js'
+} from '../result/result.js'
 import { AbortError } from '../core/abort-error.js'
 import { TaskScope } from './scope.js'
 import { Cause } from './cause.js'

@@ -51,7 +51,7 @@ describe('Result.gen value return regressions', () => {
   })
 
   it('unwraps Results from a separate module instance via yield* and preserves them in safeTry', () => {
-    const resultUrl = new URL('../src/result.ts', import.meta.url).href
+    const resultUrl = new URL('../src/result/result.ts', import.meta.url).href
     const indexUrl = new URL('../src/index.ts', import.meta.url).href
     const script = `
       import { equal } from 'node:assert/strict';

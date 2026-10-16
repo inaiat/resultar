@@ -355,7 +355,7 @@ Explore complete, runnable projects in [`examples/`](examples):
 
 | Example | Stack | What it demonstrates |
 | --- | --- | --- |
-| [`examples/resultar`](examples/resultar) | Core `resultar` cookbook | Sync validation, `Result.gen`, tagged errors, `ResultTask` resilience, fibers, and resource cleanup (`pnpm run example:resultar`) |
+| [`examples/cookbook`](examples/cookbook) | Core `resultar` cookbook | Sync validation, `Result.gen`, tagged errors, `ResultTask` resilience, fibers, and resource cleanup (`pnpm run example:cookbook`) |
 | [`examples/check`](examples/check) | `resultar-check` | Every compiler rule finding plus a zero-diagnostic clean reference project |
 | [`examples/request`](examples/request) | `resultar-request` + Zod / TypeBox | Fetch-first JSON requests with schema validation, retries, and typed HTTP error handling |
 | [`examples/hono`](examples/hono) | `resultar-hono` + `resultar-di` | Class services, inferred `AppHono` bindings, test overrides, and per-response DI scopes |

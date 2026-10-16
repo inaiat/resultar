@@ -1,5 +1,5 @@
-import { err, ok } from '../result.js'
-import type { Result } from '../result.js'
+import { err, ok } from '../result/result.js'
+import type { Result } from '../result/result.js'
 
 /**
  * Lossless failure tree produced by a `ResultTask` execution (`Exit` failure channel,

@@ -6,7 +6,7 @@ import {
   validateRetryPolicy,
 } from '../core/retry.js'
 import type { RetryContext, RetryPolicy } from '../core/retry.js'
-import type { Result } from '../result.js'
+import type { Result } from '../result/result.js'
 import type { Cause } from './cause.js'
 import { transformCause, withoutInterruptions } from './cause-transform.js'
 import { isCleanupCause } from './cleanup-cause.js'

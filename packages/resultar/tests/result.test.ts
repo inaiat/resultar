@@ -23,7 +23,7 @@ import {
   tryResultAsync,
   unitAsync,
 } from '../src/task/result-async.js'
-import { Result, err, ok, runSync, tryResult, unit } from '../src/result.js'
+import { Result, err, ok, runSync, tryResult, unit } from '../src/result/result.js'
 import { createTaggedError } from '../src/tagged/tagged-error.js'
 
 const validateUser = (user: Readonly<{ name: string }>): ResultAsync<{ name: string }, string> => {

@@ -70,7 +70,7 @@ The former `/advanced` subpath has been removed; migrate existing imports to `re
   cannot capture scoped services or request-local data. Extracting authentication remains the
   framework adapter's responsibility.
 
-For a complete runnable pattern, see the workspace `examples/hono/` and `examples/resultar/`
+For a complete runnable pattern, see the workspace `examples/hono/` and `examples/cookbook/`
 application lifecycle examples. The distributed guide includes the checked core recipe at
 `examples/workflow.mjs`; use the published declarations to adapt companion integrations.
 

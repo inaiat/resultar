@@ -8,7 +8,7 @@ import type {
   ResultTaskTryPromiseOptions,
 } from '../src/task/result-task.js'
 import { Clock } from '../src/task/task-clock.js'
-import { err, ok } from '../src/result.js'
+import { err, ok } from '../src/result/result.js'
 
 describe('ResultTask promise interruption', () => {
   it('preserves waiting for the function overload and explicit wait mode', async () => {

@@ -34,7 +34,7 @@ execution contracts when bridging between them.
 
 ## Examples
 
-- [Core cookbook](https://raw.githubusercontent.com/inaiat/resultar/main/examples/resultar/README.md) including the [application lifecycle](https://raw.githubusercontent.com/inaiat/resultar/main/examples/resultar/src/application-lifecycle.ts) (database, session, HTTP scope ordering).
+- [Core cookbook](https://raw.githubusercontent.com/inaiat/resultar/main/examples/cookbook/README.md) including the [application lifecycle](https://raw.githubusercontent.com/inaiat/resultar/main/examples/cookbook/src/application-lifecycle.ts) (database, session, HTTP scope ordering).
 - [Hono app](https://raw.githubusercontent.com/inaiat/resultar/main/examples/hono/README.md): matching service classes, AppHono inferred in main.ts and native routes.
 - [request](https://raw.githubusercontent.com/inaiat/resultar/main/examples/request/README.md), [check](https://raw.githubusercontent.com/inaiat/resultar/main/examples/check/README.md).
 - [Fastify app](https://raw.githubusercontent.com/inaiat/resultar/main/examples/fastify/README.md): class services with requires, function-based health, TypeBox routes and request.services inferred in main.ts.

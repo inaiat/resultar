@@ -2,7 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
 
 import { pipe } from '../src/core/function.js'
 import { ResultAsync, errAsync, okAsync } from '../src/task/result-async.js'
-import { err, ok } from '../src/result.js'
+import { err, ok } from '../src/result/result.js'
 import { createTaggedError } from '../src/tagged/tagged-error.js'
 
 describe.each(['direct', 'curried'] as const)('ResultAsync functional operators: %s', (form) => {

@@ -7,7 +7,7 @@
 
 Review after RFC 0001: replacing the container still requires no DI API. Lifecycle,
 however, is a concrete case for `ResultTask.acquireRelease` + `scoped`, now implemented as
-a slice of Phase 3. The lifecycle example lives in `examples/resultar/src/application-lifecycle.ts`;
+a slice of Phase 3. The lifecycle example lives in `examples/cookbook/src/application-lifecycle.ts`;
 adoption by the real private adapters is still pending.
 
 ## Summary

@@ -15,7 +15,7 @@ import {
   okAsync,
   safeTry,
 } from '../src/index.js'
-import type { AsyncResultGenOptions, ResultGenOptions } from '../src/result.js'
+import type { AsyncResultGenOptions, ResultGenOptions } from '../src/result/result.js'
 
 describe('Result.gen completed values', () => {
   it('wraps primitives and absent values while preserving literal types', () => {

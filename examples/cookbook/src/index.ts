@@ -3,7 +3,7 @@
  *
  * Re-exports every cookbook example module (except `application-lifecycle.ts`,
  * which is exercised by `scripts/lifecycle-smoke.ts`) and provides `runCookbook()`
- * for `pnpm --filter resultar-example start`.
+ * for `pnpm --filter resultar-cookbook-example start`.
  */
 import { pathToFileURL } from "node:url";
 

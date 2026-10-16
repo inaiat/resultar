@@ -1,4 +1,4 @@
-import type { Result } from '../result.js'
+import type { Result } from '../result/result.js'
 import type { ResultAsync } from '../task/result-async.js'
 
 // Given a list of Results, this extracts all the different `T` types from that list

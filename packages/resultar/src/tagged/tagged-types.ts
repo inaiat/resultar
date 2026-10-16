@@ -1,5 +1,5 @@
 import type { ResultAsync } from '../task/result-async.js'
-import type { Result } from '../result.js'
+import type { Result } from '../result/result.js'
 
 export type TaggedValue = { readonly _tag: string }
 export type TaggedErrorValue = Error & TaggedValue

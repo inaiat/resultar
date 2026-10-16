@@ -56,7 +56,7 @@ console.log(response);
 `StrictResult<T, E extends Error>` is also available when a boundary should accept
 only real Error instances. A tagged error works with either contract.
 
-Runnable example: [synchronous validation](../examples/resultar/src/sync-validation.ts).
+Runnable example: [synchronous validation](../examples/cookbook/src/sync-validation.ts).
 
 ## 2. Compose Results before adding a runtime
 
@@ -104,7 +104,7 @@ keep their Result-returning generator contract while migrating to `Result.gen` p
 Do not rely on generator `finally` for cleanup after an early `Err` in this model;
 use task resource scopes when cleanup becomes part of the workflow contract.
 
-Runnable example: [domain composition](../examples/resultar/src/domain-workflow.ts).
+Runnable example: [domain composition](../examples/cookbook/src/domain-workflow.ts).
 
 ## 3. Wrap existing Promises with ResultAsync
 
@@ -155,8 +155,8 @@ value in `Ok`; use `yield*` for fallible steps and early error returns. Yield wr
 must return a native Promise can keep a small Promise adapter at their framework
 boundary while the internal use case returns `ResultAsync` directly.
 
-Runnable examples: [edge wrapping](../examples/resultar/src/edge-wrapping.ts) and
-[async resilience](../examples/resultar/src/async-resilience.ts).
+Runnable examples: [edge wrapping](../examples/cookbook/src/edge-wrapping.ts) and
+[async resilience](../examples/cookbook/src/async-resilience.ts).
 
 ## 4. Move one use case to ResultTask
 
@@ -342,7 +342,7 @@ callback signatures; use `Retry.policy` for a shared contract.
 the task, start the run with `{ clock }`, advance time, then await the pending run.
 Virtual time does not control an external driver's own timers.
 
-Runnable example: [task resilience](../examples/resultar/src/task-resilience.ts).
+Runnable example: [task resilience](../examples/cookbook/src/task-resilience.ts).
 
 ## 7. Add owned concurrency with Fibers
 
@@ -392,8 +392,8 @@ part of the scope's error requirements. Keep the Fiber inside its owner's lifeti
 instead of starting detached work from a request. Forward the execution signal to
 drivers; cancellation is cooperative and cleanup can outlast a timeout.
 
-Runnable examples: [task resilience](../examples/resultar/src/task-resilience.ts)
-and [application resource lifetime](../examples/resultar/src/application-lifecycle.ts).
+Runnable examples: [task resilience](../examples/cookbook/src/task-resilience.ts)
+and [application resource lifetime](../examples/cookbook/src/application-lifecycle.ts).
 
 ## 8. Choose the outer boundary explicitly
 
@@ -432,6 +432,6 @@ Keep these execution decisions at the transport, job or application boundary;
 the inner use case can remain lazy.
 
 Run the checked cookbook from the repository root with
-`pnpm run example:resultar`. The [cookbook index](../examples/resultar/README.md)
+`pnpm run example:cookbook`. The [cookbook index](../examples/cookbook/README.md)
 links to the synchronous, async, task and resource examples, and the
 [API guide](../packages/resultar/README.md) documents their complete contracts.

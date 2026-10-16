@@ -6,16 +6,16 @@ This package is a runnable cookbook for the core `resultar` package. It uses the
 Run it from the repository root:
 
 ```sh
-pnpm run example:resultar
+pnpm run example:cookbook
 ```
 
 Or run the package directly:
 
 ```sh
-pnpm --filter resultar-example build:deps
-pnpm --filter resultar-example check
-pnpm --filter resultar-example smoke
-pnpm --filter resultar-example start
+pnpm --filter resultar-cookbook-example build:deps
+pnpm --filter resultar-cookbook-example check
+pnpm --filter resultar-cookbook-example smoke
+pnpm --filter resultar-cookbook-example start
 ```
 
 The `check` script runs `resultar-check`. The Resultar rule set is
