@@ -1,18 +1,18 @@
 ---
 "resultar": major
-"resultar-check": minor
-"resultar-check-darwin-arm64": minor
-"resultar-check-darwin-x64": minor
-"resultar-check-linux-arm64": minor
-"resultar-check-linux-x64": minor
-"resultar-check-win32-arm64": minor
-"resultar-check-win32-x64": minor
-"resultar-di": patch
-"resultar-hono": patch
-"resultar-fastify": patch
-"resultar-request": patch
-"resultar-request-typebox": patch
-"resultar-request-zod": patch
+"resultar-check": major
+"resultar-check-darwin-arm64": major
+"resultar-check-darwin-x64": major
+"resultar-check-linux-arm64": major
+"resultar-check-linux-x64": major
+"resultar-check-win32-arm64": major
+"resultar-check-win32-x64": major
+"resultar-di": major
+"resultar-hono": major
+"resultar-fastify": major
+"resultar-request": major
+"resultar-request-typebox": major
+"resultar-request-zod": major
 ---
 
 Prepare the next core major while preserving existing composition names,

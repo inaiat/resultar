@@ -37,7 +37,22 @@ test("JSR synchronization updates versions, preserves metadata, and respects pac
     mkdirSync(directory, { recursive: true });
     cpSync(join(source, "vite.config.ts"), join(directory, "vite.config.ts"));
     const metadata = JSON.parse(readFileSync(join(source, "jsr.json"), "utf8"));
-    expected.set(name, { ...metadata, version: "99.0.0" });
+    const expectedImports =
+      metadata.imports === undefined
+        ? undefined
+        : Object.fromEntries(
+            Object.entries(metadata.imports).map(([alias, specifier]) => [
+              alias,
+              typeof specifier === "string"
+                ? specifier.replace(/^jsr:(@inaiat\/[^@]+)@.+$/, "jsr:$1@^99.0.0")
+                : specifier,
+            ]),
+          );
+    expected.set(name, {
+      ...metadata,
+      version: "99.0.0",
+      ...(expectedImports === undefined ? {} : { imports: expectedImports }),
+    });
     writeFileSync(join(directory, "jsr.json"), JSON.stringify(metadata, null, 2) + "\n");
     writeFileSync(
       join(directory, "package.json"),
