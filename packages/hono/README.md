@@ -72,10 +72,12 @@ closed.match(
 );
 ```
 
-The callback receives a real Hono instance and configures it synchronously once. Bindings are
-inferred from the selected DI services. Unknown names and missing dependencies are compile-time
-errors. Use ordinary `await` and `result.match` inside routes. Configure middleware, `onError`
-and `notFound` on the supplied Hono instance as usual.
+The callback receives a real Hono instance and configures it synchronously once. Native
+`HonoOptions` (`strict`, `router` and `getPath`) are forwarded to `new Hono(...)` without
+attaching Resultar options to the router instance. Bindings are inferred from the selected DI
+services. Unknown names and missing dependencies are compile-time errors. Use ordinary `await`
+and `result.match` inside routes. Configure middleware (such as `logger` from `hono/logger`),
+`onError` and `notFound` on the supplied Hono instance as usual.
 
 ## Optional request bindings
 

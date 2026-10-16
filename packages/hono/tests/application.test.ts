@@ -346,5 +346,34 @@ const checkTypes = () => {
       /* Type-only configuration. */
     },
   );
+  createHonoApp(
+    {
+      services,
+      bindings: ["answer"],
+      getPath: (_request, options) => {
+        expectTypeOf(options?.env).toEqualTypeOf<{ readonly answer: number } | undefined>();
+        return "/";
+      },
+    },
+    () => {
+      /* Type-only configuration. */
+    },
+  );
 };
 expectTypeOf(checkTypes).toBeFunction();
+
+test("forwards HonoOptions to the underlying Hono router without leaking DI options", async () => {
+  const services = createModule().value("answer", 42);
+  const app = createHonoApp({ services, bindings: ["answer"], strict: false }, (router) => {
+    expect(router).not.toHaveProperty("services");
+    expect(router).not.toHaveProperty("bindings");
+    router.get("/items", (c) => c.json({ answer: c.env.answer }));
+  });
+  const withoutSlash = await app.request("/items");
+  const withSlash = await app.request("/items/");
+  expect(withoutSlash.status).toBe(200);
+  expect(withSlash.status).toBe(200);
+  expect(await withoutSlash.json()).toEqual({ answer: 42 });
+  expect(await withSlash.json()).toEqual({ answer: 42 });
+  await app.close();
+});

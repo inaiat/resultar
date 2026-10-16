@@ -24,12 +24,13 @@ For a new application, `createFastifyApp(options, configure)` follows the same s
 Hono's `createHonoApp`. It creates a native Fastify instance, registers the services plugin,
 and calls `configure` synchronously once.
 
-The factory accepts the same checked service options as `createFastifyPlugin`. It does not
-start a listener or initialize providers; native `ready()`, `inject()` and `listen()` drive
-initialization, and `close()` releases resources. Its return type, `FastifyServicesApplication`,
-preserves the selected services for `InferRequestServices` and `InferAppServices` without adding
-runtime metadata. For an existing server or custom Fastify constructor
-options, register `createFastifyPlugin` on your own instance.
+The factory accepts `FastifyAppOptions`, combining the same checked service options as
+`createFastifyPlugin` with Fastify HTTP server options (such as `logger`, `loggerInstance`
+and `requestIdHeader`). It does not start a listener or initialize providers; native `ready()`,
+`inject()` and `listen()` drive initialization, and `close()` releases resources. Its return type,
+`FastifyServicesApplication`, preserves the selected services for `InferRequestServices` and
+`InferAppServices` without adding runtime metadata. For an existing server, register
+`createFastifyPlugin` on your own instance.
 
 ## Optional request bindings
 

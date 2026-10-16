@@ -71,8 +71,8 @@ const startup = ResultTask.gen(function* smokeStartup() {
  started += 1;
 });
 const plugin = createFastifyPlugin({ services, startup, appBindings: ["answer"] });
-const createApplication = () => createFastifyApp({ services, startup, appBindings: ["answer"] }, (router) => {
- router.get("/", (request) => request.services.answer);
+const createApplication = () => createFastifyApp({ services, startup, appBindings: ["answer"], requestIdHeader: "x-smoke-id" }, (router) => {
+ router.get("/", (request) => ({ id: request.id, answer: request.services.answer }));
 });
 type RequestServices = InferRequestServices<typeof createApplication>;
 type AppServices = InferAppServices<typeof createApplication>;
@@ -98,8 +98,8 @@ try {
 if (released !== 1) throw new Error("Packed resource was not released");
 const standalone = createApplication();
 try {
- const response = await standalone.inject("/");
- if (response.statusCode !== 200 || response.body !== "42") throw new Error("Unexpected application factory response");
+ const response = await standalone.inject({ method: "GET", url: "/", headers: { "x-smoke-id": "smoke-1" } });
+ if (response.statusCode !== 200 || response.json().answer !== 42 || response.json().id !== "smoke-1") throw new Error("Unexpected application factory response");
 } finally { await standalone.close(); }
 if (false) {
  const selected = standalone.getDecorator<RequestServices>("services");

@@ -1,8 +1,10 @@
 import Fastify, {
+  type FastifyHttpOptions,
   type FastifyInstance,
   type FastifyPluginAsync,
   type FastifyReply,
   type FastifyRequest,
+  type RawServerDefault,
 } from "fastify";
 import fp from "fastify-plugin";
 import {
@@ -192,6 +194,9 @@ export interface FastifyServicesOptions {
   readonly rethrowRollbackOnClose?: boolean;
 }
 
+export interface FastifyAppOptions
+  extends FastifyServicesOptions, FastifyHttpOptions<RawServerDefault> {}
+
 type LocalValues<O> = O extends { readonly locals: infer Local extends LocalsFactory }
   ? Awaited<ReturnType<Local>>
   : // eslint-disable-next-line typescript/no-generated-empty-object-type -- No locals contributes no keys to the service intersection.
@@ -246,15 +251,44 @@ type CheckedOptions<O extends FastifyServicesOptions> = {
       });
 
 /** Creates a native Fastify instance and configures its routes before initialization. */
-export function createFastifyApp<const Options extends FastifyServicesOptions>(
+export function createFastifyApp<const Options extends FastifyAppOptions>(
   options: Options & CheckedOptions<NoInfer<Options>>,
   configure: (app: FastifyInstance) => void,
 ): FastifyServicesApplication<
   InferAppServices<ReturnType<typeof createFastifyPlugin<Options>>>,
   InferRequestServices<ReturnType<typeof createFastifyPlugin<Options>>>
 > {
-  const app = Fastify();
-  app.register(createFastifyPlugin<Options>(options));
+  const appOptions: FastifyAppOptions = options;
+  const {
+    name,
+    services,
+    bindings,
+    appBindings,
+    startup,
+    locals,
+    requestHook,
+    exposeApplication,
+    exposeRequest,
+    mapError,
+    rethrowRollbackOnClose,
+    ...serverOptions
+  } = appOptions;
+  const app = Fastify(serverOptions);
+  app.register(
+    buildFastifyPlugin({
+      name,
+      services,
+      bindings,
+      appBindings,
+      startup,
+      locals,
+      requestHook,
+      exposeApplication,
+      exposeRequest,
+      mapError,
+      rethrowRollbackOnClose,
+    }),
+  );
   configure(app);
   return app;
 }
@@ -275,6 +309,10 @@ export function createFastifyPlugin<const Options extends FastifyServicesOptions
   >,
   Exposed<Options, "exposeRequest", RequestServices<Options["services"], RequestBindings<Options>>>
 > {
+  return buildFastifyPlugin(options);
+}
+
+function buildFastifyPlugin(options: FastifyServicesOptions): FastifyPluginAsync {
   const { exposeApplication, exposeRequest } = options;
   const plugin: FastifyPluginAsync = async (app) => {
     if (app.hasDecorator("services") || app.hasRequestDecorator("services"))

@@ -8,6 +8,7 @@ import {
   resource,
   Service,
   service,
+  type FastifyAppOptions,
   type InferAppServices,
   type InferRequestServices,
 } from "../src/index.js";
@@ -283,3 +284,36 @@ const inferenceChecks = () => {
   expectTypeOf<keyof InferAppServices<typeof empty>>().toEqualTypeOf<never>();
 };
 expectTypeOf(inferenceChecks).toBeFunction();
+
+test("forwards Fastify HTTP server options to the underlying instance", async () => {
+  const logs: string[] = [];
+  const stream = {
+    write(chunk: string) {
+      logs.push(chunk);
+    },
+  };
+  const options = {
+    services: createModule().value("answer", 42),
+    bindings: ["answer"],
+    logger: { level: "info", stream },
+    requestIdHeader: "x-trace-id",
+  } as const satisfies FastifyAppOptions;
+  const app = createFastifyApp(options, (router) => {
+    router.get("/", (request) => {
+      request.log.info("handled request");
+      return { id: request.id, answer: request.getDecorator("services") };
+    });
+  });
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/",
+      headers: { "x-trace-id": "req-123" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ id: "req-123", answer: { answer: 42 } });
+    expect(logs.some((entry) => entry.includes("handled request"))).toBe(true);
+  } finally {
+    await app.close();
+  }
+});

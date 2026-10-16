@@ -65,11 +65,11 @@ const startup = ResultTask.gen(function* smokeStartup() {
  yield* Answer;
  started += 1;
 });
-const createApplication = () => createHonoApp({ services, startup }, (router) => {
+const createApplication = () => createHonoApp({ services, startup, strict: false }, (router) => {
  routes(router);
 });
 const routes = (router: Hono<{ Bindings: InferRequestServices<typeof createApplication> }>) => {
- router.get("/", (c) => {
+ router.get("/items", (c) => {
   if (c.env.base !== 40) throw new Error("Missing default Hono binding");
   return c.text(String(c.env.answer));
  });
@@ -78,7 +78,7 @@ const app = createApplication();
 try {
  const ready = await app.ready();
  if (ready.isErr() || started !== 1) throw new Error("Packed startup task did not run once");
- const response = await app.request("/");
+ const response = await app.request("/items/");
  if (await response.text() !== "42") throw new Error("Unexpected packed response");
 } finally { const closed = await app.close(); if (closed.isErr()) throw closed.error; }
 if (released !== 1) throw new Error("Packed resource was not released");
