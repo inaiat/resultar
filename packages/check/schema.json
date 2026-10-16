@@ -58,7 +58,7 @@
         },
         "diagnosticSeverity": {
           "$ref": "#/definitions/diagnosticSeverity",
-          "description": "Set severities by stable diagnostic rule id. Names may use camelCase, kebab-case, or resultar/<rule>."
+          "description": "Set all rule severities with a single severity string (for example \"error\"), or map stable diagnostic rule ids (including \"*\") to severities. Names may use camelCase, kebab-case, or resultar/<rule>."
         },
         "overrides": {
           "type": "array",
@@ -307,9 +307,14 @@
       "enum": ["error", "warning", "suggestion", "message", "off"]
     },
     "diagnosticSeverity": {
-      "type": "object",
-      "additionalProperties": { "$ref": "#/definitions/ruleSeverity" },
-      "propertyNames": { "pattern": "^(resultar/)?[A-Za-z][A-Za-z0-9_-]*$" }
+      "oneOf": [
+        { "$ref": "#/definitions/ruleSeverity" },
+        {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/ruleSeverity" },
+          "propertyNames": { "pattern": "^(\\*|(resultar/)?[A-Za-z][A-Za-z0-9_-]*)$" }
+        }
+      ]
     },
     "diagnosticOverride": {
       "type": "object",

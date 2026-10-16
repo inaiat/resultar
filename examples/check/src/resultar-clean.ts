@@ -1,7 +1,10 @@
 import {
   createTaggedError,
+  Fiber,
   fromPromise,
+  Match,
   ok,
+  pipe,
   ResultTask,
   runPromise,
   safeTry,
@@ -328,4 +331,24 @@ export const cleanGeneratorWorkflow = (email: string) =>
 // unnecessary-pipe: only use .pipe(...) when applying at least one operator.
 export const pipedUserEmail = (email: string): StrictResult<string, InvalidEmailError> =>
   validateEmail(email).pipe((res) => res.map((v) => v.toLowerCase()));
+
+// no-discard: finalized Match.value(...).when(...).orElse(...) and Fiber.join(...) are handled cleanly.
+export const classifyRole = (role: string): string =>
+  Match.value(role)
+    .when("admin", () => "allowed")
+    .orElse(() => "denied");
+
+export const pipedTaskEmail = (id: string): ResultTask<string, FetchUserError> =>
+  pipe(
+    loadUserTask(id),
+    ResultTask.map((user) => user.email),
+  );
+
+export const joinedForkedUser = (id: string): ResultTask<User, FetchUserError> =>
+  ResultTask.scoped(
+    ResultTask.gen(function* () {
+      const fiber = yield* ResultTask.forkChild(loadUserTask(id));
+      return yield* Fiber.join(fiber);
+    }),
+  );
 

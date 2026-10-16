@@ -259,12 +259,6 @@ func resolveExtendsPath(configPath, extension string) (string, error) {
 }
 
 func applyPlugin(options *Options, plugin map[string]any) error {
-	if err := setSeverity(plugin, "noUnknownTaskRequirements", &options.NoUnknownTaskRequirements); err != nil {
-		return err
-	}
-	if err := setSeverity(plugin, "unusedSuppression", &options.UnusedSuppression); err != nil {
-		return err
-	}
 	var err error
 	if value, ok := plugin["ignoreFilePatterns"]; ok {
 		if options.IgnoreFilePatterns, err = filePatterns(value); err != nil {
@@ -283,6 +277,12 @@ func applyPlugin(options *Options, plugin map[string]any) error {
 		if err := applyOverrides(options, value); err != nil {
 			return fmt.Errorf("overrides: %w", err)
 		}
+	}
+	if err := setSeverity(plugin, "noUnknownTaskRequirements", &options.NoUnknownTaskRequirements); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "unusedSuppression", &options.UnusedSuppression); err != nil {
+		return err
 	}
 	if err := setSeverity(plugin, "noAwaitInSafeTry", &options.NoAwaitInSafeTry); err != nil {
 		return err
@@ -430,12 +430,36 @@ func applyPlugin(options *Options, plugin map[string]any) error {
 	return nil
 }
 
+func setAllRulesSeverity(options *Options, value Severity) {
+	for rule := range ruleNames {
+		_ = setRuleSeverity(options, rule, value)
+	}
+}
+
 func applyDiagnosticSeverity(options *Options, value any, name string) error {
+	if _, ok := value.(string); ok {
+		parsed, err := severity(value, SeverityOff, name)
+		if err != nil {
+			return err
+		}
+		setAllRulesSeverity(options, parsed)
+		return nil
+	}
 	values, ok := value.(map[string]any)
 	if !ok || value == nil {
-		return fmt.Errorf("%s must be an object mapping rule names to severities", name)
+		return fmt.Errorf("%s must be a severity string or an object mapping rule names to severities", name)
+	}
+	if rawWildcard, hasWildcard := values["*"]; hasWildcard {
+		parsed, err := severity(rawWildcard, SeverityOff, name+".*")
+		if err != nil {
+			return err
+		}
+		setAllRulesSeverity(options, parsed)
 	}
 	for rule, rawSeverity := range values {
+		if rule == "*" {
+			continue
+		}
 		parsed, err := severity(rawSeverity, SeverityOff, name+"."+rule)
 		if err != nil {
 			return err
@@ -477,12 +501,36 @@ func applyOverrides(options *Options, value any) error {
 		if !ok {
 			return fmt.Errorf("entry %d options must define diagnosticSeverity", index)
 		}
+		if _, isString := rawSeverity.(string); isString {
+			severityValue, err := severity(rawSeverity, SeverityOff, fmt.Sprintf("overrides[%d].options.diagnosticSeverity", index))
+			if err != nil {
+				return err
+			}
+			parsed := make(map[string]Severity, len(ruleNames))
+			for rule := range ruleNames {
+				parsed[rule] = severityValue
+			}
+			options.Overrides = append(options.Overrides, FileOverride{Include: patterns, DiagnosticSeverity: parsed})
+			continue
+		}
 		severityMap, ok := rawSeverity.(map[string]any)
 		if !ok || rawSeverity == nil {
-			return fmt.Errorf("entry %d options.diagnosticSeverity must be an object", index)
+			return fmt.Errorf("entry %d options.diagnosticSeverity must be a severity string or an object", index)
 		}
 		parsed := make(map[string]Severity, len(severityMap))
+		if rawWildcard, hasWildcard := severityMap["*"]; hasWildcard {
+			severityValue, err := severity(rawWildcard, SeverityOff, fmt.Sprintf("overrides[%d].options.diagnosticSeverity.*", index))
+			if err != nil {
+				return err
+			}
+			for rule := range ruleNames {
+				parsed[rule] = severityValue
+			}
+		}
 		for rule, raw := range severityMap {
+			if rule == "*" {
+				continue
+			}
 			severityValue, err := severity(raw, SeverityOff, fmt.Sprintf("overrides[%d].options.diagnosticSeverity.%s", index, rule))
 			if err != nil {
 				return err

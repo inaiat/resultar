@@ -68,6 +68,24 @@ func isResultLikeType(type_ *checker.Type) bool {
 	return ok
 }
 
+func isMatchMatcherType(type_ *checker.Type) bool {
+	if type_ == nil {
+		return false
+	}
+	if type_.Flags()&checker.TypeFlagsUnionOrIntersection != 0 {
+		for _, part := range type_.Types() {
+			if isMatchMatcherType(part) {
+				return true
+			}
+		}
+		return false
+	}
+	if symbol := type_.Symbol(); symbol != nil && symbol.Name() == "MatchMatcher" {
+		return true
+	}
+	return typeSymbolName(type_) == "MatchMatcher"
+}
+
 func isResultTaskLikeType(type_ *checker.Type) bool {
 	if type_ == nil {
 		return false

@@ -1,15 +1,16 @@
 import {
   createTaggedError,
   err,
+  Match,
   ok,
   okAsync,
   pipe,
   Result,
+  ResultAsync,
   ResultTask,
   runSync,
   safeTry,
   tryResult,
-  type ResultAsync,
   type ResultTaskScope,
   type StrictResult,
 } from "resultar";
@@ -550,6 +551,98 @@ export const unnecessaryPipeExample = (): Result<User, SaveUserError> =>
 export const noRunInsideGenExample = () =>
   ResultTask.gen(function* () {
     const user = runSync(saveUser("run-inside-gen"));
-    return user;
+    const bridged = ResultAsync.fromTask(loadUserTask("bridge-inside-gen"));
+    return user.id + (yield* bridged).id;
   });
+
+// resultar/no-discard: MatchMatcher builders must be finalized with exhaustive/orElse/option/result.
+export const discardedMatchMatcherExample = (role: string): void => {
+  Match.value(role).when("admin", () => "allowed");
+};
+
+// resultar/typed-catch-mapper: ResultTask.tryPromise without catch leaves E as unknown.
+export const untypedResultTaskTryPromiseExample = () =>
+  ResultTask.tryPromise(() => fetchUser("untyped-try-promise"));
+
+// resultar/prefer-map: curried ResultTask.andThen in pipe that only wraps a plain value in ResultTask.ok.
+export const curriedPreferMapExample = (): ResultTask<string, FetchUserError> =>
+  pipe(
+    loadUserTask("curried-prefer-map"),
+    ResultTask.andThen((user) => ResultTask.ok(user.email)),
+  );
+
+// resultar/no-promise-in-result-success: ResultTask.succeed with a Promise wraps Promise<T> in the success channel.
+export const promiseInResultTaskSucceedExample = (): ResultTask<Promise<User>, never> =>
+  ResultTask.succeed(fetchUser("promise-in-succeed"));
+
+// resultar/prefer-and-then: curried ResultTask.map in pipe that returns a nested ResultTask.
+export const curriedPreferAndThenExample = () =>
+  pipe(
+    loadUserTask("curried-prefer-and-then"),
+    ResultTask.map(() => ResultTask.ok("nested")),
+  );
+
+// resultar/prefer-map-err: curried ResultTask.catchAll in pipe that only replaces the error with ResultTask.err.
+export const curriedPreferMapErrExample = (): ResultTask<User, ParseUserError> =>
+  pipe(
+    loadUserTask("curried-prefer-map-err"),
+    ResultTask.catchAll(() => ResultTask.err(new ParseUserError())),
+  );
+
+// resultar/prefer-catch-reason: curried Result.catchTag in pipe that branches on error.reason._tag.
+export const curriedPreferCatchReasonExample = () =>
+  pipe(
+    providerFailure,
+    Result.catchTag("ProviderFailure", (error) =>
+      error.reason._tag === "Unavailable" ? saveUser("fallback") : providerFailure,
+    ),
+  );
+
+// resultar/prefer-or-else-succeed: curried Result.orElse in pipe that ignores the error and returns ok(...).
+export const curriedPreferOrElseSucceedExample = (): Result<User, never> =>
+  pipe(
+    saveUser("curried-or-else-succeed"),
+    Result.orElse(() => ok({ email: "fallback@example.com", id: "fallback" })),
+  );
+
+// resultar/prefer-tap: curried ResultTask.map in pipe that performs side effects and returns the input unchanged.
+export const curriedPreferTapExample = (): ResultTask<User, FetchUserError> =>
+  pipe(
+    loadUserTask("curried-prefer-tap"),
+    ResultTask.map((user) => {
+      inspect(user);
+      return user;
+    }),
+  );
+
+// resultar/prefer-tap-error: curried ResultTask.mapErr in pipe that performs side effects and returns the error unchanged.
+export const curriedPreferTapErrorExample = (): ResultTask<User, FetchUserError> =>
+  pipe(
+    loadUserTask("curried-prefer-tap-error"),
+    ResultTask.mapErr((error) => {
+      inspect(error);
+      return error;
+    }),
+  );
+
+// resultar/prefer-as-void: curried Result.map(() => undefined) in pipe.
+export const curriedPreferAsVoidExample = (): Result<void, SaveUserError> =>
+  pipe(
+    saveUser("curried-prefer-as-void"),
+    Result.map(() => undefined),
+  );
+
+// resultar/prefer-filter-or-else: curried Result.andThen in pipe that only validates a predicate on the input.
+export const curriedPreferFilterOrElseExample = (): Result<User, SaveUserError | ParseUserError> =>
+  pipe(
+    saveUser("curried-prefer-filter-or-else"),
+    Result.andThen((user) => (user.id.length > 0 ? ok(user) : err(new ParseUserError()))),
+  );
+
+// resultar/no-useless-recovery: curried ResultTask.catchAll in pipe on an infallible task.
+export const curriedNoUselessRecoveryExample = () =>
+  pipe(
+    ResultTask.ok("curried-infallible"),
+    ResultTask.catchAll(() => ResultTask.ok("unreachable")),
+  );
 

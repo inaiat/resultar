@@ -12,13 +12,14 @@ var consumerMethods = map[string]struct{}{
 	"_unsafeUnwrap": {}, "_unsafeUnwrapErr": {}, "isErr": {}, "isOk": {}, "match": {},
 	"catchAll": {}, "catchCause": {}, "orElse": {}, "orElseSucceed": {}, "matchTags": {}, "matchTagsPartial": {}, "unwrapOr": {}, "unwrapOrThrow": {},
 	"withPermit": {}, "withPermits": {}, "join": {}, "await": {}, "interrupt": {},
+	"exhaustive": {}, "orElseAbsurd": {}, "option": {}, "result": {}, "tagsExhaustive": {},
 }
 
 var consumerProperties = map[string]struct{}{"error": {}, "value": {}}
 
 var tryMapperCallNames = map[string]struct{}{
-	"fromThrowable": {}, "fromThrowableAsync": {}, "tryAsync": {}, "tryCatch": {},
-	"tryCatchAsync": {}, "tryResult": {}, "tryResultAsync": {},
+	"fromThrowable": {}, "fromThrowableAsync": {}, "try": {}, "tryAsync": {}, "tryCatch": {},
+	"tryCatchAsync": {}, "tryPromise": {}, "tryResult": {}, "tryResultAsync": {},
 }
 
 var recoveryMethods = map[string]struct{}{
@@ -40,6 +41,15 @@ var resultTaskStaticConsumerMethods = map[string]struct{}{
 	"runExit": {}, "runFork": {}, "runPromise": {}, "runResult": {}, "toResultAsync": {},
 }
 
+var matchStaticConsumerMethods = map[string]struct{}{
+	"when": {}, "whenOr": {}, "whenAnd": {}, "not": {}, "tag": {}, "tags": {}, "tagStartsWith": {},
+	"tagsExhaustive": {}, "exhaustive": {}, "orElse": {}, "orElseAbsurd": {}, "result": {}, "option": {},
+}
+
+var fiberStaticConsumerMethods = map[string]struct{}{
+	"join": {}, "await": {}, "interrupt": {}, "interruptAll": {}, "all": {},
+}
+
 type trackedResult struct {
 	identifier            *ast.Node
 	name                  string
@@ -47,6 +57,10 @@ type trackedResult struct {
 	typeName              string
 	handled               bool
 	hasDiscardedResultUse bool
+}
+
+func isMustUseResultarType(type_ *checker.Type) bool {
+	return isResultLikeType(type_) || isMatchMatcherType(type_)
 }
 
 func (a *Analyzer) noDiscard(file *ast.SourceFile) []Finding {
@@ -60,7 +74,7 @@ func (a *Analyzer) noDiscard(file *ast.SourceFile) []Finding {
 			return
 		}
 		type_ := a.checker.GetTypeAtLocation(expression)
-		if !isResultLikeType(type_) {
+		if !isMustUseResultarType(type_) {
 			return
 		}
 		typeName := a.checker.TypeToStringEx(type_, expression, checker.TypeFormatFlagsNoTruncation, nil)
@@ -109,7 +123,7 @@ func (a *Analyzer) collectTrackedResults(file *ast.SourceFile) []*trackedResult 
 			return
 		}
 		type_ := a.checker.GetTypeAtLocation(initializer)
-		if !isResultLikeType(type_) {
+		if !isMustUseResultarType(type_) {
 			return
 		}
 		symbol := a.checker.GetSymbolAtLocation(name)
@@ -163,7 +177,7 @@ func (a *Analyzer) isInsideDiscardedResultExpression(identifier *ast.Node) bool 
 		if isExplicitDiscard(expression) || !isCallLikeDiscard(expression) {
 			return false
 		}
-		return isResultLikeType(a.checker.GetTypeAtLocation(expression))
+		return isMustUseResultarType(a.checker.GetTypeAtLocation(expression))
 	}
 	return false
 }
@@ -175,13 +189,12 @@ func (a *Analyzer) noPromiseInResultSuccess(file *ast.SourceFile) []Finding {
 			return
 		}
 		call := node.AsCallExpression()
-		method, receiver, nameNode := methodCall(node)
+		method, receiverType, nameNode, arguments, _ := a.operatorCall(node)
 		if method == "map" || method == "as" {
-			receiverType := a.checker.GetTypeAtLocation(receiver)
-			if !isResultLikeType(receiverType) || isResultAsyncLikeType(receiverType) || len(call.Arguments.Nodes) == 0 {
+			if !isResultLikeType(receiverType) || isResultAsyncLikeType(receiverType) || len(arguments) == 0 {
 				return
 			}
-			argument := call.Arguments.Nodes[0]
+			argument := arguments[0]
 			hasPromise := isPromiseLikeType(a.checker, a.checker.GetTypeAtLocation(argument))
 			if method == "map" {
 				hasPromise = callbackReturnsPromiseLike(a.checker, argument)
@@ -231,12 +244,8 @@ func (a *Analyzer) noUnknownResultError(file *ast.SourceFile) []Finding {
 func (a *Analyzer) preferMapErr(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		method, receiver, nameNode := methodCall(node)
-		if method != "orElse" || !isResultLikeType(a.checker.GetTypeAtLocation(receiver)) {
-			return
-		}
-		arguments := node.AsCallExpression().Arguments.Nodes
-		if len(arguments) == 0 {
+		method, receiverType, nameNode, arguments, _ := a.operatorCall(node)
+		if (method != "orElse" && method != "catchAll") || !isResultLikeType(receiverType) || len(arguments) == 0 {
 			return
 		}
 		returned := getReturnedExpressions(arguments[0])
@@ -249,8 +258,8 @@ func (a *Analyzer) preferMapErr(file *ast.SourceFile) []Finding {
 			}
 		}
 		finding := newFinding(file, nameNode, "prefer-map-err", a.options.PreferMapErr,
-			"`orElse` only replaces the failure with another Err. Use `mapErr` when the Ok value cannot recover.", "")
-		finding.Fixes = []Fix{renameFix(file, nameNode, "Replace orElse with mapErr", "mapErr")}
+			fmt.Sprintf("`%s` only replaces the failure with another Err. Use `mapErr` when the Ok value cannot recover.", method), "")
+		finding.Fixes = []Fix{renameFix(file, nameNode, fmt.Sprintf("Replace %s with mapErr", method), "mapErr")}
 		findings = append(findings, finding)
 	})
 	return findings
@@ -259,16 +268,8 @@ func (a *Analyzer) preferMapErr(file *ast.SourceFile) []Finding {
 func (a *Analyzer) preferAndThen(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		method, receiver, nameNode := methodCall(node)
-		if method != "map" {
-			return
-		}
-		receiverType := a.checker.GetTypeAtLocation(receiver)
-		if !isResultLikeType(receiverType) {
-			return
-		}
-		arguments := node.AsCallExpression().Arguments.Nodes
-		if len(arguments) == 0 {
+		method, receiverType, nameNode, arguments, _ := a.operatorCall(node)
+		if method != "map" || !isResultLikeType(receiverType) || len(arguments) == 0 {
 			return
 		}
 		var returnedResult *ast.Node
@@ -319,8 +320,23 @@ func (a *Analyzer) typedCatchMapper(file *ast.SourceFile) []Finding {
 		if _, ok := tryMapperCallNames[callName]; !ok || hasMapperArgument(node) {
 			return
 		}
+		if callName == "try" {
+			if call.Expression.Kind == ast.KindPropertyAccessExpression {
+				if a.resultarStaticNamespace(call.Expression, "try") == "" {
+					return
+				}
+			} else if !isResultLikeType(a.checker.GetTypeAtLocation(node)) {
+				return
+			}
+		}
+		if callName == "tryPromise" && !a.isResultTaskStaticCall(call.Expression, "tryPromise") {
+			return
+		}
 		if callName != "fromThrowable" && callName != "fromThrowableAsync" {
 			errorTypes := resultErrorTypes(a.checker, a.checker.GetTypeAtLocation(node))
+			if len(errorTypes) == 0 && (callName == "try" || callName == "tryPromise") {
+				return
+			}
 			if len(errorTypes) > 0 {
 				allConcrete := true
 				for _, errorType := range errorTypes {
@@ -334,8 +350,14 @@ func (a *Analyzer) typedCatchMapper(file *ast.SourceFile) []Finding {
 				}
 			}
 		}
+		displayName := callName
+		if call.Expression.Kind == ast.KindPropertyAccessExpression && (callName == "try" || callName == "tryPromise") {
+			if path := callPath(call.Expression); path != "" {
+				displayName = path
+			}
+		}
 		findings = append(findings, newFinding(file, call.Expression, "typed-catch-mapper", a.options.TypedCatchMapper,
-			fmt.Sprintf("`%s` without a catch mapper leaves the error channel as `unknown`. Map the caught value to a specific Resultar error.", callName), ""))
+			fmt.Sprintf("`%s` without a catch mapper leaves the error channel as `unknown`. Map the caught value to a specific Resultar error.", displayName), ""))
 	})
 	return findings
 }
@@ -343,11 +365,10 @@ func (a *Analyzer) typedCatchMapper(file *ast.SourceFile) []Finding {
 func (a *Analyzer) preferMap(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		method, receiver, nameNode := methodCall(node)
-		if method != "andThen" || !isResultLikeType(a.checker.GetTypeAtLocation(receiver)) {
+		method, receiverType, nameNode, arguments, _ := a.operatorCall(node)
+		if (method != "andThen" && method != "flatMap") || !isResultLikeType(receiverType) {
 			return
 		}
-		arguments := node.AsCallExpression().Arguments.Nodes
 		if len(arguments) == 0 || !callbackReturnsResultLike(a.checker, arguments[0]) {
 			return
 		}
@@ -360,12 +381,12 @@ func (a *Analyzer) preferMap(file *ast.SourceFile) []Finding {
 				return
 			}
 		}
-		message := "andThen only wraps the callback value in Ok. Use map for a non-fallible transformation."
-		if isResultTaskLikeType(a.checker.GetTypeAtLocation(receiver)) {
-			message = "andThen only wraps the callback value in a successful ResultTask. Use map for a non-fallible transformation."
+		message := fmt.Sprintf("%s only wraps the callback value in Ok. Use map for a non-fallible transformation.", method)
+		if isResultTaskLikeType(receiverType) {
+			message = fmt.Sprintf("%s only wraps the callback value in a successful ResultTask. Use map for a non-fallible transformation.", method)
 		}
 		finding := newFinding(file, nameNode, "prefer-map", a.options.PreferMap, message, "")
-		finding.Fixes = []Fix{renameFix(file, nameNode, "Replace andThen with map", "map")}
+		finding.Fixes = []Fix{renameFix(file, nameNode, fmt.Sprintf("Replace %s with map", method), "map")}
 		findings = append(findings, finding)
 	})
 	return findings
@@ -440,11 +461,10 @@ func (a *Analyzer) preferResultForEach(file *ast.SourceFile) []Finding {
 func (a *Analyzer) preferCatchReason(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		method, receiver, nameNode := methodCall(node)
-		if method != "catchTag" || !isResultLikeType(a.checker.GetTypeAtLocation(receiver)) {
+		method, receiverType, nameNode, arguments, _ := a.operatorCall(node)
+		if method != "catchTag" || !isResultLikeType(receiverType) {
 			return
 		}
-		arguments := node.AsCallExpression().Arguments.Nodes
 		if len(arguments) < 2 || !callbackChecksNestedReasonTag(arguments[1]) {
 			return
 		}
@@ -628,12 +648,11 @@ func (a *Analyzer) noTaggedErrorConstructorOverride(file *ast.SourceFile) []Find
 func (a *Analyzer) noUselessRecovery(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		method, receiver, nameNode := methodCall(node)
+		method, receiverType, nameNode, _, _ := a.operatorCall(node)
 		_, isRecovery := recoveryMethods[method]
 		if !isRecovery && method != "unwrapOr" {
 			return
 		}
-		receiverType := a.checker.GetTypeAtLocation(receiver)
 		if !isRecovery && !isResultTaskLikeType(receiverType) {
 			return
 		}
@@ -1340,6 +1359,86 @@ func methodCall(node *ast.Node) (string, *ast.Node, *ast.Node) {
 	return expression.Name().Text(), expression.AsPropertyAccessExpression().Expression, expression.Name()
 }
 
+func (a *Analyzer) operatorCall(node *ast.Node) (string, *checker.Type, *ast.Node, []*ast.Node, bool) {
+	if node == nil || node.Kind != ast.KindCallExpression {
+		return "", nil, nil, nil, false
+	}
+	call := node.AsCallExpression()
+	method, receiver, nameNode := methodCall(node)
+	if method == "" {
+		return "", nil, nil, nil, false
+	}
+	callArgs := call.Arguments.Nodes
+	if a.resultarStaticNamespace(call.Expression, method) != "" {
+		if len(callArgs) == 0 {
+			return "", nil, nil, nil, false
+		}
+		firstType := a.checker.GetTypeAtLocation(callArgs[0])
+		if isResultLikeType(firstType) {
+			return method, firstType, nameNode, callArgs[1:], true
+		}
+		receiverType := a.curriedOperatorReceiverType(node)
+		if !isResultLikeType(receiverType) {
+			return "", nil, nil, nil, false
+		}
+		return method, receiverType, nameNode, callArgs, true
+	}
+	return method, a.checker.GetTypeAtLocation(receiver), nameNode, callArgs, false
+}
+
+func (a *Analyzer) curriedOperatorReceiverType(node *ast.Node) *checker.Type {
+	if parent := node.Parent; parent != nil && parent.Kind == ast.KindCallExpression {
+		parentCall := parent.AsCallExpression()
+		if parentCall.Expression == node && len(parentCall.Arguments.Nodes) == 1 {
+			if t := a.checker.GetTypeAtLocation(parentCall.Arguments.Nodes[0]); isResultLikeType(t) {
+				return t
+			}
+		}
+		parentMethod, parentReceiver, _ := methodCall(parent)
+		if parentMethod == "pipe" && len(parentCall.Arguments.Nodes) > 0 && parentCall.Arguments.Nodes[0] == node {
+			if t := a.checker.GetTypeAtLocation(parentReceiver); isResultLikeType(t) {
+				return t
+			}
+		}
+		if a.canonicalExpressionName(parentCall.Expression) == "pipe" && len(parentCall.Arguments.Nodes) >= 2 && parentCall.Arguments.Nodes[1] == node {
+			if t := a.checker.GetTypeAtLocation(parentCall.Arguments.Nodes[0]); isResultLikeType(t) {
+				return t
+			}
+		}
+	}
+	if contextual := a.checker.GetContextualType(node, 0); contextual != nil {
+		if sigs := a.checker.GetCallSignatures(contextual); len(sigs) > 0 && len(sigs[0].Parameters()) > 0 {
+			if t := a.checker.GetTypeAtPosition(sigs[0], 0); isResultLikeType(t) {
+				return t
+			}
+		}
+	}
+	if callType := a.checker.GetTypeAtLocation(node); callType != nil {
+		if sigs := a.checker.GetCallSignatures(callType); len(sigs) > 0 && len(sigs[0].Parameters()) > 0 {
+			if t := a.checker.GetTypeAtPosition(sigs[0], 0); isResultLikeType(t) {
+				return t
+			}
+		}
+	}
+	return nil
+}
+
+func (a *Analyzer) hasOperatorReplacement(node *ast.Node, receiverType *checker.Type, prop string) bool {
+	if receiverType != nil && a.checker.GetPropertyOfType(receiverType, prop) != nil {
+		return true
+	}
+	if node != nil && node.Kind == ast.KindCallExpression {
+		expr := unwrapExpression(node.AsCallExpression().Expression)
+		if expr != nil && expr.Kind == ast.KindPropertyAccessExpression {
+			nsType := a.checker.GetTypeAtLocation(expr.AsPropertyAccessExpression().Expression)
+			if nsType != nil && a.checker.GetPropertyOfType(nsType, prop) != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func callbackReturnsPromiseLike(checker_ *checker.Checker, callback *ast.Node) bool {
 	callbackType := checker_.GetTypeAtLocation(callback)
 	if callbackType == nil {
@@ -1510,6 +1609,16 @@ func (a *Analyzer) isResultTaskStaticConsumerCall(expression *ast.Node) bool {
 			return true
 		}
 	}
+	for method := range matchStaticConsumerMethods {
+		if a.staticNamespace(expression, method) == "Match" {
+			return true
+		}
+	}
+	for method := range fiberStaticConsumerMethods {
+		if a.staticNamespace(expression, method) == "Fiber" {
+			return true
+		}
+	}
 	return false
 }
 
@@ -1526,6 +1635,9 @@ func isConsumedByReceiverChain(identifier *ast.Node) bool {
 				return true
 			}
 			if _, ok := consumerMethods[name]; ok && parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression && parent.Parent.AsCallExpression().Expression == parent {
+				return true
+			}
+			if name == "pipe" && parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression && parent.Parent.AsCallExpression().Expression == parent && len(parent.Parent.AsCallExpression().Arguments.Nodes) >= 1 {
 				return true
 			}
 			current = parent
@@ -1842,15 +1954,13 @@ func hasOnlyNeverErrors(c *checker.Checker, t *checker.Type) bool {
 func (a *Analyzer) preferOrElseSucceed(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		method, receiver, nameNode := methodCall(node)
+		method, receiverType, nameNode, arguments, isStatic := a.operatorCall(node)
 		if method != "orElse" && method != "catchAll" {
 			return
 		}
-		receiverType := a.checker.GetTypeAtLocation(receiver)
-		if !isResultLikeType(receiverType) || hasOnlyNeverErrors(a.checker, receiverType) || a.checker.GetPropertyOfType(receiverType, "orElseSucceed") == nil {
+		if !isResultLikeType(receiverType) || hasOnlyNeverErrors(a.checker, receiverType) || !a.hasOperatorReplacement(node, receiverType, "orElseSucceed") {
 			return
 		}
-		arguments := node.AsCallExpression().Arguments.Nodes
 		if len(arguments) == 0 || !isArgumentlessFunction(arguments[0]) {
 			return
 		}
@@ -1866,7 +1976,7 @@ func (a *Analyzer) preferOrElseSucceed(file *ast.SourceFile) []Finding {
 		}
 		finding := newFinding(file, nameNode, "prefer-or-else-succeed", a.options.PreferOrElseSucceed,
 			fmt.Sprintf("`%s` only wraps a fallback value in Ok/succeed without inspecting the error. Use `orElseSucceed` for infallible fallback recovery.", method), "")
-		if len(returned) == 1 {
+		if len(returned) == 1 && !isStatic {
 			unwrapped := unwrapExpression(returned[0])
 			argNode := unwrapped.AsCallExpression().Arguments.Nodes[0]
 			argText := strings.TrimSpace(nodeSourceText(file, argNode))
@@ -1915,21 +2025,19 @@ func (a *Analyzer) isErrWrappingIdentifier(node *ast.Node, name string) bool {
 func (a *Analyzer) preferTap(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		method, receiver, nameNode := methodCall(node)
+		method, receiverType, nameNode, arguments, isStatic := a.operatorCall(node)
 		if method != "map" && method != "andThen" && method != "flatMap" {
 			return
 		}
-		receiverType := a.checker.GetTypeAtLocation(receiver)
 		if !isResultLikeType(receiverType) {
 			return
 		}
 		replacement := "tap"
-		if isResultarSyncType(receiverType) && a.checker.GetPropertyOfType(receiverType, "inspect") != nil {
+		if isResultarSyncType(receiverType) && (!isStatic && a.checker.GetPropertyOfType(receiverType, "inspect") != nil || isStatic && a.hasOperatorReplacement(node, nil, "inspect")) {
 			replacement = "inspect"
-		} else if a.checker.GetPropertyOfType(receiverType, "tap") == nil {
+		} else if !a.hasOperatorReplacement(node, receiverType, "tap") {
 			return
 		}
-		arguments := node.AsCallExpression().Arguments.Nodes
 		if len(arguments) == 0 {
 			return
 		}
@@ -1970,21 +2078,19 @@ func (a *Analyzer) preferTap(file *ast.SourceFile) []Finding {
 func (a *Analyzer) preferTapError(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		method, receiver, nameNode := methodCall(node)
+		method, receiverType, nameNode, arguments, isStatic := a.operatorCall(node)
 		if method != "orElse" && method != "catchAll" && method != "mapErr" && method != "mapError" {
 			return
 		}
-		receiverType := a.checker.GetTypeAtLocation(receiver)
 		if !isResultLikeType(receiverType) || hasOnlyNeverErrors(a.checker, receiverType) {
 			return
 		}
 		replacement := "tapError"
-		if isResultarSyncType(receiverType) && a.checker.GetPropertyOfType(receiverType, "inspectError") != nil {
+		if isResultarSyncType(receiverType) && (!isStatic && a.checker.GetPropertyOfType(receiverType, "inspectError") != nil || isStatic && a.hasOperatorReplacement(node, nil, "inspectError")) {
 			replacement = "inspectError"
-		} else if a.checker.GetPropertyOfType(receiverType, "tapError") == nil {
+		} else if !a.hasOperatorReplacement(node, receiverType, "tapError") {
 			return
 		}
-		arguments := node.AsCallExpression().Arguments.Nodes
 		if len(arguments) == 0 {
 			return
 		}
@@ -2036,15 +2142,13 @@ func isUndefinedOrVoidExpression(node *ast.Node) bool {
 func (a *Analyzer) preferAsVoid(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		method, receiver, nameNode := methodCall(node)
+		method, receiverType, nameNode, arguments, isStatic := a.operatorCall(node)
 		if method != "map" {
 			return
 		}
-		receiverType := a.checker.GetTypeAtLocation(receiver)
-		if !isResultLikeType(receiverType) || a.checker.GetPropertyOfType(receiverType, "asVoid") == nil {
+		if !isResultLikeType(receiverType) || !a.hasOperatorReplacement(node, receiverType, "asVoid") {
 			return
 		}
-		arguments := node.AsCallExpression().Arguments.Nodes
 		if len(arguments) != 1 {
 			return
 		}
@@ -2061,7 +2165,9 @@ func (a *Analyzer) preferAsVoid(file *ast.SourceFile) []Finding {
 		}
 		finding := newFinding(file, nameNode, "prefer-as-void", a.options.PreferAsVoid,
 			"`map(() => undefined)` discards the success value manually. Use `asVoid()` to express void mapping.", "")
-		finding.Fixes = []Fix{replaceSpanFix(file, nameNode, node, "Replace map with asVoid()", "asVoid()")}
+		if !isStatic {
+			finding.Fixes = []Fix{replaceSpanFix(file, nameNode, node, "Replace map with asVoid()", "asVoid()")}
+		}
 		findings = append(findings, finding)
 	})
 	return findings
@@ -2106,15 +2212,13 @@ func (a *Analyzer) isFilterOrElseCallback(callback *ast.Node) bool {
 func (a *Analyzer) preferFilterOrElse(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
-		method, receiver, nameNode := methodCall(node)
+		method, receiverType, nameNode, arguments, _ := a.operatorCall(node)
 		if method != "andThen" && method != "flatMap" {
 			return
 		}
-		receiverType := a.checker.GetTypeAtLocation(receiver)
-		if !isResultLikeType(receiverType) || a.checker.GetPropertyOfType(receiverType, "filterOrElse") == nil {
+		if !isResultLikeType(receiverType) || !a.hasOperatorReplacement(node, receiverType, "filterOrElse") {
 			return
 		}
-		arguments := node.AsCallExpression().Arguments.Nodes
 		if len(arguments) != 1 || !a.isFilterOrElseCallback(arguments[0]) {
 			return
 		}
@@ -2426,6 +2530,11 @@ func (a *Analyzer) noRunInsideGen(file *ast.SourceFile) []Finding {
 					return
 				}
 			}
+			if a.staticNamespace(call.Expression, "fromTask") == "ResultAsync" {
+				findings = append(findings, newFinding(file, call.Expression, "no-run-inside-gen", a.options.NoRunInsideGen,
+					"Do not execute `ResultAsync.fromTask` inside a Resultar generator. Compose with `yield*` instead so errors, requirements, and scopes propagate through the generator.", ""))
+				return
+			}
 			calleeName := a.canonicalExpressionName(call.Expression)
 			if call.Expression.Kind != ast.KindPropertyAccessExpression && (calleeName == "runPromise" || calleeName == "runSync") {
 				findings = append(findings, newFinding(file, call.Expression, "no-run-inside-gen", a.options.NoRunInsideGen,
@@ -2433,6 +2542,11 @@ func (a *Analyzer) noRunInsideGen(file *ast.SourceFile) []Finding {
 				return
 			}
 			method, receiver, nameNode := methodCall(bodyNode)
+			if method == "toResultAsync" && isResultTaskLikeType(a.checker.GetTypeAtLocation(receiver)) {
+				findings = append(findings, newFinding(file, nameNode, "no-run-inside-gen", a.options.NoRunInsideGen,
+					"Do not call `toResultAsync` inside a Resultar generator. Compose with `yield*` instead so errors, requirements, and scopes propagate through the generator.", ""))
+				return
+			}
 			if (method == "_unsafeUnwrap" || method == "unwrapOrThrow") && isResultLikeType(a.checker.GetTypeAtLocation(receiver)) {
 				findings = append(findings, newFinding(file, nameNode, "no-run-inside-gen", a.options.NoRunInsideGen,
 					fmt.Sprintf("Do not call `%s` inside a Resultar generator. Use `yield*` to unwrap values safely without throwing.", method), ""))

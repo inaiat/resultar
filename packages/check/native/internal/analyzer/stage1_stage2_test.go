@@ -104,6 +104,17 @@ export declare const Result: {
   firstSuccessOf<A, E>(results: Iterable<Result<A, E>>): Result<A, E>
   combine<A, E>(results: Iterable<Result<A, E>>): Result<A[], E>
   forEach<T, A, E>(items: Iterable<T>, fn: (item: T) => Result<A, E>): Result<A[], E>
+  map<A, B>(fn: (a: A) => B): <E>(self: Result<A, E>) => Result<B, E>
+  map<A, E, B>(self: Result<A, E>, fn: (a: A) => B): Result<B, E>
+  andThen<A, B, E2>(fn: (a: A) => Result<B, E2>): <E>(self: Result<A, E>) => Result<B, E | E2>
+  andThen<A, E, B, E2>(self: Result<A, E>, fn: (a: A) => Result<B, E2>): Result<B, E | E2>
+  mapErr<E, E2>(fn: (e: E) => E2): <A>(self: Result<A, E>) => Result<A, E2>
+  mapErr<A, E, E2>(self: Result<A, E>, fn: (e: E) => E2): Result<A, E2>
+  orElse<E, B, E2>(fn: (e: E) => Result<B, E2>): <A>(self: Result<A, E>) => Result<A | B, E2>
+  orElse<A, E, B, E2>(self: Result<A, E>, fn: (e: E) => Result<B, E2>): Result<A | B, E2>
+  orElseSucceed<A, E, B>(self: Result<A, E>, fn: () => B): Result<A | B, never>
+  tap<A, E>(self: Result<A, E>, fn: (a: A) => void): Result<A, E>
+  tapError<A, E>(self: Result<A, E>, fn: (e: E) => void): Result<A, E>
 }
 export declare class AppError extends Error {
   readonly _tag = 'AppError'
@@ -369,3 +380,202 @@ export const fromMethodPipe = task.pipe((x) => x.map((n) => n + 1))
 		}
 	}
 }
+
+func TestV4NewFeaturesCoverage(t *testing.T) {
+	source := stage1And2Fixture + `
+export interface MatchMatcher<I, R> {
+  when<B>(pattern: unknown, fn: (input: I) => B): MatchMatcher<I, R | B>
+  exhaustive(): R
+  orElse<B>(fn: (input: I) => B): R | B
+  orElseAbsurd(): R
+  option(): unknown
+  result(): Result<R, I>
+  pipe<B>(ab: (self: this) => B): B
+}
+export declare const Match: {
+  value<I>(input: I): MatchMatcher<I, never>
+  orElse<I, R, B>(self: MatchMatcher<I, R>, fn: (input: I) => B): R | B
+}
+export declare const Fiber: {
+  join<A, E>(fiber: Fiber<A, E>): ResultTask<A, E, never>
+  interrupt<A, E>(fiber: Fiber<A, E>): ResultTask<void, never, never>
+}
+export declare const ResultAsync: {
+  fromTask<A, E>(task: ResultTask<A, E, never>): ResultTask<A, E, never>
+}
+export interface OuterError {
+  readonly _tag: 'OuterError'
+  readonly reason: { readonly _tag: 'InnerError' }
+}
+export declare namespace ResultTask {
+  function tryPromise<A>(fn: () => Promise<A>): ResultTask<A, unknown>
+  function tryPromise<A, E>(options: { try: () => Promise<A>; catch: (error: unknown) => E }): ResultTask<A, E>
+  function flatMap<A, E, R, B, E2, R2>(self: ResultTask<A, E, R>, fn: (a: A) => ResultTask<B, E2, R2>): ResultTask<B, E | E2, R | R2>
+  function andThen<A, B, E2, R2>(fn: (a: A) => ResultTask<B, E2, R2>): <E, R>(self: ResultTask<A, E, R>) => ResultTask<B, E | E2, R | R2>
+  function andThen<A, E, R, B, E2, R2>(self: ResultTask<A, E, R>, fn: (a: A) => ResultTask<B, E2, R2>): ResultTask<B, E | E2, R | R2>
+  function map<A, B>(fn: (a: A) => B): <E, R>(self: ResultTask<A, E, R>) => ResultTask<B, E, R>
+  function map<A, E, R, B>(self: ResultTask<A, E, R>, fn: (a: A) => B): ResultTask<B, E, R>
+  function catchAll<A, E, R, B, E2, R2>(self: ResultTask<A, E, R>, fn: (e: E) => ResultTask<B, E2, R2>): ResultTask<A | B, E2, R | R2>
+  function catchTag<K extends string, E extends { readonly _tag: string }, B, E2, R2>(
+    tag: K,
+    fn: (e: Extract<E, { readonly _tag: K }>) => ResultTask<B, E2, R2>,
+  ): <A, R>(self: ResultTask<A, E, R>) => ResultTask<A | B, Exclude<E, { readonly _tag: K }> | E2, R | R2>
+  function catchTag<A, E extends { readonly _tag: string }, R, K extends E['_tag'], B, E2, R2>(
+    self: ResultTask<A, E, R>,
+    tag: K,
+    fn: (e: Extract<E, { readonly _tag: K }>) => ResultTask<B, E2, R2>,
+  ): ResultTask<A | B, Exclude<E, { readonly _tag: K }> | E2, R | R2>
+  function orElse<A, E, R, B, E2, R2>(self: ResultTask<A, E, R>, fn: (e: E) => ResultTask<B, E2, R2>): ResultTask<A | B, E2, R | R2>
+  function orElseSucceed<A, E, R, B>(self: ResultTask<A, E, R>, fn: () => B): ResultTask<A | B, never, R>
+  function mapErr<A, E, R, E2>(self: ResultTask<A, E, R>, fn: (e: E) => E2): ResultTask<A, E2, R>
+  function tap<A, E, R>(self: ResultTask<A, E, R>, fn: (a: A) => void): ResultTask<A, E, R>
+  function tapError<A, E, R>(self: ResultTask<A, E, R>, fn: (e: E) => void): ResultTask<A, E, R>
+  function asVoid<A, E, R>(self: ResultTask<A, E, R>): ResultTask<void, E, R>
+  function filterOrElse<A, E, R, E2>(self: ResultTask<A, E, R>, pred: (a: A) => boolean, onFalse: (a: A) => E2): ResultTask<A, E | E2, R>
+}
+declare module './fixture' {
+  interface ResultTask<A, E, R> {
+    toResultAsync(): ResultTask<A, E, never>
+  }
+}
+
+declare const task: ResultTask<number, string>
+declare const reasonTask: ResultTask<number, OuterError>
+declare const res: Result<number, string>
+declare const infallibleTask: ResultTask<number, never>
+declare const fiber: Fiber<number, string>
+
+export function testMatchAndFiber() {
+  // Discarded MatchMatcher expression + unhandled MatchMatcher binding -> 2 no-discard findings
+  Match.value(1).when(1, () => 'one')
+  const unfinalized = Match.value(1).when(1, () => 'one')
+  void unfinalized
+
+  const badMatcher = Match.value(2).when(2, () => 'two')
+
+  // Handled MatchMatcher bindings -> 0 no-discard findings
+  const m1 = Match.value(1).when(1, () => 'one')
+  const r1 = m1.orElse(() => 'other')
+  const m2 = Match.value(1).when(1, () => 'one')
+  const r2 = Match.orElse(m2, () => 'other')
+  const m3 = Match.value(1).when(1, () => 'one')
+  const r3 = m3.pipe((m) => m.orElse(() => 'other'))
+  void r1
+  void r2
+  void r3
+  if (badMatcher === null) {
+    return Fiber.interrupt(fiber)
+  }
+
+  // Handled via Fiber.join static call
+  return Fiber.join(fiber)
+}
+
+// ResultTask.tryPromise without catch mapper -> 1 typed-catch-mapper finding
+export const untypedTryPromise = () => ResultTask.tryPromise(() => Promise.resolve(1))
+
+// ResultAsync.fromTask and .toResultAsync() inside ResultTask.gen -> 2 no-run-inside-gen findings
+export const badBridgeInGen = () => ResultTask.gen(function* () {
+  const a = ResultAsync.fromTask(task)
+  const b = task.toResultAsync()
+  return (yield* a) + (yield* b)
+})
+
+// Static data-first and curried operators (ResultTask.* and Result.*)
+export const sPromiseInSuccess1 = () => ResultTask.map(task, () => Promise.resolve(1))
+export const sPromiseInSuccess2 = () => pipe(res, Result.map(() => Promise.resolve(1)))
+export const sMap1 = () => ResultTask.flatMap(task, (x) => ResultTask.ok(x + 1))
+export const sMap2 = () => pipe(task, ResultTask.andThen((x) => ResultTask.ok(x + 1)))
+export const sMap3 = () => Result.andThen(res, (x) => Result.ok(x + 1))
+export const sAndThen1 = () => ResultTask.map(task, (x) => ResultTask.ok(x + 1))
+export const sAndThen2 = () => pipe(res, Result.map((x) => Result.ok(x + 1)))
+export const sMapErr1 = () => ResultTask.catchAll(task, (e) => ResultTask.err(e))
+export const sMapErr2 = () => pipe(res, Result.orElse((e) => Result.err(e)))
+export const sCatchReason1 = () =>
+  ResultTask.catchTag(reasonTask, 'OuterError', (e) =>
+    e.reason._tag === 'InnerError' ? ResultTask.ok(0) : ResultTask.err(e),
+  )
+export const sCatchReason2 = () =>
+  pipe(
+    reasonTask,
+    ResultTask.catchTag('OuterError', (e) =>
+      e.reason._tag === 'InnerError' ? ResultTask.ok(0) : ResultTask.err(e),
+    ),
+  )
+export const sOrElseSucceed = () => ResultTask.orElse(task, () => ResultTask.ok(0))
+export const sOrElseSucceedRes = () => Result.orElse(res, () => Result.ok(0))
+export const sTap = () => ResultTask.map(task, (x) => {
+  console.log(x)
+  return x
+})
+export const sTapRes = () => Result.map(res, (x) => {
+  console.log(x)
+  return x
+})
+export const sTapErr = () => ResultTask.mapErr(task, (e) => {
+  console.error(e)
+  return e
+})
+export const sTapErrRes = () => Result.mapErr(res, (e) => {
+  console.error(e)
+  return e
+})
+export const sAsVoid1 = () => ResultTask.map(task, () => undefined)
+export const sAsVoid2 = () => task.pipe(ResultTask.map(() => undefined))
+export const sFilter = () => ResultTask.andThen(task, (x) => (x > 0 ? ResultTask.ok(x) : ResultTask.err('bad')))
+export const sUseless = () => ResultTask.orElse(infallibleTask, () => infallibleTask)
+`
+	directory := writeFixture(t, source)
+	path := filepath.Join(directory, "fixture.ts")
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil || len(diagnostics) > 0 {
+		t.Fatalf("open: %v %v", err, diagnostics)
+	}
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, config.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for _, f := range findings {
+		counts[f.Rule]++
+	}
+	expected := map[string]int{
+		"no-discard":                    2,
+		"typed-catch-mapper":            1,
+		"no-run-inside-gen":             2,
+		"no-promise-in-result-success":  2,
+		"prefer-map":                    3,
+		"prefer-and-then":               2,
+		"prefer-map-err":                2,
+		"prefer-catch-reason":           2,
+		"prefer-or-else-succeed":        2,
+		"prefer-tap":                    2,
+		"prefer-tap-error":              2,
+		"prefer-as-void":                2,
+		"prefer-filter-or-else":         1,
+		"no-useless-recovery":           1,
+	}
+	for rule, want := range expected {
+		if counts[rule] != want {
+			t.Fatalf("rule %s: got %d, want %d (all findings: %#v)", rule, counts[rule], want, findings)
+		}
+	}
+	for _, f := range findings {
+		for _, fix := range f.Fixes {
+			edited := source
+			for i := len(fix.Edits) - 1; i >= 0; i-- {
+				edit := fix.Edits[i]
+				edited = edited[:edit.Start] + edit.NewText + edited[edit.Start+edit.Length:]
+			}
+			next, diags, err := project.OpenWithOverlay(opened.ConfigPath, map[string]string{path: edited})
+			if err != nil || len(diags) > 0 {
+				t.Fatalf("preview project for %s (%s): %v %v", f.Rule, fix.Title, err, diags)
+			}
+			if semDiags := next.Program.GetSemanticDiagnostics(context.Background(), nil); len(semDiags) > 0 {
+				t.Fatalf("invalid autofix for %s (%s):\nedited:\n%s\ndiagnostics: %v", f.Rule, fix.Title, edited, semDiags)
+			}
+		}
+	}
+}
+
+

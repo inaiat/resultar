@@ -139,7 +139,20 @@ void test("accepts combined TypeScript and Resultar configuration with JSONC syn
       "moduleResolution": "NodeNext",
       "erasableSyntaxOnly": true,
       "plugins": [
-        { "name": "resultar-check", "noUnknownTaskRequirements": "error", "unusedSuppression": "off" },
+        {
+          "name": "resultar-check",
+          "diagnosticSeverity": "error",
+          "noUnknownTaskRequirements": "error",
+          "unusedSuppression": "off",
+          "overrides": [
+            {
+              "include": ["src/**/*.test.ts"],
+              "options": {
+                "diagnosticSeverity": { "*": "off", "no-discard": "error" }
+              }
+            }
+          ]
+        },
         { "name": "another-plugin", "noDiscard": "custom-value" },
       ],
     },
@@ -171,6 +184,7 @@ void test("rejects invalid Resultar severities and file patterns", async () => {
     [
       '"noUnknownTaskRequirements": "fatal"',
       '"unusedSuppression": "fatal"',
+      '"diagnosticSeverity": "fatal"',
       '"ignoreFilePatterns": 42',
     ].map(async (option) => {
       const diagnostics = await validate(
