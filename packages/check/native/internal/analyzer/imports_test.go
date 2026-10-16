@@ -5,10 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
-	"github.com/microsoft/typescript-go/resultar-check/internal/config"
-	"github.com/microsoft/typescript-go/resultar-check/internal/project"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/config"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/project"
 )
 
 const importedAPIFixture = `
@@ -54,6 +55,9 @@ import {ok} from './api'
 			}
 			slices.Sort(rules)
 			expected := []string{"no-await-in-safe-try", "no-try-catch-in-safe-try", "yield-star-in-safe-try"}
+			if strings.HasPrefix(test.name, "Result") {
+				expected = []string{"no-await-in-safe-try", "no-result-in-task-gen", "no-try-catch-in-safe-try", "yield-star-in-safe-try"}
+			}
 			if !slices.Equal(rules, expected) {
 				t.Fatalf("got %v, want %v", rules, expected)
 			}

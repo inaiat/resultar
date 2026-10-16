@@ -262,20 +262,70 @@ export const closePendingTaskScope = (
 ): ResultTask<User, FetchUserError> => ResultTask.scoped(task);
 
 // no-unscoped-acquire-release: fn acquisition also needs an explicit owning scope.
-export const scopedDisposableFn = (id: string) =>
-  ResultTask.scoped(
-    ResultTask.fn(function* (userId: string) {
-      const session = yield* ResultTask.acquireDisposable(
-        ResultTask.sync(() => ({ id: userId, [Symbol.dispose]: (): void => {} })),
-      );
-      const user = yield* loadUserTask(session.id);
+export const scopedDisposableFn = ResultTask.fn(
+  function* (userId: string) {
+    const session = yield* ResultTask.acquireDisposable(
+      ResultTask.sync(() => ({ id: userId, [Symbol.dispose]: (): void => {} })),
+    );
+    const user = yield* loadUserTask(session.id);
 
-      return user;
-    })(id),
-  );
+    return user;
+  },
+  ResultTask.scoped,
+);
 
 // unused-suppression: retain a narrow directive only at an intentional terminal boundary.
 export const throwAtTerminalBoundary = (error: FetchUserError): never => {
   // resultar-check-disable-next-line no-throw // Explicit terminal boundary preserves this error.
   throw error;
 };
+
+// prefer-or-else-succeed: use orElseSucceed when recovery ignores the error and succeeds.
+export const fallbackUser = (email: string): StrictResult<User, never> =>
+  createUser(email).orElseSucceed(() => ({ email: "fallback@example.com", id: "fallback" }));
+
+// prefer-tap & prefer-tap-error: use tap / tapError (or inspect / inspectError on Result) for side-effect observation.
+export const observedUserTask = (id: string): ResultTask<User, FetchUserError> =>
+  loadUserTask(id)
+    .tap((user) => {
+      void user.id;
+    })
+    .tapError((error) => {
+      void error.message;
+    });
+
+// prefer-as-void: use asVoid() to discard the success value cleanly.
+export const createUserAsVoid = (
+  email: string,
+): StrictResult<void, InvalidEmailError | UserAlreadyExistsError> => createUser(email).asVoid();
+
+// prefer-filter-or-else: use filterOrElse for predicate refinements.
+export const requireNonEmptyUserId = (
+  email: string,
+): StrictResult<User, InvalidEmailError | UserAlreadyExistsError | ParseUserError> =>
+  createUser(email).filterOrElse(
+    (user) => user.id.length > 0,
+    () => new ParseUserError(),
+  );
+
+// prefer-acquire-disposable & no-fn-iife & require-return-yield-star &
+// no-unnecessary-err-wrap-in-gen & no-run-inside-gen:
+// compose directly with ResultTask.gen, acquireDisposable, direct yield*, and `return yield*`.
+export const cleanGeneratorWorkflow = (email: string) =>
+  ResultTask.scoped(
+    ResultTask.gen(function* () {
+      const session = yield* ResultTask.acquireDisposable(
+        ResultTask.sync(() => ({ email, [Symbol.dispose]: (): void => {} })),
+      );
+      const user = yield* createUser(session.email);
+      if (user.id === "") {
+        return yield* FetchUserError.taskErr({ id: "empty" });
+      }
+      return user;
+    }),
+  );
+
+// unnecessary-pipe: only use .pipe(...) when applying at least one operator.
+export const pipedUserEmail = (email: string): StrictResult<string, InvalidEmailError> =>
+  validateEmail(email).pipe((res) => res.map((v) => v.toLowerCase()));
+

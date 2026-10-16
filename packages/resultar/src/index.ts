@@ -19,11 +19,11 @@ export {
   tryCatchAsync,
   tryResultAsync,
   unitAsync,
-} from './task/result-task.js'
+} from './task/result-async.js'
 
 /** @deprecated Import `tryResultAsync` instead. */
 // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
-export { tryCatchAsync as tryAsync } from './task/result-task.js'
+export { tryCatchAsync as tryAsync } from './task/result-async.js'
 
 export type {
   ResultAsyncAbortSignal,
@@ -46,7 +46,7 @@ export type {
   ResultAsyncWithResourceOptions,
   StrictResultAsync,
   TryResultAsyncOptions,
-} from './task/result-task.js'
+} from './task/result-async.js'
 export {
   DisposableResult,
   err,

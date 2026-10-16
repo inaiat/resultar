@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/microsoft/typescript-go/internal/ast"
-	"github.com/microsoft/typescript-go/internal/scanner"
-	"github.com/microsoft/typescript-go/resultar-check/internal/config"
+	"github.com/microsoft/TypeScript/tsc/internal/ast"
+	"github.com/microsoft/TypeScript/tsc/internal/scanner"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/config"
 )
 
 type suppression struct {
@@ -108,7 +108,7 @@ func (a *Analyzer) applySuppressions(file *ast.SourceFile, findings []Finding) [
 	for _, item := range parseSuppressions(file) {
 		report := func(start, length int, message string) {
 			line, column := scanner.GetECMALineAndUTF16CharacterOfPosition(file, start)
-			filtered = append(filtered, Finding{File: file.FileName(), Start: start, Length: length, Line: line + 1, Column: int(column) + 1, Rule: "unused-suppression", Severity: a.options.UnusedSuppression, Message: message, Fixes: []Fix{{Title: "Remove unused suppression", Kind: FixCorrection, Description: "Preserves unrelated comment text.", Edits: []TextEdit{{Start: start, Length: length, NewText: ""}}}}})
+			filtered = append(filtered, Finding{File: string(file.FileName()), Start: start, Length: length, Line: line + 1, Column: int(column) + 1, Rule: "unused-suppression", Severity: a.options.UnusedSuppression, Message: message, Fixes: []Fix{{Title: "Remove unused suppression", Kind: FixCorrection, Description: "Preserves unrelated comment text.", Edits: []TextEdit{{Start: start, Length: length, NewText: ""}}}}})
 		}
 		used := func(rule string) bool {
 			for _, finding := range findings {

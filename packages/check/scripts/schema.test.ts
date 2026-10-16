@@ -101,6 +101,17 @@ void test("completes Resultar options alongside standard plugin properties", asy
     "noUnknownTaskRequirements",
     "unusedSuppression",
     "ignoreFilePatterns",
+    "preferOrElseSucceed",
+    "preferTap",
+    "preferTapError",
+    "preferAsVoid",
+    "preferFilterOrElse",
+    "preferAcquireDisposable",
+    "noFnIife",
+    "requireReturnYieldStar",
+    "noUnnecessaryErrWrapInGen",
+    "unnecessaryPipe",
+    "noRunInsideGen",
   ]) {
     assert.ok(items.includes(option), `Missing Resultar completion: ${option}`);
   }

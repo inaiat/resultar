@@ -22,7 +22,7 @@ import {
   runPromise,
   tryResultAsync,
   unitAsync,
-} from '../src/task/result-task.js'
+} from '../src/task/result-async.js'
 import { Result, err, ok, runSync, tryResult, unit } from '../src/result.js'
 import { createTaggedError } from '../src/tagged/tagged-error.js'
 

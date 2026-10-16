@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/microsoft/typescript-go/resultar-check/internal/analyzer"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/analyzer"
 )
 
 type Format string

@@ -275,7 +275,7 @@ export interface StartFiberOptions {
 const RESOLVED_PROMISE = Promise.resolve()
 
 /* eslint-disable max-params */
-export class ManagedFiber implements RuntimeFiber, ScopeChild {
+class ManagedFiber implements RuntimeFiber, ScopeChild {
   public readonly outcome: Promise<Exit<unknown, unknown>>
   public readonly handle!: FiberHandle<unknown, unknown>
   public owner?: TaskScope | undefined = undefined

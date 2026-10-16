@@ -58,6 +58,12 @@ export class TaskScope {
     return this.cleanup
   }
 
+  /* Stryker disable all: allocation optimization predicate used by runExitSyncOrAsync when no resources or children were registered. */
+  public isClean(): boolean {
+    return this.finalizers === undefined && this.children === undefined
+  }
+  /* Stryker restore all */
+
   public add(finalizer: Finalizer): void {
     if (this.isClosing) throw new Error('Cannot acquire into a closing ResultTask scope')
     this.finalizers ??= []
@@ -129,6 +135,34 @@ export class TaskScope {
     }
   }
 
+  private recordFinalizerExit(
+    currentResult: Exit<unknown, unknown>,
+    released: Exit<unknown, unknown>,
+  ): Exit<unknown, unknown> {
+    this.cleanup = appendExit(this.cleanup, released)
+    return appendExit(currentResult, released)
+  }
+
+  private recordFinalizerDefect(
+    currentResult: Exit<unknown, unknown>,
+    error: unknown,
+  ): Exit<unknown, unknown> {
+    return this.recordFinalizerExit(currentResult, {
+      _tag: 'Failure',
+      cause: { _tag: 'Die', defect: error },
+    })
+  }
+
+  private finishDrain(
+    cleanupOnly: boolean,
+    result: Exit<unknown, unknown>,
+  ): Exit<unknown, unknown> {
+    if (this.cleanup._tag === 'Failure') markCleanupCause(this.cleanup.cause)
+    const out = cleanupOnly ? this.cleanup : result
+    this.closedExit = out
+    return out
+  }
+
   private drainFinalizersSyncOrAsync(
     exit: Exit<unknown, unknown>,
     cleanupOnly: boolean,
@@ -141,8 +175,7 @@ export class TaskScope {
       try {
         const released = finalizer(exit)
         if ('_tag' in released) {
-          this.cleanup = appendExit(this.cleanup, released)
-          result = appendExit(result, released)
+          result = this.recordFinalizerExit(result, released)
         } else {
           this.closing = this.drainFinalizersAsync(exit, cleanupOnly, {
             currentResult: result,
@@ -151,19 +184,11 @@ export class TaskScope {
           return this.closing
         }
       } catch (error) {
-        const defect: Exit<unknown, unknown> = {
-          _tag: 'Failure',
-          cause: { _tag: 'Die', defect: error },
-        }
-        this.cleanup = appendExit(this.cleanup, defect)
-        result = appendExit(result, defect)
+        result = this.recordFinalizerDefect(result, error)
       }
       finalizer = finalizers?.pop()
     }
-    if (this.cleanup._tag === 'Failure') markCleanupCause(this.cleanup.cause)
-    const out = cleanupOnly ? this.cleanup : result
-    this.closedExit = out
-    return out
+    return this.finishDrain(cleanupOnly, result)
   }
 
   private async drainFinalizersAsync(
@@ -176,39 +201,22 @@ export class TaskScope {
   ): Promise<Exit<unknown, unknown>> {
     let result = state.currentResult
     try {
-      const released = await state.pendingRelease
-      this.cleanup = appendExit(this.cleanup, released)
-      result = appendExit(result, released)
+      result = this.recordFinalizerExit(result, await state.pendingRelease)
     } catch (error) {
-      const defect: Exit<unknown, unknown> = {
-        _tag: 'Failure',
-        cause: { _tag: 'Die', defect: error },
-      }
-      this.cleanup = appendExit(this.cleanup, defect)
-      result = appendExit(result, defect)
+      result = this.recordFinalizerDefect(result, error)
     }
     const finalizers = this.finalizers
     let finalizer = finalizers?.pop()
     while (finalizer !== undefined) {
       try {
         // eslint-disable-next-line no-await-in-loop
-        const released = await finalizer(exit)
-        this.cleanup = appendExit(this.cleanup, released)
-        result = appendExit(result, released)
+        result = this.recordFinalizerExit(result, await finalizer(exit))
       } catch (error) {
-        const defect: Exit<unknown, unknown> = {
-          _tag: 'Failure',
-          cause: { _tag: 'Die', defect: error },
-        }
-        this.cleanup = appendExit(this.cleanup, defect)
-        result = appendExit(result, defect)
+        result = this.recordFinalizerDefect(result, error)
       }
       finalizer = finalizers?.pop()
     }
-    if (this.cleanup._tag === 'Failure') markCleanupCause(this.cleanup.cause)
-    const out = cleanupOnly ? this.cleanup : result
-    this.closedExit = out
-    return out
+    return this.finishDrain(cleanupOnly, result)
   }
 
   private async drain(

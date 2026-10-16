@@ -42,33 +42,47 @@ These are independent adoption steps. Existing Result functions and ResultAsync 
 remain in use while a selected workflow moves to ResultTask.
 
 - [`src/sync-validation.ts`](src/sync-validation.ts): field validation with `Result.validateAll`,
-  tagged errors, redacted props, validation adapter issues, and HTTP-style boundary mapping.
+  tagged errors (`createTaggedError`, `.is()`), redacted props (`redact`, `revealRedacted`,
+  `isRedacted`), validation adapter issues (`resultar/validation`), and HTTP-style boundary mapping.
 - [`src/domain-workflow.ts`](src/domain-workflow.ts): a linear domain flow using `andThen`, `mapErr`,
-  and `safeTry` with typed error unions.
+  `Result.gen` (sync and async), legacy `safeTry`, `findCause`, and `.matchTags()` with typed error unions.
 - [`src/tagged-enum.ts`](src/tagged-enum.ts): lightweight tagged unions with `taggedEnum`, `$is`,
   and exhaustive `$match`.
 - [`src/edge-wrapping.ts`](src/edge-wrapping.ts): `tryResult`, `tryResultAsync`, reusable throwing
-  wrappers, safe promises, direct error matching, and intentional unwrapping at edges.
+  wrappers (`fromThrowable`, `fromThrowableAsync`), `fromCallback`, safe promises, direct error
+  matching (`matchError`, `matchErrorPartial`), and intentional unwrapping (`unwrapOr`, `unwrapOrThrow`,
+  `runSync`, `runPromise`) at edges.
 - [`src/recovery-and-fallbacks.ts`](src/recovery-and-fallbacks.ts): `catchTag`, `catchTags`, reasoned
-  errors, `unwrapReason`, `orElse`, `firstSuccessOf`, and partial boundary matching.
+  errors (`catchReason`, `catchReasons`, `unwrapReason`), `orElse`, `orElseSucceed`, `firstSuccessOf`,
+  and partial boundary matching (`matchTagsPartial`).
 - [`src/collections-and-control-flow.ts`](src/collections-and-control-flow.ts): `filterOrElse`, `as`,
-  `unit`, `asyncMap`, `asyncAndThen`, `zip`, `combine`, `combineWithAllErrors`, mapped validation,
-  loops, conditionals, async concurrency, observation, and disposable cleanup.
+  `asVoid`, `unit`, `unitAsync`, `asyncMap`, `asyncAndThen`, `zip`, `all`, `combine`,
+  `combineWithAllErrors`, mapped validation (`validateAll`), loops (`loop`, `iterate`), conditionals
+  (`if`, `when`, `unless`, `whenResult`, `unlessResult`), async concurrency, `ResultTask` control flow
+  and timing (`delay`, `timed`), non-deprecated observation (`inspect`, `inspectError`, `inspectBoth`),
+  legacy `tap`/`tapError`, and disposable cleanup (`toDisposable`, `toAsyncDisposable`).
 - [`src/functional-ergonomics.ts`](src/functional-ergonomics.ts): `pipe`, `flow`, `Result.fn`,
   `Result.gen`, `Result.fromNullishOr`, `Result.liftPredicate`, `.withProps<Props>()`,
-  `ResultTask.fn`, `ResultTask.acquireDisposable`, and `Match` (`Match.context`,
-  `Match.tagsExhaustive`, `Match.value`).
+  `ResultTask.fn`, `ResultTask.acquireDisposable`, service injection (`provideService`,
+  `provideServices`, `provideServiceResolver`, `serviceTag`, `isServiceTag`, `isResultTask`), and
+  `Match` (`Match.value`, `Match.type`, `Match.fn`, `Match.context`, `Match.valueTags`,
+  `Match.typeTags`, `Match.tagStartsWith`, `Match.whenOr`, `Match.whenAnd`, `Match.not`,
+  `Match.discriminator`, `Match.discriminatorsExhaustive`, `Match.result`, `Match.option`).
 - [`src/async-resilience.ts`](src/async-resilience.ts): `ResultAsync.fromPromise`, cooperative
-  `timeout`, retry policies, race variants, custom race handling, and abort detection.
+  `timeout`, inline retries and portable `Retry.policy` schedules (`onRetry`), race variants
+  (`race`, `raceAll`, `raceFirst`, `raceWith`), and abort detection (`isAbortError`).
 - [`src/task-resilience.ts`](src/task-resilience.ts): portable `Retry.policy`, scoped retry,
-  bounded collections, `Semaphore.make` (`withPermit`), `ensuring`, `sandbox`/`unsandbox`,
-  `Cause.findError`, `yieldEvery`, `Fiber.await`, `ResultTask.runFork`, timeout of a detached
-  external Promise and losing-replica cleanup, all exercised with a deterministic virtual clock.
+  bounded collections, `Semaphore.make` (`withPermit`, `withPermits`), `ensuring`, `onExit`,
+  `sandbox`/`unsandbox`, `catchCause`/`inspectCause`, `Cause` diagnostics (`isCause`, `hasFails`,
+  `hasDies`, `hasInterrupts`, `failures`, `defects`, `findError`, `pretty`), `yieldEvery`,
+  `ResultTask.yieldNow`, custom `TaskScheduler`, `Fiber.await`/`join`/`interrupt`,
+  `ResultTask.runFork`, `ResultTask.race` and `raceFirst`, direct `await task`, and `.toResultAsync()`.
 - [`src/resource-cleanup.ts`](src/resource-cleanup.ts): `ResultAsync.withResource` with release
-  assertions for success and failure paths.
+  assertions for success, failure rollback, and fallible release paths.
 - [`src/application-lifecycle.ts`](src/application-lifecycle.ts): a `ResultTask.scoped` server
-  lifetime (database, session, HTTP serve/drain) with boot rollback on failure. It is not
-  re-exported from `src/index.ts`; it is exercised directly by `scripts/lifecycle-smoke.ts`.
+  lifetime (database, session, HTTP serve/drain) with boot rollback on failure, plus manual scope
+  management with `ResultTask.scope()`. It is not re-exported from `src/index.ts`; it is exercised
+  directly by `scripts/lifecycle-smoke.ts`.
 
 The `src/index.ts` barrel re-exports every sample except `application-lifecycle.ts` and runs
 them together via `runCookbook`. The smoke scripts check the expected `Ok` and `Err` branches

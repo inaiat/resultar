@@ -1,3 +1,10 @@
+/**
+ * Error Recovery & Fallbacks (`catchTag`, `catchTags`, `orElse`, `orElseSucceed`, `firstSuccessOf`, `catchReason`)
+ *
+ * This module shows how to selectively recover from specific tagged errors or
+ * nested error reasons while widening or narrowing the remaining error union
+ * automatically.
+ */
 import {
   Result,
   createTaggedError,
@@ -30,6 +37,10 @@ export class ProfileReplicaError extends createTaggedError({
   message: "Replica could not read profile $id",
 }) {}
 
+/**
+ * Nested reason union used inside `ProfileServiceError` to demonstrate
+ * `catchReason`, `catchReasons`, and `unwrapReason`.
+ */
 export type ProfileReason = TaggedEnum<{
   QuotaExceeded: {
     readonly limit: number;
@@ -143,24 +154,47 @@ const retryProfile = (id: string, name: string): Profile => ({
   source: "retry",
 });
 
+/**
+ * `.catchTag(tag, handler)` intercepts a single `_tag` from the error union and
+ * removes `ProfileCacheMissError` from the resulting error type (`never` here).
+ */
 export const draftProfileFromCacheMiss = (id: string): StrictResult<Profile, never> =>
   readProfileFromCache(id).catchTag("ProfileCacheMissError", (error) =>
     ok<Profile, never>(draftProfile(error.id)),
   );
 
+/**
+ * `.catchTags(handlers)` recovers from multiple tagged error variants at once,
+ * narrowing the error channel by all handled tags.
+ */
 export const recoverLocalProfile = (id: string): StrictResult<Profile, never> =>
   readLocalProfile(id).catchTags({
     ProfileCacheMissError: (error) => ok<Profile, never>(draftProfile(error.id)),
     ProfileNotFoundError: (error) => ok<Profile, never>(emptyProfile(error.id)),
   });
 
-export const profileWithFallbacks = (id: string): ResultValue<Profile, ProfileReadError> =>
-  Result.firstSuccessOf([
-    () => readProfileFromCache(id),
-    () => readProfileFromPrimary(id),
-    () => readProfileFromReplica(id),
-  ]);
+/**
+ * `.orElseSucceed(fn)` converts any `Err` directly into an `Ok` fallback value
+ * without needing to wrap the return value in `ok(...)`, producing `Result<T, never>`.
+ */
+export const guaranteedProfile = (id: string): StrictResult<Profile, never> =>
+  readProfileFromCache(id).orElseSucceed((error) => emptyProfile(error.id));
 
+/**
+ * `.orElse(fn)` chains error-dependent fallback `Result` operations sequentially,
+ * inspecting the previous `error` payload before selecting the next lookup.
+ */
+export const profileWithFallbacks = (id: string): ResultValue<Profile, ProfileReadError> =>
+  readProfileFromCache(id)
+    .orElse((error) => readProfileFromPrimary(String(error.id)))
+    .orElse((error) =>
+      readProfileFromReplica(error._tag === "ProfileNotFoundError" ? String(error.id) : id),
+    );
+
+/**
+ * `Result.firstSuccessOf(candidates)` evaluates lazy candidate thunks in order
+ * and returns the first `Ok` (or the last `Err` if every candidate fails).
+ */
 export const firstAvailableProfile = (id: string): ResultValue<Profile, ProfileReadError> =>
   Result.firstSuccessOf([
     () => readProfileFromCache(id),
@@ -168,6 +202,10 @@ export const firstAvailableProfile = (id: string): ResultValue<Profile, ProfileR
     () => readProfileFromReplica(id),
   ]);
 
+/**
+ * `.catchReason(outerTag, reasonTag, handler)` recovers from a specific nested
+ * `reason._tag` inside a container error (`ProfileServiceError`).
+ */
 export const recoverRateLimitedProfile = (id: string): ResultValue<Profile, ProfileReadError> =>
   readProfileFromPrimary("rate-limited").catchReason(
     "ProfileServiceError",
@@ -175,6 +213,10 @@ export const recoverRateLimitedProfile = (id: string): ResultValue<Profile, Prof
     (reason) => ok<Profile, never>(retryProfile(id, `Retry after ${reason.retryAfterMs}ms`)),
   );
 
+/**
+ * `.catchReasons(outerTag, handlers)` recovers from multiple nested `reason`
+ * variants inside a container error in a single call.
+ */
 export const recoverProviderReason = (id: string): ResultValue<Profile, ProfileReadError> =>
   readProfileFromPrimary(id).catchReasons("ProfileServiceError", {
     QuotaExceeded: (reason) => ok<Profile, never>(retryProfile(id, `Quota ${reason.limit}`)),
@@ -182,6 +224,10 @@ export const recoverProviderReason = (id: string): ResultValue<Profile, ProfileR
       ok<Profile, never>(retryProfile(id, `Retry after ${reason.retryAfterMs}ms`)),
   });
 
+/**
+ * `.unwrapReason(outerTag)` lifts the nested `reason` union out of the outer
+ * container error (`ProfileServiceError`) into the top-level error channel.
+ */
 export const describeProviderReason = (id: string): string =>
   readProfileFromPrimary(id)
     .unwrapReason("ProfileServiceError")
@@ -204,6 +250,10 @@ export const describeProviderReason = (id: string): string =>
       },
     );
 
+/**
+ * `.matchTagsPartial(onOk, tagHandlers, onRemainingErr)` folds `Ok` and selected
+ * error tags while routing any unhandled error variants to a fallback callback.
+ */
 export const profileBoundaryResponse = (id: string) =>
   readProfileFromPrimary(id).matchTagsPartial(
     (profile) => ({

@@ -1,7 +1,8 @@
 import type { ErrResult } from '../result.js'
 
 import { isRedacted, stringifyRedacted } from '../core/redacted.js'
-import { ResultTask, type ResultAsync } from '../task/result-task.js'
+import type { ResultAsync } from '../task/result-async.js'
+import { ResultTask } from '../task/result-task.js'
 import { err as resultErr } from '../result.js'
 
 type Alpha =

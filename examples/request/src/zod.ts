@@ -68,9 +68,8 @@ export const loadAccountWithZod = (baseUrl: string) =>
   });
 
 const runZodExample = (baseUrl: string) =>
-  loadAccountWithZod(baseUrl).map((account) => {
+  loadAccountWithZod(baseUrl).tap((account) => {
     process.stdout.write(`Zod account: ${account.email}, ${account.seatLabel}\n`);
-    return account;
   });
 
 const runZodExampleCli = () =>

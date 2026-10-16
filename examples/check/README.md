@@ -72,7 +72,11 @@ The diagnostics catalog covers:
   and typed `sync` failures;
 - `no-unknown-task-requirements` for aliased `any` / `unknown` requirements;
 - assertions that remove services or deferred scope errors, including `as unknown as` bridges;
-- `unused-suppression` for obsolete rules, partially used directives, wildcards, and unknown IDs.
+- `unused-suppression` for obsolete rules, partially used directives, wildcards, and unknown IDs;
+- `prefer-or-else-succeed`, `prefer-tap`, `prefer-tap-error`, `prefer-as-void`, `prefer-filter-or-else`,
+  and `prefer-acquire-disposable` for ergonomic combinator and resource simplifications;
+- `no-fn-iife`, `require-return-yield-star`, `no-unnecessary-err-wrap-in-gen`, `unnecessary-pipe`,
+  and `no-run-inside-gen` for generator and pipeline hygiene.
 
 The clean fixture preserves concrete service requirements through `ResultTask.fn`, satisfies them
 with `provideService`, closes pending scopes with `scoped`, acquires native disposables in an owned
@@ -81,7 +85,7 @@ scope, and retains a justified suppression only at an explicit terminal throwing
 The smoke test builds the Resultar package, the `resultar-check` launcher, and the native binary for
 the current platform. It then verifies that:
 
-- all 30 native rules report their exact expected finding counts;
+- all 41 native rules report their exact expected finding counts;
 - all three fixture projects compile with the installed TypeScript version;
 - every configured severity is `error`;
 - TypeScript-Go reports no compiler diagnostics;
@@ -97,5 +101,5 @@ the included source file.
 
 This is a diagnostics fixture, not application code: `src/index.ts` is intentionally invalid and
 must keep failing, while only `src/resultar-clean.ts` shows the recommended patterns. The catalog
-covers the 30 implemented native rules; it does not promise future rules, auto-fixes, or IDE
+covers the 41 implemented native rules; it does not promise future rules, auto-fixes, or IDE
 integrations.

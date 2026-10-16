@@ -2888,13 +2888,16 @@ The LSP overlays all open project buffers, including new included files and unsa
 imported dependencies. Changes are debounced for 150 ms; hover and code-action requests analyze the
 latest accepted version immediately. Closing a buffer restores the disk-backed contents.
 
-Hover shows `T`, `E`, and `R` separately for tasks, including `yield*` operands. Service hover shows
-the identifier and contract; `Result` and `ResultAsync` show their success/error channels.
+Hover shows `T`, `E`, and `R` separately for tasks, including `yield*` operands. `MatchMatcher` hover
+shows the match input, remaining cases, and matched output. Service hover shows the identifier and
+contract; `Result` and `ResultAsync` show their success/error channels.
 
 Contextual refactors offer previews for generators that only delegate to an initialized constant
-task, tag dispatch in recovery, and consecutive `catchTag` calls. Unsafe candidates are declined,
-including generators with `finally` and earlier handlers that could introduce a later handled error.
-Edits use UTF-16 ranges and document versions so the editor can reject stale actions.
+task, converting `(...args) => ResultTask.gen(...)` / `Result.gen(...)` into `ResultTask.fn` / `Result.fn`,
+converting between `pipe(value, ...)` and `value.pipe(...)`, tag dispatch in recovery, and consecutive
+`catchTag` calls. Unsafe candidates are declined, including generators with `finally` and earlier
+handlers that could introduce a later handled error. Edits use UTF-16 ranges and document versions
+so the editor can reject stale actions.
 
 ### Inspection commands
 

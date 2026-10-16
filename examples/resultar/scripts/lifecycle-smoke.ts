@@ -5,6 +5,7 @@ import {
   applicationLifecycle,
   DatabaseLifecycleError,
   HttpLifecycleError,
+  runManualScopeOwnerExample,
   type ApplicationFactories,
 } from '../src/application-lifecycle.js'
 
@@ -21,13 +22,13 @@ const fixture = (failSchema = false, failDatabaseClose = false) => {
             ResultTask.gen(function* () {
               events.push('schema')
               if (failSchema)
-                yield* ResultTask.err(new DatabaseLifecycleError({ operation: 'schema' }))
+                return yield* DatabaseLifecycleError.taskErr({ operation: 'schema' })
             }),
           close: () =>
             ResultTask.gen(function* () {
               events.push('close database')
               if (failDatabaseClose)
-                yield* ResultTask.err(new DatabaseLifecycleError({ operation: 'close' }))
+                return yield* DatabaseLifecycleError.taskErr({ operation: 'close' })
             }),
         }
       }),
@@ -90,4 +91,9 @@ if (exit._tag !== 'Failure' || exit.cause._tag !== 'Sequential') {
 }
 equal(exit.cause.left._tag, 'Fail')
 equal(exit.cause.right._tag, 'Fail')
+
+const manualScope = await runManualScopeOwnerExample()
+equal(manualScope.value, 'worker-ready')
+deepEqual(manualScope.events, ['acquire:worker', 'release:worker-ready', 'finalizer-1:Success'])
+
 process.stdout.write('ResultTask application lifecycle smoke passed.\n')

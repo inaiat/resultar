@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/microsoft/typescript-go/resultar-check/internal/config"
-	"github.com/microsoft/typescript-go/resultar-check/internal/project"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/config"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/project"
 )
 
 const resultAsyncTypes = `

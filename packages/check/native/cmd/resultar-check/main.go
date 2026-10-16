@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/microsoft/typescript-go/internal/ast"
-	"github.com/microsoft/typescript-go/internal/compiler"
-	"github.com/microsoft/typescript-go/internal/scanner"
-	"github.com/microsoft/typescript-go/resultar-check/internal/analyzer"
-	"github.com/microsoft/typescript-go/resultar-check/internal/config"
-	"github.com/microsoft/typescript-go/resultar-check/internal/output"
-	"github.com/microsoft/typescript-go/resultar-check/internal/project"
+	"github.com/microsoft/TypeScript/tsc/internal/ast"
+	"github.com/microsoft/TypeScript/tsc/internal/compiler"
+	"github.com/microsoft/TypeScript/tsc/internal/scanner"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/analyzer"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/config"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/output"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/project"
 )
 
 const usage = `Usage: resultar-check
@@ -250,7 +250,7 @@ func collectTypeScriptDiagnostics(ctx context.Context, program *compiler.Program
 		diagnostics := program.GetSyntacticDiagnostics(ctx, file)
 		findings = append(findings, tsDiagnostics(diagnostics)...)
 	}
-	semantic := program.GetSemanticDiagnosticsWithoutNoEmitFiltering(ctx, files)
+	semantic := program.GetSemanticDiagnosticsForIncremental(ctx, files)
 	for _, file := range files {
 		diagnostics := compiler.FilterNoEmitSemanticDiagnostics(semantic[file], program.Options())
 		findings = append(findings, tsDiagnostics(diagnostics)...)
@@ -266,7 +266,7 @@ func tsDiagnostics(items []*ast.Diagnostic) []output.Diagnostic {
 		if file := diagnostic.File(); file != nil && diagnostic.Pos() >= 0 {
 			line, column := scanner.GetECMALineAndUTF16CharacterOfPosition(file, diagnostic.Pos())
 			finding.Column = int(column) + 1
-			finding.File = file.FileName()
+			finding.File = string(file.FileName())
 			finding.Length = diagnostic.Len()
 			finding.Line = line + 1
 			finding.Start = diagnostic.Pos()

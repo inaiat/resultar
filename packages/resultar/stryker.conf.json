@@ -18,7 +18,10 @@
     "src/core/pipe.ts",
     "src/core/redacted.ts",
     "src/result.ts",
+    "src/task/result-async.ts",
     "src/task/result-task.ts",
+    "src/task/task-helpers.ts",
+    "src/task/task-service.ts",
     "src/tagged/tagged-error.ts",
     "src/tagged/tagged-match.ts"
   ],

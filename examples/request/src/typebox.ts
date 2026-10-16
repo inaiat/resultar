@@ -60,11 +60,10 @@ export const loadAccountWithTypeBox = (baseUrl: string) =>
   });
 
 const runTypeBoxExample = (baseUrl: string) =>
-  loadAccountWithTypeBox(baseUrl).map((account) => {
+  loadAccountWithTypeBox(baseUrl).tap((account) => {
     process.stdout.write(
       `TypeBox account: ${account.id}, ${account.email}, ${account.seats} seats\n`,
     );
-    return account;
   });
 
 const runTypeBoxExampleCli = () =>

@@ -1,6 +1,14 @@
+/**
+ * Async Resilience (`ResultAsync.timeout`, `retry`, `retryOrElse`, `race`, `raceAll`, `raceFirst`, `raceWith`)
+ *
+ * This module demonstrates cooperative cancellation via `AbortSignal`, timeouts,
+ * retry loops (both inline options and portable `Retry.policy` schedules), and
+ * racing concurrent `ResultAsync` tasks.
+ */
 import {
   AbortError,
   ResultAsync,
+  Retry,
   createTaggedError,
   errAsync,
   fromPromise,
@@ -45,6 +53,10 @@ export class PriceProviderError extends createTaggedError({
   message: "Price provider $region failed",
 }) {}
 
+/**
+ * Helper that simulates an asynchronous call honoring a `ResultAsyncAbortSignal`.
+ * When `signal` aborts (e.g., on timeout or race loss), the timer is cleared immediately.
+ */
 const delay = <T>(
   value: T,
   delayMs: number,
@@ -81,12 +93,20 @@ const fetchRemoteUser = (
     (cause) => new RemoteUserError({ cause, id }),
   );
 
+/**
+ * `ResultAsync.timeout(task, { timeoutMs, onTimeout })` passes a cancellation
+ * `signal` to `task` and aborts it if `timeoutMs` elapses first.
+ */
 export const loadUserWithTimeout = (id: string, delayMs: number) =>
   ResultAsync.timeout((signal) => fetchRemoteUser(id, delayMs, signal), {
     onTimeout: () => new UserTimeoutError({ id }),
     timeoutMs: 5,
   });
 
+/**
+ * `ResultAsync.retryOrElse(task, { times, delayMs, orElse })` retries `task` up to
+ * `times` additional attempts and falls back to `orElse(lastError)` when all attempts fail.
+ */
 export const loadCatalogWithFallback = (sku: string) => {
   let attempts = 0;
   const task = (): ResultAsync<CatalogItem, CatalogUnavailableError> => {
@@ -104,6 +124,10 @@ export const loadCatalogWithFallback = (sku: string) => {
   });
 };
 
+/**
+ * `ResultAsync.retry(task, options)` retries `task` while the `while` predicate
+ * returns `true` for the error and `times` retries remain.
+ */
 export const loadCatalogAfterRetry = (sku: string) => {
   let attempts = 0;
   const task = (): ResultAsync<CatalogItem, CatalogUnavailableError> => {
@@ -121,6 +145,43 @@ export const loadCatalogAfterRetry = (sku: string) => {
   });
 };
 
+/**
+ * `Retry.policy` defines a portable retry schedule (shared between `ResultAsync`
+ * and `ResultTask`) with exponential backoff, jitter, and an `onRetry` hook.
+ */
+export const loadCatalogWithRetryPolicy = async (sku: string) => {
+  const retryLog: string[] = [];
+  let attempts = 0;
+
+  const catalogRetryPolicy = Retry.policy<CatalogUnavailableError>({
+    backoff: 2,
+    delayMs: 0,
+    times: 2,
+    while: (error) => CatalogUnavailableError.is(error),
+  });
+
+  const result = await ResultAsync.retry(
+    () => {
+      attempts += 1;
+      return attempts < 3
+        ? errAsync(new CatalogUnavailableError({ sku }))
+        : okAsync({ sku, source: "primary" as const });
+    },
+    {
+      ...catalogRetryPolicy,
+      onRetry: (error, { attempt }) => {
+        retryLog.push(`retry:${attempt}:${error._tag}`);
+      },
+    },
+  );
+
+  return {
+    attempts,
+    result,
+    retryLog,
+  };
+};
+
 const priceFrom =
   (
     region: string,
@@ -134,6 +195,11 @@ const priceFrom =
       (cause) => new PriceProviderError({ cause, region }),
     );
 
+/**
+ * `ResultAsync.raceAll(tasks)` runs all tasks concurrently, resolves with the
+ * first `Ok` winner (ignoring faster `Err` completions while peers are still running),
+ * and aborts the remaining losers.
+ */
 export const fastestPrice = (sku: string) => {
   void sku;
 
@@ -144,12 +210,20 @@ export const fastestPrice = (sku: string) => {
   ] as const);
 };
 
+/**
+ * `ResultAsync.race(left, right)` races two tasks for the first `Ok` result
+ * and cancels the loser.
+ */
 export const fastestRegionalPrice = (sku: string) => {
   void sku;
 
   return ResultAsync.race(priceFrom("primary", 2_400, 8), priceFrom("replica", 2_300, 2));
 };
 
+/**
+ * `ResultAsync.raceFirst(left, right)` settles as soon as either task completes,
+ * even if that first completion is an `Err`.
+ */
 export const firstCompletedPrice = (sku: string) => {
   void sku;
 
@@ -159,6 +233,10 @@ export const firstCompletedPrice = (sku: string) => {
   );
 };
 
+/**
+ * `ResultAsync.raceWith(left, right, { onLeftDone, onRightDone })` gives custom
+ * control over whether to abort or await the peer handle when the first branch finishes.
+ */
 export const fallbackPriceWithCustomRace = (sku: string) => {
   void sku;
 
@@ -182,6 +260,10 @@ export const fallbackPriceWithCustomRace = (sku: string) => {
   );
 };
 
+/**
+ * `isAbortError(value)` detects `AbortError` instances as well as standard DOM/Node
+ * abort errors (`name === "AbortError"` or `code === "ABORT_ERR"`).
+ */
 export const abortDetectionExamples = () => ({
   code: isAbortError({ code: "ABORT_ERR" }),
   instance: isAbortError(new AbortError("cancelled")),

@@ -1,7 +1,8 @@
 import { type ErrorConfig, createResultarError } from './core/error.js'
 import { type FnPipe, Pipeable, type PipeFn, runFnPipe } from './core/pipe.js'
 import { dual } from './core/dual.js'
-import { ResultTask, type ResultAsync } from './task/result-task.js'
+import type { ResultAsync } from './task/result-async.js'
+import type { ResultTask } from './task/result-task.js'
 import type { ExtractErrTypes, ExtractOkTypes, InferErrTypes, InferOkTypes } from './core/utils.js'
 import {
   callTaggedHandler,
@@ -1231,7 +1232,16 @@ interface ResultAsyncMap {
   <T, U>(this: void, f: (value: T) => Promise<U>): <E>(self: Result<T, E>) => ResultAsync<U, E>
 }
 
-export const getMatchErrorHandler = <T, E, A, B>(
+type ResultAsyncFactory = <T, E>(promise: Promise<Result<T, E>>) => ResultAsync<T, E>
+
+// eslint-disable-next-line init-declarations
+let createResultAsync: ResultAsyncFactory
+
+export const registerResultAsyncFactory = (factory: ResultAsyncFactory): void => {
+  createResultAsync = factory
+}
+
+const getMatchErrorHandler = <T, E, A, B>(
   input: MatchHandlers<T, E, A, B> | MatchOkHandler<T, A>,
   fnErr: MatchErrorHandler<E, B> | undefined,
 ): MatchErrorHandler<E, B> => {
@@ -2501,7 +2511,7 @@ class Ok<T, E> extends ResultVariant<T, E> {
   }
 
   public asyncMap<X>(f: (t: T) => Promise<X>): ResultAsync<X, E> {
-    return new ResultTask(Promise.resolve(f(this.value)).then((value) => ok<X, E>(value)))
+    return createResultAsync(Promise.resolve(f(this.value)).then((value) => ok<X, E>(value)))
   }
 
   public unwrapOr<A>(_defaultValue: A): T | A {
@@ -2573,9 +2583,8 @@ class Ok<T, E> extends ResultVariant<T, E> {
     throw createResultarError('Called `_unsafeUnwrapErr` on an Ok', this, config)
   }
 
-  /* eslint-disable-next-line require-yield */
-  public *[Symbol.iterator](): Generator<Result<never, E>, T> {
-    return this.value
+  public [Symbol.iterator](): Generator<Result<never, E>, T> {
+    return new OkResultIterator(this.value) as unknown as Generator<Result<never, E>, T>
   }
 
   /** @deprecated Use `yield* result` inside Result.gen. */
@@ -2587,6 +2596,21 @@ class Ok<T, E> extends ResultVariant<T, E> {
     })()
   }
 }
+
+class OkResultIterator<T> {
+  declare public readonly done: true
+  public readonly value: T
+
+  public constructor(value: T) {
+    this.value = value
+  }
+
+  public next(): IteratorResult<never, T> {
+    return this as unknown as IteratorResult<never, T>
+  }
+}
+
+Object.assign(OkResultIterator.prototype, { done: true })
 
 class Err<T, E> extends ResultVariant<T, E> {
   public readonly error: E
@@ -2746,11 +2770,11 @@ class Err<T, E> extends ResultVariant<T, E> {
 
   public asyncAndThen<X, Y>(_f: (t: T) => ResultAsync<X, Y>): ResultAsync<X, E | Y>
   public asyncAndThen<X, Y>(_f: (t: T) => ResultAsync<X, E>): ResultAsync<X, E | Y> {
-    return new ResultTask(Promise.resolve(err<X, E | Y>(this.error)))
+    return createResultAsync(Promise.resolve(err<X, E | Y>(this.error)))
   }
 
   public asyncMap<X>(_f: (t: T) => Promise<X>): ResultAsync<X, E> {
-    return new ResultTask(Promise.resolve(err<X, E>(this.error)))
+    return createResultAsync(Promise.resolve(err<X, E>(this.error)))
   }
 
   public unwrapOr<A>(defaultValue: A): T | A {
@@ -3039,7 +3063,7 @@ const runResultGenerator = (
     throw error
   }
 
-  return new ResultTask(
+  return createResultAsync(
     n.then(onStep).catch((error: unknown) => {
       if (catchFn) {
         return err(catchFn(error))

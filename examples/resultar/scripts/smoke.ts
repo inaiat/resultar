@@ -4,11 +4,17 @@ import {
   AccountCreateError,
   PaymentState,
   PaymentDeclinedError,
+  StorageWriteError,
   abortDetectionExamples,
   acknowledgeCheckout,
   acknowledgeCheckoutAsync,
+  allAsyncOrderChecks,
+  allOrderChecks,
+  asyncFinalCursor,
+  asyncInvoiceSchedule,
   chooseFulfillment,
   chooseAsyncFulfillment,
+  clearCartSnapshot,
   collectLineTotals,
   combineAsyncOrderContext,
   combineOrderContext,
@@ -16,6 +22,8 @@ import {
   configErrorStatus,
   configPortOrDefault,
   createPaidAccount,
+  createPaidAccountAsyncWithGen,
+  createPaidAccountWithGen,
   createPaidAccountWithSafeTry,
   decidePaymentState,
   decodeSignupPayload,
@@ -25,28 +33,41 @@ import {
   fallbackPriceWithCustomRace,
   fastestPrice,
   fastestRegionalPrice,
+  filterAuthorizedPayments,
   finalCursor,
+  findStorageCause,
   firstAvailableProfile,
+  firstAvailableWarehouse,
   firstCompletedPrice,
+  guaranteedProfile,
   importRowsWithCleanup,
+  importRowsWithFallibleRelease,
+  inspectCheckoutEvents,
   invoiceSchedule,
+  isEmailValidationFailure,
   loadBundledConfig,
   loadCatalogAfterRetry,
   loadCatalogWithFallback,
+  loadCatalogWithRetryPolicy,
   loadConfig,
   loadConfigOrThrow,
+  loadConfigPortPromise,
   loadDefaultConfig,
   loadUserWithTimeout,
   markCheckoutStarted,
   maybeAudit,
   maybeAuditAfterFlag,
   maybeAsyncAudit,
+  maybeAsyncAuditAfterFlag,
   maybeAsyncFraudCheck,
+  maybeAsyncFraudCheckAfterFlag,
   maybeFraudCheck,
+  maybeFraudCheckAfterFlag,
   normalizeUnknownError,
   observeAsyncCheckout,
   observeCheckout,
   parseConfig,
+  parseConfigPortSync,
   parseConfigWithReusableWrapper,
   profileBoundaryResponse,
   profileWithFallbacks,
@@ -56,12 +77,17 @@ import {
   requireNonEmptyCart,
   reserveInventory,
   reserveValidatedLine,
+  runAdvancedErgonomics,
+  runAdvancedTaskResilience,
   runCookbook,
+  runTaskControlFlow,
   runTaskResilience,
   saveAuditTrail,
+  validateAsyncCheckout,
   validateCheckout,
   validateInventory,
   validateOrderLines,
+  waitForConfigEvent,
   paymentStateLabel,
   retryAfterMsFromUnknown,
   settlePayment,
@@ -86,6 +112,8 @@ if (signup.isErr()) {
     signup.error.map((error) => error._tag),
     ["InvalidEmailError", "WeakPasswordError", "TermsNotAcceptedError"],
   );
+  assert.equal(isEmailValidationFailure(signup.error[0]), true);
+  assert.equal(isEmailValidationFailure(signup.error[1]), false);
 
   const serializedErrors = JSON.stringify(signup.error);
   assert.match(serializedErrors, /<redacted:password>/);
@@ -131,6 +159,20 @@ if (account.isOk()) {
   assert.equal(account.value.receiptId, "rcpt_4242");
 }
 
+const accountFromGen = createPaidAccountWithGen({
+  cardToken: "card_4242",
+  email: "ada@example.com",
+  planCode: "enterprise",
+});
+assert.equal(accountFromGen.isOk(), true);
+
+const accountFromAsyncGen = await createPaidAccountAsyncWithGen({
+  cardToken: "card_4242",
+  email: "ada@example.com",
+  planCode: "team",
+});
+assert.equal(accountFromAsyncGen.isOk(), true);
+
 const declined = createPaidAccountWithSafeTry({
   cardToken: "card_declined",
   email: "ada@example.com",
@@ -155,6 +197,9 @@ if (storageFailure.isErr()) {
   const error: CreatePaidAccountError = storageFailure.error;
   assert.equal(error instanceof AccountCreateError, true);
   assert.equal(error.cause instanceof Error, true);
+  const rootStorageError = findStorageCause(error);
+  assert.equal(rootStorageError instanceof StorageWriteError, true);
+  assert.equal(rootStorageError?.email, "ada@blocked.example");
 }
 
 const parsedConfig = parseConfig('{"port":8080,"mode":"prod"}');
@@ -193,7 +238,19 @@ if (defaultConfig.isOk()) {
   assert.equal(defaultConfig.value.mode, "dev");
 }
 
+const callbackEvents: string[] = [];
+const callbackConfig = await waitForConfigEvent("ready", callbackEvents);
+assert.equal(callbackConfig.isOk(), true);
+assert.deepEqual(callbackEvents, ["subscribe:ready", "cleanup:ready"]);
+
+const brokenCallbackEvents: string[] = [];
+const brokenCallbackConfig = await waitForConfigEvent("broken", brokenCallbackEvents);
+assert.equal(brokenCallbackConfig.isErr(), true);
+assert.deepEqual(brokenCallbackEvents, ["subscribe:broken", "cleanup:broken"]);
+
 assert.equal(configPortOrDefault("{"), 3000);
+assert.equal(parseConfigPortSync('{"port":9000,"mode":"dev"}'), 9000);
+assert.equal(await loadConfigPortPromise("memory"), 8080);
 assert.equal((await loadConfigOrThrow("memory")).port, 8080);
 assert.equal(normalizeUnknownError(new Error("boom")), "boom");
 assert.equal(normalizeUnknownError("boom"), "not-an-error");
@@ -210,6 +267,12 @@ assert.equal(recoveredLocalProfile.isOk(), true);
 
 if (recoveredLocalProfile.isOk()) {
   assert.equal(recoveredLocalProfile.value.source, "empty");
+}
+
+const guaranteed = guaranteedProfile("missing-cache-key");
+assert.equal(guaranteed.isOk(), true);
+if (guaranteed.isOk()) {
+  assert.equal(guaranteed.value.source, "empty");
 }
 
 const fallbackProfile = profileWithFallbacks("new-user");
@@ -252,13 +315,19 @@ assert.equal(PaymentState.$is("PendingReview", pendingPayment), true);
 assert.equal(retryAfterMsFromUnknown(pendingPayment), 60_000);
 assert.equal(paymentStateLabel(pendingPayment), "pending:60000");
 
-const settledPayment = settlePayment(decidePaymentState(1_900, 10));
+const authorizedPayment = decidePaymentState(1_900, 10);
+const settledPayment = settlePayment(authorizedPayment);
 assert.equal(settledPayment._tag, "Settled");
 assert.equal(paymentStateLabel(settledPayment), "settled:rcpt_1900");
 
 const declinedPayment = decidePaymentState(60_000, 10);
 assert.equal(PaymentState.$is("Declined", declinedPayment), true);
 assert.equal(paymentStateLabel(declinedPayment), "declined:limit_exceeded");
+assert.equal(
+  filterAuthorizedPayments([pendingPayment, authorizedPayment, settledPayment, declinedPayment])
+    .length,
+  1,
+);
 
 const orderLines = [
   { quantity: 2, sku: "book", unitCents: 1_000 },
@@ -275,6 +344,12 @@ assert.equal(checkoutStarted.isOk(), true);
 
 if (checkoutStarted.isOk()) {
   assert.equal(checkoutStarted.value.status, "started");
+}
+
+const clearedCart = clearCartSnapshot();
+assert.equal(clearedCart.isOk(), true);
+if (clearedCart.isOk()) {
+  assert.equal(clearedCart.value, undefined);
 }
 
 const acknowledged = acknowledgeCheckout();
@@ -318,6 +393,9 @@ assert.equal(orderContext.isOk(), true);
 if (orderContext.isOk()) {
   assert.equal(orderContext.value.coupon.discountCents, 1_000);
 }
+
+const allSyncOrder = allOrderChecks("SAVE10");
+assert.equal(allSyncOrder.isOk(), true);
 
 const validLines = validateOrderLines(orderLines);
 assert.equal(validLines.isOk(), true);
@@ -387,6 +465,12 @@ if (fraudSkipped.isOk()) {
   assert.equal(fraudSkipped.value, undefined);
 }
 
+const fraudAfterFlag = maybeFraudCheckAfterFlag(false);
+assert.equal(fraudAfterFlag.isOk(), true);
+if (fraudAfterFlag.isOk()) {
+  assert.equal(fraudAfterFlag.value, "fraud-check-from-result");
+}
+
 const asyncFulfillment = await chooseAsyncFulfillment(false);
 assert.equal(asyncFulfillment.isOk(), true);
 
@@ -401,11 +485,23 @@ if (asyncAuditSkipped.isOk()) {
   assert.equal(asyncAuditSkipped.value, undefined);
 }
 
+const asyncAuditAfterFlag = await maybeAsyncAuditAfterFlag(true);
+assert.equal(asyncAuditAfterFlag.isOk(), true);
+if (asyncAuditAfterFlag.isOk()) {
+  assert.equal(asyncAuditAfterFlag.value, "async-audit-from-result");
+}
+
 const asyncFraudCheck = await maybeAsyncFraudCheck(false);
 assert.equal(asyncFraudCheck.isOk(), true);
 
 if (asyncFraudCheck.isOk()) {
   assert.equal(asyncFraudCheck.value, "async-fraud-check");
+}
+
+const asyncFraudAfterFlag = await maybeAsyncFraudCheckAfterFlag(false);
+assert.equal(asyncFraudAfterFlag.isOk(), true);
+if (asyncFraudAfterFlag.isOk()) {
+  assert.equal(asyncFraudAfterFlag.value, "async-fraud-from-result");
 }
 
 const inventory = await reserveInventory(orderLines);
@@ -434,12 +530,53 @@ if (asyncOrderContext.isOk()) {
   assert.equal(asyncOrderContext.value.payment, "authorized");
 }
 
+const allAsyncChecks = await allAsyncOrderChecks();
+assert.equal(allAsyncChecks.isOk(), true);
+
+const invalidAsyncCheckout = await validateAsyncCheckout(
+  [{ quantity: 1, sku: "missing", unitCents: 100 }],
+  "NOPE",
+);
+assert.equal(invalidAsyncCheckout.isErr(), true);
+if (invalidAsyncCheckout.isErr()) {
+  assert.equal(invalidAsyncCheckout.error.length, 2);
+}
+
+const warehouse = await firstAvailableWarehouse("sku_book");
+assert.equal(warehouse.isOk(), true);
+if (warehouse.isOk()) {
+  assert.equal(warehouse.value.position, 1);
+}
+
+const asyncSchedule = await asyncInvoiceSchedule();
+assert.equal(asyncSchedule.isOk(), true);
+if (asyncSchedule.isOk()) {
+  assert.deepEqual(asyncSchedule.value, [
+    "async-invoice:1",
+    "async-invoice:2",
+    "async-invoice:3",
+  ]);
+}
+
+const asyncCursor = await asyncFinalCursor();
+assert.equal(asyncCursor.isOk(), true);
+if (asyncCursor.isOk()) {
+  assert.equal(asyncCursor.value, 3);
+}
+
 const asyncOrderIds = await zipAsyncOrderIds();
 assert.equal(asyncOrderIds.isOk(), true);
 
 if (asyncOrderIds.isOk()) {
   assert.deepEqual(asyncOrderIds.value, ["order_1", "receipt_1"]);
 }
+
+assert.deepEqual(await inspectCheckoutEvents(), [
+  "inspect:order_inspect",
+  "bothOk:order_inspect",
+  "asyncInspectError:AuditWriteError",
+  "asyncBothErr:AuditWriteError",
+]);
 
 assert.deepEqual(observeCheckout(), [
   "tap:order_1",
@@ -454,6 +591,18 @@ assert.deepEqual(await observeAsyncCheckout(), [
   "log:async_order",
   "dispose:async_order",
 ]);
+
+assert.deepEqual(await runTaskControlFlow(), {
+  branch: "express",
+  delayedValue: "ready",
+  elapsedMs: 5,
+  fallback: "warehouse:backup",
+  iterated: 4,
+  looped: ["step:1", "step:2"],
+  unlessValue: undefined,
+  whenValue: "audited",
+  zipped: ["left", "right"],
+});
 
 const quickUser = await loadUserWithTimeout("usr_123", 1);
 assert.equal(quickUser.isOk(), true);
@@ -478,6 +627,14 @@ assert.equal(retriedCatalog.isOk(), true);
 if (retriedCatalog.isOk()) {
   assert.equal(retriedCatalog.value.source, "primary");
 }
+
+const policyCatalog = await loadCatalogWithRetryPolicy("sku_123");
+assert.equal(policyCatalog.attempts, 3);
+assert.equal(policyCatalog.result.isOk(), true);
+assert.deepEqual(policyCatalog.retryLog, [
+  "retry:0:CatalogUnavailableError",
+  "retry:1:CatalogUnavailableError",
+]);
 
 const price = await fastestPrice("sku_123");
 assert.equal(price.isOk(), true);
@@ -525,6 +682,15 @@ assert.deepEqual(importFailed.events, [
   "warehouse-1:release:rollback",
 ]);
 
+const importReleaseFailed = await importRowsWithFallibleRelease(true);
+assert.equal(importReleaseFailed.result.isOk(), true);
+assert.deepEqual(importReleaseFailed.result.unwrapOr({ imported: -1 }), { imported: 1 });
+assert.deepEqual(importReleaseFailed.events, [
+  "acquire",
+  "warehouse-2:use",
+  "warehouse-2:release",
+]);
+
 const summary = await runCookbook();
 const resilience = await runTaskResilience();
 assert.deepEqual(resilience, {
@@ -570,6 +736,50 @@ assert.deepEqual(summary.ergonomics, {
   matchedNumber: 84,
   status: "Ready",
 });
+
+const advancedErgonomics = await runAdvancedErgonomics();
+assert.deepEqual(advancedErgonomics, {
+  billingAlert: "alert:7d",
+  guards: {
+    isClockTag: true,
+    isTask: true,
+  },
+  http: ["ok:pong", "redirect->/login"],
+  invoiceGroup: ["invoice-group:InvoicePaid", "other:SubscriptionCancelled"],
+  matchedAsOption: { _tag: "Some", value: "non-admin:viewer" },
+  matchedAsResult: "write:admin",
+  paidBanner: "paid:2500",
+  providedWithMap: "acme:t=100",
+  providedWithResolver: "globex:t=200",
+  scores: ["boundary:100", "pass:60(40+20)", "fail:15"],
+});
+
+const advancedResilience = await runAdvancedTaskResilience();
+assert.deepEqual(advancedResilience, {
+  awaitedDirectly: "direct-await",
+  bridgedAsync: "bridged-async",
+  causeDiagnostics: {
+    defects: ["unexpected-defect"],
+    failures: ["TaskProviderError"],
+    hasDies: true,
+    hasFails: true,
+    hasInterrupts: false,
+    isCause: true,
+    prettyIncludesFail: true,
+  },
+  causeEvents: ["inspectCause:true"],
+  fiberResult: {
+    interruptedTag: "Failure",
+    joined: "joined-value",
+  },
+  lifecycleEvents: ["fiberWorkflow:Success"],
+  multiPermitValue: "two-permits-acquired",
+  raceOkWinner: "backup-winner",
+  recoveredFromCause: "caught:4",
+  schedulerYields: 3,
+  yieldedValue: "step-1->after-yield",
+});
+
 assert.equal(summary.signup.statusCode, 201);
 assert.equal(summary.account.statusCode, 201);
 assert.equal(summary.payment.label, "settled:rcpt_1900");

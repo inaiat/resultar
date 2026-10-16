@@ -18,40 +18,55 @@ const duration = (milliseconds: number): void => {
     throw new RangeError('Task duration must be a finite non-negative number')
 }
 
+const runSleep = (
+  milliseconds: number,
+  signal: AbortSignal,
+  start: (complete: () => void) => () => void,
+): Promise<void> => {
+  duration(milliseconds)
+  return new Promise((resolve, reject) => {
+    const rejectAbort = (): void => {
+      reject(new AbortError('Task sleep interrupted', { cause: signal.reason }))
+    }
+    if (signal.aborted) {
+      rejectAbort()
+      return
+    }
+    const cancel = start(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    })
+    const onAbort = (): void => {
+      cancel()
+      signal.removeEventListener('abort', onAbort)
+      rejectAbort()
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 const live: TaskClock = Object.freeze({
   now: () => performance.now(),
   random: () => Math.random(),
-  sleep: (milliseconds: number, signal: AbortSignal): Promise<void> => {
-    duration(milliseconds)
-    return new Promise((resolve, reject) => {
-      if (signal.aborted) {
-        reject(new AbortError('Task sleep interrupted', { cause: signal.reason }))
-        return
-      }
+  sleep: (milliseconds: number, signal: AbortSignal): Promise<void> =>
+    runSleep(milliseconds, signal, (complete) => {
       const deadline = performance.now() + milliseconds
       let timer: ReturnType<typeof setTimeout> | undefined = undefined
-      const onAbort = (): void => {
-        clearTimeout(timer)
-        signal.removeEventListener('abort', onAbort)
-        reject(new AbortError('Task sleep interrupted', { cause: signal.reason }))
-      }
       const schedule = (): void => {
         const remaining = deadline - performance.now()
         timer = setTimeout(
           () => {
             if (performance.now() < deadline) schedule()
-            else {
-              signal.removeEventListener('abort', onAbort)
-              resolve()
-            }
+            else complete()
           },
           Math.min(Math.max(0, remaining), 2_147_483_647),
         )
       }
       schedule()
-      signal.addEventListener('abort', onAbort, { once: true })
-    })
-  },
+      return () => {
+        clearTimeout(timer)
+      }
+    }),
 })
 
 interface Sleeper {
@@ -89,30 +104,20 @@ export class VirtualClock implements TaskClock {
   public readonly now = (): number => this.time
 
   /** Registers a virtual sleeper that wakes when virtual time reaches `now() + milliseconds` or `signal` aborts. */
-  public readonly sleep = (milliseconds: number, signal: AbortSignal): Promise<void> => {
-    duration(milliseconds)
-    return new Promise((resolve, reject) => {
-      if (signal.aborted) {
-        reject(new AbortError('Task sleep interrupted', { cause: signal.reason }))
-        return
-      }
+  public readonly sleep = (milliseconds: number, signal: AbortSignal): Promise<void> =>
+    runSleep(milliseconds, signal, (complete) => {
       const sleeper: Sleeper = {
         at: this.time + milliseconds,
         wake: () => {
           this.sleepers.delete(sleeper)
-          signal.removeEventListener('abort', onAbort)
-          resolve()
+          complete()
         },
       }
-      const onAbort = (): void => {
-        this.sleepers.delete(sleeper)
-        signal.removeEventListener('abort', onAbort)
-        reject(new AbortError('Task sleep interrupted', { cause: signal.reason }))
-      }
       this.sleepers.add(sleeper)
-      signal.addEventListener('abort', onAbort, { once: true })
+      return () => {
+        this.sleepers.delete(sleeper)
+      }
     })
-  }
 
   /** Number of active sleepers currently waiting on this virtual clock. */
   public get pending(): number {

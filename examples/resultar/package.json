@@ -3,9 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node ../../packages/check/dist/cli.js",
+    "check": "node ../../packages/check/dist/cli.js --project tsconfig.json",
+    "check:resultar": "node ../../packages/check/dist/cli.js --project tsconfig.json",
+    "check:fix": "node ../../packages/check/dist/cli.js --project tsconfig.json --fix",
+    "check:json": "node ../../packages/check/dist/cli.js --project tsconfig.json --json",
+    "check:types": "tsc --project tsconfig.json",
     "build:deps": "pnpm --filter resultar build && pnpm --filter resultar-check build && pnpm --filter resultar-check native:build:current",
-    "smoke": "pnpm run build:deps && pnpm run check && tsx scripts/smoke.ts && tsx scripts/lifecycle-smoke.ts",
+    "smoke": "pnpm run build:deps && pnpm run check:types && pnpm run check && tsx scripts/smoke.ts && tsx scripts/lifecycle-smoke.ts",
     "start": "pnpm run build:deps && tsx src/index.ts"
   },
   "dependencies": {

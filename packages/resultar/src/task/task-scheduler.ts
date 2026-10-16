@@ -57,21 +57,30 @@ export interface TaskScheduling {
   remaining: number
 }
 
-/** A positive operation budget, or Infinity to disable automatic yields. */
-export const createScheduling = (
+const createSchedulingWithOptions = (
   clock: TaskClock,
-  options?: { readonly scheduler?: TaskScheduler; readonly yieldEvery?: number },
+  options: { readonly scheduler?: TaskScheduler; readonly yieldEvery?: number },
 ): TaskScheduling => {
-  const yieldEvery = options?.yieldEvery ?? 2048
+  const yieldEvery = options.yieldEvery ?? 2048
   if (yieldEvery !== Infinity && (!Number.isSafeInteger(yieldEvery) || yieldEvery < 1)) {
     throw new RangeError('Task yieldEvery must be a positive safe integer or Infinity')
   }
-  const scheduler = options?.scheduler ?? Scheduler.live
+  const scheduler = options.scheduler ?? Scheduler.live
   if (typeof scheduler.yield !== 'function') {
     throw new TypeError('Task scheduler must provide a yield function')
   }
   return { scheduler, yieldEvery, clock, remaining: yieldEvery }
 }
+
+/** A positive operation budget, or Infinity to disable automatic yields. */
+export const createScheduling = (
+  clock: TaskClock,
+  options?: { readonly scheduler?: TaskScheduler; readonly yieldEvery?: number },
+): TaskScheduling =>
+  // Stryker disable next-line ConditionalExpression,EqualityOperator: default 2048 is a valid positive safe integer and Scheduler.live has a valid yield function.
+  options === undefined
+    ? { scheduler: Scheduler.live, yieldEvery: 2048, clock, remaining: 2048 }
+    : createSchedulingWithOptions(clock, options)
 
 /** Child fibers share the dispatcher but start with an independent operation budget. */
 export const forkScheduling = (parent: TaskScheduling): TaskScheduling => ({

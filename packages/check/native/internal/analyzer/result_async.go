@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/microsoft/typescript-go/internal/ast"
-	"github.com/microsoft/typescript-go/internal/checker"
+	"github.com/microsoft/TypeScript/tsc/internal/ast"
+	"github.com/microsoft/TypeScript/tsc/internal/checker"
 )
 
 func (a *Analyzer) preferResultAsync(file *ast.SourceFile) []Finding {
@@ -73,12 +73,12 @@ func isNativePromiseType(type_ *checker.Type) bool {
 		return false
 	}
 	target := type_.Target()
-	if target == nil || target.Symbol() == nil || target.Symbol().Name != "Promise" {
+	if target == nil || target.Symbol() == nil || target.Symbol().Name() != "Promise" {
 		return false
 	}
-	for _, declaration := range target.Symbol().Declarations {
+	for _, declaration := range target.Symbol().Declarations() {
 		file := ast.GetSourceFileOfNode(declaration)
-		if file != nil && strings.HasPrefix(filepath.Base(file.FileName()), "lib.") && file.IsDeclarationFile {
+		if file != nil && strings.HasPrefix(filepath.Base(string(file.FileName())), "lib.") && file.IsDeclarationFile {
 			return true
 		}
 	}
@@ -108,15 +108,15 @@ func isResultarSyncType(type_ *checker.Type) bool {
 		symbols = append(symbols, type_.Target().Symbol())
 	}
 	for _, symbol := range symbols {
-		if symbol == nil || (symbol.Name != "Result" && symbol.Name != "StrictResult" && symbol.Name != "OkResult" && symbol.Name != "ErrResult") {
+		if symbol == nil || (symbol.Name() != "Result" && symbol.Name() != "StrictResult" && symbol.Name() != "OkResult" && symbol.Name() != "ErrResult") {
 			continue
 		}
-		for _, declaration := range symbol.Declarations {
+		for _, declaration := range symbol.Declarations() {
 			file := ast.GetSourceFileOfNode(declaration)
 			if file == nil {
 				continue
 			}
-			path := filepath.ToSlash(file.FileName())
+			path := filepath.ToSlash(string(file.FileName()))
 			if strings.Contains(path, "/node_modules/resultar/") || strings.Contains(path, "/packages/resultar/") {
 				return true
 			}

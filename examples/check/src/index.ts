@@ -3,8 +3,10 @@ import {
   err,
   ok,
   okAsync,
+  pipe,
   Result,
   ResultTask,
+  runSync,
   safeTry,
   tryResult,
   type ResultAsync,
@@ -466,3 +468,88 @@ export const unscopedDisposableFnExample = ResultTask.fn(function* () {
 
   return session.id;
 });
+
+// resultar/prefer-or-else-succeed: orElse/catchAll that ignores the error and
+// returns an infallible Ok/succeed fallback is clearer as orElseSucceed.
+export const preferOrElseSucceedExample = (): Result<User, never> =>
+  saveUser("or-else-succeed").orElse(() => ok({ email: "fallback@example.com", id: "fallback" }));
+
+// resultar/prefer-tap: map/andThen/flatMap that performs side effects and
+// returns the input unchanged should use inspect (on sync Result) or tap (on ResultTask).
+export const preferTapExample = (): ResultTask<User, FetchUserError> =>
+  loadUserTask("prefer-tap").map((user) => {
+    inspect(user);
+    return user;
+  });
+
+// resultar/prefer-tap-error: mapErr/orElse/catchAll that performs side effects
+// and forwards the error unchanged should use inspectError or tapError.
+export const preferTapErrorExample = (): ResultTask<User, FetchUserError> =>
+  loadUserTask("prefer-tap-error").mapErr((error) => {
+    inspect(error);
+    return error;
+  });
+
+// resultar/prefer-as-void: map(() => undefined) or map(() => void ...) is
+// clearer as asVoid().
+export const preferAsVoidExample = (): Result<void, SaveUserError> =>
+  saveUser("prefer-as-void").map(() => undefined);
+
+// resultar/prefer-filter-or-else: andThen/flatMap that only validates a
+// predicate on the input and returns it unchanged or fails should use filterOrElse.
+export const preferFilterOrElseExample = (): Result<User, SaveUserError | ParseUserError> =>
+  saveUser("prefer-filter-or-else").andThen((user) =>
+    user.id.length > 0 ? ok(user) : err(new ParseUserError()),
+  );
+
+// resultar/prefer-acquire-disposable: acquireRelease whose release callback
+// only calls [Symbol.dispose]() or [Symbol.asyncDispose]() should use acquireDisposable.
+export const preferAcquireDisposableExample = () =>
+  ResultTask.scoped(
+    ResultTask.acquireRelease({
+      acquire: ResultTask.sync(() => ({ id: "disposable", [Symbol.dispose]: (): void => {} })),
+      release: (resource) =>
+        ResultTask.sync(() => {
+          resource[Symbol.dispose]();
+        }),
+    }),
+  );
+
+// resultar/no-fn-iife: immediately invoking Result.fn(...)() or ResultTask.fn(...)()
+// as an IIFE should use Result.gen or ResultTask.gen directly.
+export const noFnIifeExample = () =>
+  ResultTask.fn(function* () {
+    return yield* loadUserTask("fn-iife");
+  })();
+
+// resultar/require-return-yield-star: terminal error/defect yields inside
+// generators should use `return yield*` so TypeScript narrows control flow.
+export const requireReturnYieldStarExample = () =>
+  ResultTask.gen(function* () {
+    const user = yield* loadUserTask("terminal-yield");
+    if (user.id === "") {
+      yield* FetchUserError.taskErr({ id: "empty" });
+    }
+    return user;
+  });
+
+// resultar/no-unnecessary-err-wrap-in-gen: synchronous Result and TaggedError
+// instances are directly yieldable inside generators without ResultTask.fromResult or err(...).
+export const noUnnecessaryErrWrapInGenExample = () =>
+  ResultTask.gen(function* () {
+    return yield* ResultTask.fromResult(saveUser("unnecessary-from-result"));
+  });
+
+// resultar/unnecessary-pipe: single-argument pipe(x) and zero-argument x.pipe()
+// are no-ops and can be replaced with the receiver directly.
+export const unnecessaryPipeExample = (): Result<User, SaveUserError> =>
+  pipe(saveUser("unnecessary-pipe"));
+
+// resultar/no-run-inside-gen: do not execute task runners or unsafe unwraps
+// inside generators; compose values with yield* instead.
+export const noRunInsideGenExample = () =>
+  ResultTask.gen(function* () {
+    const user = runSync(saveUser("run-inside-gen"));
+    return user;
+  });
+

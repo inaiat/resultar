@@ -887,27 +887,15 @@ describe('coverage-focused public behavior', () => {
       ),
     ).toBe('main')
 
-    // ServiceTagIterator & ResultTaskIterator .return, .throw, and [Symbol.iterator]
-    const IterTag = ResultTask.service<number, 'IterTag'>('IterTag')
-    const tagIter = IterTag[Symbol.iterator]()
-    expect(tagIter[Symbol.iterator]()).toBe(tagIter)
-    expect(() => tagIter.throw?.('tag-iter-throw')).toThrow('tag-iter-throw')
-    expect(tagIter.next(99)).toEqual({ done: true, value: 99 })
-
-    const tagIterReturn = IterTag[Symbol.iterator]()
-    expect(tagIterReturn.return?.(11)).toEqual({ done: true, value: 11 })
-    expect(tagIterReturn.next(22)).toEqual({ done: true, value: 22 })
-
-    const taskIter = ResultTask.ok(1)[Symbol.iterator]()
-    expect(taskIter[Symbol.iterator]()).toBe(taskIter)
-    expect(() => taskIter.throw?.('task-iter-throw')).toThrow('task-iter-throw')
-    expect(taskIter.next({ _tag: 'Success', value: 99 })).toEqual({ done: true, value: 99 })
-
-    const taskIterReturn = ResultTask.ok(1)[Symbol.iterator]()
-    expect(taskIterReturn.return?.(11)).toEqual({ done: true, value: 11 })
-    expect(taskIterReturn.next({ _tag: 'Success', value: 22 })).toEqual({ done: true, value: 22 })
+    const addFn = ResultTask.fn(function* (a: number, b: number) {
+      const x = yield* ResultTask.ok(a)
+      const y = yield* ResultTask.ok(b)
+      return x + y
+    })
+    expect(await ResultTask.runPromise(addFn(20, 22))).toBe(42)
 
     // Structural ResultTaskYield and ServiceYield in ResultTask.gen
+    const IterTag = ResultTask.service<number, 'IterTag'>('IterTag')
     expect(
       await ResultTask.runPromise(
         (
@@ -1618,7 +1606,6 @@ describe('coverage-focused public behavior', () => {
       _tag: 'Failure',
       cause: { _tag: 'Die', defect: 'release-custom-throw' },
     })
-    expect(Reflect.deleteProperty(customThrowRelease, 'execute')).toBe(true)
     const customAsyncScopeThrowTask = ResultTask.ok(1)
     ;(
       customAsyncScopeThrowTask as unknown as { execute: (ctx: { scope: TaskScope }) => unknown }
@@ -1716,5 +1703,23 @@ describe('coverage-focused public behavior', () => {
     expect(() => (ResultTask.match as (...args: unknown[]) => unknown)((v: number) => v)).toThrow(
       new TypeError('ResultTask.match requires both onOk and onErr callbacks'),
     )
+
+    const genFnSingleArg = ResultTask.fn(function* (x: number) {
+      const y = yield* ResultTask.ok(x + 1)
+      return y * 2
+    })
+    expect(await ResultTask.runPromise(genFnSingleArg(4).map((v) => v + 1))).toBe(11)
+    expect(
+      await ResultTask.runPromise(
+        ResultTask.tryPromise(() => Promise.resolve(3)).andThen((v) => genFnSingleArg(v)),
+      ),
+    ).toBe(8)
+
+    const settledFiber = ResultTask.runFork(ResultTask.ok(7))
+    expect(await ResultTask.runPromise(settledFiber.join())).toBe(7)
+    expect(await ResultTask.runPromise(settledFiber.interrupt())).toEqual({
+      _tag: 'Success',
+      value: 7,
+    })
   })
 })

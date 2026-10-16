@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
 
 import { pipe } from '../src/core/function.js'
-import { ResultAsync, errAsync, okAsync } from '../src/task/result-task.js'
+import { ResultAsync, errAsync, okAsync } from '../src/task/result-async.js'
 import { err, ok } from '../src/result.js'
 import { createTaggedError } from '../src/tagged/tagged-error.js'
 

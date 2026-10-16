@@ -1,6 +1,13 @@
 # Resultar
 
-**Typed, composable error handling and resilient workflows for TypeScript.**
+**Typed, composable error handling and resilient workflows for TypeScript — from a single `Result<T, E>` to lazy, dependency-injected `ResultTask<T, E, R>`.**
+
+[![Node.js 24+](https://img.shields.io/badge/node-%3E%3D24-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![ESM Only](https://img.shields.io/badge/module-ESM-f7df1e?logo=javascript&logoColor=black)](https://github.com/inaiat/resultar/blob/main/packages/resultar/package.json)
+[![TypeScript 7 Native Checks](https://img.shields.io/badge/resultar--check-TypeScript--Go-3178c6?logo=typescript&logoColor=white)](https://github.com/inaiat/resultar/blob/main/packages/check/README.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/inaiat/resultar/blob/main/LICENSE)
+
+[Gradual Adoption](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md) · [Full Reference (`DOCUMENTATION.md`)](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md) · [`resultar-check` Compiler CLI/LSP](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) · [Benchmarks](https://github.com/inaiat/resultar/blob/main/benchmarks/README.md) · [API Decision Guide](#api-decision-guide)
 
 In standard TypeScript, `throw` and rejected promises are invisible in function signatures. Callers have no way of knowing what can fail—or whether they handled every failure case—without reading the implementation.
 
@@ -101,7 +108,7 @@ const response = result.matchTags(
 
 ---
 
-## Highlights
+## Highlights & Positioning
 
 | What you need | What Resultar provides |
 | --- | --- |
@@ -113,7 +120,18 @@ const response = result.matchTags(
 | **Lazy tasks & typed dependencies** | `ResultTask<T, E, R>` with typed service requirements (`R`), `AbortSignal` cancellation, and LIFO resource scopes |
 | **Compiler guardrails** | Optional native [`resultar-check`](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) CLI & LSP to forbid ignored results (`noDiscard`) and raw `throw` |
 
-Resultar began as a fork of `neverthrow`. It keeps the familiar `Ok` / `Err` mental model while adding tagged errors, generator workflows, production async resilience, lazy tasks with scoped resources, and native compiler diagnostics—without forcing a framework or global runtime on your codebase.
+### Where Resultar Sits Between `neverthrow` and `Effect`
+
+Resultar began as a fork of `neverthrow`. It keeps the approachable `Ok` / `Err` mental model while adding structured concurrency, scoped resources, typed DI, and native compiler diagnostics—without forcing a global runtime on your codebase:
+
+| Capability | `neverthrow` | `Resultar` | `Effect` |
+| --- | --- | --- | --- |
+| **Adoption unit** | 1 function (`Result<T, E>`) | **1 function (`Result<T, E>`)** | Full `Effect<A, E, R>` ecosystem |
+| **Direct `await` on async results** | Yes (`ResultAsync<T, E>`) | **Yes (`ResultAsync<T, E>` when `R = never`)** | No (requires `Effect.runPromise` / runtime) |
+| **Tagged `Error` classes & secret redaction** | Manual | **Built-in (`createTaggedError`, `redact`)** | Built-in (`Data.TaggedError`, `Redacted`) |
+| **Retries, timeouts, races & virtual clock** | Manual | **Built-in (`Retry.policy`, `timeout`, `Clock.virtual`)** | Built-in (`Schedule`, `TestClock`) |
+| **Typed DI (`R`), LIFO resource scopes & fibers** | No | **Opt-in via `ResultTask<T, E, R>` & `resultar-di`** | Always present (`Effect<A, E, R>`, `Layer`, `Scope`) |
+| **Compiler enforcement (`noDiscard`)** | ESLint plugin | **Native TypeScript-Go CLI & LSP (`resultar-check`)** | Language service plugin |
 
 ---
 
@@ -135,10 +153,15 @@ npm install resultar
 
 You do not need to rewrite your application to use Resultar. Start with a single function returning `Result<T, E>` and scale up only when a workflow needs async I/O or typed dependencies:
 
-```ts
-Result<T, E>          // 1. Synchronous value: Ok(T) or Err(E)
-ResultAsync<T, E>     // 2. Requirement-free async task (ResultTask<T, E, never>): directly awaitable to Result<T, E>
-ResultTask<T, E, R>   // 3. Lazy, repeatable workflow with required services/scopes (R)
+```mermaid
+flowchart LR
+  R["<b>1. Result&lt;T, E&gt;</b><br/>Synchronous value (Ok / Err)<br/>Zero async overhead"]
+  RA["<b>2. ResultAsync&lt;T, E&gt;</b><br/>Alias for ResultTask&lt;T, E, never&gt;<br/>Directly awaitable to Result&lt;T, E&gt;"]
+  RT["<b>3. ResultTask&lt;T, E, R&gt;</b><br/>Lazy workflow with required<br/>services &amp; resource scopes (R)"]
+
+  R -->|"async I/O, retry, timeout"| RA
+  RA -->|"add service(Tag) or acquireRelease"| RT
+  RT -->|".provideServices(...) / ResultTask.scoped"| RA
 ```
 
 - **`T`** is the success value.
@@ -153,11 +176,15 @@ ResultTask<T, E, R>   // 3. Lazy, repeatable workflow with required services/sco
 | **2. `ResultAsync<T, E>`** | Requirement-free async workflows (`R = never`) that can be `await`ed directly | `tryResultAsync`, `asyncAndThen`, `ResultAsync.retry`, `timeout` |
 | **3. `ResultTask<T, E, R>`** | Workflows with typed service injection (`R`), cooperative cancellation, and scoped resource lifecycles | `ResultTask.gen`, `ResultTask.fn`, `tryPromise`, `service`, `acquireRelease`, `runResult` |
 
-All three compose seamlessly on a single async engine:
-- Inside `Result.gen(async function* () { ... })` or `ResultTask.gen(function* () { ... })`, you can `yield*` both `Result` and `ResultAsync` / `ResultTask`.
-- Satisfying all `R` requirements on a `ResultTask<T, E, R>` automatically narrows it to `ResultAsync<T, E>` (`ResultTask<T, E, never>`), making it directly `await`able.
+### Sync-First, Pay-As-You-Go Execution Engine
 
-See the [Gradual Adoption Guide](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md) for a step-by-step walkthrough.
+All three primitives share a single **sync-first, pay-as-you-go engine** designed so that gradual adoption never imposes unnecessary runtime overhead:
+
+- **Seamless `yield*` interop**: Inside `Result.gen(async function* () { ... })` or `ResultTask.gen(function* () { ... })`, you can `yield*` both `Result` and `ResultAsync` / `ResultTask`. Satisfying all `R` requirements on a `ResultTask<T, E, R>` automatically narrows it back to `ResultAsync<T, E>` (`R = never`).
+- **Zero-microtask synchronous fast path**: `Result.gen`, synchronous `ResultTask` pipelines, and `ResultTask.scoped` workflows without async steps execute inside a tight synchronous `while` loop (`runTaskLoop` / `#runGen`) without scheduling microtasks—reusing static singletons (`sharedSuccessExit`, `idleTaskIterator`, `idleRunContext`) on the happy path until a real `Promise` or opt-in `yieldEvery` checkpoint is encountered.
+- **Pay only for the stage you use**: Service maps, LIFO finalizer stacks, and fiber schedulers are allocated lazily only when a workflow invokes `service()`, `acquireRelease()`, or `forkChild()`.
+
+See the [Gradual Adoption Guide](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md) for a step-by-step walkthrough and the [Benchmarks Guide](https://github.com/inaiat/resultar/blob/main/benchmarks/README.md) for the architectural and runtime profile.
 
 ---
 

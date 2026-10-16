@@ -1,3 +1,11 @@
+/**
+ * Bracketed Async Resource Cleanup (`ResultAsync.withResource`)
+ *
+ * This module demonstrates the acquire / use / release bracket pattern for
+ * `ResultAsync`, where `release` always runs after `use` completes (whether with
+ * `Ok`, `Err`, or cancellation) and receives the `ResultAsyncResourceReleaseContext`
+ * to decide between commit/close and rollback.
+ */
 import { ResultAsync, createTaggedError, errAsync, okAsync } from "resultar";
 
 export interface ImportSummary {
@@ -23,6 +31,15 @@ export class ImportFailedError extends createTaggedError({
   message: "Import failed at row $row",
 }) {}
 
+export class ReleaseFailedError extends createTaggedError({
+  name: "ReleaseFailedError",
+  message: "Could not release connection $id",
+}) {}
+
+/**
+ * Acquires a warehouse connection, imports rows, and guarantees `release` is
+ * called with the outcome (`context.result`) so failed imports trigger a rollback.
+ */
 export const importRowsWithCleanup = async (
   rows: readonly string[],
   options: { readonly failAtRow?: number } = {},
@@ -47,6 +64,36 @@ export const importRowsWithCleanup = async (
       }
 
       return okAsync({ imported: rows.length });
+    },
+  });
+
+  return {
+    events,
+    result,
+  };
+};
+
+/**
+ * `ResultAsync.withResource` treats `release` as best-effort cleanup: even if `release`
+ * returns `Err` or rejects, the outcome of `use` is preserved without masking domain results.
+ */
+export const importRowsWithFallibleRelease = async (shouldFailRelease: boolean) => {
+  const events: string[] = [];
+
+  const result = await ResultAsync.withResource({
+    acquire: () => {
+      events.push("acquire");
+      return okAsync<Connection, ConnectionError>({ id: "warehouse-2" });
+    },
+    release: (connection) => {
+      events.push(`${connection.id}:release`);
+      return shouldFailRelease
+        ? errAsync(new ReleaseFailedError({ id: connection.id }))
+        : okAsync(undefined);
+    },
+    use: (connection) => {
+      events.push(`${connection.id}:use`);
+      return okAsync<ImportSummary, ImportFailedError>({ imported: 1 });
     },
   });
 

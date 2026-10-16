@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/microsoft/typescript-go/internal/ast"
-	"github.com/microsoft/typescript-go/internal/checker"
-	"github.com/microsoft/typescript-go/internal/compiler"
-	"github.com/microsoft/typescript-go/resultar-check/internal/config"
+	"github.com/microsoft/TypeScript/tsc/internal/ast"
+	"github.com/microsoft/TypeScript/tsc/internal/checker"
+	"github.com/microsoft/TypeScript/tsc/internal/compiler"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/config"
 )
 
 type Analyzer struct {
@@ -27,9 +27,10 @@ func Run(ctx context.Context, program *compiler.Program, projectDir string, opti
 	analyzer := Analyzer{checker: checker_, options: options, projectDir: projectDir}
 	findings := make([]Finding, 0)
 	for _, file := range program.SourceFiles() {
-		if options.ShouldInspect(file.FileName(), projectDir) {
+		fileName := string(file.FileName())
+		if options.ShouldInspect(fileName, projectDir) {
 			fileAnalyzer := analyzer
-			fileAnalyzer.options = options.ForFile(file.FileName(), projectDir)
+			fileAnalyzer.options = options.ForFile(fileName, projectDir)
 			findings = append(findings, fileAnalyzer.applySuppressions(file, fileAnalyzer.analyzeFile(file))...)
 		}
 	}
@@ -133,6 +134,39 @@ func (a *Analyzer) analyzeFile(file *ast.SourceFile) []Finding {
 	}
 	if a.options.NoThrowInTaskSync != config.SeverityOff {
 		findings = append(findings, a.noThrowInTaskSync(file)...)
+	}
+	if a.options.PreferOrElseSucceed != config.SeverityOff {
+		findings = append(findings, a.preferOrElseSucceed(file)...)
+	}
+	if a.options.PreferTap != config.SeverityOff {
+		findings = append(findings, a.preferTap(file)...)
+	}
+	if a.options.PreferTapError != config.SeverityOff {
+		findings = append(findings, a.preferTapError(file)...)
+	}
+	if a.options.PreferAsVoid != config.SeverityOff {
+		findings = append(findings, a.preferAsVoid(file)...)
+	}
+	if a.options.PreferFilterOrElse != config.SeverityOff {
+		findings = append(findings, a.preferFilterOrElse(file)...)
+	}
+	if a.options.PreferAcquireDisposable != config.SeverityOff {
+		findings = append(findings, a.preferAcquireDisposable(file)...)
+	}
+	if a.options.NoFnIife != config.SeverityOff {
+		findings = append(findings, a.noFnIife(file)...)
+	}
+	if a.options.RequireReturnYieldStar != config.SeverityOff {
+		findings = append(findings, a.requireReturnYieldStar(file)...)
+	}
+	if a.options.NoUnnecessaryErrWrapInGen != config.SeverityOff {
+		findings = append(findings, a.noUnnecessaryErrWrapInGen(file)...)
+	}
+	if a.options.UnnecessaryPipe != config.SeverityOff {
+		findings = append(findings, a.unnecessaryPipe(file)...)
+	}
+	if a.options.NoRunInsideGen != config.SeverityOff {
+		findings = append(findings, a.noRunInsideGen(file)...)
 	}
 	return findings
 }

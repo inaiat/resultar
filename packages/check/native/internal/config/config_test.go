@@ -335,3 +335,51 @@ func TestRequirementAndSuppressionSeverityAliases(t *testing.T) {
 		})
 	}
 }
+
+func TestStage2RulesDefaultsAndAliases(t *testing.T) {
+	defaults := Defaults()
+	if defaults.PreferOrElseSucceed != SeveritySuggestion ||
+		defaults.PreferTap != SeveritySuggestion ||
+		defaults.PreferTapError != SeveritySuggestion ||
+		defaults.PreferAsVoid != SeveritySuggestion ||
+		defaults.PreferFilterOrElse != SeveritySuggestion ||
+		defaults.PreferAcquireDisposable != SeveritySuggestion ||
+		defaults.NoFnIife != SeverityWarning ||
+		defaults.RequireReturnYieldStar != SeverityWarning ||
+		defaults.NoUnnecessaryErrWrapInGen != SeveritySuggestion ||
+		defaults.UnnecessaryPipe != SeveritySuggestion ||
+		defaults.NoRunInsideGen != SeverityWarning {
+		t.Fatalf("unexpected defaults for stage 2 rules: %#v", defaults)
+	}
+
+	rules := []string{
+		"prefer-or-else-succeed",
+		"prefer-tap",
+		"prefer-tap-error",
+		"prefer-as-void",
+		"prefer-filter-or-else",
+		"prefer-acquire-disposable",
+		"no-fn-iife",
+		"require-return-yield-star",
+		"no-unnecessary-err-wrap-in-gen",
+		"unnecessary-pipe",
+		"no-run-inside-gen",
+	}
+	for _, rule := range rules {
+		t.Run(rule, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "tsconfig.json")
+			contents := `{"compilerOptions":{"plugins":[{"name":"resultar-check","diagnosticSeverity":{"` + rule + `":"error"}}]}}`
+			if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			options, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value, known := RuleSeverity(options, rule); !known || value != SeverityError {
+				t.Fatalf("rule %s severity = %v (%v), want error", rule, value, known)
+			}
+		})
+	}
+}

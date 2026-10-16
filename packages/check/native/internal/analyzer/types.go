@@ -3,8 +3,8 @@ package analyzer
 import (
 	"regexp"
 
-	"github.com/microsoft/typescript-go/internal/ast"
-	"github.com/microsoft/typescript-go/internal/checker"
+	"github.com/microsoft/TypeScript/tsc/internal/ast"
+	"github.com/microsoft/TypeScript/tsc/internal/checker"
 )
 
 var resultTypeNames = map[string]struct{}{
@@ -27,14 +27,14 @@ func typeSymbolName(type_ *checker.Type) string {
 		return ""
 	}
 	if alias := type_.Alias(); alias != nil && alias.Symbol() != nil {
-		return alias.Symbol().Name
+		return alias.Symbol().Name()
 	}
 	if symbol := type_.Symbol(); symbol != nil {
-		return symbol.Name
+		return symbol.Name()
 	}
 	if type_.Flags()&checker.TypeFlagsObject != 0 && type_.ObjectFlags()&checker.ObjectFlagsReference != 0 {
 		if target := type_.Target(); target != nil && target.Symbol() != nil {
-			return target.Symbol().Name
+			return target.Symbol().Name()
 		}
 	}
 	return ""
@@ -54,10 +54,10 @@ func isResultLikeType(type_ *checker.Type) bool {
 	}
 	name := typeSymbolName(type_)
 	if symbol := type_.Symbol(); symbol != nil {
-		if _, ok := resultTypeNames[symbol.Name]; ok {
+		if _, ok := resultTypeNames[symbol.Name()]; ok {
 			return true
 		}
-		if _, ok := resultTaskTypeNames[symbol.Name]; ok {
+		if _, ok := resultTaskTypeNames[symbol.Name()]; ok {
 			return true
 		}
 	}
@@ -80,11 +80,38 @@ func isResultTaskLikeType(type_ *checker.Type) bool {
 		}
 		return false
 	}
-	if symbol := type_.Symbol(); symbol != nil && symbol.Name == "ResultTask" {
+	if alias := type_.Alias(); alias != nil && alias.Symbol() != nil {
+		if _, ok := resultAsyncTypeNames[alias.Symbol().Name()]; ok {
+			return false
+		}
+	}
+	if symbol := type_.Symbol(); symbol != nil && symbol.Name() == "ResultTask" {
 		return true
 	}
 	_, ok := resultTaskTypeNames[typeSymbolName(type_)]
 	return ok
+}
+
+func isAwaitableResultTaskType(c *checker.Checker, type_ *checker.Type) bool {
+	if type_ == nil || c == nil {
+		return false
+	}
+	if type_.Flags()&checker.TypeFlagsUnionOrIntersection != 0 {
+		for _, part := range type_.Types() {
+			if isAwaitableResultTaskType(c, part) {
+				return true
+			}
+		}
+		return false
+	}
+	if !isResultTaskLikeType(type_) {
+		return false
+	}
+	args := typeArguments(c, type_)
+	if len(args) >= 3 && args[2] != nil && args[2].Flags()&checker.TypeFlagsNever != 0 {
+		return true
+	}
+	return false
 }
 
 func isResultAsyncLikeType(type_ *checker.Type) bool {
@@ -101,6 +128,39 @@ func isResultAsyncLikeType(type_ *checker.Type) bool {
 	}
 	_, ok := resultAsyncTypeNames[typeSymbolName(type_)]
 	return ok
+}
+
+// nodeCannotBeResultarType returns true for AST expressions whose grammar
+// guarantees they can never produce a Result, ResultAsync, or ResultTask value,
+// avoiding unnecessary checker.GetTypeAtLocation queries.
+func nodeCannotBeResultarType(node *ast.Node) bool {
+	node = unwrapExpression(node)
+	if node == nil {
+		return true
+	}
+	switch node.Kind {
+	case ast.KindNumericLiteral,
+		ast.KindBigIntLiteral,
+		ast.KindStringLiteral,
+		ast.KindRegularExpressionLiteral,
+		ast.KindNoSubstitutionTemplateLiteral,
+		ast.KindTemplateExpression,
+		ast.KindTrueKeyword,
+		ast.KindFalseKeyword,
+		ast.KindNullKeyword,
+		ast.KindPrefixUnaryExpression,
+		ast.KindPostfixUnaryExpression,
+		ast.KindDeleteExpression,
+		ast.KindTypeOfExpression,
+		ast.KindVoidExpression,
+		ast.KindArrowFunction,
+		ast.KindFunctionExpression,
+		ast.KindClassExpression,
+		ast.KindArrayLiteralExpression:
+		return true
+	default:
+		return false
+	}
 }
 
 func typeArguments(c *checker.Checker, t *checker.Type) []*checker.Type {

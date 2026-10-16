@@ -17,10 +17,10 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/microsoft/typescript-go/resultar-check/internal/analyzer"
-	"github.com/microsoft/typescript-go/resultar-check/internal/config"
-	"github.com/microsoft/typescript-go/resultar-check/internal/output"
-	"github.com/microsoft/typescript-go/resultar-check/internal/project"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/analyzer"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/config"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/output"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/project"
 )
 
 type lspServer struct {
@@ -653,7 +653,7 @@ func (s *lspServer) snapshotText(path string) string {
 	}
 	if s.cacheOpened != nil {
 		for _, file := range s.cacheOpened.Program.SourceFiles() {
-			if filepath.Clean(file.FileName()) == filepath.Clean(path) {
+			if filepath.Clean(string(file.FileName())) == filepath.Clean(path) {
 				return file.Text()
 			}
 		}

@@ -1,9 +1,9 @@
 package analyzer
 
 import (
-	"github.com/microsoft/typescript-go/internal/ast"
-	"github.com/microsoft/typescript-go/internal/scanner"
-	"github.com/microsoft/typescript-go/resultar-check/internal/config"
+	"github.com/microsoft/TypeScript/tsc/internal/ast"
+	"github.com/microsoft/TypeScript/tsc/internal/scanner"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/config"
 )
 
 type Finding struct {
@@ -44,7 +44,7 @@ func newFinding(file *ast.SourceFile, node *ast.Node, rule string, severity conf
 	line, column := scanner.GetECMALineAndUTF16CharacterOfPosition(file, range_.Pos())
 	return Finding{
 		Column:   int(column) + 1,
-		File:     file.FileName(),
+		File:     string(file.FileName()),
 		Length:   range_.Len(),
 		Line:     line + 1,
 		Message:  message,
@@ -68,4 +68,14 @@ func insertFix(file *ast.SourceFile, node *ast.Node, title, newText string) Fix 
 func replaceTokenFix(file *ast.SourceFile, node *ast.Node, title, newText string) Fix {
 	range_ := scanner.GetRangeOfTokenAtPosition(file, node.Pos())
 	return Fix{Title: title, Kind: FixCorrection, Edits: []TextEdit{{Start: range_.Pos(), Length: range_.Len(), NewText: newText}}}
+}
+
+func replaceSpanFix(file *ast.SourceFile, startNode, endNode *ast.Node, title, newText string) Fix {
+	start := scanner.GetRangeOfTokenAtPosition(file, startNode.Pos()).Pos()
+	return Fix{Title: title, Kind: FixCorrection, Edits: []TextEdit{{Start: start, Length: endNode.End() - start, NewText: newText}}}
+}
+
+func nodeSourceText(file *ast.SourceFile, node *ast.Node) string {
+	start := scanner.GetRangeOfTokenAtPosition(file, node.Pos()).Pos()
+	return file.Text()[start:node.End()]
 }

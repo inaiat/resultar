@@ -1,3 +1,10 @@
+/**
+ * Resultar Cookbook Barrel & Runnable Summary (`runCookbook`)
+ *
+ * Re-exports every cookbook example module (except `application-lifecycle.ts`,
+ * which is exercised by `scripts/lifecycle-smoke.ts`) and provides `runCookbook()`
+ * for `pnpm --filter resultar-example start`.
+ */
 import { pathToFileURL } from "node:url";
 
 export * from "./async-resilience.js";
@@ -27,6 +34,10 @@ const errorCode = (error: unknown): string => {
   return error instanceof Error ? error.name : "UnknownError";
 };
 
+/**
+ * Executes a representative path across the cookbook modules and returns a
+ * JSON-serializable summary.
+ */
 export const runCookbook = async () => {
   const user = await loadUserWithTimeout("usr_123", 1);
   const catalog = await loadCatalogWithFallback("sku_123");
