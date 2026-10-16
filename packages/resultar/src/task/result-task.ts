@@ -3200,12 +3200,10 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
     const signal = fiberSignal.asAbortSignal()
     // Stryker disable next-line ConditionalExpression,EqualityOperator: NEVER_ABORTED_SIGNAL.aborted is always false; trackSignal is a fast-path check.
     const trackSignal = context.signal !== NEVER_ABORTED_SIGNAL
-    // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: reusing an untouched scope and context when no scheduler/cleanup state is active is an allocation optimization.
-    const canReuseCleanScope =
-      context.scheduling.yieldEvery === Infinity && context.cleanup === undefined
     const workerCount = Math.min(concurrency, input.length)
     let next = 0
     let stopping = false
+    // Stryker disable next-line BooleanLiteral: paired with the hasFailure fast-path check below when all items succeed.
     let hasFailure = false
     const stop = (): void => {
       // Stryker disable next-line ConditionalExpression: fiberSignal.abort is idempotent when stop() is called multiple times.
@@ -3257,8 +3255,8 @@ export class ResultTask<out A, out E = never, out R = never> extends Pipeable {
         } catch (error) {
           closed = ResultTask.#closeChildScope(scope, died(error), childContext)
         }
-        // Stryker disable next-line ConditionalExpression,LogicalOperator: reusing an untouched scope and context when no scheduler/cleanup state is active is an allocation optimization.
-        if (!(canReuseCleanScope && scope.isClean())) {
+        // Stryker disable next-line ConditionalExpression: reusing an untouched scope when isClean() is true is an allocation optimization; always recreating it is functionally equivalent.
+        if (!scope.isClean()) {
           scope = new TaskScope()
           childContext = withChildScope(context, scope, signal)
         }

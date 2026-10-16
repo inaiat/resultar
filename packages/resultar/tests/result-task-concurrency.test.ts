@@ -612,6 +612,26 @@ describe('ResultTask collections', () => {
       await ResultTask.runResult(ResultTask.forEach([], () => ResultTask.err('never'))),
       ok([]),
     )
+    const cleaned: number[] = []
+    deepEqual(
+      await ResultTask.runResult(
+        // eslint-disable-next-line unicorn/no-array-for-each -- This is the ResultTask policy, not Array.forEach.
+        ResultTask.forEach(new Set([1, 2]), (item) =>
+          ResultTask.acquireRelease({
+            acquire: ResultTask.ok(item * 10),
+            release: () =>
+              // eslint-disable-next-line unicorn/no-array-for-each -- This is the ResultTask policy, not Array.forEach.
+              ResultTask.forEach([item], (value) =>
+                ResultTask.sync(() => {
+                  cleaned.push(value)
+                }),
+              ).asVoid(),
+          }),
+        ),
+      ),
+      ok([10, 20]),
+    )
+    deepEqual(cleaned, [1, 2])
   })
 
   it('does not hide expected errors when validation also encounters a defect', async () => {
