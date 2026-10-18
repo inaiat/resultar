@@ -4,6 +4,11 @@ An example application combining dependency injection with
 [Resultar DI](../../packages/di/README.md) and typed routes with
 [resultar-hono](../../packages/hono/README.md).
 
+Prefer lazy `ResultTask` workflows and explicit runners for new async code. This runnable fixture
+retains eager `ResultAsync` / `StrictResultAsync` service methods from the `resultar/async`
+subpath for compatibility coverage.
+Both types are deprecated since v4 and preserve one shared execution.
+
 The file layout matches the [Fastify example](../fastify/README.md):
 
 - [Services](src/services.ts): `Cache`, `UsersRepository`, `Users`, function-based `Health` and DI registration.
@@ -67,9 +72,32 @@ import { Service, service, createModule } from "resultar-hono";
 ```
 
 `Users` declares `requires: { repository: UsersRepository }`; the repository declares
-`requires: { cache: Cache }`. Their methods return `StrictResultAsync`, and the user service
-composes lookup and removal through `Result.gen`. `Health` uses the function-based `service`
-API and reads the same cache.
+`requires: { cache: Cache }`. Their existing methods return deprecated eager `StrictResultAsync`,
+and the user service composes lookup and removal through `genAsync` from `resultar/async`. `Health` uses the
+function-based `service` API and reads the same cache. For new methods, return `ResultTask`, use
+`ResultTask.tryPromise` for drivers and `ResultTask.gen` for composition.
+
+To compose the existing service inside a new Task workflow, defer its call until execution:
+
+```ts
+import { ResultTask } from "resultar";
+
+// Inside a native Hono route handler for /users/:id:
+const task = ResultTask.fromResultAsync(() => c.env.users.findById(c.req.param("id")));
+const result = await ResultTask.runResult(task);
+return result.matchTags(
+  (user) => c.json(user),
+  {
+    UserNotFoundError: (error) => c.json({ error: error.message }, 404),
+    UserReadError: (error) => c.json({ error: error.message }, 503),
+  },
+);
+```
+
+The factory starts a fresh eager call on each run; passing an existing Async value would reuse
+its execution. Task has no `.then`, `map` is synchronous, and `match` returns a Task to run. The
+example above matches the `Result` after execution. Pass new Task-returning methods directly to
+`runResult`, without a bridge.
 
 ## Application and route types
 
@@ -110,7 +138,7 @@ The import is erased at runtime and does not start the server.
   preloaded with user `1` / `Ada`).
 - `UsersRepository` is a **singleton** backed by that cache.
 - `Users` and `Health` are **scoped** (a fresh instance resolved for each HTTP request).
-  `Users.findById` and `Users.remove` return `StrictResultAsync`; `Health.check` returns the
+  `Users.findById` and `Users.remove` retain eager `StrictResultAsync`; `Health.check` returns the
   current user count. Each application owns its cache, independently of other applications.
 - `createHonoApp` keeps one DI root and opens a child scope per request, holding scoped
   resources until the response body is fully consumed or canceled.
@@ -148,5 +176,6 @@ Run `pnpm --filter resultar-hono test` from the workspace root to include lookup
 health, repository override and application isolation checks alongside adapter tests.
 
 With `requires`, class service factories return their method objects directly. The DI module
-constructs them lazily within the registered lifetime. Return a `ResultTask` only when
-initialization needs task composition; service methods still return `StrictResultAsync`.
+constructs them lazily within the registered lifetime. Return a `ResultTask` from the factory when
+initialization needs task composition. Separately, prefer Task-returning async service methods in
+new code; this fixture's deprecated `StrictResultAsync` methods retain their original contract.

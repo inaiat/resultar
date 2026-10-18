@@ -1,5 +1,11 @@
 # Awilix vs Resultar composition root
 
+> Historical consumer review from v3. The eager `ResultAsync` / `StrictResultAsync`
+> examples and original roadmap below describe that migration. In v4 these APIs
+> are deprecated; use `ResultTask` for new asynchronous workflows, including those
+> without service requirements. See [current adoption guidance](gradual-adoption.md)
+> and [v4 compatibility notes](migrations/v4.md).
+
 - Status: Note
 - Date: 2026-09-05
 - Scope: DX of replacing Awilix in Resultar consumers

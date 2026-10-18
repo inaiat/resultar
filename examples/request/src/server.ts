@@ -1,4 +1,4 @@
-import { ResultAsync, runPromise, type ResultAsyncAbortSignal } from "resultar";
+import { ResultAsync, runPromise, type ResultAsyncAbortSignal } from "resultar/async";
 
 import {
   AccountExampleServerError,

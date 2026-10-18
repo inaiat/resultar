@@ -1,4 +1,4 @@
-import { okAsync, type StrictResultAsync } from "resultar";
+import { okAsync, type StrictResultAsync } from "resultar/async";
 
 type User = { readonly id: string };
 

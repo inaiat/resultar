@@ -1,19 +1,18 @@
+// Lifecycle sessions retain their eager ResultAsync compatibility boundary.
+/* eslint-disable typescript/no-deprecated */
 import { Hono } from "hono";
 import type { HonoOptions } from "hono/hono-base";
 import {
   AbortError,
   err,
-  errAsync,
-  fromSafePromise,
   ResultTask,
   ResultTaskCauseError,
-  unitAsync,
   unit,
   ok,
   type Exit,
   type Result,
-  type ResultAsync,
 } from "resultar";
+import { errAsync, fromSafePromise, unitAsync, type ResultAsync } from "resultar/async";
 import {
   inspectModule,
   startServiceTask,
@@ -113,26 +112,24 @@ export function createHonoApp<
   let startupResult: ResultAsync<void, ResultTaskCauseError> | undefined = undefined;
   let startupFailed = false;
   const closeResources = () => {
-    resourcesClosing ??= ResultTask.toResultAsync(
-      (session?.close() ?? unitAsync())
-        .map((): ResultTaskCauseError | undefined => undefined)
-        .orElse((error) => ok(error))
-        .andThen((error) =>
-          fromSafePromise(ResultTask.runExit(root.close())).map(
-            (exit): Exit<void, ServiceScopeError<R>> => {
-              if (error === undefined) return exit;
-              const cause = { _tag: "Die", defect: error } as const;
-              return {
-                _tag: "Failure",
-                cause:
-                  exit._tag === "Failure"
-                    ? { _tag: "Sequential", left: cause, right: exit.cause }
-                    : cause,
-              };
-            },
-          ),
+    resourcesClosing ??= (session?.close() ?? unitAsync())
+      .map((): ResultTaskCauseError | undefined => undefined)
+      .orElse((error) => ok(error))
+      .andThen((error) =>
+        fromSafePromise(ResultTask.runExit(root.close())).map(
+          (exit): Exit<void, ServiceScopeError<R>> => {
+            if (error === undefined) return exit;
+            const cause = { _tag: "Die", defect: error } as const;
+            return {
+              _tag: "Failure",
+              cause:
+                exit._tag === "Failure"
+                  ? { _tag: "Sequential", left: cause, right: exit.cause }
+                  : cause,
+            };
+          },
         ),
-    );
+      );
     return resourcesClosing;
   };
   const ready = (): ResultAsync<void, ResultTaskCauseError> => {
@@ -154,22 +151,16 @@ export function createHonoApp<
         useSingletons([], () => task as ResultTask<void, unknown>) as ResultTask<void, unknown>,
       startup,
     );
-    startupResult = ResultTask.toResultAsync(
-      session.ready.orElse((error) => {
-        startupFailed = true;
-        return closeResources().andThen((exit) =>
-          errAsync(
-            exit._tag === "Failure"
-              ? new ResultTaskCauseError({
-                  _tag: "Sequential",
-                  left: error.cause,
-                  right: exit.cause,
-                })
-              : error,
-          ),
-        );
-      }),
-    );
+    startupResult = session.ready.orElse((error) => {
+      startupFailed = true;
+      return closeResources().andThen((exit) =>
+        errAsync(
+          exit._tag === "Failure"
+            ? new ResultTaskCauseError({ _tag: "Sequential", left: error.cause, right: exit.cause })
+            : error,
+        ),
+      );
+    });
     return startupResult;
   };
   const fetch = (request: Request): Promise<Response> => {
@@ -198,21 +189,17 @@ export function createHonoApp<
         closing ??= ResultTask.runResult(root.close());
         return closing;
       }
-      closing ??= closeResources()
-        .match(
-          (exit): Result<void, ServiceScopeError<R>> => {
-            if (exit._tag === "Success") return unit();
-            if (exit.cause._tag === "Fail") return err(exit.cause.error);
-            if (exit.cause._tag === "Die") throw exit.cause.defect;
-            if (exit.cause._tag === "Interrupt")
-              throw new AbortError("ResultTask execution interrupted", {
-                cause: exit.cause.reason,
-              });
-            throw new ResultTaskCauseError(exit.cause);
-          },
-          (error: never) => error,
-        )
-        .unwrapOrThrow();
+      closing ??= closeResources().match(
+        (exit): Result<void, ServiceScopeError<R>> => {
+          if (exit._tag === "Success") return unit();
+          if (exit.cause._tag === "Fail") return err(exit.cause.error);
+          if (exit.cause._tag === "Die") throw exit.cause.defect;
+          if (exit.cause._tag === "Interrupt")
+            throw new AbortError("ResultTask execution interrupted", { cause: exit.cause.reason });
+          throw new ResultTaskCauseError(exit.cause);
+        },
+        (error: never) => error,
+      );
       return closing;
     },
   };

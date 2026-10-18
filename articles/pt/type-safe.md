@@ -1,5 +1,46 @@
 # TypeScript Type-safe: Transformando Exceções em Valores com Resultar [Resultar](https://github.com/inaiat/resultar)
 
+## Orientação atual para a v4
+
+Use `Result<T, E>` para operações síncronas de domínio e `ResultTask<T, E, R>`
+para novos fluxos assíncronos. `ResultAsync` e `StrictResultAsync` estão depreciados
+desde a v4 e preservam o comportamento eager no subpath `resultar/async` do mesmo pacote durante a migração.
+
+```typescript
+import { createTaggedError, ResultTask } from 'resultar';
+
+class ReadTextError extends createTaggedError({
+  name: 'ReadTextError',
+  message: 'Could not read $url',
+}) {}
+
+const readText = (url: string) => ResultTask.tryPromise({
+  try: (signal) => fetch(url, { signal }).then((response) => response.text()),
+  catch: (cause) => new ReadTextError({ url, cause }),
+});
+
+const summarize = (url: string) => ResultTask.gen(function* () {
+  const text = yield* readText(url);
+  return { length: text.length };
+});
+
+// Construir o fluxo é lazy. Execute-o explicitamente na fronteira da aplicação.
+const result = await ResultTask.runResult(summarize('https://example.com'));
+console.log(result.match({ ok: (summary) => summary, err: (error) => error.message }));
+```
+
+Veja o [guia de adoção](../../docs/gradual-adoption.md) e a
+[migração para a v4](../../docs/migrations/v4.md) para retries, recursos,
+execução e pontes com APIs eager existentes.
+
+## Artigo histórico da v3
+
+O texto abaixo preserva os exemplos originais de conversão de exceções em valores.
+As receitas assíncronas usam a API eager da v3 e `safeTry`; na v4, importe os equivalentes de `resultar/async`, conforme o guia de migração. Para código
+novo na v4, siga a receita Task acima. Fetch resolve mesmo em status HTTP de erro;
+o exemplo curto acima mapeia falhas de rede/leitura do corpo. A política de status
+deve ficar no adapter ou nos [pacotes de request](../../packages/request/README.md).
+
 ## O Problema das Exceções em JavaScript
 
 JavaScript, como muitas linguagens dinâmicas, permite que exceções sejam lançadas em praticamente qualquer ponto do código. Este comportamento, embora flexível, pode criar diversos problemas:

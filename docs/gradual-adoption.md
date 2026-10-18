@@ -1,9 +1,10 @@
 # Adopt Resultar gradually
 
 Start by making one expected failure explicit with `Result<T, E>`. Keep existing
-Promise APIs at their boundaries, then move one use case to `ResultTask` when it
-needs reusable execution, time policies, service requirements or owned concurrent
-work. Each step is useful on its own; an application can keep all three models.
+Promise APIs at their boundaries and prefer `ResultTask` for new asynchronous
+workflows. Add time policies, service requirements or owned concurrent work as
+needed. Deprecated `ResultAsync` from `resultar/async` preserves existing eager boundaries during migration.
+Each step is useful on its own; an application can keep all three models.
 
 `Result<T, E>` uses `T` for success and `E` for expected errors.
 `ResultTask<T, E, R>` adds a third parameter, `R`, for required services and
@@ -17,8 +18,8 @@ their preferred names; changing those spellings is independent of adopting tasks
 | Adopt when you need | Contract | When work starts |
 | --- | --- | --- |
 | One synchronous validation or domain operation | `Result<T, E>` | When the function is called |
-| Requirement-free async work (`R = never`) | `ResultAsync<T, E>` (`ResultTask<T, E, never>`) | When `await`ed or passed to `run*` (or immediately if wrapping an existing `Promise`) |
-| A reusable workflow with service/scope requirements (`R`) or custom runtime options | `ResultTask<T, E, R>` | At a `run*` boundary (or `await` once `R = never`), again on each run |
+| New async work, with optional service/scope requirements (`R`) and runtime options | `ResultTask<T, E, R>` | At an explicit `run*` boundary, again on each run |
+| An existing eager async contract | Deprecated `ResultAsync<T, E>` | Immediately; repeated awaits observe one execution |
 
 The TypeScript blocks below are independent examples. Copy one into an ESM
 module; blocks using `await` use top-level await.
@@ -101,20 +102,21 @@ console.log(parseAddress("localhost", "8080").unwrapOr({ host: "localhost", port
 The inferred error channel contains both validation errors. This still executes
 synchronously and needs no Clock, services or Fibers. Existing `safeTry` workflows
 keep their Result-returning generator contract while migrating to `Result.gen` plain-value returns.
+These helpers are separate functions; the modern generator wraps its plain return
+without inspecting the payload.
 Do not rely on generator `finally` for cleanup after an early `Err` in this model;
 use task resource scopes when cleanup becomes part of the workflow contract.
 
 Runnable example: [domain composition](../examples/cookbook/src/domain-workflow.ts).
 
-## 3. Wrap existing Promises with ResultAsync
+## 3. Add asynchronous work with ResultTask
 
-Adopt typed asynchronous errors with `ResultAsync<T, E>` (`ResultTask<T, E, never>`).
-`tryResultAsync` wraps both synchronous throws while creating a Promise and
-later rejections, and can be `await`ed directly to produce `Result<T, E>`. For an already-created Promise,
-use `ResultAsync.fromPromise(promise, toError)`.
+Use `ResultTask.tryPromise` to turn a Promise factory into lazy, repeatable work.
+Pass its signal to the driver and map expected failures in `catch`. Constructing
+the Task does not start the operation; the outer boundary chooses when to run it.
 
 ```ts
-import { Result, createTaggedError, ok, tryResultAsync, type ResultAsync } from "resultar";
+import { ResultTask, createTaggedError } from "resultar";
 
 interface User {
   readonly id: string;
@@ -127,21 +129,24 @@ class LoadUserError extends createTaggedError({
 }) {}
 
 // Stand-in for an existing driver; replace its body with your Promise API.
-const readUser = async (id: string): Promise<User> => ({ id, name: "Ada" });
+const readUser = async (id: string, signal: AbortSignal): Promise<User> => {
+  signal.throwIfAborted();
+  return { id, name: "Ada" };
+};
 
-const loadUser = (id: string): ResultAsync<User, LoadUserError> =>
-  tryResultAsync({
-    try: () => readUser(id),
+const loadUser = (id: string): ResultTask<User, LoadUserError> =>
+  ResultTask.tryPromise({
+    try: (signal) => readUser(id, signal),
     catch: (cause) => new LoadUserError({ id, cause }),
   });
 
 const greeting = (id: string) =>
-  Result.gen(async function* () {
+  ResultTask.gen(function* () {
     const user = yield* loadUser(id);
     return `Hello, ${user.name}`;
   });
 
-const result = await greeting("user_123");
+const result = await ResultTask.runResult(greeting("user_123"));
 const response = result.match({
   ok: (message) => ({ status: 200, body: { message } }),
   err: (error) => ({ status: 503, body: { message: error.message } }),
@@ -150,21 +155,28 @@ const response = result.match({
 console.log(response);
 ```
 
-`Result.gen` with an async generator returns `ResultAsync` and wraps the returned plain
-value in `Ok`; use `yield*` for fallible steps and early error returns. Yield wrapped Results instead of raw Promises. Callers that
-must return a native Promise can keep a small Promise adapter at their framework
-boundary while the internal use case returns `ResultAsync` directly.
+`ResultTask.gen` uses a synchronous generator even when its steps perform async I/O.
+Return a plain success value, and compose fallible Results or Tasks with `yield*`.
+Use `andThen` and `tryPromise` for an asynchronous transformation; Task `map` is
+synchronous. At the outer boundary, `runResult` returns `Promise<Result<T, E>>`;
+`runExit` preserves every failure cause as a value and `runPromise` resolves the
+success value or rejects.
 
-Runnable examples: [edge wrapping](../examples/cookbook/src/edge-wrapping.ts) and
-[async resilience](../examples/cookbook/src/async-resilience.ts).
+Runnable examples: [task resilience](../examples/cookbook/src/task-resilience.ts) and
+[application lifecycle](../examples/cookbook/src/application-lifecycle.ts).
 
-## 4. Move one use case to ResultTask
+## 4. Bridge existing eager APIs during migration
 
-Introduce `ResultTask.gen` for a selected use case and reuse its existing `Result` and
-`ResultAsync` helpers directly via `yield*`. Task generators return a **plain success value**.
+`ResultAsync` and `StrictResultAsync` are deprecated since v4 and live in the
+`resultar/async` subpath of the same package. Import from this subpath to keep
+their eager, single-execution behavior where existing callers
+depend on that contract. For a new Task workflow, adapt the existing operation with
+`fromResultAsync`; a factory creates fresh work on each run. The following
+`loadUser` represents such an existing eager adapter.
 
 ```ts
-import { ResultTask, createTaggedError, ok, tryResultAsync, type Result } from "resultar";
+import { ResultTask, createTaggedError, ok, type Result } from "resultar";
+import { ResultAsync, tryResultAsync } from "resultar/async";
 
 class InvalidIdError extends createTaggedError({
   name: "InvalidIdError",
@@ -188,12 +200,12 @@ const loadUser = (id: string) =>
 const greetingTask = (input: string) =>
   ResultTask.gen(function* () {
     const id = yield* validateId(input);
-    const user = yield* loadUser(id);
+    const user = yield* ResultTask.fromResultAsync(() => loadUser(id));
     return `Hello, ${user.name}`;
   });
 
-// Existing callers keep an awaitable ResultAsync contract (since R = never).
-const greeting = (id: string) => ResultTask.toResultAsync(greetingTask(id));
+// The bridge eagerly starts one execution for existing ResultAsync callers.
+const greeting = (id: string) => ResultAsync.fromTask(greetingTask(id));
 
 console.log((await greeting("user_123")).unwrapOr("Unavailable"));
 
@@ -203,11 +215,11 @@ const result = await ResultTask.runResult(task);
 console.log(result.unwrapOr("Unavailable"));
 ```
 
-Because `ResultAsync<T, E>` is `ResultTask<T, E, never>`, `toResultAsync` accepts any
-task with no remaining requirements (`R = never`). Provide services
-and wrap scope-dependent work with `ResultTask.scoped` before bridging or `await`ing when
-needed. Its underlying `runResult` boundary can still reject on defects,
-interruption or composite causes.
+`ResultAsync.fromTask` accepts a task with no remaining requirements (`R = never`),
+starts it once and captures that execution in a separate awaitable facade. Provide
+services and wrap scope-dependent work with `ResultTask.scoped` before bridging.
+Its underlying `runResult` boundary can still reject on defects, interruption or
+composite causes. A Task itself has no `.then`; awaiting it does not execute it.
 
 For Promise adapters that need the active cancellation signal, use `ResultTask.tryPromise({ try: signal => ..., catch })`
 or `ResultTask.fromResultAsync(signal => load(signal))` and pass the signal to a cooperative driver.
@@ -215,23 +227,31 @@ or `ResultTask.fromResultAsync(signal => load(signal))` and pass the signal to a
 | Bridge | Execution behavior |
 | --- | --- |
 | `ResultTask.fromResult(result)` | Wraps a synchronous `Result` that has already been computed |
-| `ResultTask.fromResultAsync(existing)` | Wraps an existing `ResultAsync` / `ResultTask<T, E, never>` |
+| `ResultTask.fromResultAsync(existing)` | Reuses an existing eager `ResultAsync` execution on every task run |
 | `ResultTask.fromResultAsync(signal => load(signal))` | Evaluates the factory with the active `AbortSignal` on each task run |
 | `ResultTask.tryPromise({ try, catch })` | Calls the Promise factory on each task run |
-| `ResultTask.toResultAsync(task)` | Returns the requirement-free `ResultTask<T, E, never>` as `ResultAsync<T, E>` |
+| `ResultAsync.fromTask(task)` | Starts a requirement-free task once and returns a memoized `ResultAsync` |
 
 Capturing an already-started `Promise` via `fromPromise` cannot undo its execution; use
-`tryResultAsync` or `ResultTask.tryPromise` so each task run and retry creates a fresh operation. `fromResult` has no
+`ResultTask.tryPromise` or `fromResultAsync(() => tryResultAsync(...))` so each task
+run and retry creates a fresh operation. `fromResult` has no
 factory overload; defer a Result-producing call inside `ResultTask.gen` as above.
+
+The incoming bridge accepts any `PromiseLike<Result<T, E>>`. Core `Result.gen` and
+`Result.fn` accept synchronous and asynchronous generators with plain return values;
+legacy `safeTry` preserves the final Result. Existing root imports remain supported,
+and `resultar/async` provides the eager helpers in the same package; see the
+[v4 migration table](migrations/v4.md).
 
 ## 5. Add services where a task needs them
 
 Keep ordinary function parameters until a task benefits from typed service
 requirements. A service tag records its requirement in `R`; the run boundary
-supplies the implementation. The repository can still return ResultAsync.
+supplies the implementation. New repositories can return Tasks directly; existing
+eager repositories use the bridge from the previous section.
 
 ```ts
-import { ResultTask, createTaggedError, tryResultAsync, type ResultAsync } from "resultar";
+import { ResultTask, createTaggedError } from "resultar";
 
 interface User {
   readonly id: string;
@@ -244,21 +264,21 @@ class LoadUserError extends createTaggedError({
 }) {}
 
 interface UserRepository {
-  readonly load: (id: string, signal: AbortSignal) => ResultAsync<User, LoadUserError>;
+  readonly load: (id: string) => ResultTask<User, LoadUserError>;
 }
 
 const Users = ResultTask.service<UserRepository>()("Users");
 
 const greeting = ResultTask.gen(function* () {
   const users = yield* Users;
-  const user = yield* ResultTask.fromResultAsync((signal) => users.load("user_123", signal));
+  const user = yield* users.load("user_123");
   return `Hello, ${user.name}`;
 });
 
 const users: UserRepository = {
-  load: (id, signal) =>
-    tryResultAsync({
-      try: async () => {
+  load: (id) =>
+    ResultTask.tryPromise({
+      try: async (signal) => {
         signal.throwIfAborted();
         return { id, name: "Ada" };
       },
@@ -271,19 +291,19 @@ console.log(result.unwrapOr("Unavailable"));
 ```
 
 Omitting `Users` is a type error. Bind it earlier with
-`ResultTask.provideService(greeting, Users, users)` when an eager compatibility
-facade needs a requirement-free task. A DI container is optional; see the
+`ResultTask.provideService(greeting, Users, users)` to supply it before execution.
+A DI container is optional; see the
 [service guide](../packages/resultar/README.md#lazy-workflows-with-resulttask) and
 [resultar-di](../packages/di/README.md) when lifetimes span several use cases.
 
 ## 6. Reuse retry policy and make time deterministic
 
 Introduce retry around an operation that is safe to repeat, such as a read.
-`Retry.policy` works with existing eager ResultAsync factories and lazy tasks, so
-policy adoption can happen before execution-model migration.
+Use `Retry.policy` on the Task representing that operation. The same policy can
+also be reused by existing eager ResultAsync factories during migration.
 
 ```ts
-import { Clock, ResultAsync, ResultTask, Retry, createTaggedError, tryResultAsync } from "resultar";
+import { Clock, ResultTask, Retry, createTaggedError } from "resultar";
 
 class ProviderError extends createTaggedError({
   name: "ProviderError",
@@ -297,17 +317,6 @@ const policy = Retry.policy<ProviderError>({
   jittered: 0.2,
   while: (error) => ProviderError.is(error),
 });
-
-const eager = () =>
-  ResultAsync.retry(
-    () => tryResultAsync({
-      try: async () => "ready",
-      catch: (cause) => new ProviderError({ cause }),
-    }),
-    policy,
-  );
-
-console.log((await eager()).unwrapOr("Unavailable"));
 
 let attempts = 0;
 const read = ResultTask.sync(() => ++attempts).andThen((attempt) =>

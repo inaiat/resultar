@@ -21,13 +21,21 @@ import type {
   ReasonForTag,
   ReasonTagsOf,
   ReasonsOf,
-  RemainingMatchTagErrors,
   ResultCatchReasonHandlers as CatchReasonHandlers,
   ResultCatchTagHandlers as CatchTagHandlers,
   TagsOf,
   TagsWithReasonOf,
 } from '../tagged/tagged-types.js'
-import type { ResultAsync } from '../task/result-async.js'
+import { createResultAsync } from '../resultar-async/result-async-adapter.js'
+import type { ResultAsync } from '../resultar-async/result-async.js'
+import type { ResultAsyncAndThen, ResultAsyncMap } from '../resultar-async/async-types.js'
+import type {
+  AsyncResultGenGuard,
+  AsyncResultGenOptions,
+  LegacySafeTry,
+  SafeTryAsyncOptions,
+  SafeTryOptions,
+} from '../resultar-async/generator-types.js'
 import {
   callSyncSideEffect,
   createEmptyResultsCollectionError,
@@ -38,8 +46,6 @@ import {
   OkResultIterator,
 } from './result-helpers.js'
 import type {
-  AsyncResultGenGuard,
-  AsyncResultGenOptions,
   CombineResults,
   CombineResultsIterable,
   CombineResultsIterableWithAllErrors,
@@ -48,16 +54,12 @@ import type {
   CombineResultsWithAllErrorsArray,
   ErrResult,
   FirstSuccessOf,
-  LegacySafeTry,
   MatchErrorHandler,
   MatchHandlers,
   MatchOkHandler,
   OkResult,
   ResultAndThen,
   ResultAs,
-  ResultAsyncAndThen,
-  ResultAsyncFactory,
-  ResultAsyncMap,
   ResultBooleanCondition,
   ResultCandidate,
   ResultCatchReason,
@@ -113,31 +115,19 @@ import type {
   ResultWhenWithCondition,
   ResultZipped,
   ResultAsVoid,
-  SafeTryAsyncOptions,
-  SafeTryOptions,
   SyncResultGenGuard,
   TryResultOptions,
   WidenLiteral,
 } from './result-types.js'
 
 export { createEmptyResultsCollectionError, DisposableResult } from './result-helpers.js'
+export type { AsyncResultGenOptions } from '../resultar-async/generator-types.js'
 export type {
-  AsyncResultGenOptions,
-  Combine,
-  Dedup,
-  EmptyArrayToNever,
   ErrResult,
-  IsLiteralArray,
-  MatchHandlers,
-  MemberListOf,
-  MembersToUnion,
   OkResult,
-  ResultAsyncGenerator,
   ResultGenerator,
   ResultGenOptions,
   ResultOperations,
-  SafeTryAsyncOptions,
-  SafeTryOptions,
   StrictResult,
   TryResultOptions,
 } from './result-types.js'
@@ -145,14 +135,20 @@ export type {
 export type Result<T, E> = OkResult<T, E> | ErrResult<T, E>
 
 const combineResultList = <T, E>(resultList: readonly Result<T, E>[]): Result<readonly T[], E> => {
+  const len = resultList.length
   const values: T[] = []
 
-  for (const result of resultList) {
-    if (result.isErr()) {
-      return err(result.error)
-    }
+  /* Stryker disable all: indexed loop is behaviorally equivalent to for-of over dense array. */
+  for (let index = 0; index < len; index += 1) {
+    const result = resultList[index]
+    if (result !== undefined) {
+      /* Stryker restore all */
+      if (result.isErr()) {
+        return err(result.error)
+      }
 
-    values.push(result.value)
+      values.push(result.value)
+    }
   }
 
   return ok(values)
@@ -210,6 +206,53 @@ const combineResultRecordWithAllErrors = <T extends ResultRecord>(
 
   return ok(values) as CombineResultsRecordWithAllErrors<T>
 }
+
+const whenByExpected = <Condition extends ResultCondition, R extends Result<unknown, unknown>>(
+  condition: Condition,
+  body: R | (() => R),
+  expected: boolean,
+): ResultWhen<R, ResultConditionError<Condition>> => {
+  const rawCondition: ResultCondition = condition
+  const evaluatedCondition = typeof rawCondition === 'function' ? rawCondition() : rawCondition
+
+  if (typeof evaluatedCondition === 'boolean') {
+    if (evaluatedCondition === expected) {
+      return (typeof body === 'function' ? body() : body) as ResultWhen<
+        R,
+        ResultConditionError<Condition>
+      >
+    }
+
+    return ok<InferOkTypes<R> | undefined, ResultConditionError<Condition> | InferErrTypes<R>>(
+      undefined,
+    )
+  }
+
+  if (evaluatedCondition.isErr()) {
+    return err(evaluatedCondition.error as ResultConditionError<Condition>) as ResultWhen<
+      R,
+      ResultConditionError<Condition>
+    >
+  }
+
+  if (evaluatedCondition.value !== expected) {
+    return ok<InferOkTypes<R> | undefined, ResultConditionError<Condition> | InferErrTypes<R>>(
+      undefined,
+    )
+  }
+
+  return (typeof body === 'function' ? body() : body) as ResultWhen<
+    R,
+    ResultConditionError<Condition>
+  >
+}
+
+const curryWhenByExpected =
+  <Condition extends ResultCondition>(condition: Condition, expected: boolean) =>
+  <Body extends Result<unknown, unknown>>(
+    target: Body | (() => Body),
+  ): ResultWhen<Body, ResultConditionError<Condition>> =>
+    whenByExpected(condition, target, expected)
 
 const loopResult = <State, R extends Result<unknown, unknown>>(
   initial: State,
@@ -310,13 +353,6 @@ const forEachResult = <Item, R extends Result<unknown, unknown>>(
   }
 
   return ok<readonly InferOkTypes<R>[], InferErrTypes<R>>(values)
-}
-
-// eslint-disable-next-line init-declarations
-let createResultAsync: ResultAsyncFactory
-
-export const registerResultAsyncFactory = (factory: ResultAsyncFactory): void => {
-  createResultAsync = factory
 }
 
 interface ResultStatic {
@@ -844,7 +880,7 @@ class ResultNamespace {
   }
 
   /**
-   * Alias for the top-level `safeTry` generator workflow.
+   * Runs a generator that returns a plain success value and composes Results with `yield*`.
    */
   public static readonly gen: typeof resultGen = resultGen
 
@@ -909,18 +945,34 @@ class ResultNamespace {
     fn: Fn,
     errorFn?: (e: any) => E,
   ): (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E> {
-    return (...args) => {
-      try {
-        const result = fn(...args)
-        return ok(result as ReturnType<Fn>)
-      } catch (error) {
-        if (errorFn) {
+    if (errorFn) {
+      return function (this: unknown, a?: unknown): Result<ReturnType<Fn>, E> {
+        try {
+          /* Stryker disable all: 0/1-arg fast-path avoids rest array allocation and is equivalent to Reflect.apply. */
+          if (this === undefined && arguments.length <= 1) {
+            return ok((fn as (arg?: unknown) => ReturnType<Fn>)(a))
+          }
+          /* Stryker restore all */
+          // eslint-disable-next-line prefer-rest-params
+          return ok(Reflect.apply(fn, this, arguments) as ReturnType<Fn>)
+        } catch (error) {
           return err(errorFn(error))
         }
-
+      } as unknown as (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E>
+    }
+    return function (this: unknown, a?: unknown): Result<ReturnType<Fn>, E> {
+      try {
+        /* Stryker disable all: 0/1-arg fast-path avoids rest array allocation and is equivalent to Reflect.apply. */
+        if (this === undefined && arguments.length <= 1) {
+          return ok((fn as (arg?: unknown) => ReturnType<Fn>)(a))
+        }
+        /* Stryker restore all */
+        // eslint-disable-next-line prefer-rest-params
+        return ok(Reflect.apply(fn, this, arguments) as ReturnType<Fn>)
+      } catch (error) {
         return err(error as E)
       }
-    }
+    } as unknown as (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E>
   }
 
   /**
@@ -1179,46 +1231,6 @@ class ResultNamespace {
     >
   }
 
-  static #whenByPredicate<Condition extends ResultCondition, R extends Result<unknown, unknown>>(
-    condition: Condition,
-    body: R | (() => R),
-    predicate: (value: boolean) => boolean,
-  ): ResultWhen<R, ResultConditionError<Condition>> {
-    const rawCondition: ResultCondition = condition
-    const evaluatedCondition = typeof rawCondition === 'function' ? rawCondition() : rawCondition
-
-    if (typeof evaluatedCondition !== 'boolean') {
-      if (evaluatedCondition.isErr()) {
-        return err(evaluatedCondition.error as ResultConditionError<Condition>) as ResultWhen<
-          R,
-          ResultConditionError<Condition>
-        >
-      }
-
-      if (!predicate(evaluatedCondition.value)) {
-        return ok<InferOkTypes<R> | undefined, ResultConditionError<Condition> | InferErrTypes<R>>(
-          undefined,
-        )
-      }
-
-      return (typeof body === 'function' ? body() : body) as ResultWhen<
-        R,
-        ResultConditionError<Condition>
-      >
-    }
-
-    if (predicate(evaluatedCondition)) {
-      return (typeof body === 'function' ? body() : body) as ResultWhen<
-        R,
-        ResultConditionError<Condition>
-      >
-    }
-
-    return ok<InferOkTypes<R> | undefined, ResultConditionError<Condition> | InferErrTypes<R>>(
-      undefined,
-    )
-  }
-
   public static when<Condition extends ResultCondition, R extends Result<unknown, unknown>>(
     this: void,
     condition: Condition,
@@ -1240,18 +1252,17 @@ class ResultNamespace {
         target: Body | (() => Body),
       ) => ResultWhen<Body, ResultConditionError<Condition>>) {
     if (body === undefined) {
-      return <Body extends Result<unknown, unknown>>(target: Body | (() => Body)) =>
-        ResultNamespace.#whenByPredicate(condition, target, (value) => value)
+      return curryWhenByExpected(condition, true)
     }
 
-    return ResultNamespace.#whenByPredicate(condition, body, (value) => value)
+    return whenByExpected(condition, body, true)
   }
 
   public static whenResult<
     Condition extends Result<boolean, unknown>,
     R extends Result<unknown, unknown>,
   >(this: void, condition: Condition, body: R | (() => R)): ResultWhenWithCondition<Condition, R> {
-    return ResultNamespace.#whenByPredicate(condition, body, (value) => value)
+    return whenByExpected(condition, body, true)
   }
 
   public static unless<Condition extends ResultCondition, R extends Result<unknown, unknown>>(
@@ -1275,18 +1286,17 @@ class ResultNamespace {
         target: Body | (() => Body),
       ) => ResultWhen<Body, ResultConditionError<Condition>>) {
     if (body === undefined) {
-      return <Body extends Result<unknown, unknown>>(target: Body | (() => Body)) =>
-        ResultNamespace.#whenByPredicate(condition, target, (value) => !value)
+      return curryWhenByExpected(condition, false)
     }
 
-    return ResultNamespace.#whenByPredicate(condition, body, (value) => !value)
+    return whenByExpected(condition, body, false)
   }
 
   public static unlessResult<
     Condition extends Result<boolean, unknown>,
     R extends Result<unknown, unknown>,
   >(this: void, condition: Condition, body: R | (() => R)): ResultWhenWithCondition<Condition, R> {
-    return ResultNamespace.#whenByPredicate(condition, body, (value) => !value)
+    return whenByExpected(condition, body, false)
   }
 
   public static loop<State, BodyState extends State, R extends Result<unknown, unknown>>(
@@ -1374,21 +1384,6 @@ class ResultNamespace {
 export const Result: ResultStatic = ResultNamespace
 
 abstract class ResultVariant<T, E> extends Pipeable {
-  public filterOrElse<U extends T, F>(
-    predicate: (value: T) => value is U,
-    onFalse: (value: T) => F,
-  ): Result<U, E | F>
-  public filterOrElse<F>(
-    predicate: (value: T) => boolean,
-    onFalse: (value: T) => F,
-  ): Result<T, E | F>
-  public filterOrElse<F>(
-    predicate: (value: T) => boolean,
-    onFalse: (value: T) => F,
-  ): Result<T, E | F> {
-    return this.filterOrElseResult(predicate, onFalse)
-  }
-
   public if(fCondition: (t: T) => boolean): {
     true: <X1, Y1>(
       fTrue: (t: T) => Result<X1, Y1>,
@@ -1412,14 +1407,6 @@ abstract class ResultVariant<T, E> extends Pipeable {
     condition: Condition,
   ): Result<T | undefined, E | ResultConditionError<Condition>> {
     return Result.unless(condition, this as unknown as Result<T, E>)
-  }
-
-  public orElse<R extends Result<unknown, unknown>>(
-    f: (e: E) => R,
-  ): Result<InferOkTypes<R> | T, InferErrTypes<R>>
-  public orElse<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A>
-  public orElse<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A> {
-    return this.orElseResult(f)
   }
 
   public orElseSucceed<A>(f: (e: E) => A): Result<T | A, never> {
@@ -1450,25 +1437,22 @@ abstract class ResultVariant<T, E> extends Pipeable {
 
   public abstract inspectError(fn: (e: E) => void): this
 
-  protected abstract filterOrElseResult<F>(
-    predicate: (value: T) => boolean,
-    onFalse: (value: T) => F,
-  ): Result<T, E | F>
+  public abstract orElse<R extends Result<unknown, unknown>>(
+    f: (e: E) => R,
+  ): Result<InferOkTypes<R> | T, InferErrTypes<R>>
+  public abstract orElse<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A>
 
   protected abstract branchResult<X1, Y1, X2, Y2>(
     fCondition: (t: T) => boolean,
     fTrue: (t: T) => Result<X1, Y1>,
     fFalse: (t: T) => Result<X2, Y2>,
   ): Result<X1 | X2, Y1 | Y2 | E>
-
-  protected abstract orElseResult<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A>
 }
 
-class Ok<T, E> extends ResultVariant<T, E> {
+class Ok<T, E> {
   public readonly value: T
 
   public constructor(value: T) {
-    super()
     this.value = value
   }
 
@@ -1491,7 +1475,15 @@ class Ok<T, E> extends ResultVariant<T, E> {
     return ok<X, E>(value)
   }
 
-  protected filterOrElseResult<F>(
+  public filterOrElse<U extends T, F>(
+    predicate: (value: T) => value is U,
+    onFalse: (value: T) => F,
+  ): Result<U, E | F>
+  public filterOrElse<F>(
+    predicate: (value: T) => boolean,
+    onFalse: (value: T) => F,
+  ): Result<T, E | F>
+  public filterOrElse<F>(
     predicate: (value: T) => boolean,
     onFalse: (value: T) => F,
   ): Result<T, E | F> {
@@ -1510,7 +1502,11 @@ class Ok<T, E> extends ResultVariant<T, E> {
     return f(this.value)
   }
 
-  protected orElseResult<U, A>(_f: (e: E) => Result<U, A>): Result<U | T, A> {
+  public orElse<R extends Result<unknown, unknown>>(
+    _f: (e: E) => R,
+  ): Result<InferOkTypes<R> | T, InferErrTypes<R>>
+  public orElse<U, A>(_f: (e: E) => Result<U, A>): Result<U | T, A>
+  public orElse<U, A>(_f: (e: E) => Result<U, A>): Result<U | T, A> {
     return ok<U | T, A>(this.value as Exclude<T, Promise<any>>)
   }
 
@@ -1574,7 +1570,9 @@ class Ok<T, E> extends ResultVariant<T, E> {
   }
 
   public asyncMap<X>(f: (t: T) => Promise<X>): ResultAsync<X, E> {
-    return createResultAsync(Promise.resolve(f(this.value)).then((value) => ok<X, E>(value)))
+    return createResultAsync<ResultAsync<X, E>>(
+      Promise.resolve(f(this.value)).then((value) => ok<X, E>(value)),
+    )
   }
 
   public unwrapOr<A>(_defaultValue: A): T | A {
@@ -1587,9 +1585,7 @@ class Ok<T, E> extends ResultVariant<T, E> {
     input: MatchHandlers<T, E, A, B> | MatchOkHandler<T, A>,
     _fnErr?: MatchErrorHandler<E, B>,
   ): A | B {
-    const fnOk = typeof input === 'function' ? input : input.ok
-
-    return fnOk(this.value)
+    return typeof input === 'function' ? input(this.value) : input.ok(this.value)
   }
 
   public matchTags<A, const Handlers extends object>(
@@ -1602,7 +1598,7 @@ class Ok<T, E> extends ResultVariant<T, E> {
   public matchTagsPartial<A, B, const Handlers extends object>(
     fnOk: (t: T) => A,
     _handlers: Handlers & PartialMatchTagHandlers<E, Handlers>,
-    _fallback: (error: RemainingMatchTagErrors<E, Handlers>) => B,
+    _fallback: (error: E) => B,
   ): A | MatchTagHandlerResult<Handlers> | B {
     return fnOk(this.value)
   }
@@ -1643,7 +1639,11 @@ class Ok<T, E> extends ResultVariant<T, E> {
   }
 
   public _unsafeUnwrapErr(config?: ErrorConfig): E {
-    throw createResultarError('Called `_unsafeUnwrapErr` on an Ok', this, config)
+    throw createResultarError(
+      'Called `_unsafeUnwrapErr` on an Ok',
+      this as unknown as Result<T, E>,
+      config,
+    )
   }
 
   public [Symbol.iterator](): Generator<Result<never, E>, T> {
@@ -1660,11 +1660,10 @@ class Ok<T, E> extends ResultVariant<T, E> {
   }
 }
 
-class Err<T, E> extends ResultVariant<T, E> {
+class Err<T, E> {
   public readonly error: E
 
   public constructor(error: E) {
-    super()
     this.error = error
   }
 
@@ -1686,7 +1685,15 @@ class Err<T, E> extends ResultVariant<T, E> {
     return err<X, E>(this.error)
   }
 
-  protected filterOrElseResult<F>(
+  public filterOrElse<U extends T, F>(
+    predicate: (value: T) => value is U,
+    onFalse: (value: T) => F,
+  ): Result<U, E | F>
+  public filterOrElse<F>(
+    predicate: (value: T) => boolean,
+    onFalse: (value: T) => F,
+  ): Result<T, E | F>
+  public filterOrElse<F>(
     _predicate: (value: T) => boolean,
     _onFalse: (value: T) => F,
   ): Result<T, E | F> {
@@ -1701,7 +1708,11 @@ class Err<T, E> extends ResultVariant<T, E> {
     return err<X, E | Y>(this.error)
   }
 
-  protected orElseResult<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A> {
+  public orElse<R extends Result<unknown, unknown>>(
+    f: (e: E) => R,
+  ): Result<InferOkTypes<R> | T, InferErrTypes<R>>
+  public orElse<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A>
+  public orElse<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A> {
     return f(this.error)
   }
 
@@ -1818,11 +1829,11 @@ class Err<T, E> extends ResultVariant<T, E> {
 
   public asyncAndThen<X, Y>(_f: (t: T) => ResultAsync<X, Y>): ResultAsync<X, E | Y>
   public asyncAndThen<X, Y>(_f: (t: T) => ResultAsync<X, E>): ResultAsync<X, E | Y> {
-    return createResultAsync(Promise.resolve(err<X, E | Y>(this.error)))
+    return createResultAsync<ResultAsync<X, E | Y>>(Promise.resolve(err<X, E | Y>(this.error)))
   }
 
   public asyncMap<X>(_f: (t: T) => Promise<X>): ResultAsync<X, E> {
-    return createResultAsync(Promise.resolve(err<X, E>(this.error)))
+    return createResultAsync<ResultAsync<X, E>>(Promise.resolve(err<X, E>(this.error)))
   }
 
   public unwrapOr<A>(defaultValue: A): T | A {
@@ -1858,14 +1869,9 @@ class Err<T, E> extends ResultVariant<T, E> {
   public matchTagsPartial<A, B, const Handlers extends object>(
     _fnOk: (t: T) => A,
     handlers: Handlers & PartialMatchTagHandlers<E, Handlers>,
-    fallback: (error: RemainingMatchTagErrors<E, Handlers>) => B,
+    fallback: (error: E) => B,
   ): A | MatchTagHandlerResult<Handlers> | B {
-    return matchTaggedOr<
-      E,
-      MatchTagHandlerResult<Handlers>,
-      B,
-      RemainingMatchTagErrors<E, Handlers>
-    >(this.error, handlers, fallback)
+    return matchTaggedOr<E, MatchTagHandlerResult<Handlers>, B>(this.error, handlers, fallback)
   }
 
   public log(fn: (t?: T, e?: E) => void): this {
@@ -1901,7 +1907,11 @@ class Err<T, E> extends ResultVariant<T, E> {
   }
 
   public _unsafeUnwrap(config?: ErrorConfig): T {
-    throw createResultarError('Called `_unsafeUnwrap` on an Err', this, config)
+    throw createResultarError(
+      'Called `_unsafeUnwrap` on an Err',
+      this as unknown as Result<T, E>,
+      config,
+    )
   }
 
   public _unsafeUnwrapErr(_config?: ErrorConfig): E {
@@ -1923,6 +1933,20 @@ class Err<T, E> extends ResultVariant<T, E> {
     })()
   }
 }
+
+/* Stryker disable all: copying shared methods onto Ok/Err prototypes avoids derived constructor super() overhead while keeping V8 fast prototype mode. */
+const copyPrototypeMethods = (target: object, source: object): void => {
+  for (const name of Object.getOwnPropertyNames(source)) {
+    if (name !== 'constructor') {
+      ;(target as Record<string, unknown>)[name] = (source as Record<string, unknown>)[name]
+    }
+  }
+}
+copyPrototypeMethods(Ok.prototype, Pipeable.prototype)
+copyPrototypeMethods(Ok.prototype, ResultVariant.prototype)
+copyPrototypeMethods(Err.prototype, Pipeable.prototype)
+copyPrototypeMethods(Err.prototype, ResultVariant.prototype)
+/* Stryker restore all */
 
 const resultGenStep = (
   step: IteratorResult<Result<never, unknown>, unknown>,
@@ -1957,7 +1981,7 @@ const runResultGenerator = (
     throw error
   }
 
-  return createResultAsync(
+  return createResultAsync<ResultAsync<unknown, unknown>>(
     n.then(onStep).catch((error: unknown) => {
       if (catchFn) {
         return err(catchFn(error))
@@ -2088,7 +2112,7 @@ function resultFn<Body extends ResultFnBody>(
 }
 /* eslint-enable max-params */
 
-/** @deprecated Use Result.gen; this alias retains its typed returned Result contract. */
+/** @deprecated Use Result.gen or ResultTask.gen with plain success returns; this helper retains its returned Result contract. */
 export const safeTry: LegacySafeTry = ((
   input:
     | (() => Generator<Result<never, unknown>, Result<unknown, unknown>>)
@@ -2103,7 +2127,7 @@ export const safeTry: LegacySafeTry = ((
 export function ok<T, E = never>(value: T): OkResult<T, E>
 export function ok<E = never>(value: void): OkResult<void, E>
 export function ok<T, E = never>(value: T): OkResult<T, E> {
-  return new Ok<T, E>(value)
+  return new Ok<T, E>(value) as unknown as OkResult<T, E>
 }
 
 /**
@@ -2113,7 +2137,7 @@ export function err<T = never, E extends string = string>(err: E): ErrResult<T, 
 export function err<T = never, E = unknown>(err: E): ErrResult<T, E>
 export function err<T = never>(err: void): ErrResult<T, void>
 export function err<T = never, E = unknown>(error: E): ErrResult<T, E> {
-  return new Err<T, E>(error)
+  return new Err<T, E>(error) as unknown as ErrResult<T, E>
 }
 
 /**

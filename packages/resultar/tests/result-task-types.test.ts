@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
+import { describe, expectTypeOf, it } from 'vite-plus/test'
 
 import type {
   Exit,
@@ -16,7 +16,6 @@ import {
   err,
   ok,
   pipe,
-  ResultAsync,
   ResultTask,
   ResultTaskTypeId,
   Semaphore,
@@ -24,8 +23,8 @@ import {
 
 describe('ResultTask public types', () => {
   it('infers constructor and execution boundary types', async () => {
-    const successful = ResultTask.ok(1)
-    const failed = ResultTask.err<'not-found'>('not-found')
+    const successful = ResultTask.succeed(1)
+    const failed = ResultTask.fail<'not-found'>('not-found')
     const synchronous = ResultTask.sync(() => 'value')
     const caught = ResultTask.try({ try: () => 1, catch: () => 'invalid' as const })
     const promised = ResultTask.tryPromise({
@@ -41,12 +40,10 @@ describe('ResultTask public types', () => {
 
     const exit = await ResultTask.runExit(successful)
     const result = await ResultTask.runResult(successful)
-    const awaited = await successful
     const value = await ResultTask.runPromise(successful)
 
     expectTypeOf(exit).toEqualTypeOf<Exit<number, never>>()
     expectTypeOf(result).toEqualTypeOf<Result<number, never>>()
-    expectTypeOf(awaited).toEqualTypeOf<Result<number, never>>()
     expectTypeOf(value).toEqualTypeOf<number>()
     const runOptions: ResultTaskRunOptions<never> = {}
     expectTypeOf(runOptions).toExtend<{
@@ -57,49 +54,10 @@ describe('ResultTask public types', () => {
     if (false) {
       // @ts-expect-error A task without requirements does not accept a service environment.
       void ResultTask.runResult(successful, { services: {} })
-      // @ts-expect-error ResultTask resolves to Result<A, E> when awaited, not raw A.
+      // @ts-expect-error ResultTask is not implicitly awaitable.
       const promiseLike: PromiseLike<number> = successful
       void promiseLike
     }
-  })
-
-  it('unifies ResultAsync<A, E> with ResultTask<A, E, never> and gates await on R = never', async () => {
-    expectTypeOf<ResultAsync<number, 'err'>>().toEqualTypeOf<ResultTask<number, 'err', never>>()
-
-    const asyncTask = ResultAsync.ok(42)
-    const syncTask = ResultTask.ok(42)
-    expect(asyncTask).toBeInstanceOf(ResultTask)
-    expect(asyncTask).toBeInstanceOf(ResultAsync)
-    expect(syncTask).toBeInstanceOf(ResultTask)
-    expect(syncTask).toBeInstanceOf(ResultAsync)
-
-    const Logger = ResultTask.service<{ readonly info: (msg: string) => void }, 'Logger'>('Logger')
-    const unprovided = ResultTask.gen(function* () {
-      const logger = yield* Logger
-      logger.info('hi')
-      return 21
-    })
-    const scopedResource = ResultTask.acquireRelease({
-      acquire: ResultTask.ok('conn'),
-      release: () => ResultTask.err('close-err' as const),
-    })
-
-    if (false) {
-      // @ts-expect-error Tasks with unprovided service requirements cannot be awaited directly.
-      await unprovided
-      // @ts-expect-error Tasks with open scope requirements cannot be awaited directly.
-      await scopedResource
-    }
-
-    const provided = unprovided.provideService(Logger, { info: () => undefined })
-    const closedScope = ResultTask.scoped(scopedResource)
-    const providedResult = await provided
-    const closedResult = await closedScope
-
-    expectTypeOf(providedResult).toEqualTypeOf<Result<number, never>>()
-    expectTypeOf(closedResult).toEqualTypeOf<Result<string, 'close-err'>>()
-    expect(providedResult).toEqual(ok(21))
-    expect(closedResult).toEqual(err('close-err'))
   })
 
   it('preserves and combines error and service requirement types', () => {
@@ -131,10 +89,10 @@ describe('ResultTask public types', () => {
       return value
     })
     const mapped = workflow.map((value) => value + 1)
-    const chained = workflow.andThen((value) =>
+    const chained = workflow.flatMap((value) =>
       ResultTask.try({ try: () => String(value), catch: () => 'format-failed' as const }),
     )
-    const recovered = workflow.orElse(() => ResultTask.ok(0))
+    const recovered = workflow.catchAll(() => ResultTask.succeed(0))
 
     expectTypeOf(workflow).toEqualTypeOf<
       ResultTask<number, 'clock-failed', typeof Logger | typeof Clock>
@@ -156,8 +114,8 @@ describe('ResultTask public types', () => {
     if (false) {
       // @ts-expect-error A workflow cannot be executed without its required services.
       void ResultTask.runPromise(workflow)
-      // @ts-expect-error Both service requirements must be provided.
       void ResultTask.runResult<number, 'clock-failed', typeof Logger | typeof Clock>(workflow, {
+        // @ts-expect-error Both service requirements must be provided.
         services: { Logger: { info: () => undefined } },
       })
     }
@@ -238,7 +196,7 @@ describe('ResultTask public types', () => {
     type BaseUser = { readonly id: string }
     type AdminUser = BaseUser & { readonly role: 'admin' }
 
-    const adminTask = ResultTask.ok<AdminUser>({ id: 'u1', role: 'admin' })
+    const adminTask = ResultTask.succeed<AdminUser>({ id: 'u1', role: 'admin' })
 
     expectTypeOf(adminTask[ResultTaskTypeId]).toEqualTypeOf<{
       readonly success: (_: never) => AdminUser
@@ -250,7 +208,7 @@ describe('ResultTask public types', () => {
     expectTypeOf(adminTask).toExtend<ResultTask<BaseUser>>()
 
     // Covariance in error type E: 'narrow' -> string
-    const narrowErrorTask = ResultTask.err<'narrow'>('narrow')
+    const narrowErrorTask = ResultTask.fail<'narrow'>('narrow')
     expectTypeOf(narrowErrorTask).toExtend<ResultTask<never, string>>()
   })
 

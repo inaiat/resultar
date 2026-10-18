@@ -9,8 +9,16 @@ It deliberately keeps three independent projects:
 - [`src/resultar-clean.ts`](src/resultar-clean.ts) contains the corresponding recommended patterns
   and must pass without compiler or Resultar diagnostics;
 - [`src/contracts.ts`](src/contracts.ts) enables `preferResultAsyncMode: "all"` and rejects raw
-  Promise repository contracts and inferred implementations while accepting `StrictResultAsync`
-  and explicit native boundary suppressions.
+  Promise repository contracts and inferred implementations while accepting existing eager
+  `StrictResultAsync` contracts and explicit native boundary suppressions. This is an optional
+  legacy policy fixture, not the v4 recommendation for new async application code.
+
+Prefer lazy `ResultTask` workflows with explicit runners in new async code. `ResultAsync` and
+`StrictResultAsync` are exported from the `resultar/async` subpath and are deprecated since v4 and retain one eager execution for compatibility.
+The legacy `preferResultAsync` option remains available to enforce existing eager contracts;
+disable it with `"preferResultAsync": "off"` when that project policy does not apply.
+The fixture imports eager helpers and async `safeTry` from `resultar/async`; the synchronous
+`safeTry`, `Result.gen`, and `Result.fn` remain in `resultar`.
 
 ## Run
 
@@ -66,7 +74,7 @@ The diagnostics catalog covers:
 - `map`, `andThen`, recovery, fallback, and collection simplifications;
 - concrete error and requirement channels, safe type assertions, and typed catch mappers;
 - tagged-error construction and naming conventions;
-- Promise safety, `ResultAsync` service contracts, raw `await`, and exact ignored-call paths;
+- Promise safety, legacy eager `ResultAsync` service contracts, raw `await`, and exact ignored-call paths;
 - `yield*` composition in `safeTry`, `ResultTask.gen`, and parameterized `ResultTask.fn`;
 - DI lifetimes, `acquireRelease` / `acquireDisposable` scope ownership, plain generator returns,
   and typed `sync` failures;
@@ -95,7 +103,7 @@ the current platform. It then verifies that:
 Rule configuration lives in [`tsconfig.json`](tsconfig.json). The
 [`tsconfig.clean.json`](tsconfig.clean.json) project inherits the same configuration and changes only
 the included source file.
-[`tsconfig.contracts.json`](tsconfig.contracts.json) enables the stricter async contract policy.
+[`tsconfig.contracts.json`](tsconfig.contracts.json) enables the optional eager contract policy.
 
 ## Limitations
 

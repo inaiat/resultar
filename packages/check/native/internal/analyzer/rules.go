@@ -11,6 +11,7 @@ import (
 var consumerMethods = map[string]struct{}{
 	"_unsafeUnwrap": {}, "_unsafeUnwrapErr": {}, "isErr": {}, "isOk": {}, "match": {},
 	"catchAll": {}, "catchCause": {}, "orElse": {}, "orElseSucceed": {}, "matchTags": {}, "matchTagsPartial": {}, "unwrapOr": {}, "unwrapOrThrow": {},
+	"retry":      {},
 	"withPermit": {}, "withPermits": {}, "join": {}, "await": {}, "interrupt": {},
 	"exhaustive": {}, "orElseAbsurd": {}, "option": {}, "result": {}, "tagsExhaustive": {},
 }
@@ -36,7 +37,7 @@ var resultTaskStaticConsumerMethods = map[string]struct{}{
 	"scoped": {}, "forkChild": {}, "all": {}, "zip": {}, "firstSuccessOf": {}, "race": {}, "raceFirst": {}, "raceAll": {}, "raceWith": {}, "retry": {}, "retryOrElse": {}, "timeout": {}, "delay": {}, "timed": {}, "ensuring": {}, "onExit": {}, "withResource": {},
 	"when": {}, "whenResult": {}, "unless": {}, "unlessResult": {}, "if": {}, "loop": {}, "iterate": {},
 	"inspect": {}, "inspectError": {}, "inspectCause": {}, "inspectBoth": {}, "provideService": {}, "provideServices": {}, "provideServiceResolver": {},
-	"acquireDisposable": {}, "memoize": {}, "fromTask": {}, "forEach": {}, "validateAll": {}, "combine": {}, "combineWithAllErrors": {},
+	"acquireDisposable": {}, "memoize": {}, "fromTask": {}, "fromResultAsync": {}, "forEach": {}, "validateAll": {}, "combine": {}, "combineWithAllErrors": {},
 	"asyncMap": {}, "asyncAndThen": {}, "liftPredicate": {}, "fromNullishOr": {},
 	"runExit": {}, "runFork": {}, "runPromise": {}, "runResult": {}, "toResultAsync": {},
 }
@@ -202,7 +203,7 @@ func (a *Analyzer) noPromiseInResultSuccess(file *ast.SourceFile) []Finding {
 			if hasPromise {
 				message := "This synchronous Result maps or stores a Promise in its success channel. Use asyncMap or ResultAsync for asynchronous work."
 				if isResultTaskLikeType(receiverType) {
-					message = "This ResultTask maps or stores a Promise in its success channel. Use flatMap/andThen with ResultTask.tryPromise for asynchronous work."
+					message = "This ResultTask maps or stores a Promise in its success channel. Use andThen with ResultTask.tryPromise for asynchronous work."
 				}
 				findings = append(findings, newFinding(file, nameNode, "no-promise-in-result-success", a.options.NoPromiseInResultSuccess,
 					message, ""))
@@ -218,8 +219,12 @@ func (a *Analyzer) noPromiseInResultSuccess(file *ast.SourceFile) []Finding {
 		}
 		value := call.Arguments.Nodes[0]
 		if isPromiseLikeType(a.checker, a.checker.GetTypeAtLocation(value)) {
+			message := "Do not put a Promise in a synchronous Result success channel. Use ResultAsync or a Resultar Promise boundary."
+			if isResultTaskLikeType(resultType) {
+				message = "Do not put a Promise in a ResultTask success channel. Use andThen with ResultTask.tryPromise for asynchronous work."
+			}
 			findings = append(findings, newFinding(file, value, "no-promise-in-result-success", a.options.NoPromiseInResultSuccess,
-				"Do not put a Promise in a synchronous Result success channel. Use ResultAsync or a Resultar Promise boundary.", ""))
+				message, ""))
 		}
 	})
 	return findings
@@ -286,24 +291,30 @@ func (a *Analyzer) preferAndThen(file *ast.SourceFile) []Finding {
 		receiverIsTask := isResultTaskLikeType(receiverType)
 		returnedIsTask := isResultTaskLikeType(returnedType)
 		returnedIsAsync := isResultAsyncLikeType(returnedType) || isAwaitableResultTaskType(a.checker, returnedType)
-		if receiverIsTask {
-			if !returnedIsTask && !isResultAsyncLikeType(returnedType) {
-				return
-			}
-		} else if returnedIsTask && !isAwaitableResultTaskType(a.checker, returnedType) {
+		if !receiverIsTask && returnedIsTask && !isAwaitableResultTaskType(a.checker, returnedType) {
 			return
 		}
 		methodName := "andThen"
-		if !receiverIsTask && !isResultAsyncLikeType(receiverType) && returnedIsAsync {
-			methodName = "asyncAndThen"
-		}
 		typeName := a.checker.TypeToStringEx(returnedType, returnedResult, checker.TypeFormatFlagsNoTruncation, nil)
 		message := fmt.Sprintf("`map` creates a nested Result when its callback returns %s. Use `%s` for fallible composition.", typeName, methodName)
 		if receiverIsTask {
 			message = fmt.Sprintf("`map` creates a nested ResultTask when its callback returns %s. Use `%s` for fallible composition.", typeName, methodName)
 		}
+		canRename := true
+		if returnedIsAsync && !isResultAsyncLikeType(receiverType) {
+			if !receiverIsTask {
+				methodName = "asyncAndThen"
+				message = fmt.Sprintf("`map` creates a nested Result when its callback returns %s. Use `%s` for fallible composition.", typeName, methodName)
+				canRename = a.hasOperatorReplacement(node, receiverType, methodName)
+			} else if receiverIsTask && !returnedIsTask {
+				canRename = false
+				message = fmt.Sprintf("`map` creates a nested ResultAsync when its callback returns %s. Compose it with `andThen` and `ResultTask.fromResultAsync`.", typeName)
+			}
+		}
 		finding := newFinding(file, nameNode, "prefer-and-then", a.options.PreferAndThen, message, "")
-		finding.Fixes = []Fix{renameFix(file, nameNode, fmt.Sprintf("Replace map with %s", methodName), methodName)}
+		if canRename {
+			finding.Fixes = []Fix{renameFix(file, nameNode, fmt.Sprintf("Replace map with %s", methodName), methodName)}
+		}
 		findings = append(findings, finding)
 	})
 	return findings
@@ -1142,6 +1153,53 @@ func (a *Analyzer) resultarStaticNamespace(expression *ast.Node, methodName stri
 	return ""
 }
 
+// Compatibility helpers are recognized by their imported declarations, including aliases.
+func (a *Analyzer) asyncCompatibilityFunctionName(expression *ast.Node) string {
+	expression = unwrapExpression(expression)
+	if expression == nil {
+		return ""
+	}
+	curried := expression.Kind == ast.KindCallExpression
+	if curried {
+		call := expression.AsCallExpression()
+		if len(call.Arguments.Nodes) != 1 {
+			return ""
+		}
+		expression = unwrapExpression(call.Expression)
+		if expression == nil {
+			return ""
+		}
+	}
+	symbol := a.checker.GetSymbolAtLocation(expression)
+	if symbol != nil && symbol.Flags()&ast.SymbolFlagsAlias != 0 {
+		symbol = a.checker.GetAliasedSymbol(symbol)
+	}
+	if symbol == nil {
+		return ""
+	}
+	name := symbol.Name()
+	if name != "gen" && name != "fn" && name != "asyncMap" && name != "asyncAndThen" {
+		return ""
+	}
+	if curried && name != "asyncMap" && name != "asyncAndThen" {
+		return ""
+	}
+	for _, declaration := range symbol.Declarations() {
+		if declaration.Kind != ast.KindFunctionDeclaration && declaration.Kind != ast.KindVariableDeclaration {
+			continue
+		}
+		file := ast.GetSourceFileOfNode(declaration)
+		if file == nil {
+			continue
+		}
+		path := strings.ReplaceAll(string(file.FileName()), "\\", "/")
+		if strings.Contains(path, "/packages/resultar/src/resultar-async/") || strings.Contains(path, "/packages/resultar/dist/") || strings.Contains(path, "/node_modules/resultar/dist/") {
+			return name
+		}
+	}
+	return ""
+}
+
 func callbackChecksNestedReasonTag(callback *ast.Node) bool {
 	callback = unwrapExpression(callback)
 	if callback == nil || (callback.Kind != ast.KindArrowFunction && callback.Kind != ast.KindFunctionExpression) || callback.Body() == nil {
@@ -1169,7 +1227,8 @@ func (a *Analyzer) safeTryBody(node *ast.Node) *ast.Node {
 		return nil
 	}
 	call := node.AsCallExpression()
-	if (a.canonicalExpressionName(call.Expression) != "safeTry" && a.staticNamespace(call.Expression, "gen") != "Result" && a.staticNamespace(call.Expression, "fn") != "Result") || len(call.Arguments.Nodes) == 0 {
+	compatibility := a.asyncCompatibilityFunctionName(call.Expression)
+	if (a.canonicalExpressionName(call.Expression) != "safeTry" && a.staticNamespace(call.Expression, "gen") != "Result" && a.staticNamespace(call.Expression, "fn") != "Result" && compatibility != "gen" && compatibility != "fn") || len(call.Arguments.Nodes) == 0 {
 		return nil
 	}
 	first := unwrapExpression(call.Arguments.Nodes[0])
@@ -1205,7 +1264,8 @@ func (a *Analyzer) resultGenOrFnBody(node *ast.Node) *ast.Node {
 		return nil
 	}
 	call := node.AsCallExpression()
-	if (a.staticNamespace(call.Expression, "gen") != "Result" && a.staticNamespace(call.Expression, "fn") != "Result") || len(call.Arguments.Nodes) == 0 {
+	compatibility := a.asyncCompatibilityFunctionName(call.Expression)
+	if (a.staticNamespace(call.Expression, "gen") != "Result" && a.staticNamespace(call.Expression, "fn") != "Result" && compatibility != "gen" && compatibility != "fn") || len(call.Arguments.Nodes) == 0 {
 		return nil
 	}
 	first := unwrapExpression(call.Arguments.Nodes[0])
@@ -1604,6 +1664,16 @@ func (a *Analyzer) isConsumedByResultTaskStaticCall(identifier *ast.Node) bool {
 }
 
 func (a *Analyzer) isResultTaskStaticConsumerCall(expression *ast.Node) bool {
+	if callee := unwrapExpression(expression); callee != nil && callee.Kind == ast.KindCallExpression {
+		call := callee.AsCallExpression()
+		if len(call.Arguments.Nodes) == 1 && a.isResultTaskStaticCall(call.Expression, "retry") {
+			return true
+		}
+	}
+	compatibility := a.asyncCompatibilityFunctionName(expression)
+	if compatibility == "asyncMap" || compatibility == "asyncAndThen" {
+		return true
+	}
 	for method := range resultTaskStaticConsumerMethods {
 		if a.isResultTaskStaticCall(expression, method) || a.resultarStaticNamespace(expression, method) != "" {
 			return true
@@ -1867,6 +1937,9 @@ func (a *Analyzer) noResultInTaskGen(file *ast.SourceFile) []Finding {
 		if body == nil {
 			body = a.resultGenOrFnBody(node)
 			isResultGen = body != nil
+			if isResultGen && !a.generatorHasNestedResultSuccess(node) {
+				return
+			}
 		}
 		if body == nil {
 			return
@@ -1890,6 +1963,42 @@ func (a *Analyzer) noResultInTaskGen(file *ast.SourceFile) []Finding {
 		})
 	})
 	return findings
+}
+
+func (a *Analyzer) generatorHasNestedResultSuccess(node *ast.Node) bool {
+	type_ := a.checker.GetTypeAtLocation(node)
+	// Legacy Result.gen signatures flatten returned Results; report only proven nesting.
+	if type_ == nil {
+		return false
+	}
+	if a.staticNamespace(node.AsCallExpression().Expression, "fn") == "Result" {
+		for _, signature := range a.checker.GetCallSignatures(type_) {
+			if hasNestedResultSuccess(a.checker, a.checker.GetReturnTypeOfSignature(signature)) {
+				return true
+			}
+		}
+		return false
+	}
+	return hasNestedResultSuccess(a.checker, type_)
+}
+
+func hasNestedResultSuccess(c *checker.Checker, type_ *checker.Type) bool {
+	if type_ == nil {
+		return false
+	}
+	if type_.Flags()&checker.TypeFlagsUnionOrIntersection != 0 {
+		for _, part := range type_.Types() {
+			if hasNestedResultSuccess(c, part) {
+				return true
+			}
+		}
+		return false
+	}
+	if !isResultLikeType(type_) {
+		return false
+	}
+	args := typeArguments(c, type_)
+	return len(args) > 0 && isResultLikeType(args[0])
 }
 
 func (a *Analyzer) noAwaitInResultTaskGen(file *ast.SourceFile) []Finding {
@@ -1975,7 +2084,7 @@ func (a *Analyzer) preferOrElseSucceed(file *ast.SourceFile) []Finding {
 			}
 		}
 		finding := newFinding(file, nameNode, "prefer-or-else-succeed", a.options.PreferOrElseSucceed,
-			fmt.Sprintf("`%s` only wraps a fallback value in Ok/succeed without inspecting the error. Use `orElseSucceed` for infallible fallback recovery.", method), "")
+			fmt.Sprintf("`%s` only wraps a fallback value in Ok without inspecting the error. Use `orElseSucceed` for infallible fallback recovery.", method), "")
 		if len(returned) == 1 && !isStatic {
 			unwrapped := unwrapExpression(returned[0])
 			argNode := unwrapped.AsCallExpression().Arguments.Nodes[0]
@@ -2347,6 +2456,11 @@ func (a *Analyzer) noFnIife(file *ast.SourceFile) []Finding {
 			return
 		}
 		innerCallee := callee.AsCallExpression().Expression
+		if a.asyncCompatibilityFunctionName(innerCallee) == "fn" {
+			findings = append(findings, newFinding(file, node, "no-fn-iife", a.options.NoFnIife,
+				"`fn(...)` from `resultar/async` returns a reusable function. Use its `gen(...)` helper for immediate generator composition.", ""))
+			return
+		}
 		namespace := a.staticNamespace(innerCallee, "fn")
 		if namespace != "Result" && namespace != "ResultTask" {
 			return

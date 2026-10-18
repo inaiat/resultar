@@ -36,7 +36,7 @@ describe("service composition", () => {
       .scoped("right", ["database"], ({ database }) => database);
     const task = services.use(["left", "right"], ({ left, right }) => {
       expect(left).toBe(right);
-      return ResultTask.ok(left.id);
+      return ResultTask.succeed(left.id);
     });
     const exits = await Promise.all([ResultTask.runExit(task), ResultTask.runExit(task)]);
     expect(exits).toEqual([
@@ -75,7 +75,9 @@ describe("service composition", () => {
       .scoped("health", ["database"], ({ database }) => database.status)
       .override("database", { status: "mock" });
     expect(
-      await ResultTask.runPromise(services.use(["health"], ({ health }) => ResultTask.ok(health))),
+      await ResultTask.runPromise(
+        services.use(["health"], ({ health }) => ResultTask.succeed(health)),
+      ),
     ).toBe("mock");
   });
 
@@ -87,7 +89,7 @@ describe("service composition", () => {
       })
       .scoped("constructor", ["__proto__"], (deps) => Object.hasOwn(deps, "__proto__"));
     const value = await ResultTask.runPromise(
-      services.use(["constructor", "__proto__"], (deps) => ResultTask.ok(deps.constructor)),
+      services.use(["constructor", "__proto__"], (deps) => ResultTask.succeed(deps.constructor)),
     );
     expect(value).toBe(true);
     expect(creations).toBe(1);
@@ -100,7 +102,7 @@ describe("service composition", () => {
     // @ts-expect-error Forward references are rejected before execution.
     expect(() => services.scoped("repo", ["missing"], () => 1)).toThrow("Unknown service: missing");
     // @ts-expect-error Unknown selections cannot silently produce undefined.
-    expect(() => services.use(["missing"], () => ResultTask.ok(1))).toThrow(
+    expect(() => services.use(["missing"], () => ResultTask.succeed(1))).toThrow(
       "Unknown service: missing",
     );
     // @ts-expect-error An override must replace a registered service.
@@ -109,8 +111,8 @@ describe("service composition", () => {
 
   test("rejects asynchronous factories for JavaScript callers", async () => {
     // @ts-expect-error Tasks must use resource acquisition, not synchronous factories.
-    const services = createModule().scoped("invalid", [], () => ResultTask.ok(1));
-    const exit = await ResultTask.runExit(services.use(["invalid"], () => ResultTask.ok(1)));
+    const services = createModule().scoped("invalid", [], () => ResultTask.succeed(1));
+    const exit = await ResultTask.runExit(services.use(["invalid"], () => ResultTask.succeed(1)));
     expect(exit._tag).toBe("Failure");
     if (exit._tag === "Failure" && exit.cause._tag === "Die") {
       expect(exit.cause.defect).toBeInstanceOf(TypeError);
@@ -128,7 +130,7 @@ describe("service lifetimes", () => {
       .transient("right", ["operation"], ({ operation }) => operation);
 
     const distinct = await ResultTask.runPromise(
-      services.use(["left", "right"], ({ left, right }) => ResultTask.ok(left !== right)),
+      services.use(["left", "right"], ({ left, right }) => ResultTask.succeed(left !== right)),
     );
     expect(distinct).toBe(true);
   });
@@ -152,7 +154,7 @@ describe("service lifetimes", () => {
       });
     const application = services.scope();
     const program = application.use(["singleton", "scoped", "transient"], (resolved) =>
-      ResultTask.ok(resolved),
+      ResultTask.succeed(resolved),
     );
     const first = await ResultTask.runPromise(program);
     const second = await ResultTask.runPromise(program);
@@ -184,10 +186,10 @@ describe("service lifetimes", () => {
     const application = services.scope();
 
     await ResultTask.runPromise(
-      application.use(["database"], ({ database }) => ResultTask.ok(database.open)),
+      application.use(["database"], ({ database }) => ResultTask.succeed(database.open)),
     );
     await ResultTask.runPromise(
-      application.use(["database"], ({ database }) => ResultTask.ok(database.open)),
+      application.use(["database"], ({ database }) => ResultTask.succeed(database.open)),
     );
     expect(events).toEqual(["open"]);
 
@@ -201,7 +203,7 @@ describe("service lifetimes", () => {
       .scoped("request", [], () => ({ id: 1 }))
       .singleton("application", ["request"], ({ request }) => request);
     const exit = await ResultTask.runExit(
-      services.use(["application"], ({ application }) => ResultTask.ok(application)),
+      services.use(["application"], ({ application }) => ResultTask.succeed(application)),
     );
 
     expect(exit).toMatchObject({ _tag: "Failure", cause: { _tag: "Die" } });
@@ -273,14 +275,14 @@ describe("scoped resources", () => {
     const events: string[] = [];
     const bootError = new Error("server failed");
     const services = createApplication(events).resource("server", ["session"], {
-      acquire: () => ResultTask.err(bootError),
+      acquire: () => ResultTask.fail(bootError),
       release: () =>
         ResultTask.sync(() => {
           events.push("must not release unacquired server");
         }),
     });
     const exit = await ResultTask.runExit(
-      services.use(["server"], () => ResultTask.ok("unreachable")),
+      services.use(["server"], () => ResultTask.succeed("unreachable")),
     );
     expect(exit).toEqual({ _tag: "Failure", cause: { _tag: "Fail", error: bootError } });
     expect(events).toEqual([
@@ -298,10 +300,9 @@ describe("scoped resources", () => {
       expect(session.connected).toBe(true);
       throw defect;
     });
-    expect(await ResultTask.runExit(services.use(["server"], () => ResultTask.ok(1)))).toEqual({
-      _tag: "Failure",
-      cause: { _tag: "Die", defect },
-    });
+    expect(await ResultTask.runExit(services.use(["server"], () => ResultTask.succeed(1)))).toEqual(
+      { _tag: "Failure", cause: { _tag: "Die", defect } },
+    );
     expect(events.slice(-2)).toEqual(["close session: Failure", "close database"]);
   });
 
@@ -310,10 +311,12 @@ describe("scoped resources", () => {
     const useError = { _tag: "UseError" };
     const releaseError = { _tag: "ReleaseError" };
     const services = createApplication(events).resource("server", ["session"], {
-      acquire: () => ResultTask.ok(1),
-      release: () => ResultTask.err(releaseError),
+      acquire: () => ResultTask.succeed(1),
+      release: () => ResultTask.fail(releaseError),
     });
-    const exit = await ResultTask.runExit(services.use(["server"], () => ResultTask.err(useError)));
+    const exit = await ResultTask.runExit(
+      services.use(["server"], () => ResultTask.fail(useError)),
+    );
     expect(exit).toEqual({
       _tag: "Failure",
       cause: {
@@ -329,12 +332,12 @@ describe("scoped resources", () => {
     const events: string[] = [];
     const defect = new Error("release bug");
     const services = createApplication(events).resource("server", ["session"], {
-      acquire: () => ResultTask.ok(1),
+      acquire: () => ResultTask.succeed(1),
       release: () => {
         throw defect;
       },
     });
-    const exit = await ResultTask.runExit(services.use(["server"], () => ResultTask.ok(1)));
+    const exit = await ResultTask.runExit(services.use(["server"], () => ResultTask.succeed(1)));
     expect(exit).toEqual({ _tag: "Failure", cause: { _tag: "Die", defect } });
     expect(events.slice(-2)).toEqual(["close session: Success", "close database"]);
   });
@@ -343,7 +346,7 @@ describe("scoped resources", () => {
     const controller = new AbortController();
     const events: string[] = [];
     const services = createApplication(events).resource("server", ["session"], {
-      acquire: () => ResultTask.ok(1),
+      acquire: () => ResultTask.succeed(1),
       release: () =>
         ResultTask.tryPromise({
           try: (signal) => {
@@ -369,7 +372,7 @@ describe("scoped resources", () => {
     const session = { connected: true };
     const services = createApplication(events).override("session", session);
     await ResultTask.runPromise(
-      services.use(["session"], (deps) => ResultTask.ok(deps.session.connected)),
+      services.use(["session"], (deps) => ResultTask.succeed(deps.session.connected)),
     );
     expect(events).toEqual([]);
     expect(session.connected).toBe(true);

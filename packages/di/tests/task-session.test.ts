@@ -10,7 +10,7 @@ test("session reports synchronous binding defects without throwing at constructi
   const defect = new Error("bind failed");
   const session = startServiceTask(() => {
     throw defect;
-  }, ResultTask.ok(globalThis.undefined));
+  }, ResultTask.succeed(globalThis.undefined));
   const ready = await session.ready;
   expect(ready.isErr()).toBe(true);
   if (ready.isErr()) expect(ready.error.cause).toEqual({ _tag: "Die", defect });
@@ -41,8 +41,8 @@ test("cancellation retains finalizer failures and close is idempotent", async ()
     scoped,
     ResultTask.gen(function* initialize() {
       yield* ResultTask.acquireRelease({
-        acquire: ResultTask.ok({}),
-        release: () => ResultTask.err("cleanup"),
+        acquire: ResultTask.succeed({}),
+        release: () => ResultTask.fail("cleanup"),
       });
       yield* ResultTask.tryPromise({
         try: (signal) =>

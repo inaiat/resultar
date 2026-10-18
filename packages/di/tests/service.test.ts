@@ -33,7 +33,7 @@ describe("class-shaped services", () => {
     }) {}
 
     const application = createModule().singleton(Cache).scoped(Users).scope();
-    const program = application.use(["users"], ({ users }) => ResultTask.ok(users));
+    const program = application.use(["users"], ({ users }) => ResultTask.succeed(users));
 
     const first = await ResultTask.runPromise(program);
     const second = await ResultTask.runPromise(program);
@@ -49,7 +49,7 @@ describe("class-shaped services", () => {
 
   test("reports missing class dependencies when the graph is executed", async () => {
     class MissingDependency extends Service<{ readonly value: string }>()("missing", {
-      make: ResultTask.ok({ value: "ok" }),
+      make: ResultTask.succeed({ value: "ok" }),
     }) {}
 
     class NeedsMissing extends Service<{ readonly dependency: string }>()("needs", {
@@ -60,7 +60,7 @@ describe("class-shaped services", () => {
     }) {}
 
     const module = createModule().scoped(NeedsMissing);
-    const task = module.use(["needs"], ({ needs }) => ResultTask.ok(needs.dependency));
+    const task = module.use(["needs"], ({ needs }) => ResultTask.succeed(needs.dependency));
     const exit = await ResultTask.runExit(task, { services: {} as never });
 
     expect(exit._tag).toBe("Failure");
@@ -79,7 +79,7 @@ describe("class-shaped services", () => {
     }) {}
 
     const application = createModule().transient(TransientService).scope();
-    const task = application.use(["transient"], ({ transient }) => ResultTask.ok(transient));
+    const task = application.use(["transient"], ({ transient }) => ResultTask.succeed(transient));
     const first = await ResultTask.runPromise(task);
     const second = await ResultTask.runPromise(task);
 
@@ -99,7 +99,7 @@ describe("class-shaped services", () => {
 
     const application = createModule().scoped(InferredService).scoped(CurriedInferred).scope();
     const task = application.use(["inferred", "curried"], ({ inferred, curried }) =>
-      ResultTask.ok({ message: inferred.greet("Ada"), count: curried.count }),
+      ResultTask.succeed({ message: inferred.greet("Ada"), count: curried.count }),
     );
 
     const result = await ResultTask.runPromise(task);

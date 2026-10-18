@@ -173,7 +173,7 @@ const pretty = <E>(cause: Cause<E>): string => {
  *
  * const recovered = await ResultTask.err('PrimaryFailed' as const)
  *   .sandbox()
- *   .mapError((cause) => ({
+ *   .mapErr((cause) => ({
  *     firstError: Cause.findError(cause).unwrapOr('none' as const),
  *     report: Cause.pretty(cause),
  *   }))

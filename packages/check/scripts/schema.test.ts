@@ -139,24 +139,33 @@ void test("accepts combined TypeScript and Resultar configuration with JSONC syn
       "moduleResolution": "NodeNext",
       "erasableSyntaxOnly": true,
       "plugins": [
-        {
-          "name": "resultar-check",
-          "diagnosticSeverity": "error",
-          "noUnknownTaskRequirements": "error",
-          "unusedSuppression": "off",
-          "overrides": [
-            {
-              "include": ["src/**/*.test.ts"],
-              "options": {
-                "diagnosticSeverity": { "*": "off", "no-discard": "error" }
-              }
-            }
-          ]
-        },
+        { "name": "resultar-check", "noUnknownTaskRequirements": "error", "unusedSuppression": "off" },
         { "name": "another-plugin", "noDiscard": "custom-value" },
       ],
     },
   }`),
+    [],
+  );
+});
+
+void test("accepts diagnostic severity shorthand and wildcard overrides", async () => {
+  assert.deepEqual(
+    await validate(`{
+      "compilerOptions": {
+        "plugins": [{
+          "name": "resultar-check",
+          "diagnosticSeverity": "error",
+          "noUnknownTaskRequirements": "error",
+          "unusedSuppression": "off",
+          "overrides": [{
+            "include": ["src/**/*.test.ts"],
+            "options": {
+              "diagnosticSeverity": { "*": "off", "no-discard": "error" }
+            }
+          }]
+        }]
+      }
+    }`),
     [],
   );
 });

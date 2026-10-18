@@ -7,17 +7,16 @@ import Fastify, {
   type RawServerDefault,
 } from "fastify";
 import fp from "fastify-plugin";
+// Lifecycle sessions retain their eager ResultAsync compatibility boundary.
+/* eslint-disable typescript/no-deprecated */
+import { err, ResultTask, ResultTaskCauseError, tryResult, unit } from "resultar";
 import {
-  err,
+  asyncAndThen,
   fromSafePromise,
-  ResultTask,
-  ResultTaskCauseError,
-  tryResult,
   tryResultAsync,
-  unit,
   unitAsync,
   type ResultAsync,
-} from "resultar";
+} from "resultar/async";
 import {
   useServiceAccess,
   inspectModule,
@@ -355,19 +354,21 @@ function buildFastifyPlugin(options: FastifyServicesOptions): FastifyPluginAsync
         .unwrapOrThrow();
     });
     return (
-      tryResult(() => {
-        application.session = startSession((hold) =>
-          exposeApplication === undefined
-            ? root.useSingletons(options.appBindings ?? [], hold)
-            : useServiceAccess(
-                root,
-                (access) => hold(exposeApplication(access, app) as RuntimeServices),
-                { application: true, initialize: options.appBindings },
-              ),
-        );
-        return application.session;
-      }, preserveNativeError)
-        .asyncAndThen((session) => session.ready)
+      asyncAndThen(
+        tryResult(() => {
+          application.session = startSession((hold) =>
+            exposeApplication === undefined
+              ? root.useSingletons(options.appBindings ?? [], hold)
+              : useServiceAccess(
+                  root,
+                  (access) => hold(exposeApplication(access, app) as RuntimeServices),
+                  { application: true, initialize: options.appBindings },
+                ),
+          );
+          return application.session;
+        }, preserveNativeError),
+        (session) => session.ready,
+      )
         .andThen((appServices) =>
           tryResult(() => {
             if (application.closing !== undefined)

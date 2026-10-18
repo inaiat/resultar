@@ -173,8 +173,8 @@ test("abort and native error responses release the selected graph", async () => 
 
 test("cleanup failures remain typed and repeated middleware is rejected", async () => {
   const Bad = resource("bad", {
-    acquire: ResultTask.ok(42),
-    release: () => ResultTask.err("cleanup" as const),
+    acquire: ResultTask.succeed(42),
+    release: () => ResultTask.fail("cleanup" as const),
   });
   const di = createHonoServices(createModule().singleton(Bad));
   const app = new Hono().get("/", di.middleware(["bad"]), (c) => c.body(null, 204));

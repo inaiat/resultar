@@ -1,5 +1,9 @@
 # Native Fastify services
 
+For new async code, return lazy `ResultTask` workflows and run them explicitly in native route
+handlers. This runnable fixture retains eager `ResultAsync` / `StrictResultAsync` service methods
+from the `resultar/async` subpath for compatibility coverage. Both types are deprecated since v4 and preserve one shared execution.
+
 ```sh
 cd examples/fastify
 pnpm dev
@@ -28,7 +32,7 @@ application factory.
 
 The file layout matches the [Hono example](../hono/README.md):
 
-- [Services](src/services.ts): `Cache`, `UsersRepository`, `Users`, function-based `Health` and DI registration. Repository and service methods return `StrictResultAsync`.
+- [Services](src/services.ts): `Cache`, `UsersRepository`, `Users`, function-based `Health` and DI registration. Repository and service methods retain deprecated eager `StrictResultAsync` contracts.
 - [Routes](src/routes.ts): native Fastify TypeBox schemas and exhaustive result-to-response mapping.
 - [Application](src/main.ts): `createApplication()`, optional `bindings`, inferred `request.services`, route registration and server startup with `PORT`.
 
@@ -64,18 +68,41 @@ if (import.meta.main) {
 }
 ```
 
-Declare the repository as a class and reference it directly in the service. The following
-excerpt comes from `services.ts`; the function-based health service and registration follow below:
+## New Task workflows over the compatibility fixture
+
+Create a Task from a factory when calling the fixture's eager methods from new code. Inside a
+native route handler:
 
 ```ts
-import {
-  createTaggedError,
-  ok,
-  okAsync,
-  Result,
-  ResultTask,
-  type StrictResultAsync,
-} from "resultar";
+import { ResultTask } from "resultar";
+
+const task = ResultTask.fromResultAsync(() =>
+  request.services.users.findById(request.params.id),
+);
+const result = await ResultTask.runResult(task, { signal: request.signal });
+return result.matchTags(
+  (user) => reply.send(user),
+  {
+    UserNotFoundError: (error) => reply.code(404).send({ error: error.message }),
+    UserReadError: (error) => reply.code(503).send({ error: error.message }),
+  },
+);
+```
+
+The factory calls the legacy method afresh on every Task run. Passing an existing Async value
+instead would reuse its already-started operation. For new repositories and services, return
+`ResultTask` directly, use `tryPromise` for drivers and `ResultTask.gen` for composition. Task has
+no `.then`; `map` is synchronous, and `match` returns a Task to run. The example above matches the
+`Result` after execution and exhaustively maps its error union, as in `routes.ts`.
+
+## Existing eager service contracts
+
+The following compatibility excerpt comes from `services.ts`; it is retained to demonstrate
+existing eager callers. The function-based health service and registration follow below:
+
+```ts
+import { createTaggedError, ResultTask } from "resultar";
+import { gen as genAsync, okAsync, type StrictResultAsync } from "resultar/async";
 import { createModule, Service, service } from "resultar-fastify";
 
 export type User = { readonly id: string; readonly name: string };
@@ -110,14 +137,14 @@ export class Users extends Service("users", {
   requires: { repository: UsersRepository },
   make: ({ repository }) => ({
     findById(id: string): StrictResultAsync<User, UserNotFoundError | UserReadError> {
-      return Result.gen(async function* () {
+      return genAsync(async function* () {
         const user = yield* repository.findById(id);
         if (user === undefined) return yield* UserNotFoundError.err({ id });
         return user;
       });
     },
     remove(id: string): StrictResultAsync<void, UserNotFoundError> {
-      return Result.gen(async function* () {
+      return genAsync(async function* () {
         const removed = yield* repository.remove(id);
         if (!removed) return yield* UserNotFoundError.err({ id });
       });
@@ -136,7 +163,7 @@ The failing-repository test uses `services.override("repository", brokenReposito
 For a synchronous factory, use `service` with its dependencies directly:
 
 ```ts
-import { okAsync } from "resultar";
+import { okAsync } from "resultar/async";
 import { service } from "resultar-fastify";
 // Cache is declared above in the same services.ts file.
 
@@ -162,20 +189,25 @@ with the default data. The default request decorator also exposes `cache` and `r
 The sample repository owns no connections. A real database connection should be registered with
 `resource` and an explicit release callback, as documented in [resultar-di](../../packages/di/README.md).
 
-Repository adapters convert driver failures to `UserReadError` with `tryResultAsync` or
-`fromPromise`. The service composes the repository's result directly and turns a missing user into
-`UserNotFoundError`. The in-memory implementation returns `okAsync`.
+The compatibility repository can convert driver failures to `UserReadError` with `tryResultAsync`
+or `fromPromise`. Its service composes the eager result directly and turns a missing user into
+`UserNotFoundError`. The in-memory implementation returns `okAsync`. In new Task repositories,
+capture driver failures with `ResultTask.tryPromise` instead.
 
-The checker enables `preferResultAsync: "error"` and `preferResultAsyncMode: "all"`, so both
+This compatibility fixture enables the optional legacy checker policy
+`preferResultAsync: "error"` and `preferResultAsyncMode: "all"`, so both
 `Promise<User | undefined>` and inferred Promise-returning implementations fail the check. Native
 Fastify plugin and HTTP handler functions retain their framework contracts with local,
 documented rule suppressions. Driver callbacks passed to Resultar conversion helpers can likewise
 use a local suppression when their Promise return is required for interoperability.
+That policy is not a recommendation to introduce deprecated Async types in v4; set
+`preferResultAsync: "off"` when your project does not enforce an eager compatibility contract.
 
 The package test suite also imports this application directly as a use case.
 Run `pnpm --filter resultar-fastify test` from the workspace root to include its routes,
 repository override and application isolation checks alongside adapter tests.
 
 With `requires`, class service factories return their method objects directly. The DI module
-constructs them lazily within the registered lifetime. Return a `ResultTask` only when
-initialization needs task composition; service methods still return `StrictResultAsync`.
+constructs them lazily within the registered lifetime. Return a `ResultTask` from the factory when
+initialization needs task composition. Separately, prefer Task-returning async service methods in
+new code; this fixture's deprecated `StrictResultAsync` methods retain their original contract.

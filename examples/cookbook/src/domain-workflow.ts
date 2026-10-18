@@ -3,8 +3,8 @@
  *
  * Demonstrates:
  * - Chaining dependent domain steps with `.andThen()`, `.map()`, and `.mapErr()`
- * - Writing linear imperative-style workflows with `Result.gen` (returning plain values and
- *   unwrapping `Result` / `ResultAsync` steps via `yield*`)
+ * - Writing linear imperative-style workflows with `Result.gen` and `ResultTask.gen`
+ *   (returning plain values and unwrapping typed steps via `yield*`)
  * - Preserving the legacy `safeTry` generator helper for gradual v4 migration
  * - Wrapping low-level infrastructure causes (`StorageWriteError`) in domain errors
  *   (`AccountCreateError`) and inspecting the cause chain with `findCause`
@@ -12,13 +12,12 @@
  */
 import {
   Result,
-  ResultAsync,
+  ResultTask,
   createTaggedError,
   findCause,
   ok,
   safeTry,
   type StrictResult,
-  type StrictResultAsync,
 } from "resultar";
 
 export interface PaidAccountRequest {
@@ -142,20 +141,21 @@ export const createPaidAccountWithGen = (
   });
 
 /**
- * Async `Result.gen` style: seamlessly mixes synchronous `Result` steps (`selectPlan`, `chargeCard`)
- * and asynchronous `ResultAsync` steps (`ResultAsync.fromSafePromise`) in a single generator.
+ * Lazy Task generator style: mixes synchronous domain Results with a Promise boundary.
+ * Constructing the Task performs no work; each explicit runner executes the workflow again.
  */
-export const createPaidAccountAsyncWithGen = (
+export const createPaidAccountTaskWithGen = (
   request: PaidAccountRequest,
-): StrictResultAsync<PaidAccount, CreatePaidAccountError> =>
-  Result.gen(async function* () {
+): ResultTask<PaidAccount, CreatePaidAccountError> =>
+  ResultTask.gen(function* () {
     const plan = yield* selectPlan(request.planCode);
     const receipt = yield* chargeCard(request.cardToken, plan.priceCents);
-    const persisted = yield* ResultAsync.fromSafePromise(
-      Promise.resolve(persistAccount(request, plan, receipt)),
-    ).andThen((result) =>
-      result.mapErr((cause) => new AccountCreateError({ cause, email: request.email })),
-    );
+    const persisted = yield* ResultTask.tryPromise({
+      try: () => Promise.resolve({ plan, receipt }),
+      catch: (cause) => new StorageWriteError({ cause, email: request.email }),
+    })
+      .andThen(({ plan, receipt }) => ResultTask.fromResult(persistAccount(request, plan, receipt)))
+      .mapErr((cause) => new AccountCreateError({ cause, email: request.email }));
 
     return persisted;
   });

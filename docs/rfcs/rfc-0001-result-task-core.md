@@ -1,5 +1,10 @@
 # RFC 0001: ResultTask and the next core architecture
 
+> Design history: v4 prefers `ResultTask` for new async workflows. `ResultAsync`
+> lives in the deprecated `resultar/async` subpath of the same package with explicit bridges. For current contracts,
+> see the [core guide](../../packages/resultar/README.md) and
+> [v4 migration notes](../migrations/v4.md); retain earlier examples below as design context.
+
 - Status: Implemented (Phases 0–5 Done)
 - Date: 2026-09-01
 - Scope: `resultar` package

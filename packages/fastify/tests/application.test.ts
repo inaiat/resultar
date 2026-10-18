@@ -160,7 +160,7 @@ test("early responses skip acquisition and error handlers retain live request re
 
 test("rolls back partial startup and rejects scoped application bindings", async () => {
   const { services, events } = fixture();
-  const Failing = service("failing", ResultTask.err("offline"));
+  const Failing = service("failing", ResultTask.fail("offline"));
   const app = Fastify();
   app.register(
     createFastifyPlugin({
@@ -179,7 +179,7 @@ test("rolls back partial startup and rejects scoped application bindings", async
 });
 
 test("request acquisition failures use the native error handler and preserve the cause", async () => {
-  const Failing = service("failing", ResultTask.err("offline"));
+  const Failing = service("failing", ResultTask.fail("offline"));
   const app = Fastify();
   await app.register(
     createFastifyPlugin({ services: createModule().scoped(Failing), bindings: ["failing"] }),

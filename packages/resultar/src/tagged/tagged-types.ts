@@ -1,4 +1,3 @@
-import type { ResultAsync } from '../task/result-async.js'
 import type { Result } from '../result/result.js'
 
 export type TaggedValue = { readonly _tag: string }
@@ -84,12 +83,6 @@ export type ResultCatchTagHandlers<E, Handlers> = CatchTagHandlers<
   Result<unknown, unknown>
 >
 
-export type ResultAsyncCatchTagHandlers<E, Handlers> = CatchTagHandlers<
-  E,
-  Handlers,
-  Result<unknown, unknown> | ResultAsync<unknown, unknown>
->
-
 export type CatchReasonHandlers<E, ErrorTag extends string, Handlers, R> = {
   readonly [ReasonTag in keyof Handlers]: ReasonTag extends ReasonTagsOf<E, ErrorTag>
     ? (
@@ -104,17 +97,6 @@ export type ResultCatchReasonHandlers<E, ErrorTag extends string, Handlers> = Ca
   ErrorTag,
   Handlers,
   Result<unknown, unknown>
->
-
-export type ResultAsyncCatchReasonHandlers<
-  E,
-  ErrorTag extends string,
-  Handlers,
-> = CatchReasonHandlers<
-  E,
-  ErrorTag,
-  Handlers,
-  Result<unknown, unknown> | ResultAsync<unknown, unknown>
 >
 
 type ErrorFallback<E> = UntaggedError<E> | ErrorForTag<E, 'Error'>

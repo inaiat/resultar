@@ -80,6 +80,17 @@ const config: UserConfig = defineConfig({
     },
     overrides: [
       {
+        // Compatibility tests retain coverage of supported deprecated APIs.
+        files: [
+          "tests/**/*.ts",
+          "test/**/*.ts",
+          "scripts/diagnostics.ts",
+          "scripts/scale-types.ts",
+          "scripts/smoke-package.ts",
+        ],
+        rules: { "@typescript-eslint/no-deprecated": "allow" },
+      },
+      {
         files: ["**/tests/**", "**/test/**", "scripts/**/*.ts"],
         rules: {
           "@typescript-eslint/require-await": "allow",

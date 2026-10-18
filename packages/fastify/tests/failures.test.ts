@@ -55,7 +55,7 @@ test("a native registration failure waits for rollback and retains its identity"
   const release = Promise.withResolvers<void>();
   let releases = 0;
   const Shared = resource("shared", {
-    acquire: ResultTask.ok(1),
+    acquire: ResultTask.succeed(1),
     release: () =>
       ResultTask.tryPromise({
         try: async () => {
@@ -80,17 +80,15 @@ test("a native registration failure waits for rollback and retains its identity"
   let settled = false;
   const ready = tryResultAsync(async () => {
     await app.ready();
-  })
-    .match(
-      () => {
-        settled = true;
-      },
-      (error) => {
-        settled = true;
-        return error;
-      },
-    )
-    .unwrapOrThrow();
+  }).match(
+    () => {
+      settled = true;
+    },
+    (error) => {
+      settled = true;
+      return error;
+    },
+  );
   await releasing.promise;
   expect(settled).toBe(false);
   expect(releases).toBe(0);
@@ -111,8 +109,8 @@ test("request release failures are logged once after the native reply is sent", 
     },
   });
   const Local = resource("local", {
-    acquire: ResultTask.ok(1),
-    release: () => ResultTask.err("cleanup"),
+    acquire: ResultTask.succeed(1),
+    release: () => ResultTask.fail("cleanup"),
   });
   const app = Fastify({ logger: { stream } });
   await app.register(
@@ -129,13 +127,13 @@ test("request release failures are logged once after the native reply is sent", 
 test("root cleanup failure rejects close and preserves startup failure alongside rollback failure", async () => {
   let releases = 0;
   const Shared = resource("shared", {
-    acquire: ResultTask.ok(1),
+    acquire: ResultTask.succeed(1),
     release: () =>
       ResultTask.sync(() => {
         releases += 1;
-      }).andThen(() => ResultTask.err("release failed")),
+      }).flatMap(() => ResultTask.fail("release failed")),
   });
-  const Failing = service("failing", ResultTask.err("startup failed"));
+  const Failing = service("failing", ResultTask.fail("startup failed"));
   const app = Fastify();
   await app.register(
     createFastifyPlugin({
@@ -251,7 +249,7 @@ test("a client abort during acquisition waits for and releases the acquired reso
 test("stream transport errors release resources without relying on onResponse", async () => {
   let released = 0;
   const Local = resource("local", {
-    acquire: ResultTask.ok(1),
+    acquire: ResultTask.succeed(1),
     release: () =>
       ResultTask.sync(() => {
         released += 1;

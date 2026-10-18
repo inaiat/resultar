@@ -104,13 +104,13 @@ test("default selection propagates acquisition failure and releases acquired req
   let released = 0;
   let handled = 0;
   const Lease = resource("lease", {
-    acquire: ResultTask.ok("open"),
+    acquire: ResultTask.succeed("open"),
     release: () =>
       ResultTask.sync(() => {
         released += 1;
       }),
   });
-  const Broken = service("broken", ResultTask.err(new Error("offline")));
+  const Broken = service("broken", ResultTask.fail(new Error("offline")));
   const app = createFastifyApp(
     { services: createModule().scoped(Lease).scoped(Broken) },
     (router) => {

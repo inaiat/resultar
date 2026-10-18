@@ -55,8 +55,6 @@
         "preferMap": "error",
         "preferMapErr": "error",
         "preferOrElseSucceed": "error",
-        "preferResultAsync": "error",
-        "preferResultAsyncMode": "result",
         "preferResultForEach": "error",
         "preferTaggedError": "error",
         "preferTap": "error",
@@ -68,7 +66,7 @@
         "unsafeResultTypeAssertion": "error",
         "unusedSuppression": "error",
         "yieldStarInResultTaskGen": "error",
-        "yieldStarInSafeTry": "error",
+        "yieldStarInSafeTry": "error"
       }
     ]
   },

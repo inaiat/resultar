@@ -104,7 +104,7 @@ test("runs an application through one lifetime", async () => {
 test("tests health with a typed replacement and no application infrastructure", async () => {
   const events: string[] = [];
   const fakeDatabase: Database = {
-    health: () => ResultTask.ok("mock healthy"),
+    health: () => ResultTask.succeed("mock healthy"),
     close: () =>
       ResultTask.sync(() => {
         events.push("externally owned");

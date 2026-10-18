@@ -20,7 +20,8 @@ import type {
   TagsOf,
   TagsWithReasonOf,
 } from '../tagged/tagged-types.js'
-import type { ResultAsync } from '../task/result-async.js'
+import type { ResultAsyncOperations } from '../resultar-async/async-types.js'
+import type { AsyncResultFnGuard, AsyncResultFnOutput } from '../resultar-async/generator-types.js'
 import type { ResultTask } from '../task/result-task.js'
 import type { Result } from './result.js'
 import type { DisposableResult } from './result-helpers.js'
@@ -250,7 +251,7 @@ export interface Resultable<T, E> {
 }
 
 /** Operations shared by the Ok and Err variants of `Result<T, E>`. */
-export interface ResultOperations<T, E> {
+export interface ResultOperations<T, E> extends ResultAsyncOperations<T, E> {
   /**
    * Narrows this result to the Ok variant.
    */
@@ -386,14 +387,6 @@ export interface ResultOperations<T, E> {
     errorTag: ErrorTag,
   ) => Result<T, ExcludeTag<E, ErrorTag> | ReasonsOf<E, ErrorTag>>
   /**
-   * Chains an async fallible operation from the Ok value.
-   */
-  asyncAndThen: <X, Y>(f: (t: T) => ResultAsync<X, Y>) => ResultAsync<X, E | Y>
-  /**
-   * Maps the Ok value with an async function and returns a `ResultAsync`.
-   */
-  asyncMap: <X>(f: (t: T) => Promise<X>) => ResultAsync<X, E>
-  /**
    * Converts this Result into a plain value by handling both Ok and Err.
    */
   match: {
@@ -413,7 +406,7 @@ export interface ResultOperations<T, E> {
   matchTagsPartial: <A, B, const Handlers extends object>(
     fnOk: (t: T) => A,
     handlers: Handlers & PartialMatchTagHandlers<E, Handlers>,
-    fallback: (error: RemainingMatchTagErrors<E, Handlers>) => B,
+    fallback: (error: E) => B,
   ) => A | MatchTagHandlerResult<Handlers> | B
   /**
    * Pipes this Result through reusable transformation functions.
@@ -553,43 +546,6 @@ export interface TryResultOptions<T, E = unknown> {
   readonly catch?: (e: unknown) => E
 }
 
-/** Object-form synchronous generator workflow accepted by `safeTry`. */
-export interface SafeTryOptions<
-  YieldErr extends Result<never, unknown>,
-  GeneratorReturnResult extends Result<unknown, unknown>,
-  CatchErr = never,
-> {
-  /**
-   * Generator body evaluated by `safeTry`.
-   *
-   * Use `yield* result` to unwrap Resultar values and short-circuit on Err.
-   */
-  readonly try: () => Generator<YieldErr, GeneratorReturnResult>
-  /**
-   * Converts synchronous throws from the generator setup into the Result error channel.
-   */
-  readonly catch?: (e: unknown) => CatchErr
-}
-
-/** Object-form asynchronous generator workflow accepted by `safeTry`. */
-export interface SafeTryAsyncOptions<
-  YieldErr extends Result<never, unknown>,
-  GeneratorReturnResult extends Result<unknown, unknown>,
-  CatchErr = never,
-> {
-  /**
-   * Async generator body evaluated by `safeTry`.
-   *
-   * Use `yield* result` or `yield* resultAsync` to unwrap Resultar values and short-circuit on Err.
-   */
-  readonly try: () => AsyncGenerator<YieldErr, GeneratorReturnResult>
-  /**
-   * Converts synchronous throws or async rejections from the generator setup into the ResultAsync
-   * error channel.
-   */
-  readonly catch?: (e: unknown) => CatchErr
-}
-
 /** Object-form synchronous Result.gen workflow, returning a plain success value. */
 export interface ResultGenOptions<
   YieldErr extends Result<never, unknown>,
@@ -600,21 +556,8 @@ export interface ResultGenOptions<
   readonly catch?: (e: unknown) => CatchErr
 }
 
-/** Object-form asynchronous Result.gen workflow, returning a plain success value. */
-export interface AsyncResultGenOptions<
-  YieldErr extends Result<never, unknown>,
-  ReturnValue,
-  CatchErr = never,
-> {
-  readonly try: () => AsyncGenerator<YieldErr, ReturnValue>
-  readonly catch?: (e: unknown) => CatchErr
-}
-
 /** Generator return type annotation helper for synchronous `Result.gen`, `Result.fn`, and composable sub-generators. */
 export type ResultGenerator<T, E = never> = Generator<Result<never, E>, T>
-
-/** Generator return type annotation helper for asynchronous `Result.gen`, `Result.fn`, and composable sub-generators. */
-export type ResultAsyncGenerator<T, E = never> = AsyncGenerator<Result<never, E>, T>
 
 export type SyncResultGenGuard<Returned> = [
   Extract<
@@ -622,14 +565,6 @@ export type SyncResultGenGuard<Returned> = [
     | Result<unknown, unknown>
     | { readonly then: (...args: never[]) => unknown }
     | ResultTask<unknown, unknown, unknown>
-  >,
-] extends [never]
-  ? unknown
-  : never
-export type AsyncResultGenGuard<Returned> = [
-  Extract<
-    Returned,
-    Result<unknown, unknown> | ResultAsync<unknown, unknown> | ResultTask<unknown, unknown, unknown>
   >,
 ] extends [never]
   ? unknown
@@ -657,15 +592,11 @@ export type ResultFnBody =
 export type ResultFnOutput<Body extends (...args: never[]) => unknown> =
   ReturnType<Body> extends Generator<infer Yielded, infer Returned>
     ? Result<Returned, InferErrTypes<Yielded>>
-    : ReturnType<Body> extends AsyncGenerator<infer Yielded, infer Returned>
-      ? ResultAsync<Returned, InferErrTypes<Yielded>>
-      : never
+    : AsyncResultFnOutput<Body>
 export type ResultFnGuard<Body extends (...args: never[]) => unknown> =
   ReturnType<Body> extends Generator<unknown, infer Returned>
     ? SyncResultGenGuard<Returned>
-    : ReturnType<Body> extends AsyncGenerator<unknown, infer Returned>
-      ? AsyncResultGenGuard<Returned>
-      : never
+    : AsyncResultFnGuard<Body>
 
 export interface ResultFromNullishOr {
   <T, E>(this: void, value: T, onNullish: (value: T) => E): Result<NonNullable<T>, E>
@@ -1028,88 +959,6 @@ export interface ResultMatchTagsPartial {
   ): (self: Result<T, E>) => A | MatchTagHandlerResult<Handlers> | B
 }
 /* eslint-enable max-params */
-
-export interface ResultAsyncAndThen {
-  <T, E, U, F>(
-    this: void,
-    self: Result<T, E>,
-    f: (value: T) => ResultAsync<U, F>,
-  ): ResultAsync<U, E | F>
-  <T, U, F>(
-    this: void,
-    f: (value: T) => ResultAsync<U, F>,
-  ): <E>(self: Result<T, E>) => ResultAsync<U, E | F>
-}
-
-export interface ResultAsyncMap {
-  <T, E, U>(this: void, self: Result<T, E>, f: (value: T) => Promise<U>): ResultAsync<U, E>
-  <T, U>(this: void, f: (value: T) => Promise<U>): <E>(self: Result<T, E>) => ResultAsync<U, E>
-}
-
-export type ResultAsyncFactory = <T, E>(promise: Promise<Result<T, E>>) => ResultAsync<T, E>
-
-export interface LegacySafeTry {
-  <T, E, CatchErr = E>(
-    input: SafeTryOptions<Result<never, E>, Result<T, E>, CatchErr> & {
-      readonly catch: (e: unknown) => CatchErr
-    },
-  ): Result<T, E | CatchErr>
-  <T, E>(
-    input:
-      | (() => Generator<Result<never, E>, Result<T, E>>)
-      | SafeTryOptions<Result<never, E>, Result<T, E>>,
-  ): Result<T, E>
-  <
-    YieldErr extends Result<never, unknown>,
-    GeneratorReturnResult extends Result<unknown, unknown>,
-    CatchErr,
-  >(
-    input: SafeTryOptions<YieldErr, GeneratorReturnResult, CatchErr> & {
-      readonly catch: (e: unknown) => CatchErr
-    },
-  ): Result<
-    InferOkTypes<GeneratorReturnResult>,
-    InferErrTypes<YieldErr> | InferErrTypes<GeneratorReturnResult> | CatchErr
-  >
-  <YieldErr extends Result<never, unknown>, GeneratorReturnResult extends Result<unknown, unknown>>(
-    input:
-      | (() => Generator<YieldErr, GeneratorReturnResult>)
-      | SafeTryOptions<YieldErr, GeneratorReturnResult>,
-  ): Result<
-    InferOkTypes<GeneratorReturnResult>,
-    InferErrTypes<YieldErr> | InferErrTypes<GeneratorReturnResult>
-  >
-  <T, E, CatchErr = E>(
-    input: SafeTryAsyncOptions<Result<never, E>, Result<T, E>, CatchErr> & {
-      readonly catch: (e: unknown) => CatchErr
-    },
-  ): ResultAsync<T, E | CatchErr>
-  <T, E>(
-    input:
-      | (() => AsyncGenerator<Result<never, E>, Result<T, E>>)
-      | SafeTryAsyncOptions<Result<never, E>, Result<T, E>>,
-  ): ResultAsync<T, E>
-  <
-    YieldErr extends Result<never, unknown>,
-    GeneratorReturnResult extends Result<unknown, unknown>,
-    CatchErr,
-  >(
-    input: SafeTryAsyncOptions<YieldErr, GeneratorReturnResult, CatchErr> & {
-      readonly catch: (e: unknown) => CatchErr
-    },
-  ): ResultAsync<
-    InferOkTypes<GeneratorReturnResult>,
-    InferErrTypes<YieldErr> | InferErrTypes<GeneratorReturnResult> | CatchErr
-  >
-  <YieldErr extends Result<never, unknown>, GeneratorReturnResult extends Result<unknown, unknown>>(
-    input:
-      | (() => AsyncGenerator<YieldErr, GeneratorReturnResult>)
-      | SafeTryAsyncOptions<YieldErr, GeneratorReturnResult>,
-  ): ResultAsync<
-    InferOkTypes<GeneratorReturnResult>,
-    InferErrTypes<YieldErr> | InferErrTypes<GeneratorReturnResult>
-  >
-}
 
 // #region Combine - Types
 

@@ -122,14 +122,11 @@ func isAwaitableResultTaskType(c *checker.Checker, type_ *checker.Type) bool {
 		}
 		return false
 	}
-	if !isResultTaskLikeType(type_) {
+	if !isResultTaskLikeType(type_) || c.GetPropertyOfType(type_, "then") == nil {
 		return false
 	}
 	args := typeArguments(c, type_)
-	if len(args) >= 3 && args[2] != nil && args[2].Flags()&checker.TypeFlagsNever != 0 {
-		return true
-	}
-	return false
+	return len(args) >= 3 && args[2] != nil && args[2].Flags()&checker.TypeFlagsNever != 0
 }
 
 func isResultAsyncLikeType(type_ *checker.Type) bool {

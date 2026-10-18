@@ -38,6 +38,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./async": {
+      "types": "./dist/async.d.ts",
+      "import": "./dist/async.js"
     }
   },
   "scripts": {

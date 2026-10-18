@@ -125,7 +125,7 @@ const Database = resource("database", {
 const Health = service("health", { database: Database }, ({ database }) => database.status);
 const services = createModule().scoped(Database).scoped(Health);
 const value = await ResultTask.runPromise(
-  services.use(["health"], ({ health }) => ResultTask.ok(health)),
+  services.use(["health"], ({ health }) => ResultTask.succeed(health)),
 );
 if (value !== "live" || events.join(",") !== "open,close") {
   throw new Error("Published entrypoint did not preserve resource lifetime");
@@ -133,7 +133,7 @@ if (value !== "live" || events.join(",") !== "open,close") {
 const mocked = await ResultTask.runPromise(
   services
     .override("database", { status: "mock" })
-    .use(["health"], ({ health }) => ResultTask.ok(health)),
+    .use(["health"], ({ health }) => ResultTask.succeed(health)),
 );
 if (mocked !== "mock" || events.join(",") !== "open,close") {
   throw new Error("Published entrypoint did not preserve override isolation");
@@ -153,7 +153,7 @@ const status = await ResultTask.runPromise(
     .value("label", "ready")
     .value("suffix", "!")
     .scoped(Status)
-    .use(["status"], (values) => ResultTask.ok(values.status)),
+    .use(["status"], (values) => ResultTask.succeed(values.status)),
 );
 if (status !== "ready!")
   throw new Error("Published entrypoint did not preserve service requirements");

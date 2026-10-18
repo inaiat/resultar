@@ -56,7 +56,7 @@ class Answer extends Service("answer", {
  make: ({ base }) => ResultTask.sync(() => base + 2),
 }) {}
 const Lease = resource("lease", {
- acquire: ResultTask.ok("open"),
+ acquire: ResultTask.succeed("open"),
  release: () => ResultTask.sync(() => { released += 1; }),
 });
 const lifetime: ServiceLifetime = "singleton";
@@ -65,11 +65,11 @@ const startup = ResultTask.gen(function* smokeStartup() {
  yield* Answer;
  started += 1;
 });
-const createApplication = () => createHonoApp({ services, startup, strict: false }, (router) => {
+const createApplication = () => createHonoApp({ services, startup }, (router) => {
  routes(router);
 });
 const routes = (router: Hono<{ Bindings: InferRequestServices<typeof createApplication> }>) => {
- router.get("/items", (c) => {
+ router.get("/", (c) => {
   if (c.env.base !== 40) throw new Error("Missing default Hono binding");
   return c.text(String(c.env.answer));
  });
@@ -78,7 +78,7 @@ const app = createApplication();
 try {
  const ready = await app.ready();
  if (ready.isErr() || started !== 1) throw new Error("Packed startup task did not run once");
- const response = await app.request("/items/");
+ const response = await app.request("/");
  if (await response.text() !== "42") throw new Error("Unexpected packed response");
 } finally { const closed = await app.close(); if (closed.isErr()) throw closed.error; }
 if (released !== 1) throw new Error("Packed resource was not released");
@@ -88,6 +88,15 @@ try {
  const response = await native.request("/", undefined, {suffix: "!"});
  if (await response.text() !== "42!") throw new Error("Native Hono bindings were replaced");
 } finally { const closed = await di.close(); if (closed.isErr()) throw closed.error; }
+
+const optionsApp = createHonoApp({ services, startup, strict: false }, (router) => {
+ router.get("/items", (c) => c.text(String(c.env.answer)));
+});
+try {
+ const response = await optionsApp.request("/items/");
+ if (response.status !== 200 || await response.text() !== "42") throw new Error("Packed Hono options were not forwarded");
+} finally { const closed = await optionsApp.close(); if (closed.isErr()) throw closed.error; }
+
 `,
   );
   execFileSync(

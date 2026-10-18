@@ -1,7 +1,8 @@
 import type { ErrResult } from '../result/result.js'
 
 import { isRedacted, stringifyRedacted } from '../core/redacted.js'
-import type { ResultAsync } from '../task/result-async.js'
+import type { ResultAsync } from '../resultar-async/result-async.js'
+import { createResultAsync } from '../resultar-async/result-async-adapter.js'
 import { ResultTask } from '../task/result-task.js'
 import { err as resultErr } from '../result/result.js'
 
@@ -249,6 +250,7 @@ export type TaggedErrorClass<
   ) => ErrResult<never, ErrorClassInstance<This>>
   /**
    * Creates a failed ResultAsync containing this tagged error.
+   * @deprecated Use taskErr for new Task workflows; the eager legacy contract is retained.
    */
   errAsync: <
     This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate, Props>) => Error,
@@ -631,6 +633,7 @@ const createTaggedErrorClass = <
 
     /**
      * Creates a failed ResultAsync containing this tagged error.
+     * @deprecated Use taskErr for Task workflows, or errAsync from resultar/async for legacy consumers.
      */
     public static errAsync<
       This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate>) => Error,
@@ -639,7 +642,9 @@ const createTaggedErrorClass = <
       ...args: TaggedErrorConstructorArgs<MessageTemplate>
     ): ResultAsync<never, InstanceType<This>> {
       const error = new this(...args) as InstanceType<This>
-      return new ResultTask(Promise.resolve(resultErr<never, InstanceType<This>>(error)))
+      return createResultAsync<ResultAsync<never, InstanceType<This>>>(
+        Promise.resolve(resultErr<never, InstanceType<This>>(error)),
+      )
     }
 
     /**

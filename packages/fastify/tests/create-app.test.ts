@@ -99,13 +99,13 @@ test("keeps separate application roots and releases their singletons on close", 
 test("retains native startup failure and rollback", async () => {
   let released = 0;
   const Connection = resource("connection", {
-    acquire: ResultTask.ok("connected"),
+    acquire: ResultTask.succeed("connected"),
     release: () =>
       ResultTask.sync(() => {
         released += 1;
       }),
   });
-  const Failing = service("failing", ResultTask.err("offline"));
+  const Failing = service("failing", ResultTask.fail("offline"));
   const app = createFastifyApp(
     {
       services: createModule().singleton(Connection).singleton(Failing),
@@ -161,7 +161,7 @@ test("rolls back application resources when optional startup fails", async () =>
       services: createModule().singleton(Connection),
       startup: ResultTask.gen(function* failStartup() {
         yield* Connection;
-        return yield* ResultTask.err("offline" as const);
+        return yield* ResultTask.fail("offline" as const);
       }),
       bindings: [],
     },

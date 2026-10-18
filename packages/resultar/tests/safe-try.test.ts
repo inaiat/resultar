@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-deprecated -- These compatibility tests exercise supported legacy APIs. */
 import { deepEqual, equal, ok as isOk } from 'node:assert'
 import { describe, it } from 'vite-plus/test'
 
@@ -9,20 +8,6 @@ describe('safeTry', async () => {
   const fooValue = okAsync('foo')
   const barValue = okAsync('bar')
   const errValue = errAsync('boom')
-
-  it('exposes Result.gen with plain-value returns alongside safeTry', async () => {
-    const syncResult = Result.gen(function* () {
-      const value = yield* ok(1)
-      return value + 1
-    })
-    deepEqual(syncResult, { value: 2 })
-
-    const asyncResult = Result.gen(async function* () {
-      const value = yield* okAsync(1)
-      return value + 1
-    })
-    deepEqual(await asyncResult, { value: 2 })
-  })
 
   it('SafeTryAsync with all Ok', async () => {
     const resultAsync = safeTry(async function* () {

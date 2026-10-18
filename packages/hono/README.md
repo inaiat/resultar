@@ -6,8 +6,12 @@ and `HttpApplication`. These are the original `resultar-di` exports, with the sa
 and behavior. You do not need to import or directly install `resultar-di` for this API.
 Keep `resultar-di` as a direct dependency for framework-independent shared services or
 when importing framework adapter helpers such as `withProvider` and `useServiceAccess`.
-Core helpers such as `ResultTask` and `okAsync` continue to come from `resultar`.
+Core helpers such as `ResultTask` continue to come from `resultar`.
 The DI package has one entry point; migrate old `resultar-di/advanced` imports to `resultar-di`.
+
+Prefer lazy `ResultTask` values for new async service methods and run them explicitly in routes.
+`ResultAsync` and `StrictResultAsync` are exported from the `resultar/async` subpath and are deprecated since v4; existing eager contracts keep one
+shared execution and can be adapted with `ResultTask.fromResultAsync(() => legacyMethod())`.
 
 ## Add services to an existing Hono router
 
@@ -75,8 +79,9 @@ closed.match(
 The callback receives a real Hono instance and configures it synchronously once. Native
 `HonoOptions` (`strict`, `router` and `getPath`) are forwarded to `new Hono(...)` without
 attaching Resultar options to the router instance. Bindings are inferred from the selected DI
-services. Unknown names and missing dependencies are compile-time errors. Use ordinary `await`
-and `result.match` inside routes. Configure middleware (such as `logger` from `hono/logger`),
+services. Unknown names and missing dependencies are compile-time errors. Run Task-returning
+methods with `await ResultTask.runResult(task)` and use `result.match` inside routes. Native Hono
+and lifecycle Promise boundaries retain ordinary `await`. Configure middleware (such as `logger` from `hono/logger`),
 `onError` and `notFound` on the supplied Hono instance as usual.
 
 ## Optional request bindings
@@ -160,12 +165,15 @@ if (import.meta.main) {
 Route files import only the application type:
 
 ```ts
-// routes.ts — health route excerpt
+// routes.ts — adapting the fixture's existing eager health method
+import { ResultTask } from "resultar";
 import type { AppHono } from "./main.ts";
 
 export const healthRoutes = (app: AppHono) => {
   app.get("/health", async (c) => {
-    const result = await c.env.health.check();
+    const result = await ResultTask.runResult(
+      ResultTask.fromResultAsync(() => c.env.health.check()),
+    );
     return result.match(
       (health) => c.json(health),
       () => c.json({ error: "Health unavailable" }, 503),
@@ -180,6 +188,11 @@ services by default, or only the explicit `bindings` selection. Routes do not re
 This helper describes `createHonoApp` bindings in `c.env`; `createHonoServices` middleware
 continues to infer its per-route selection in `c.var.services`.
 
+The runnable fixture retains eager Async service methods for compatibility coverage. The bridge
+calls the method on each Task run; passing an already-created Async value would reuse its execution.
+For a new Task-returning method, pass it directly to `runResult`. Task has no `.then`, `map` is
+synchronous, and `match` returns a Task to execute with a runner.
+
 Start the example with `pnpm dev` from `examples/hono`. Tests import `createApplication`
 without starting the Node server because startup is guarded by `import.meta.main`.
 
@@ -187,7 +200,8 @@ without starting the Node server because startup is guarded by `import.meta.main
 
 - `fetch(request)` serves requests using one shared root and a fresh child scope per response.
 - `request(input, init?)` uses the same path for tests. Relative paths resolve against localhost.
-- `ready()` runs the optional startup task once and returns a `ResultAsync`; call it before opening a
+- `ready()` runs the optional startup task once and returns an eager compatibility `ResultAsync`;
+  this public lifecycle contract is retained despite the facade's v4 deprecation. Call it before opening a
   server listener when startup errors should be handled explicitly.
 - `close()` returns a Promise of Result, retaining the module's typed release failures. Concurrent
   and repeated calls return the same promise; requests after close are rejected. Defects or

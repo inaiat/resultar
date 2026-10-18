@@ -210,7 +210,7 @@ assert.equal(Cause.findError(cause)._unsafeUnwrap(), 'query');
 assert.equal(Cause.pretty(cause), 'Fail: query\\nDie: close');
 assert.equal(pipe(ok(2), Result.map(value => value * 3), Result.andThen(value => ok(String(value))), Result.match({ok: value => value, err: () => 'failed'})), '6');
 assert.equal((await pipe(ResultAsync.ok(2), ResultAsync.map(value => value * 3), ResultAsync.andThen(value => ok(String(value)))))._unsafeUnwrap(), '6');
-assert.equal((await ResultAsync.err('boom').match({ok: () => 'ok', err: error => error}))._unsafeUnwrap(), 'boom');
+assert.equal(await ResultAsync.err('boom').match({ok: () => 'ok', err: error => error}), 'boom');
 import {account, welcome} from './dist/agent/examples/workflow.mjs';
 assert.equal(account('invalid').isErr(), true);
 const result = await ResultTask.runResult(welcome(' ADA@EXAMPLE.COM '), {services: {greeting: 'Hello'}});

@@ -196,15 +196,13 @@ export const runTaskResilience = async () => {
         }),
       )
       .sandbox()
-      .mapError(
-        (cause): Cause<string> => ({
-          _tag: "Fail",
-          error: Cause.findError(cause).match({
-            ok: (failure) => `recovered:${failure._tag}:${failure.attempt}`,
-            err: () => "recovered:unknown",
-          }),
+      .mapErr((cause): Cause<string> => ({
+        _tag: "Fail",
+        error: Cause.findError(cause).match({
+          ok: (failure) => `recovered:${failure._tag}:${failure.attempt}`,
+          err: () => "recovered:unknown",
         }),
-      )
+      }))
       .unsandbox()
       .orElse((label) => ResultTask.ok(label)),
   );
@@ -252,7 +250,7 @@ export const runTaskResilience = async () => {
  * - `.onExit()`, `.inspectCause()`, and `.catchCause()`
  * - `Cause` inspection helpers (`isCause`, `hasFails`, `hasDies`, `hasInterrupts`, `failures`, `defects`, `pretty`)
  * - Cooperative yielding (`ResultTask.yieldNow`, custom `TaskScheduler`, `Scheduler.live`)
- * - Direct `await task` (`PromiseLike<Result<A, E>>`) and `.toResultAsync()`
+ * - Explicit task runners and native Promise interoperability with `runPromise`
  */
 export const runAdvancedTaskResilience = async () => {
   const clock = Clock.virtual(0);
@@ -324,7 +322,7 @@ export const runAdvancedTaskResilience = async () => {
       ),
   );
 
-  // 5. Custom `TaskScheduler` (`yieldEvery: 1`) and direct `await task` / `.toResultAsync()`.
+  // 5. Custom `TaskScheduler` (`yieldEvery: 1`) and explicit execution / Promise interoperability.
   let schedulerYields = 0;
   const countingScheduler: TaskScheduler = {
     yield: (signal) => {
@@ -342,14 +340,15 @@ export const runAdvancedTaskResilience = async () => {
     { scheduler: countingScheduler, yieldEvery: 1 },
   );
 
-  // `ResultTask` implements `PromiseLike<Result<A, E>>` for zero-requirement tasks (`R = never`),
-  // and `.toResultAsync()` bridges into `ResultAsync` pipelines.
-  const awaitedDirectly = await ResultTask.ok("direct-await" as const);
-  const bridgedAsync = await ResultTask.ok("bridged-async" as const).toResultAsync();
+  // Run tasks explicitly; `runPromise` starts one execution and returns a native Promise.
+  const explicitlyRun = await ResultTask.runPromise(ResultTask.ok("direct-await" as const));
+  const promiseInterop = await ResultTask.runPromise(
+    ResultTask.ok("promise-interop" as const),
+  ).then((value) => value);
 
   return {
-    awaitedDirectly: awaitedDirectly.unwrapOr("none"),
-    bridgedAsync: bridgedAsync.unwrapOr("none"),
+    awaitedDirectly: explicitlyRun,
+    promiseInterop,
     causeDiagnostics,
     causeEvents,
     fiberResult,
@@ -361,4 +360,3 @@ export const runAdvancedTaskResilience = async () => {
     yieldedValue,
   };
 };
-

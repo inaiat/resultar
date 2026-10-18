@@ -1,21 +1,19 @@
 /**
- * Async Resilience (`ResultAsync.timeout`, `retry`, `retryOrElse`, `race`, `raceAll`, `raceFirst`, `raceWith`)
+ * Task Resilience (`ResultTask.timeout`, `retry`, `orElse`, `race`, `raceFirst`, fibers)
  *
  * This module demonstrates cooperative cancellation via `AbortSignal`, timeouts,
- * retry loops (both inline options and portable `Retry.policy` schedules), and
- * racing concurrent `ResultAsync` tasks.
+ * retry loops with portable `Retry.policy` schedules, and
+ * racing concurrent, lazy `ResultTask` programs. Execute them with an explicit runner.
  */
 import {
   AbortError,
-  ResultAsync,
+  Fiber,
+  ResultTask,
   Retry,
   createTaggedError,
-  errAsync,
-  fromPromise,
+  err,
   isAbortError,
-  okAsync,
-  type ResultAsyncAbortSignal,
-  type ResultAsyncRaceTask,
+  ok,
 } from "resultar";
 
 export interface RemoteUser {
@@ -54,17 +52,28 @@ export class PriceProviderError extends createTaggedError({
 }) {}
 
 /**
- * Helper that simulates an asynchronous call honoring a `ResultAsyncAbortSignal`.
- * When `signal` aborts (e.g., on timeout or race loss), the timer is cleared immediately.
+ * Simulates a Promise API honoring `AbortSignal`. Timeout and race interruption
+ * clear its timer; every completion also removes the abort listener.
  */
 const delay = <T>(
   value: T,
   delayMs: number,
-  signal: ResultAsyncAbortSignal,
+  signal: AbortSignal,
   shouldReject = false,
 ): Promise<T> =>
   new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new AbortError("cancelled"));
+      return;
+    }
+
+    const onAbort = () => {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      reject(new AbortError("cancelled"));
+    };
     const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
       if (shouldReject) {
         reject(new Error("remote failure"));
         return;
@@ -73,190 +82,170 @@ const delay = <T>(
       resolve(value);
     }, delayMs);
 
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timeout);
-        reject(new Error("aborted"));
-      },
-      { once: true },
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+
+const fetchRemoteUser = (id: string, delayMs: number): ResultTask<RemoteUser, RemoteUserError> =>
+  ResultTask.tryPromise({
+    try: (signal) => delay({ id, name: "Ada Lovelace" }, delayMs, signal),
+    catch: (cause) => new RemoteUserError({ cause, id }),
+  });
+
+/**
+ * `.timeout(milliseconds, onTimeout)` interrupts the Promise through its
+ * supplied signal and waits for cancellation before returning the typed timeout.
+ */
+export const loadUserWithTimeout = (id: string, delayMs: number) =>
+  fetchRemoteUser(id, delayMs).timeout(5, () => new UserTimeoutError({ id }));
+
+/**
+ * `.retry(policy).orElseSucceed(recover)` retries before using a cached fallback.
+ * The generator creates a fresh counter for every execution of this program.
+ */
+export const loadCatalogWithFallback = (sku: string): ResultTask<CatalogItem> =>
+  ResultTask.gen(function* () {
+    let attempts = 0;
+    const task = ResultTask.sync(() => ++attempts).andThen((attempt) =>
+      attempt < 3
+        ? ResultTask.err(new CatalogUnavailableError({ sku }))
+        : ResultTask.ok({ sku, source: "primary" as const }),
+    );
+
+    return yield* task
+      .retry(Retry.policy({ delayMs: 0, times: 1 }))
+      .orElseSucceed(() => ({ sku, source: "cache" as const }));
+  });
+
+/**
+ * `.retry(Retry.policy(...))` retries while the predicate accepts the error
+ * and additional attempts remain. The counter belongs to this execution.
+ */
+export const loadCatalogAfterRetry = (
+  sku: string,
+): ResultTask<CatalogItem, CatalogUnavailableError> =>
+  ResultTask.gen(function* () {
+    let attempts = 0;
+    const task = ResultTask.sync(() => ++attempts).andThen((attempt) =>
+      attempt < 2
+        ? ResultTask.err(new CatalogUnavailableError({ sku }))
+        : ResultTask.ok({ sku, source: "primary" as const }),
+    );
+
+    return yield* task.retry(
+      Retry.policy<CatalogUnavailableError>({
+        delayMs: 0,
+        times: 2,
+        while: (error) => CatalogUnavailableError.is(error),
+      }),
     );
   });
 
-const fetchRemoteUser = (
-  id: string,
-  delayMs: number,
-  signal: ResultAsyncAbortSignal,
-): ResultAsync<RemoteUser, RemoteUserError> =>
-  fromPromise(
-    delay({ id, name: "Ada Lovelace" }, delayMs, signal),
-    (cause) => new RemoteUserError({ cause, id }),
-  );
-
 /**
- * `ResultAsync.timeout(task, { timeoutMs, onTimeout })` passes a cancellation
- * `signal` to `task` and aborts it if `timeoutMs` elapses first.
+ * `Retry.policy` defines a retry schedule with backoff and an `onRetry` hook.
+ * `.match` captures the final Result for a report; run this task with `runPromise`.
  */
-export const loadUserWithTimeout = (id: string, delayMs: number) =>
-  ResultAsync.timeout((signal) => fetchRemoteUser(id, delayMs, signal), {
-    onTimeout: () => new UserTimeoutError({ id }),
-    timeoutMs: 5,
-  });
+export const loadCatalogWithRetryPolicy = (sku: string) =>
+  ResultTask.gen(function* () {
+    const retryLog: string[] = [];
+    let attempts = 0;
 
-/**
- * `ResultAsync.retryOrElse(task, { times, delayMs, orElse })` retries `task` up to
- * `times` additional attempts and falls back to `orElse(lastError)` when all attempts fail.
- */
-export const loadCatalogWithFallback = (sku: string) => {
-  let attempts = 0;
-  const task = (): ResultAsync<CatalogItem, CatalogUnavailableError> => {
-    attempts += 1;
-
-    return attempts < 3
-      ? errAsync(new CatalogUnavailableError({ sku }))
-      : okAsync({ sku, source: "primary" });
-  };
-
-  return ResultAsync.retryOrElse(task, {
-    delayMs: 0,
-    orElse: () => okAsync({ sku, source: "cache" as const }),
-    times: 1,
-  });
-};
-
-/**
- * `ResultAsync.retry(task, options)` retries `task` while the `while` predicate
- * returns `true` for the error and `times` retries remain.
- */
-export const loadCatalogAfterRetry = (sku: string) => {
-  let attempts = 0;
-  const task = (): ResultAsync<CatalogItem, CatalogUnavailableError> => {
-    attempts += 1;
-
-    return attempts < 2
-      ? errAsync(new CatalogUnavailableError({ sku }))
-      : okAsync({ sku, source: "primary" });
-  };
-
-  return ResultAsync.retry(task, {
-    delayMs: 0,
-    times: 2,
-    while: (error) => error._tag === "CatalogUnavailableError",
-  });
-};
-
-/**
- * `Retry.policy` defines a portable retry schedule (shared between `ResultAsync`
- * and `ResultTask`) with exponential backoff, jitter, and an `onRetry` hook.
- */
-export const loadCatalogWithRetryPolicy = async (sku: string) => {
-  const retryLog: string[] = [];
-  let attempts = 0;
-
-  const catalogRetryPolicy = Retry.policy<CatalogUnavailableError>({
-    backoff: 2,
-    delayMs: 0,
-    times: 2,
-    while: (error) => CatalogUnavailableError.is(error),
-  });
-
-  const result = await ResultAsync.retry(
-    () => {
-      attempts += 1;
-      return attempts < 3
-        ? errAsync(new CatalogUnavailableError({ sku }))
-        : okAsync({ sku, source: "primary" as const });
-    },
-    {
-      ...catalogRetryPolicy,
+    const catalogRetryPolicy = Retry.policy<CatalogUnavailableError>({
+      backoff: 2,
+      delayMs: 0,
+      times: 2,
+      while: (error) => CatalogUnavailableError.is(error),
       onRetry: (error, { attempt }) => {
         retryLog.push(`retry:${attempt}:${error._tag}`);
       },
-    },
-  );
+    });
 
-  return {
-    attempts,
-    result,
-    retryLog,
-  };
-};
-
-const priceFrom =
-  (
-    region: string,
-    cents: number,
-    delayMs: number,
-    shouldReject = false,
-  ): ResultAsyncRaceTask<PriceQuote, PriceProviderError> =>
-  (signal) =>
-    fromPromise(
-      delay({ cents, region }, delayMs, signal, shouldReject),
-      (cause) => new PriceProviderError({ cause, region }),
+    const task = ResultTask.sync(() => ++attempts).andThen((attempt) =>
+      attempt < 3
+        ? ResultTask.err(new CatalogUnavailableError({ sku }))
+        : ResultTask.ok({ sku, source: "primary" as const }),
     );
+    const result = yield* task.retry(catalogRetryPolicy).match({
+      ok: (value) => ok(value),
+      err: (error) => err(error),
+    });
+
+    return { attempts, result, retryLog };
+  });
+
+const priceFrom = (
+  region: string,
+  cents: number,
+  delayMs: number,
+  shouldReject = false,
+): ResultTask<PriceQuote, PriceProviderError> =>
+  ResultTask.tryPromise({
+    try: (signal) => delay({ cents, region }, delayMs, signal, shouldReject),
+    catch: (cause) => new PriceProviderError({ cause, region }),
+  });
 
 /**
- * `ResultAsync.raceAll(tasks)` runs all tasks concurrently, resolves with the
- * first `Ok` winner (ignoring faster `Err` completions while peers are still running),
- * and aborts the remaining losers.
+ * Compose `ResultTask.race` to race several providers for their first success.
+ * Faster typed failures do not win; interruption waits for loser cleanup.
+ * If every provider fails, `runExit` preserves the combined failure causes.
  */
 export const fastestPrice = (sku: string) => {
   void sku;
 
-  return ResultAsync.raceAll([
+  return ResultTask.race(
     priceFrom("us-east", 1_900, 10, true),
-    priceFrom("eu-west", 2_100, 3),
-    priceFrom("sa-east", 2_000, 8),
-  ] as const);
+    ResultTask.race(priceFrom("eu-west", 2_100, 3), priceFrom("sa-east", 2_000, 8)),
+  );
 };
 
 /**
- * `ResultAsync.race(left, right)` races two tasks for the first `Ok` result
- * and cancels the loser.
+ * `ResultTask.race(left, right)` races for the first success and interrupts the loser.
  */
 export const fastestRegionalPrice = (sku: string) => {
   void sku;
 
-  return ResultAsync.race(priceFrom("primary", 2_400, 8), priceFrom("replica", 2_300, 2));
+  return ResultTask.race(priceFrom("primary", 2_400, 8), priceFrom("replica", 2_300, 2));
 };
 
 /**
- * `ResultAsync.raceFirst(left, right)` settles as soon as either task completes,
- * even if that first completion is an `Err`.
+ * `ResultTask.raceFirst(left, right)` returns the first outcome after loser cleanup,
+ * even if the first outcome is a typed failure.
  */
 export const firstCompletedPrice = (sku: string) => {
   void sku;
 
-  return ResultAsync.raceFirst(
+  return ResultTask.raceFirst(
     priceFrom("failed-fast", 0, 1, true),
     priceFrom("slow-success", 2_300, 8),
   );
 };
 
 /**
- * `ResultAsync.raceWith(left, right, { onLeftDone, onRightDone })` gives custom
- * control over whether to abort or await the peer handle when the first branch finishes.
+ * Child fibers implement a custom policy: a primary failure waits for fallback,
+ * while a primary success or any fallback outcome interrupts the other provider.
+ * Detaching the losing race waiter keeps the provider alive until this policy decides.
  */
 export const fallbackPriceWithCustomRace = (sku: string) => {
   void sku;
 
-  return ResultAsync.raceWith(
-    priceFrom("primary", 1_900, 1, true),
-    priceFrom("fallback", 2_200, 5),
-    {
-      onLeftDone: (leftResult, fallbackHandle) => {
-        if (leftResult.isOk()) {
-          fallbackHandle.abort();
-          return leftResult;
-        }
+  return ResultTask.scoped(
+    ResultTask.gen(function* () {
+      const primary = yield* ResultTask.forkChild(priceFrom("primary", 1_900, 1, true));
+      const fallback = yield* ResultTask.forkChild(priceFrom("fallback", 2_200, 5));
+      const primaryOutcome = Fiber.join(primary, { interruption: "detach" })
+        .match({ ok: (value) => ok(value), err: (error) => err(error) })
+        .map((result) => ({ branch: "primary" as const, result }));
+      const fallbackOutcome = Fiber.join(fallback, { interruption: "detach" })
+        .match({ ok: (value) => ok(value), err: (error) => err(error) })
+        .map((result) => ({ branch: "fallback" as const, result }));
+      const completed = yield* ResultTask.raceFirst(primaryOutcome, fallbackOutcome);
 
-        return fallbackHandle.wait();
-      },
-      onRightDone: (rightResult, primaryHandle) => {
-        primaryHandle.abort();
-        return rightResult;
-      },
-    },
+      if (completed.branch === "primary" && completed.result.isErr()) {
+        return yield* Fiber.join(fallback);
+      }
+
+      yield* Fiber.interrupt(completed.branch === "primary" ? fallback : primary);
+      return yield* completed.result;
+    }),
   );
 };
 

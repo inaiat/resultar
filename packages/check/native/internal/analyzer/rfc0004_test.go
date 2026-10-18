@@ -134,13 +134,13 @@ func TestOverviewHoverAndSafeRefactors(t *testing.T) {
 	source := taskToolingFixture + `
 export const simplified = ResultTask.gen(function*(){return yield* task})
 export const retained = ResultTask.gen(function*(){try{return yield* task}finally{void 1}})
-export const byTag = task.catchAll((error: Missing|Denied)=>error._tag==='Missing'?recover(error):ResultTask.err(error))
+export const byTag = task.catchAll((error: Missing|Denied)=>error._tag==='Missing'?recover(error):ResultTask.fail(error))
 const handleMissing = recover
 const handleDenied = recover
 export const merged = task.catchTag('Missing',handleMissing).catchTag('Denied',handleDenied)
-const introducesDenied = (_error:Missing|Denied):ResultTask<number,Denied>=>ResultTask.err({_tag:'Denied'})
+const introducesDenied = (_error:Missing|Denied):ResultTask<number,Denied>=>ResultTask.fail({_tag:'Denied'})
 export const retainedRecovery = task.catchTag('Missing',introducesDenied).catchTag('Denied',handleDenied)
-const broad = (_error:Missing|Denied):ResultTask<number,Error>=>ResultTask.err(new Error())
+const broad = (_error:Missing|Denied):ResultTask<number,Error>=>ResultTask.fail(new Error())
 const handleAnyError = (_error:Error)=>task
 export const retainedBroadRecovery = task.catchTag('Missing',broad).catchTag('Denied',handleAnyError)
 export const later = ResultTask.gen(function*(){return yield* future})

@@ -41,6 +41,8 @@ const requirePath = (path: string): string => {
   return path
 }
 
+// This intentionally invalid fixture measures diagnostics, not Resultar execution.
+// Keep the legacy safeTry cases to exercise the three safe-try rule IDs among all 21 rules.
 const fixtureSource = (index: number): string => `
 type Result<T, E> = {
   readonly value?: T
@@ -51,7 +53,11 @@ type Result<T, E> = {
   catchTag<X, F>(tag: string, fn: (error: E) => Result<X, F>): Result<T | X, F>
   mapErr<F>(fn: (error: E) => F): Result<T, F>
 }
-type ResultAsync<T, E> = { readonly value?: T; readonly error?: E }
+type ResultTask<T, E> = {
+  readonly value?: T
+  readonly error?: E
+  map<X>(fn: (value: T) => X): ResultTask<X, E>
+}
 declare const Result: {
   combine<T, E>(values: readonly Result<T, E>[]): Result<T[], E>
 }
@@ -59,7 +65,7 @@ declare function ok<T, E = never>(value: T): Result<T, E>
 declare function err<E, T = never>(error: E): Result<T, E>
 declare function save${index}(): Result<string, Error>
 declare function fallback${index}(): Result<string, Error>
-declare function asyncFallback${index}(): ResultAsync<string, Error>
+declare function taskFallback${index}(): ResultTask<string, Error>
 declare function asyncSave${index}(value: number): Promise<void>
 declare function fromThrowable<T>(fn: () => T): Result<T, unknown>
 declare function validate${index}(value: number): Result<string, Error>
@@ -76,7 +82,7 @@ declare const unsafe${index}: Result<string, unknown>
 void unsafe${index}
 void save${index}().orElse(() => err(new Error("mapped")))
 void save${index}().map(() => fallback${index}())
-void save${index}().map(() => asyncFallback${index}())
+void taskFallback${index}().map(() => taskFallback${index}())
 void save${index}().andThen((value) => ok(value.length))
 void save${index}().orElse(() => fallback${index}()).orElse(() => fallback${index}())
 void fromThrowable(() => ${index})

@@ -12,13 +12,19 @@ const thrownError = new Error('callback failed')
 const rejectedError = new Error('callback rejected')
 
 describe('ResultAsync callback failures', () => {
-  it('rejects when map callback throws', async () => {
+  it('rejects when map callback throws or rejects', async () => {
     await assert.rejects(
       async () =>
         await okAsync<number, Error>(1).map(() => {
           throw thrownError
         }),
       thrownError,
+    )
+
+    await assert.rejects(
+      async () =>
+        await okAsync<number, Error>(1).map(async () => await Promise.reject(rejectedError)),
+      rejectedError,
     )
 
     const skipped = await errAsync<number, Error>(new Error('original')).map(() => {
@@ -76,7 +82,7 @@ describe('ResultAsync callback failures', () => {
     equal(skipped._unsafeUnwrap(), 1)
   })
 
-  it('rejects when match callbacks throw', async () => {
+  it('rejects when match callbacks throw or reject', async () => {
     await assert.rejects(
       async () =>
         await okAsync<number, Error>(1).match(
@@ -90,9 +96,10 @@ describe('ResultAsync callback failures', () => {
 
     await assert.rejects(
       async () =>
-        await errAsync<number, Error>(new Error('original')).match(String, () => {
-          throw rejectedError
-        }),
+        await errAsync<number, Error>(new Error('original')).match(
+          String,
+          async () => await Promise.reject(rejectedError),
+        ),
       rejectedError,
     )
   })

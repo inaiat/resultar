@@ -50,14 +50,14 @@ describe('ResultTask resource scopes', () => {
     let failedRelease = false
     const task = ResultTask.gen(function* () {
       yield* ResultTask.acquireRelease({
-        acquire: ResultTask.ok('database'),
+        acquire: ResultTask.succeed('database'),
         release: (_resource, exit) =>
           ResultTask.sync(() => {
             exits.push(exit)
           }),
       })
       yield* ResultTask.acquireRelease({
-        acquire: ResultTask.err('connect'),
+        acquire: ResultTask.fail('connect'),
         release: () =>
           ResultTask.sync(() => {
             failedRelease = true
@@ -73,7 +73,7 @@ describe('ResultTask resource scopes', () => {
     const events: string[] = []
     const acquire = (name: string) =>
       ResultTask.acquireRelease({
-        acquire: ResultTask.ok(name),
+        acquire: ResultTask.succeed(name),
         release: () =>
           ResultTask.sync(() => {
             events.push(name)
@@ -92,16 +92,16 @@ describe('ResultTask resource scopes', () => {
     const exits: Exit<unknown, unknown>[] = []
     const resource = (error: string) =>
       ResultTask.acquireRelease({
-        acquire: ResultTask.ok(undefined),
+        acquire: ResultTask.succeed(undefined),
         release: (_resource, exit) => {
           exits.push(exit)
-          return ResultTask.err(error)
+          return ResultTask.fail(error)
         },
       })
     const task = ResultTask.gen(function* () {
       yield* resource('database-close')
       yield* resource('session-close')
-      yield* ResultTask.err('boot')
+      yield* ResultTask.fail('boot')
     })
     const expected = {
       _tag: 'Failure',
@@ -130,11 +130,11 @@ describe('ResultTask resource scopes', () => {
 
   it('returns a single release failure as Err and can recover after scoped closes', async () => {
     const resource = ResultTask.acquireRelease({
-      acquire: ResultTask.ok(1),
-      release: () => ResultTask.err('release'),
+      acquire: ResultTask.succeed(1),
+      release: () => ResultTask.fail('release'),
     })
     deepEqual(await ResultTask.runResult(resource), { error: 'release' })
-    const recovered = ResultTask.scoped(resource).orElse(() => ResultTask.ok(2))
+    const recovered = ResultTask.scoped(resource).catchAll(() => ResultTask.succeed(2))
     deepEqual(await ResultTask.runResult(recovered), { value: 2 })
   })
 
@@ -144,14 +144,14 @@ describe('ResultTask resource scopes', () => {
     let closed = false
     const task = ResultTask.gen(function* () {
       yield* ResultTask.acquireRelease({
-        acquire: ResultTask.ok(undefined),
+        acquire: ResultTask.succeed(undefined),
         release: () =>
           ResultTask.sync(() => {
             closed = true
           }),
       })
       yield* ResultTask.acquireRelease({
-        acquire: ResultTask.ok(undefined),
+        acquire: ResultTask.succeed(undefined),
         release: () => {
           throw releaseDefect
         },
@@ -174,7 +174,7 @@ describe('ResultTask resource scopes', () => {
     const finish = Promise.withResolvers<void>()
     let resolved = false
     const task = ResultTask.acquireRelease({
-      acquire: ResultTask.ok(undefined),
+      acquire: ResultTask.succeed(undefined),
       release: () =>
         ResultTask.tryPromise({
           try: () => {
@@ -202,7 +202,7 @@ describe('ResultTask resource scopes', () => {
       acquire: ResultTask.sync(() => {
         opened = true
       }),
-      release: () => ResultTask.ok(undefined),
+      release: () => ResultTask.succeed(undefined),
     })
     deepEqual(await ResultTask.runExit(task, { signal: controller.signal }), {
       _tag: 'Failure',
@@ -251,8 +251,8 @@ describe('ResultTask resource scopes', () => {
     let errorMapped = false
     const task = ResultTask.gen(function* () {
       yield* ResultTask.acquireRelease({
-        acquire: ResultTask.ok(undefined),
-        release: () => ResultTask.err('release'),
+        acquire: ResultTask.succeed(undefined),
+        release: () => ResultTask.fail('release'),
       })
       try {
         yield* ResultTask.tryPromise({
@@ -297,7 +297,7 @@ describe('ResultTask resource scopes', () => {
     const Logger = ResultTask.service<{ readonly close: () => void }, 'Logger'>('Logger')
     let closed = false
     const resource = ResultTask.acquireRelease({
-      acquire: ResultTask.ok(1),
+      acquire: ResultTask.succeed(1),
       release: () =>
         ResultTask.gen(function* () {
           const logger = yield* Logger
@@ -316,11 +316,11 @@ describe('ResultTask resource scopes', () => {
   it('closes resources acquired by a finalizer before proceeding to the next finalizer', async () => {
     const events: string[] = []
     const resource = ResultTask.acquireRelease({
-      acquire: ResultTask.ok(undefined),
+      acquire: ResultTask.succeed(undefined),
       release: () =>
         ResultTask.gen(function* () {
           yield* ResultTask.acquireRelease({
-            acquire: ResultTask.ok(undefined),
+            acquire: ResultTask.succeed(undefined),
             release: () =>
               ResultTask.sync(() => {
                 events.push('nested')
@@ -373,7 +373,7 @@ describe('ResultTask cancellation lifetime', () => {
     const events: string[] = []
     const task = ResultTask.scoped(
       ResultTask.acquireRelease({
-        acquire: ResultTask.ok(undefined),
+        acquire: ResultTask.succeed(undefined),
         release: () =>
           ResultTask.tryPromise({
             try: async (signal) => {
@@ -402,11 +402,11 @@ describe('ResultTask cancellation lifetime', () => {
 describe('ResultTask scope inference', () => {
   it('retains release errors from nested acquisitions in finalizers', async () => {
     const resource = ResultTask.acquireRelease({
-      acquire: ResultTask.ok(undefined),
+      acquire: ResultTask.succeed(undefined),
       release: () =>
         ResultTask.acquireRelease({
-          acquire: ResultTask.ok(undefined),
-          release: () => ResultTask.err('nested-release'),
+          acquire: ResultTask.succeed(undefined),
+          release: () => ResultTask.fail('nested-release'),
         }),
     })
     expectTypeOf(resource).toEqualTypeOf<
@@ -417,17 +417,17 @@ describe('ResultTask scope inference', () => {
     deepEqual(result, { error: 'nested-release' })
   })
 
-  it('does not run orElse for a composite failure or leak removed errors as Fail', async () => {
+  it('does not run catchAll for a composite failure or leak removed errors as Fail', async () => {
     let recovered = false
     const task = ResultTask.scoped(
       ResultTask.gen(function* () {
         yield* ResultTask.acquireRelease({
-          acquire: ResultTask.ok(undefined),
-          release: () => ResultTask.err('release'),
+          acquire: ResultTask.succeed(undefined),
+          release: () => ResultTask.fail('release'),
         })
-        yield* ResultTask.err('use')
+        yield* ResultTask.fail('use')
       }),
-    ).orElse(() =>
+    ).catchAll(() =>
       ResultTask.sync(() => {
         recovered = true
       }),
@@ -452,13 +452,13 @@ describe('ResultTask scope inference', () => {
         ResultTask.gen(function* () {
           const logger = yield* Logger
           logger.close()
-          yield* ResultTask.err('release')
+          yield* ResultTask.fail('release')
         }),
     })
     expectTypeOf(resource).toEqualTypeOf<
       ResultTask<number, 'acquire', typeof Logger | ResultTaskScope<'release'>>
     >()
-    const recovered = resource.orElse(() => ResultTask.ok(0))
+    const recovered = resource.catchAll(() => ResultTask.succeed(0))
     const provided = ResultTask.provideServices(recovered, { Logger: { close: () => undefined } })
     expectTypeOf(provided).toEqualTypeOf<ResultTask<number, never, ResultTaskScope<'release'>>>()
     const result = await ResultTask.runResult(provided)

@@ -13,7 +13,7 @@ test("requires a declared parameter when synchronous factories list dependencies
     find: (id: string) => cache.get(id),
   });
   const users = services.scoped("users", ["cache"], createUsers);
-  const task = users.use(["users"], (deps) => ResultTask.ok(deps.users.find("1")));
+  const task = users.use(["users"], (deps) => ResultTask.succeed(deps.users.find("1")));
   expectTypeOf(task).toEqualTypeOf<ResultTask<string | undefined>>();
 
   // No dependencies means a zero-argument function is valid.
@@ -52,7 +52,7 @@ test("accepts optional, default, and rest dependency parameters", () => {
     expectTypeOf(deps.optional).toEqualTypeOf<number | undefined>();
     expectTypeOf(deps.defaulted).toEqualTypeOf<number>();
     expectTypeOf(deps.rest).toEqualTypeOf<number>();
-    return ResultTask.ok(deps.rest);
+    return ResultTask.succeed(deps.rest);
   });
   expectTypeOf(task).toEqualTypeOf<ResultTask<number>>();
 });
@@ -69,7 +69,7 @@ test("infers synchronous registrations and rejects unsupported lifetime argument
       return users.find("1");
     });
 
-  const task = services.use(["operation"], ({ operation }) => ResultTask.ok(operation));
+  const task = services.use(["operation"], ({ operation }) => ResultTask.succeed(operation));
   expectTypeOf(task).toEqualTypeOf<ResultTask<string | undefined>>();
 
   const invalidExamples = () => {
@@ -78,7 +78,7 @@ test("infers synchronous registrations and rejects unsupported lifetime argument
     // @ts-expect-error Singleton initialization must be synchronous.
     services.singleton("async", [], () => Promise.resolve(1));
     // @ts-expect-error Transient initialization must also be synchronous.
-    services.transient("lazy", [], () => ResultTask.ok(1));
+    services.transient("lazy", [], () => ResultTask.succeed(1));
     // @ts-expect-error Dependency names remain checked for singleton registrations.
     services.singleton("missing", ["unknown"], () => 1);
     // @ts-expect-error Duplicate names are rejected across registration methods.
@@ -94,7 +94,7 @@ test("infers factory dependencies, resource values, and all failure channels", (
     .resource("server", ["address"], {
       acquire: ({ address }) =>
         ResultTask.try({ try: () => ({ address }), catch: () => "acquire" as const }),
-      release: () => ResultTask.err("release" as const),
+      release: () => ResultTask.fail("release" as const),
     });
   const task = services.use(["server"], ({ server }) => {
     expectTypeOf(server).toEqualTypeOf<{ address: string }>();
@@ -110,20 +110,20 @@ test("preserves external service requirements and nested finalizer errors", () =
       ResultTask.gen(function* acquireDatabase() {
         const clock = yield* Clock;
         return yield* ResultTask.acquireRelease({
-          acquire: ResultTask.ok(clock.now()),
-          release: () => ResultTask.err("inner release" as const),
+          acquire: ResultTask.succeed(clock.now()),
+          release: () => ResultTask.fail("inner release" as const),
         });
       }),
-    release: () => ResultTask.err("outer release" as const),
+    release: () => ResultTask.fail("outer release" as const),
   });
-  const task = services.use(["database"], ({ database }) => ResultTask.ok(database));
+  const task = services.use(["database"], ({ database }) => ResultTask.succeed(database));
   expectTypeOf(task).toEqualTypeOf<
     ResultTask<number, "inner release" | "outer release", typeof Clock>
   >();
   const nestedUse = createModule().use([], () =>
     ResultTask.acquireRelease({
-      acquire: ResultTask.ok(1),
-      release: () => ResultTask.err("use release" as const),
+      acquire: ResultTask.succeed(1),
+      release: () => ResultTask.fail("use release" as const),
     }),
   );
   expectTypeOf(nestedUse).toEqualTypeOf<ResultTask<number, "use release">>();
@@ -134,10 +134,10 @@ test("preserves external service requirements and nested finalizer errors", () =
   const taskProvider = createModule().task("config", [], () =>
     ResultTask.acquireRelease({
       acquire: ResultTask.try({ try: () => 3000, catch: () => "config" as const }),
-      release: () => ResultTask.err("config release" as const),
+      release: () => ResultTask.fail("config release" as const),
     }),
   );
-  const config = taskProvider.use(["config"], (deps) => ResultTask.ok(deps.config));
+  const config = taskProvider.use(["config"], (deps) => ResultTask.succeed(deps.config));
   expectTypeOf(config).toEqualTypeOf<ResultTask<number, "config" | "config release">>();
 });
 
@@ -153,13 +153,13 @@ test("rejects unsafe dependency declarations, replacements, and async factories"
     // @ts-expect-error Replacements retain the original service contract.
     services.override("config", { port: "bad" });
     // @ts-expect-error Selection controls which services the callback receives.
-    services.use(["config"], ({ logger }) => ResultTask.ok(logger));
+    services.use(["config"], ({ logger }) => ResultTask.succeed(logger));
     // @ts-expect-error Factory dependencies are also narrowed.
     services.scoped("repo", ["config"], ({ logger }) => String(logger));
     // @ts-expect-error Promise factories hide acquisition errors and ownership.
     services.scoped("async", [], () => Promise.resolve(1));
     // @ts-expect-error ResultTask factories use task or resource registration.
-    services.scoped("task", [], () => ResultTask.ok(1));
+    services.scoped("task", [], () => ResultTask.succeed(1));
     // @ts-expect-error Use callbacks return tasks, not already executing promises.
     services.use(["config"], () => Promise.resolve(1));
     // @ts-expect-error A broad string cannot guarantee a known service property.
@@ -169,13 +169,13 @@ test("rejects unsafe dependency declarations, replacements, and async factories"
     services.value(unionName, 1);
     const dynamicKeys: ("config" | "logger")[] = ["config"];
     // @ts-expect-error Widened arrays cannot promise all selected properties are present.
-    services.use(dynamicKeys, () => ResultTask.ok(1));
+    services.use(dynamicKeys, () => ResultTask.succeed(1));
     const unionKey = Math.random() > 0.5 ? "config" : "logger";
     // @ts-expect-error A union element does not guarantee both dependencies.
-    services.use([unionKey], () => ResultTask.ok(1));
+    services.use([unionKey], () => ResultTask.succeed(1));
     const unionTuple = Math.random() > 0.5 ? (["config"] as const) : (["logger"] as const);
     // @ts-expect-error A union of tuples also cannot guarantee all selected properties.
-    services.use(unionTuple, () => ResultTask.ok(1));
+    services.use(unionTuple, () => ResultTask.succeed(1));
   };
   expectTypeOf(invalidExamples).toBeFunction();
 });

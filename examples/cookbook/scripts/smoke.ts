@@ -1,5 +1,7 @@
 import { strict as assert } from "node:assert";
 
+import { Cause, ResultTask } from "resultar";
+
 import {
   AccountCreateError,
   PaymentState,
@@ -7,29 +9,29 @@ import {
   StorageWriteError,
   abortDetectionExamples,
   acknowledgeCheckout,
-  acknowledgeCheckoutAsync,
-  allAsyncOrderChecks,
+  acknowledgeCheckoutTask,
+  allTaskOrderChecks,
   allOrderChecks,
-  asyncFinalCursor,
-  asyncInvoiceSchedule,
+  taskFinalCursor,
+  taskInvoiceSchedule,
   chooseFulfillment,
-  chooseAsyncFulfillment,
+  chooseTaskFulfillment,
   clearCartSnapshot,
   collectLineTotals,
-  combineAsyncOrderContext,
+  combineTaskOrderContext,
   combineOrderContext,
   configErrorLabel,
   configErrorStatus,
   configPortOrDefault,
   createPaidAccount,
-  createPaidAccountAsyncWithGen,
+  createPaidAccountTaskWithGen,
   createPaidAccountWithGen,
   createPaidAccountWithSafeTry,
   decidePaymentState,
   decodeSignupPayload,
   describeProviderReason,
   draftProfileFromCacheMiss,
-  enrichBuyerAsync,
+  enrichBuyerTask,
   fallbackPriceWithCustomRace,
   fastestPrice,
   fastestRegionalPrice,
@@ -57,14 +59,14 @@ import {
   markCheckoutStarted,
   maybeAudit,
   maybeAuditAfterFlag,
-  maybeAsyncAudit,
-  maybeAsyncAuditAfterFlag,
-  maybeAsyncFraudCheck,
-  maybeAsyncFraudCheckAfterFlag,
+  maybeTaskAudit,
+  maybeTaskAuditAfterFlag,
+  maybeTaskFraudCheck,
+  maybeTaskFraudCheckAfterFlag,
   maybeFraudCheck,
   maybeFraudCheckAfterFlag,
   normalizeUnknownError,
-  observeAsyncCheckout,
+  observeTaskCheckout,
   observeCheckout,
   parseConfig,
   parseConfigPortSync,
@@ -83,7 +85,7 @@ import {
   runTaskControlFlow,
   runTaskResilience,
   saveAuditTrail,
-  validateAsyncCheckout,
+  validateTaskCheckout,
   validateCheckout,
   validateInventory,
   validateOrderLines,
@@ -93,7 +95,7 @@ import {
   settlePayment,
   isSignupPasswordRedacted,
   validateSignup,
-  zipAsyncOrderIds,
+  zipTaskOrderIds,
   zipBuyerAndCart,
   type CreatePaidAccountError,
 } from "../src/index.js";
@@ -166,12 +168,39 @@ const accountFromGen = createPaidAccountWithGen({
 });
 assert.equal(accountFromGen.isOk(), true);
 
-const accountFromAsyncGen = await createPaidAccountAsyncWithGen({
-  cardToken: "card_4242",
-  email: "ada@example.com",
-  planCode: "team",
-});
-assert.equal(accountFromAsyncGen.isOk(), true);
+const accountFromTaskGen = await ResultTask.runResult(
+  createPaidAccountTaskWithGen({
+    cardToken: "card_4242",
+    email: "ada@example.com",
+    planCode: "team",
+  }),
+);
+assert.equal(accountFromTaskGen.isOk(), true);
+
+const declinedTaskAccount = await ResultTask.runResult(
+  createPaidAccountTaskWithGen({
+    cardToken: "card_declined",
+    email: "ada@example.com",
+    planCode: "team",
+  }),
+);
+assert.equal(declinedTaskAccount.isErr(), true);
+if (declinedTaskAccount.isErr()) {
+  assert.equal(declinedTaskAccount.error instanceof PaymentDeclinedError, true);
+}
+
+const failedTaskAccount = await ResultTask.runResult(
+  createPaidAccountTaskWithGen({
+    cardToken: "card_4242",
+    email: "ada@blocked.example",
+    planCode: "team",
+  }),
+);
+assert.equal(failedTaskAccount.isErr(), true);
+if (failedTaskAccount.isErr()) {
+  assert.equal(failedTaskAccount.error instanceof AccountCreateError, true);
+  assert.equal(findStorageCause(failedTaskAccount.error) instanceof StorageWriteError, true);
+}
 
 const declined = createPaidAccountWithSafeTry({
   cardToken: "card_declined",
@@ -220,7 +249,7 @@ if (badJsonConfig.isErr()) {
   assert.equal(configErrorStatus(badJsonConfig.error), 400);
 }
 
-const missingConfig = await loadConfig("missing");
+const missingConfig = await ResultTask.runResult(loadConfig("missing"));
 assert.equal(missingConfig.isErr(), true);
 
 if (missingConfig.isErr()) {
@@ -228,10 +257,10 @@ if (missingConfig.isErr()) {
   assert.equal(configErrorStatus(missingConfig.error), 503);
 }
 
-const bundledConfig = await loadBundledConfig("memory");
+const bundledConfig = await ResultTask.runResult(loadBundledConfig("memory"));
 assert.equal(bundledConfig.isOk(), true);
 
-const defaultConfig = await loadDefaultConfig();
+const defaultConfig = await ResultTask.runResult(loadDefaultConfig());
 assert.equal(defaultConfig.isOk(), true);
 
 if (defaultConfig.isOk()) {
@@ -239,14 +268,49 @@ if (defaultConfig.isOk()) {
 }
 
 const callbackEvents: string[] = [];
-const callbackConfig = await waitForConfigEvent("ready", callbackEvents);
+const callbackTask = waitForConfigEvent("ready", callbackEvents);
+assert.deepEqual(callbackEvents, []);
+const callbackConfig = await ResultTask.runResult(callbackTask);
 assert.equal(callbackConfig.isOk(), true);
 assert.deepEqual(callbackEvents, ["subscribe:ready", "cleanup:ready"]);
 
+const repeatedCallbackConfig = await ResultTask.runResult(callbackTask);
+assert.equal(repeatedCallbackConfig.isOk(), true);
+assert.deepEqual(callbackEvents, [
+  "subscribe:ready",
+  "cleanup:ready",
+  "subscribe:ready",
+  "cleanup:ready",
+]);
+
 const brokenCallbackEvents: string[] = [];
-const brokenCallbackConfig = await waitForConfigEvent("broken", brokenCallbackEvents);
+const brokenCallbackConfig = await ResultTask.runResult(
+  waitForConfigEvent("broken", brokenCallbackEvents),
+);
 assert.equal(brokenCallbackConfig.isErr(), true);
 assert.deepEqual(brokenCallbackEvents, ["subscribe:broken", "cleanup:broken"]);
+
+const interruptedCallbackEvents: string[] = [];
+const callbackController = new AbortController();
+const interruptedCallbackRun = ResultTask.runExit(
+  waitForConfigEvent("ready", interruptedCallbackEvents),
+  { signal: callbackController.signal },
+);
+assert.deepEqual(interruptedCallbackEvents, ["subscribe:ready"]);
+callbackController.abort();
+const interruptedCallback = await interruptedCallbackRun;
+assert.equal(interruptedCallback._tag, "Failure");
+if (interruptedCallback._tag === "Failure") {
+  assert.equal(Cause.hasInterrupts(interruptedCallback.cause), true);
+}
+assert.deepEqual(interruptedCallbackEvents, ["subscribe:ready", "cleanup:ready"]);
+
+const preAbortedEvents: string[] = [];
+const preAbortedCallback = await ResultTask.runExit(waitForConfigEvent("ready", preAbortedEvents), {
+  signal: callbackController.signal,
+});
+assert.equal(preAbortedCallback._tag, "Failure");
+assert.deepEqual(preAbortedEvents, []);
 
 assert.equal(configPortOrDefault("{"), 3000);
 assert.equal(parseConfigPortSync('{"port":9000,"mode":"dev"}'), 9000);
@@ -359,21 +423,21 @@ if (acknowledged.isOk()) {
   assert.equal(acknowledged.value, undefined);
 }
 
-const asyncAcknowledged = await acknowledgeCheckoutAsync();
-assert.equal(asyncAcknowledged.isOk(), true);
+const taskAcknowledged = await ResultTask.runResult(acknowledgeCheckoutTask());
+assert.equal(taskAcknowledged.isOk(), true);
 
-if (asyncAcknowledged.isOk()) {
-  assert.equal(asyncAcknowledged.value, undefined);
+if (taskAcknowledged.isOk()) {
+  assert.equal(taskAcknowledged.value, undefined);
 }
 
-const enrichedBuyer = await enrichBuyerAsync("buyer_1");
+const enrichedBuyer = await ResultTask.runResult(enrichBuyerTask("buyer_1"));
 assert.equal(enrichedBuyer.isOk(), true);
 
 if (enrichedBuyer.isOk()) {
   assert.equal(enrichedBuyer.value.tier, "gold");
 }
 
-const reservedValidatedLine = await reserveValidatedLine(orderLines[0]);
+const reservedValidatedLine = await ResultTask.runResult(reserveValidatedLine(orderLines[0]));
 assert.equal(reservedValidatedLine.isOk(), true);
 
 if (reservedValidatedLine.isOk()) {
@@ -471,104 +535,108 @@ if (fraudAfterFlag.isOk()) {
   assert.equal(fraudAfterFlag.value, "fraud-check-from-result");
 }
 
-const asyncFulfillment = await chooseAsyncFulfillment(false);
-assert.equal(asyncFulfillment.isOk(), true);
+const taskFulfillment = await ResultTask.runResult(chooseTaskFulfillment(false));
+assert.equal(taskFulfillment.isOk(), true);
 
-if (asyncFulfillment.isOk()) {
-  assert.equal(asyncFulfillment.value.mode, "standard");
+if (taskFulfillment.isOk()) {
+  assert.equal(taskFulfillment.value.mode, "standard");
 }
 
-const asyncAuditSkipped = await maybeAsyncAudit(false);
-assert.equal(asyncAuditSkipped.isOk(), true);
+const taskAuditSkipped = await ResultTask.runResult(maybeTaskAudit(false));
+assert.equal(taskAuditSkipped.isOk(), true);
 
-if (asyncAuditSkipped.isOk()) {
-  assert.equal(asyncAuditSkipped.value, undefined);
+if (taskAuditSkipped.isOk()) {
+  assert.equal(taskAuditSkipped.value, undefined);
 }
 
-const asyncAuditAfterFlag = await maybeAsyncAuditAfterFlag(true);
-assert.equal(asyncAuditAfterFlag.isOk(), true);
-if (asyncAuditAfterFlag.isOk()) {
-  assert.equal(asyncAuditAfterFlag.value, "async-audit-from-result");
+const taskAuditAfterFlag = await ResultTask.runResult(maybeTaskAuditAfterFlag(true));
+assert.equal(taskAuditAfterFlag.isOk(), true);
+if (taskAuditAfterFlag.isOk()) {
+  assert.equal(taskAuditAfterFlag.value, "async-audit-from-result");
 }
 
-const asyncFraudCheck = await maybeAsyncFraudCheck(false);
-assert.equal(asyncFraudCheck.isOk(), true);
+const taskFraudCheck = await ResultTask.runResult(maybeTaskFraudCheck(false));
+assert.equal(taskFraudCheck.isOk(), true);
 
-if (asyncFraudCheck.isOk()) {
-  assert.equal(asyncFraudCheck.value, "async-fraud-check");
+if (taskFraudCheck.isOk()) {
+  assert.equal(taskFraudCheck.value, "async-fraud-check");
 }
 
-const asyncFraudAfterFlag = await maybeAsyncFraudCheckAfterFlag(false);
-assert.equal(asyncFraudAfterFlag.isOk(), true);
-if (asyncFraudAfterFlag.isOk()) {
-  assert.equal(asyncFraudAfterFlag.value, "async-fraud-from-result");
+const taskFraudAfterFlag = await ResultTask.runResult(maybeTaskFraudCheckAfterFlag(false));
+assert.equal(taskFraudAfterFlag.isOk(), true);
+if (taskFraudAfterFlag.isOk()) {
+  assert.equal(taskFraudAfterFlag.value, "async-fraud-from-result");
 }
 
-const inventory = await reserveInventory(orderLines);
+const inventory = await ResultTask.runResult(reserveInventory(orderLines));
 assert.equal(inventory.isOk(), true);
 
 if (inventory.isOk()) {
   assert.equal(inventory.value.length, 2);
 }
 
-const inventoryValidation = await validateInventory([
-  ...orderLines,
-  { quantity: 1, sku: "missing", unitCents: 500 },
-]);
+const inventoryValidation = await ResultTask.runResult(
+  validateInventory([...orderLines, { quantity: 1, sku: "missing", unitCents: 500 }]),
+);
 assert.equal(inventoryValidation.isErr(), true);
 
-const auditSaved = await saveAuditTrail(["created", "paid"]);
+const auditSaved = await ResultTask.runResult(saveAuditTrail(["created", "paid"]));
 assert.equal(auditSaved.isOk(), true);
 
-const auditFailed = await saveAuditTrail(["created", "bad"]);
+const auditFailed = await ResultTask.runResult(saveAuditTrail(["created", "bad"]));
 assert.equal(auditFailed.isErr(), true);
 
-const asyncOrderContext = await combineAsyncOrderContext();
-assert.equal(asyncOrderContext.isOk(), true);
+const taskOrderContext = await ResultTask.runResult(combineTaskOrderContext());
+assert.equal(taskOrderContext.isOk(), true);
 
-if (asyncOrderContext.isOk()) {
-  assert.equal(asyncOrderContext.value.payment, "authorized");
+if (taskOrderContext.isOk()) {
+  assert.equal(taskOrderContext.value.payment, "authorized");
 }
 
-const allAsyncChecks = await allAsyncOrderChecks();
-assert.equal(allAsyncChecks.isOk(), true);
+const allTaskChecks = await ResultTask.runResult(allTaskOrderChecks());
+assert.equal(allTaskChecks.isOk(), true);
 
-const invalidAsyncCheckout = await validateAsyncCheckout(
-  [{ quantity: 1, sku: "missing", unitCents: 100 }],
-  "NOPE",
+const invalidTaskCheckout = await ResultTask.runResult(
+  validateTaskCheckout([{ quantity: 1, sku: "missing", unitCents: 100 }], "NOPE"),
 );
-assert.equal(invalidAsyncCheckout.isErr(), true);
-if (invalidAsyncCheckout.isErr()) {
-  assert.equal(invalidAsyncCheckout.error.length, 2);
+assert.equal(invalidTaskCheckout.isErr(), true);
+if (invalidTaskCheckout.isErr()) {
+  assert.equal(invalidTaskCheckout.error.length, 2);
 }
 
-const warehouse = await firstAvailableWarehouse("sku_book");
+const validTaskCheckout = await ResultTask.runResult(validateTaskCheckout(orderLines, "SAVE10"));
+assert.equal(validTaskCheckout.isOk(), true);
+if (validTaskCheckout.isOk()) {
+  assert.equal(validTaskCheckout.value.coupon.discountCents, 1_000);
+  assert.deepEqual(
+    validTaskCheckout.value.inventory.map((line) => line.sku),
+    ["book", "pen"],
+  );
+}
+
+const warehouse = await ResultTask.runResult(firstAvailableWarehouse("sku_book"));
 assert.equal(warehouse.isOk(), true);
 if (warehouse.isOk()) {
   assert.equal(warehouse.value.position, 1);
 }
 
-const asyncSchedule = await asyncInvoiceSchedule();
-assert.equal(asyncSchedule.isOk(), true);
-if (asyncSchedule.isOk()) {
-  assert.deepEqual(asyncSchedule.value, [
-    "async-invoice:1",
-    "async-invoice:2",
-    "async-invoice:3",
-  ]);
+const taskSchedule = await ResultTask.runResult(taskInvoiceSchedule());
+assert.equal(taskSchedule.isOk(), true);
+if (taskSchedule.isOk()) {
+  assert.deepEqual(taskSchedule.value, ["async-invoice:1", "async-invoice:2", "async-invoice:3"]);
 }
 
-const asyncCursor = await asyncFinalCursor();
-assert.equal(asyncCursor.isOk(), true);
-if (asyncCursor.isOk()) {
-  assert.equal(asyncCursor.value, 3);
+const taskCursor = await ResultTask.runResult(taskFinalCursor());
+assert.equal(taskCursor.isOk(), true);
+if (taskCursor.isOk()) {
+  assert.equal(taskCursor.value, 3);
 }
 
-const asyncOrderIds = await zipAsyncOrderIds();
-assert.equal(asyncOrderIds.isOk(), true);
+const taskOrderIds = await ResultTask.runResult(zipTaskOrderIds());
+assert.equal(taskOrderIds.isOk(), true);
 
-if (asyncOrderIds.isOk()) {
-  assert.deepEqual(asyncOrderIds.value, ["order_1", "receipt_1"]);
+if (taskOrderIds.isOk()) {
+  assert.deepEqual(taskOrderIds.value, ["order_1", "receipt_1"]);
 }
 
 assert.deepEqual(await inspectCheckoutEvents(), [
@@ -586,7 +654,7 @@ assert.deepEqual(observeCheckout(), [
   "log:AuditWriteError",
   "dispose:AuditWriteError",
 ]);
-assert.deepEqual(await observeAsyncCheckout(), [
+assert.deepEqual(await observeTaskCheckout(), [
   "tap:async_order",
   "log:async_order",
   "dispose:async_order",
@@ -604,31 +672,32 @@ assert.deepEqual(await runTaskControlFlow(), {
   zipped: ["left", "right"],
 });
 
-const quickUser = await loadUserWithTimeout("usr_123", 1);
+const quickUser = await ResultTask.runResult(loadUserWithTimeout("usr_123", 1));
 assert.equal(quickUser.isOk(), true);
 
-const slowUser = await loadUserWithTimeout("usr_123", 20);
+const slowUser = await ResultTask.runResult(loadUserWithTimeout("usr_123", 20));
 assert.equal(slowUser.isErr(), true);
 
 if (slowUser.isErr()) {
   assert.equal(slowUser.error._tag, "UserTimeoutError");
 }
 
-const catalog = await loadCatalogWithFallback("sku_123");
+const catalog = await ResultTask.runResult(loadCatalogWithFallback("sku_123"));
 assert.equal(catalog.isOk(), true);
 
 if (catalog.isOk()) {
   assert.equal(catalog.value.source, "cache");
 }
 
-const retriedCatalog = await loadCatalogAfterRetry("sku_123");
+const retriedCatalog = await ResultTask.runResult(loadCatalogAfterRetry("sku_123"));
 assert.equal(retriedCatalog.isOk(), true);
 
 if (retriedCatalog.isOk()) {
   assert.equal(retriedCatalog.value.source, "primary");
 }
 
-const policyCatalog = await loadCatalogWithRetryPolicy("sku_123");
+const policyCatalogTask = loadCatalogWithRetryPolicy("sku_123");
+const policyCatalog = await ResultTask.runPromise(policyCatalogTask);
 assert.equal(policyCatalog.attempts, 3);
 assert.equal(policyCatalog.result.isOk(), true);
 assert.deepEqual(policyCatalog.retryLog, [
@@ -636,28 +705,34 @@ assert.deepEqual(policyCatalog.retryLog, [
   "retry:1:CatalogUnavailableError",
 ]);
 
-const price = await fastestPrice("sku_123");
+const repeatedPolicyCatalog = await ResultTask.runPromise(policyCatalogTask);
+assert.equal(repeatedPolicyCatalog.attempts, 3);
+assert.equal(repeatedPolicyCatalog.result.isOk(), true);
+assert.deepEqual(repeatedPolicyCatalog.retryLog, policyCatalog.retryLog);
+assert.notEqual(repeatedPolicyCatalog.retryLog, policyCatalog.retryLog);
+
+const price = await ResultTask.runResult(fastestPrice("sku_123"));
 assert.equal(price.isOk(), true);
 
 if (price.isOk()) {
   assert.equal(price.value.region, "eu-west");
 }
 
-const regionalPrice = await fastestRegionalPrice("sku_123");
+const regionalPrice = await ResultTask.runResult(fastestRegionalPrice("sku_123"));
 assert.equal(regionalPrice.isOk(), true);
 
 if (regionalPrice.isOk()) {
   assert.equal(regionalPrice.value.region, "replica");
 }
 
-const firstPrice = await firstCompletedPrice("sku_123");
+const firstPrice = await ResultTask.runResult(firstCompletedPrice("sku_123"));
 assert.equal(firstPrice.isErr(), true);
 
 if (firstPrice.isErr()) {
   assert.equal(firstPrice.error._tag, "PriceProviderError");
 }
 
-const customRacePrice = await fallbackPriceWithCustomRace("sku_123");
+const customRacePrice = await ResultTask.runResult(fallbackPriceWithCustomRace("sku_123"));
 assert.equal(customRacePrice.isOk(), true);
 
 if (customRacePrice.isOk()) {
@@ -683,13 +758,21 @@ assert.deepEqual(importFailed.events, [
 ]);
 
 const importReleaseFailed = await importRowsWithFallibleRelease(true);
-assert.equal(importReleaseFailed.result.isOk(), true);
-assert.deepEqual(importReleaseFailed.result.unwrapOr({ imported: -1 }), { imported: 1 });
-assert.deepEqual(importReleaseFailed.events, [
-  "acquire",
-  "warehouse-2:use",
-  "warehouse-2:release",
-]);
+assert.equal(importReleaseFailed.exit._tag, "Failure");
+if (importReleaseFailed.exit._tag === "Failure") {
+  assert.deepEqual(
+    Cause.failures(importReleaseFailed.exit.cause).map((error) => error._tag),
+    ["ReleaseFailedError"],
+  );
+}
+assert.deepEqual(importReleaseFailed.events, ["acquire", "warehouse-2:use", "warehouse-2:release"]);
+
+const importReleaseOk = await importRowsWithFallibleRelease(false);
+assert.equal(importReleaseOk.exit._tag, "Success");
+if (importReleaseOk.exit._tag === "Success") {
+  assert.deepEqual(importReleaseOk.exit.value, { imported: 1 });
+}
+assert.deepEqual(importReleaseOk.events, ["acquire", "warehouse-2:use", "warehouse-2:release"]);
 
 const summary = await runCookbook();
 const resilience = await runTaskResilience();
@@ -757,7 +840,7 @@ assert.deepEqual(advancedErgonomics, {
 const advancedResilience = await runAdvancedTaskResilience();
 assert.deepEqual(advancedResilience, {
   awaitedDirectly: "direct-await",
-  bridgedAsync: "bridged-async",
+  promiseInterop: "promise-interop",
   causeDiagnostics: {
     defects: ["unexpected-defect"],
     failures: ["TaskProviderError"],

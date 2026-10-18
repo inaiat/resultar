@@ -4,23 +4,19 @@
  * This module demonstrates collection combinators (`all`, `combine`, `combineWithAllErrors`,
  * `zip`, `forEach`, `validateAll`, `firstSuccessOf`), structured loops (`loop`, `iterate`),
  * conditional branches (`if`, `when`, `unless`, `whenResult`, `unlessResult`),
- * value replacement (`as`, `asVoid`, `unit`, `unitAsync`), and observation hooks
+ * value replacement (`as`, `asVoid`, `unit`), and observation hooks
  * (`inspect`, `inspectError`, `inspectBoth`, `tap`, `tapError`, `log`, `toDisposable`).
+ * Async recipes use lazy Tasks and explicit runners, with scoped native disposal.
  */
 import {
   Clock,
   Result,
-  ResultAsync,
   ResultTask,
   createTaggedError,
   err,
-  errAsync,
   ok,
-  okAsync,
   unit,
-  unitAsync,
   type StrictResult,
-  type StrictResultAsync,
 } from "resultar";
 
 export interface OrderLineInput {
@@ -92,32 +88,39 @@ export const markCheckoutStarted = () => ok("checkout").as({ status: "started" a
 export const clearCartSnapshot = () => ok({ items: 3 }).asVoid();
 
 /**
- * `unit()` and `unitAsync()` construct `Ok<void, never>` / `ResultAsync<void, never>`
- * for side-effect-only steps that have no meaningful return value.
+ * `unit()` and `ResultTask.ok(undefined)` represent side-effect-only steps
+ * that have no meaningful return value.
  */
 export const acknowledgeCheckout = () => unit();
 
-export const acknowledgeCheckoutAsync = () => unitAsync();
+export const acknowledgeCheckoutTask = () => ResultTask.ok<void>(undefined);
 
 /**
- * `.asyncMap(fn)` lifts a synchronous `Result` into `ResultAsync` by applying an
- * infallible async transformation to the `Ok` value.
+ * `fromResult` lifts a synchronous Result into a Task; `map` transforms its success lazily.
+ * Promise-based enrichment would use `andThen` with `ResultTask.tryPromise` instead.
  */
-export const enrichBuyerAsync = (buyerId: string) =>
-  ok(buyerId).asyncMap(async (id) => ({
+export const enrichBuyerTask = (buyerId: string) =>
+  ResultTask.fromResult(ok(buyerId)).map((id) => ({
     id,
     tier: "gold" as const,
   }));
 
 /**
- * `.asyncAndThen(fn)` chains a synchronous `Result` into a fallible `ResultAsync` step.
+ * `fromResult` and `andThen` chain synchronous validation into a fallible Task step.
  */
 export const reserveValidatedLine = (line: OrderLineInput) =>
-  validateLine(line, 0).asyncAndThen((validLine) => reserveLine(validLine, validLine.index));
+  ResultTask.fromResult(validateLine(line, 0)).andThen((validLine) =>
+    reserveLine(validLine, validLine.index),
+  );
+
+interface ValidCoupon {
+  readonly code: string;
+  readonly discountCents: number;
+}
 
 const validateCoupon = (
   code: string | undefined,
-): StrictResult<{ readonly code: string; readonly discountCents: number }, InvalidCouponError> => {
+): StrictResult<ValidCoupon, InvalidCouponError> => {
   if (code === undefined) {
     return ok({ code: "none", discountCents: 0 });
   }
@@ -219,112 +222,128 @@ export const maybeFraudCheckAfterFlag = (trustedBuyer: boolean) =>
   Result.unlessResult(ok(trustedBuyer), () => ok("fraud-check-from-result" as const));
 
 /**
- * Async conditional branching helpers on `ResultAsync`.
+ * Lazy conditional branching helpers on ResultTask.
+ * A Task-produced flag composes with `andThen` before selecting the branch.
  */
-export const chooseAsyncFulfillment = (expedited: boolean) =>
-  ResultAsync.if(expedited, {
-    onFalse: () => okAsync({ mode: "standard" as const }),
-    onTrue: () => okAsync({ mode: "express" as const }),
+export const chooseTaskFulfillment = (expedited: boolean) =>
+  ResultTask.if(expedited, {
+    onFalse: () => ResultTask.ok({ mode: "standard" as const }),
+    onTrue: () => ResultTask.ok({ mode: "express" as const }),
   });
 
-export const maybeAsyncAudit = (enabled: boolean) =>
-  ResultAsync.when(enabled, () => okAsync("async-audit-written" as const));
+export const maybeTaskAudit = (enabled: boolean) =>
+  ResultTask.when(enabled, () => ResultTask.ok("async-audit-written" as const));
 
-export const maybeAsyncAuditAfterFlag = (enabled: boolean) =>
-  ResultAsync.whenResult(okAsync(enabled), () => okAsync("async-audit-from-result" as const));
+export const maybeTaskAuditAfterFlag = (enabled: boolean) =>
+  ResultTask.ok(enabled).andThen((flag) =>
+    ResultTask.when(flag, () => ResultTask.ok("async-audit-from-result" as const)),
+  );
 
-export const maybeAsyncFraudCheck = (trustedBuyer: boolean) =>
-  ResultAsync.unless(trustedBuyer, () => okAsync("async-fraud-check" as const));
+export const maybeTaskFraudCheck = (trustedBuyer: boolean) =>
+  ResultTask.unless(trustedBuyer, () => ResultTask.ok("async-fraud-check" as const));
 
-export const maybeAsyncFraudCheckAfterFlag = (trustedBuyer: boolean) =>
-  ResultAsync.unlessResult(
-    okAsync(trustedBuyer),
-    () => okAsync("async-fraud-from-result" as const),
+export const maybeTaskFraudCheckAfterFlag = (trustedBuyer: boolean) =>
+  ResultTask.ok(trustedBuyer).andThen((flag) =>
+    ResultTask.unless(flag, () => ResultTask.ok("async-fraud-from-result" as const)),
   );
 
 const reserveLine = (
   line: OrderLineInput,
   index: number,
-): StrictResultAsync<ReservedLine, MissingInventoryError> =>
-  ResultAsync.fromSafePromise(Promise.resolve({ index, line })).andThen(({ index, line }) =>
+): ResultTask<ReservedLine, MissingInventoryError> =>
+  ResultTask.sync(() => ({ index, line })).andThen(({ index, line }) =>
     line.sku === "missing"
-      ? MissingInventoryError.err({ sku: line.sku })
-      : ok({ position: index, sku: line.sku }),
+      ? MissingInventoryError.taskErr({ sku: line.sku })
+      : ResultTask.ok({ position: index, sku: line.sku }),
   );
 
 /**
- * `ResultAsync.forEach` processes items with configurable concurrency (`number | "unbounded"`)
- * and optional `{ discard: true }` when only side effects matter.
+ * `ResultTask.forEach` processes items lazily with configurable concurrency.
+ * Apply `asVoid` to its result when only side effects matter.
  */
 export const reserveInventory = (lines: readonly OrderLineInput[]) =>
-  ResultAsync.forEach(lines, reserveLine, { concurrency: 2 });
+  ResultTask.forEach(lines, reserveLine, { concurrency: 2 });
 
 /**
- * `ResultAsync.validateAll` runs async validation across all items (with optional
+ * `ResultTask.validateAll` runs validation across all items (with optional
  * concurrency) and collects every error instead of failing fast.
  */
 export const validateInventory = (lines: readonly OrderLineInput[]) =>
-  ResultAsync.validateAll(lines, reserveLine, { concurrency: "unbounded" });
+  ResultTask.validateAll(lines, reserveLine, { concurrency: "unbounded" });
 
 export const saveAuditTrail = (entries: readonly string[]) =>
-  ResultAsync.forEach(
+  ResultTask.forEach(
     entries,
     (entry) =>
       entry === "bad"
-        ? errAsync(new AuditWriteError({ entry }))
-        : okAsync({ entry, written: true }),
-    { concurrency: 2, discard: true },
-  );
+        ? AuditWriteError.taskErr({ entry })
+        : ResultTask.ok({ entry, written: true }),
+    { concurrency: 2 },
+  ).asVoid();
 
 /**
- * `ResultAsync.combine`, `ResultAsync.all`, `ResultAsync.combineWithAllErrors`,
- * `ResultAsync.zip`, `ResultAsync.firstSuccessOf`, `ResultAsync.loop`, and `ResultAsync.iterate`.
+ * Task records use `all`, with explicit concurrency. Heterogeneous validation first
+ * captures each typed outcome as a Result, then combines those values to collect errors.
+ * `zip`, `firstSuccessOf`, `loop`, and `iterate` remain lazy Task operators.
  */
-export const combineAsyncOrderContext = () =>
-  ResultAsync.combine({
-    inventory: okAsync("reserved"),
-    payment: okAsync("authorized"),
-  });
+export const combineTaskOrderContext = () =>
+  ResultTask.all(
+    {
+      inventory: ResultTask.ok("reserved"),
+      payment: ResultTask.ok("authorized"),
+    },
+    { concurrency: "unbounded" },
+  );
 
-export const allAsyncOrderChecks = () =>
-  ResultAsync.all({
-    inventory: okAsync("reserved" as const),
-    payment: okAsync("authorized" as const),
-  });
+export const allTaskOrderChecks = () =>
+  ResultTask.all(
+    {
+      inventory: ResultTask.ok("reserved" as const),
+      payment: ResultTask.ok("authorized" as const),
+    },
+    { concurrency: "unbounded" },
+  );
 
-export const validateAsyncCheckout = (
+export const validateTaskCheckout = (
   lines: readonly OrderLineInput[],
   coupon: string | undefined,
 ) =>
-  ResultAsync.combineWithAllErrors({
-    coupon: validateCoupon(coupon).asyncMap((value) => Promise.resolve(value)),
-    inventory: reserveInventory(lines),
-  });
+  ResultTask.all(
+    {
+      coupon: ResultTask.sync(() => validateCoupon(coupon)),
+      inventory: reserveInventory(lines).match({
+        ok: (value) => ok<ReservedLine[], MissingInventoryError>(value),
+        err: (error) => err<ReservedLine[], MissingInventoryError>(error),
+      }),
+    },
+    { concurrency: "unbounded" },
+  ).andThen((checks) => ResultTask.fromResult(Result.combineWithAllErrors(checks)));
 
 export const firstAvailableWarehouse = (sku: string) =>
-  ResultAsync.firstSuccessOf([
-    () => errAsync<ReservedLine, MissingInventoryError>(new MissingInventoryError({ sku })),
-    () => okAsync<ReservedLine, MissingInventoryError>({ position: 1, sku }),
+  ResultTask.firstSuccessOf([
+    () => MissingInventoryError.taskErr({ sku }),
+    () => ResultTask.ok<ReservedLine, MissingInventoryError>({ position: 1, sku }),
   ]);
 
-export const asyncInvoiceSchedule = () =>
-  ResultAsync.loop(1, {
-    body: (month) => okAsync(`async-invoice:${month}`),
+export const taskInvoiceSchedule = () =>
+  ResultTask.loop(1, {
+    body: (month) => ResultTask.ok(`async-invoice:${month}`),
     step: (month) => month + 1,
     while: (month) => month <= 3,
   });
 
-export const asyncFinalCursor = () =>
-  ResultAsync.iterate(0, {
-    body: (cursor) => okAsync(cursor + 1),
+export const taskFinalCursor = () =>
+  ResultTask.iterate(0, {
+    body: (cursor) => ResultTask.ok(cursor + 1),
     while: (cursor) => cursor < 3,
   });
 
-export const zipAsyncOrderIds = () => ResultAsync.zip(okAsync("order_1"), okAsync("receipt_1"));
+export const zipTaskOrderIds = () =>
+  ResultTask.zip(ResultTask.ok("order_1"), ResultTask.ok("receipt_1"), { concurrent: true });
 
 /**
  * Preferred non-deprecated side-effect inspection helpers (`inspect`, `inspectError`, `inspectBoth`).
- * These observe `Ok` and `Err` values without altering the `Result` or `ResultAsync`.
+ * These observe successes and failures without altering the Result or Task outcome.
  */
 export const inspectCheckoutEvents = async () => {
   const events: string[] = [];
@@ -345,28 +364,30 @@ export const inspectCheckoutEvents = async () => {
       },
     });
 
-  void (await errAsync<string, AuditWriteError>(new AuditWriteError({ entry: "failed_inspect" }))
-    .inspect((value) => {
-      events.push(`asyncInspect:${value}`);
-    })
-    .inspectError((error) => {
-      events.push(`asyncInspectError:${error._tag}`);
-    })
-    .inspectBoth({
-      err: (error) => {
-        events.push(`asyncBothErr:${error._tag}`);
-      },
-      ok: (value) => {
-        events.push(`asyncBothOk:${value}`);
-      },
-    }));
+  void (await ResultTask.runResult(
+    AuditWriteError.taskErr({ entry: "failed_inspect" })
+      .inspect((value) => {
+        events.push(`asyncInspect:${value}`);
+      })
+      .inspectError((error) => {
+        events.push(`asyncInspectError:${error._tag}`);
+      })
+      .inspectBoth({
+        err: (error) => {
+          events.push(`asyncBothErr:${error._tag}`);
+        },
+        ok: (value) => {
+          events.push(`asyncBothOk:${value}`);
+        },
+      }),
+  ));
 
   return events;
 };
 
 /**
  * Legacy `tap` / `tapError` alongside `log` and explicit resource management
- * (`toDisposable` / `toAsyncDisposable`).
+ * (`toDisposable`).
  */
 export const observeCheckout = () => {
   const events: string[] = [];
@@ -392,23 +413,43 @@ export const observeCheckout = () => {
   return events;
 };
 
-export const observeAsyncCheckout = async () => {
+/**
+ * Tasks use `inspect` for best-effort observation and `acquireDisposable` for native
+ * async cleanup. Scope closure awaits disposal and preserves any disposal defect.
+ */
+export const observeTaskCheckout = async () => {
   const events: string[] = [];
 
-  await okAsync<string, AuditWriteError>("async_order")
-    .tap((value) => {
+  const checkout = ResultTask.ok<string, AuditWriteError>("async_order")
+    .inspect((value) => {
       events.push(`tap:${value}`);
     })
-    .tapError((error) => {
+    .inspectError((error) => {
       events.push(`tapError:${error._tag}`);
     })
-    .log((value, error) => {
-      events.push(`log:${value ?? error?._tag}`);
-    })
-    .toAsyncDisposable(async (value, error) => {
-      events.push(`dispose:${value ?? error?._tag}`);
-    })
-    [Symbol.asyncDispose]();
+    .inspectBoth({
+      ok: (value) => {
+        events.push(`log:${value}`);
+      },
+      err: (error) => {
+        events.push(`log:${error._tag}`);
+      },
+    });
+
+  const program = ResultTask.scoped(
+    ResultTask.gen(function* () {
+      const value = yield* checkout;
+      yield* ResultTask.acquireDisposable(
+        ResultTask.sync(() => ({
+          [Symbol.asyncDispose]: async () => {
+            events.push(`dispose:${value}`);
+          },
+        })),
+      );
+      return value;
+    }),
+  );
+  await ResultTask.runPromise(program);
 
   return events;
 };
@@ -451,7 +492,9 @@ export const runTaskControlFlow = async () => {
       { concurrent: true },
     );
 
-    const [elapsedMs, delayedValue] = yield* ResultTask.ok("ready" as const).delay(5).timed();
+    const [elapsedMs, delayedValue] = yield* ResultTask.ok("ready" as const)
+      .delay(5)
+      .timed();
 
     return {
       branch,

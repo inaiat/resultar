@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { ResultAsync, createTaggedError, runPromise } from "resultar";
+import { createTaggedError } from "resultar";
+import { ResultAsync, runPromise } from "resultar/async";
 import { type RequestJsonMapError } from "resultar-request";
 import { requestJson as requestJsonZod } from "resultar-request-zod";
 

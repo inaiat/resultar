@@ -16,8 +16,6 @@ import {
   ServiceTagTypeId,
 } from '../src/index.js'
 import { TaskScope } from '../src/task/scope.js'
-import { Clock } from '../src/task/task-clock.js'
-import { createScheduling } from '../src/task/task-scheduler.js'
 
 describe('TaskScope edge cases', () => {
   it('throws when adding a finalizer to a closing scope', async () => {
@@ -88,7 +86,7 @@ describe('ResultTask.memoize and ResultTask.makeScope', () => {
     const owner = ResultTask.makeScope()
     let resourceClosed = false
     const resource = ResultTask.acquireRelease({
-      acquire: ResultTask.ok('active-resource'),
+      acquire: ResultTask.succeed('active-resource'),
       release: () =>
         ResultTask.sync(() => {
           resourceClosed = true
@@ -103,7 +101,7 @@ describe('ResultTask.memoize and ResultTask.makeScope', () => {
     equal(closeExit._tag, 'Success')
     equal(resourceClosed, true)
 
-    const afterCloseExit = await ResultTask.runExit(owner.use(ResultTask.ok(1)))
+    const afterCloseExit = await ResultTask.runExit(owner.use(ResultTask.succeed(1)))
     equal(afterCloseExit._tag, 'Failure')
     if (afterCloseExit._tag === 'Failure') {
       equal(afterCloseExit.cause._tag, 'Die')
@@ -120,12 +118,12 @@ describe('ResultTask.memoize and ResultTask.makeScope', () => {
     const owner = ResultTask.makeScope()
     let resourceClosed = false
     const failingResource = ResultTask.acquireRelease({
-      acquire: ResultTask.ok('temp-res'),
+      acquire: ResultTask.succeed('temp-res'),
       release: () =>
         ResultTask.sync(() => {
           resourceClosed = true
         }),
-    }).andThen(() => ResultTask.err('failed-in-use'))
+    }).flatMap(() => ResultTask.fail('failed-in-use'))
 
     const exit = await ResultTask.runExit(owner.use(failingResource))
     equal(exit._tag, 'Failure')
@@ -137,7 +135,7 @@ describe('ResultTask.memoize and ResultTask.makeScope', () => {
     const owner = ResultTask.makeScope()
     const controller = new AbortController()
     controller.abort()
-    const abortedExit = await ResultTask.runExit(owner.use(ResultTask.ok('ok')), {
+    const abortedExit = await ResultTask.runExit(owner.use(ResultTask.succeed('ok')), {
       signal: controller.signal,
     })
     equal(abortedExit._tag, 'Failure')
@@ -156,7 +154,7 @@ describe('ResultTask generator finally and error propagation', () => {
   it('captures throwing tasks inside finally in ResultTask.gen', async () => {
     const gen = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err('initial-failure')
+        yield* ResultTask.fail('initial-failure')
       } finally {
         yield* throwingTask
       }
@@ -172,13 +170,13 @@ describe('ResultTask generator finally and error propagation', () => {
     const Tag = serviceTag<string, 'Tag'>('Tag')
     const gen = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err('initial-failure')
+        yield* ResultTask.fail('initial-failure')
       } finally {
         yield* Tag
       }
     })
     const provided = ResultTask.provideServiceResolver(gen, {
-      Tag: () => ResultTask.err('resolver-failure'),
+      Tag: () => ResultTask.fail('resolver-failure'),
     })
     const exit = await ResultTask.runExit(provided)
     equal(exit._tag, 'Failure')
@@ -190,7 +188,7 @@ describe('ResultTask generator finally and error propagation', () => {
   it('captures err results yielded inside finally in ResultTask.gen', async () => {
     const gen = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err('initial-failure')
+        yield* ResultTask.fail('initial-failure')
       } finally {
         yield* err('finally-err')
       }
@@ -205,7 +203,7 @@ describe('ResultTask generator finally and error propagation', () => {
   it('captures unsupported values yielded inside finally in ResultTask.gen', async () => {
     const gen = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err('initial-failure')
+        yield* ResultTask.fail('initial-failure')
       } finally {
         yield* [123] as unknown as Iterable<never>
       }
@@ -245,43 +243,43 @@ describe('ResultTask generator finally and error propagation', () => {
 })
 
 describe('ResultTask combinator error branches and defects', () => {
-  it('converts synchronous throws in map, andThen, tap, tapError, orElse into Die', async () => {
-    const mapThrow = ResultTask.ok(1).map(() => {
+  it('converts synchronous throws in map, flatMap, tap, tapError, catchAll into Die', async () => {
+    const mapThrow = ResultTask.succeed(1).map(() => {
       throw new Error('map throw')
     })
     const exitMap = await ResultTask.runExit(mapThrow)
     equal(exitMap._tag, 'Failure')
 
-    const andThenThrow = ResultTask.ok(1).andThen((): ResultTask<number, never, never> => {
-      throw new Error('andThen throw')
+    const flatMapThrow = ResultTask.succeed(1).flatMap((): ResultTask<number, never, never> => {
+      throw new Error('flatMap throw')
     })
-    const exitFlatMap = await ResultTask.runExit(andThenThrow)
+    const exitFlatMap = await ResultTask.runExit(flatMapThrow)
     equal(exitFlatMap._tag, 'Failure')
 
-    const tapThrow = ResultTask.ok(1).tap(() => {
+    const tapThrow = ResultTask.succeed(1).tap(() => {
       throw new Error('tap throw')
     })
     const exitTap = await ResultTask.runExit(tapThrow)
     equal(exitTap._tag, 'Failure')
 
-    const tapErrorThrow = ResultTask.err('err').tapError(() => {
+    const tapErrorThrow = ResultTask.fail('err').tapError(() => {
       throw new Error('tapError throw')
     })
     const exitTapError = await ResultTask.runExit(tapErrorThrow)
     equal(exitTapError._tag, 'Failure')
 
-    const orElseThrow = ResultTask.err('err').orElse((): ResultTask<number, never, never> => {
-      throw new Error('orElse throw')
+    const catchAllThrow = ResultTask.fail('err').catchAll((): ResultTask<number, never, never> => {
+      throw new Error('catchAll throw')
     })
-    const exitCatchAll = await ResultTask.runExit(orElseThrow)
+    const exitCatchAll = await ResultTask.runExit(catchAllThrow)
     equal(exitCatchAll._tag, 'Failure')
   })
 
-  it('preserves Die defects across mapErr and tapError', async () => {
+  it('preserves Die defects across mapError and tapError', async () => {
     const dieTask = ResultTask.sync(() => {
       throw new Error('die defect')
     })
-    const mapped = dieTask.mapErr(() => 'mapped')
+    const mapped = dieTask.mapError(() => 'mapped')
     const exitMapped = await ResultTask.runExit(mapped)
     equal(exitMapped._tag, 'Failure')
     if (exitMapped._tag === 'Failure') {
@@ -336,7 +334,7 @@ describe('ResultTask fromResultAsync abortion and error handling', () => {
 })
 
 describe('ResultTask static helper validations', () => {
-  const task = ResultTask.ok(1)
+  const task = ResultTask.succeed(1)
   const tag = serviceTag<number, 'Num'>('Num')
   const callMethod = (name: string, ...args: unknown[]) => {
     const fn = (
@@ -402,16 +400,16 @@ describe('ResultTask static helper validations', () => {
   it('validates functional combinator arguments and supports curried form', () => {
     throws(() => callMethod('map', task, undefined), /ResultTask\.map requires a mapping function/u)
     throws(
-      () => callMethod('mapErr', task, undefined),
-      /ResultTask\.mapErr requires an error mapping function/u,
+      () => callMethod('mapError', task, undefined),
+      /ResultTask\.mapError requires an error mapping function/u,
     )
     throws(
-      () => callMethod('andThen', task, undefined),
-      /ResultTask\.andThen requires a continuation function/u,
+      () => callMethod('flatMap', task, undefined),
+      /ResultTask\.flatMap requires a continuation function/u,
     )
     throws(
-      () => callMethod('orElse', task, undefined),
-      /ResultTask\.orElse requires a recovery function/u,
+      () => callMethod('catchAll', task, undefined),
+      /ResultTask\.catchAll requires a recovery function/u,
     )
     throws(
       () => callMethod('tap', task, undefined),
@@ -430,11 +428,11 @@ describe('ResultTask static helper validations', () => {
 
     // Curried forms
     const mapped = task.pipe(ResultTask.map((x) => x + 1))
-    const flatMapped = task.pipe(ResultTask.andThen((x) => ResultTask.ok(x * 2)))
-    const andThenCurried = task.pipe(ResultTask.andThen((x) => ResultTask.ok(x * 2)))
+    const flatMapped = task.pipe(ResultTask.flatMap((x) => ResultTask.succeed(x * 2)))
+    const andThenCurried = task.pipe(ResultTask.andThen((x) => ResultTask.succeed(x * 2)))
     const tapped = task.pipe(ResultTask.tap(() => undefined))
     const asVal = task.pipe(ResultTask.as('hello'))
-    const caught = ResultTask.err('err').pipe(ResultTask.orElse(() => ResultTask.ok(0)))
+    const caught = ResultTask.fail('err').pipe(ResultTask.catchAll(() => ResultTask.succeed(0)))
     const matched = task.pipe(
       ResultTask.match({ onSuccess: (x) => `ok:${x}`, onFailure: () => 'fail' }),
     )
@@ -451,11 +449,11 @@ describe('ResultTask static helper validations', () => {
   it('executes combinators in data-first mode', async () => {
     let tapRun = false
     let tapErrRun = false
-    const t = ResultTask.ok(10)
-    const errT = ResultTask.err('err')
+    const t = ResultTask.succeed(10)
+    const errT = ResultTask.fail('err')
 
     const andThenRes = await ResultTask.runPromise(
-      ResultTask.andThen(t, (x) => ResultTask.ok(x * 3)),
+      ResultTask.andThen(t, (x) => ResultTask.succeed(x * 3)),
     )
     equal(andThenRes, 30)
 
@@ -487,7 +485,7 @@ describe('ResultTask static helper validations', () => {
 
 describe('ResultTask synchronous executor exception handling', () => {
   const createSyncThrowingTask = () => {
-    const raw = ResultTask.ok(1) as unknown as Record<string, unknown>
+    const raw = ResultTask.succeed(1) as unknown as Record<string, unknown>
     const broken = Object.create(raw) as Record<string, unknown>
     broken['execute'] = () => {
       throw new Error('sync execute throw')
@@ -512,7 +510,7 @@ describe('ResultTask synchronous executor exception handling', () => {
     // Inside generator finally
     const genFinally = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err('initial-err')
+        yield* ResultTask.fail('initial-err')
       } finally {
         yield* broken
       }
@@ -549,7 +547,7 @@ describe('ResultTask synchronous executor exception handling', () => {
     })
     const workflow = genMixed
       .pipe(ResultTask.provideServices({ TagA: 'providedA' }))
-      .pipe(ResultTask.provideServiceResolver({ TagB: () => ResultTask.ok(42) }))
+      .pipe(ResultTask.provideServiceResolver({ TagB: () => ResultTask.succeed(42) }))
     const mixedVal = await ResultTask.runPromise(workflow)
     equal(mixedVal, 'providedA:42')
   })
@@ -586,7 +584,7 @@ describe('ResultTask synchronous executor exception handling', () => {
     equal(res1._tag, 'Failure')
 
     const ownerDirect = ResultTask.makeScope()
-    const useTask = ownerDirect.use(ResultTask.ok(1))
+    const useTask = ownerDirect.use(ResultTask.succeed(1))
     const directScopeExec = useTask as unknown as {
       execute: (c: unknown) => Promise<{ _tag: string }>
     }
@@ -610,7 +608,7 @@ describe('ResultTask synchronous executor exception handling', () => {
 })
 
 describe('ResultTask Stryker Mutant Killers', () => {
-  const task = ResultTask.ok(1)
+  const task = ResultTask.succeed(1)
 
   it('validates ResultTaskCauseError and MissingServiceError error properties (lines 21-22, 41-43)', () => {
     const innerCause = {
@@ -682,7 +680,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
     equal(isServiceTag(withoutIterator), false)
 
     // isResultTask checks
-    equal(isResultTask(ResultTask.ok(1)), true)
+    equal(isResultTask(ResultTask.succeed(1)), true)
     equal(isResultTask({}), false)
     equal(isResultTask(null), false)
   })
@@ -707,7 +705,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
     equal(isServiceTag(callableTag), true)
     for (const variant of tagVariants) equal(isServiceTag(variant), false)
 
-    const task = ResultTask.ok(1)
+    const task = ResultTask.succeed(1)
     equal(isResultTask(task), true)
     equal(isResultTask({ [ResultTaskTypeId]: undefined }), false)
 
@@ -779,12 +777,9 @@ describe('ResultTask Stryker Mutant Killers', () => {
     const context = {
       namedServices: new Map(),
       services: new Map([[Tag.key, 'symbol-value']]),
-      serviceResolver: () => ResultTask.err('wrong-resolver'),
+      serviceResolver: () => ResultTask.fail('wrong-resolver'),
       signal,
       scope: new TaskScope(),
-      clock: Clock.live,
-      scheduling: createScheduling(Clock.live, { yieldEvery: Infinity }),
-      cleanup: undefined,
     }
     const exit = (await execute(context)) as { _tag: string; value?: unknown }
     equal(exit._tag, 'Success')
@@ -823,7 +818,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
       return a
     })
     const taskFailResolver = ResultTask.provideServiceResolver(genFailResolver, {
-      ServiceA: () => ResultTask.err('resolver-failed'),
+      ServiceA: () => ResultTask.fail('resolver-failed'),
     })
     const exitFail = await ResultTask.runExit(taskFailResolver)
     equal(exitFail._tag, 'Failure')
@@ -889,13 +884,13 @@ describe('ResultTask Stryker Mutant Killers', () => {
     let cleanupValue = ''
     const closing = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err('body-failure')
+        yield* ResultTask.fail('body-failure')
       } finally {
         cleanupValue = yield* CleanupTag
       }
     })
     const resolvedClosing = ResultTask.provideServiceResolver(closing, {
-      CleanupTag: () => ResultTask.ok('cleanup-ok'),
+      CleanupTag: () => ResultTask.succeed('cleanup-ok'),
     })
     const closingExit = await ResultTask.runExit(resolvedClosing)
     equal(cleanupValue, 'cleanup-ok')
@@ -907,14 +902,14 @@ describe('ResultTask Stryker Mutant Killers', () => {
 
     const failedClosing = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err('body-failure')
+        yield* ResultTask.fail('body-failure')
       } finally {
         yield* CleanupTag
       }
     })
     const failedClosingExit = await ResultTask.runExit(
       ResultTask.provideServiceResolver(failedClosing, {
-        CleanupTag: () => ResultTask.err('cleanup-failure'),
+        CleanupTag: () => ResultTask.fail('cleanup-failure'),
       }),
     )
     equal(failedClosingExit._tag, 'Failure')
@@ -928,7 +923,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
     const CleanupTag = serviceTag<string>('CleanupTag')
     const throwingClosing = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err('body-failure')
+        yield* ResultTask.fail('body-failure')
       } finally {
         yield* CleanupTag
       }
@@ -948,7 +943,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
 
     const errClosing = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err('body-failure')
+        yield* ResultTask.fail('body-failure')
       } finally {
         yield err('cleanup-err')
       }
@@ -979,21 +974,24 @@ describe('ResultTask Stryker Mutant Killers', () => {
 
   it('validates success & failure continuation error boundaries (lines 563-584, 601-633)', async () => {
     // Null is not a thenable and must remain a successful pass-through value.
-    equal(await ResultTask.runPromise(ResultTask.ok(10).tap(() => null as unknown as void)), 10)
+    equal(
+      await ResultTask.runPromise(ResultTask.succeed(10).tap(() => null as unknown as void)),
+      10,
+    )
 
     // MapError, TapError, CatchAll do not alter Success value
-    const passSuccess = ResultTask.ok(100)
-      .mapErr((e) => `mapped-${String(e)}`)
+    const passSuccess = ResultTask.succeed(100)
+      .mapError((e) => `mapped-${String(e)}`)
       .tapError(() => {
         throw new Error('should not tap success')
       })
-      .orElse(() => ResultTask.ok(999))
+      .catchAll(() => ResultTask.succeed(999))
     equal(await ResultTask.runPromise(passSuccess), 100)
 
     // Map, FlatMap, Tap do not alter Failure
-    const passFailure = ResultTask.err('fail-msg')
+    const passFailure = ResultTask.fail('fail-msg')
       .map(() => 999)
-      .andThen(() => ResultTask.ok(999))
+      .flatMap(() => ResultTask.succeed(999))
       .tap(() => {
         throw new Error('should not tap failure')
       })
@@ -1005,14 +1003,14 @@ describe('ResultTask Stryker Mutant Killers', () => {
 
     // Tap returning a Promise that resolves or rejects (lines 745-755)
     let promiseTapped = false
-    const tapPromise = ResultTask.ok(10).tap(async () => {
+    const tapPromise = ResultTask.succeed(10).tap(async () => {
       await Promise.resolve()
       promiseTapped = true
     })
     equal(await ResultTask.runPromise(tapPromise), 10)
     equal(promiseTapped, true)
 
-    const tapPromiseReject = ResultTask.ok(10).tap(async () => {
+    const tapPromiseReject = ResultTask.succeed(10).tap(async () => {
       await Promise.resolve()
       throw new Error('tap promise rejected')
     })
@@ -1047,8 +1045,8 @@ describe('ResultTask Stryker Mutant Killers', () => {
     const directTask = new (ResultTask as unknown as new (fn: unknown) => ResultTask<unknown>)(
       () => seqExit,
     )
-    const orElseSeq = directTask.orElse(() => ResultTask.ok('recovered'))
-    const exitSeq = await ResultTask.runExit(orElseSeq as never)
+    const catchAllSeq = directTask.catchAll(() => ResultTask.succeed('recovered'))
+    const exitSeq = await ResultTask.runExit(catchAllSeq as never)
     equal(exitSeq._tag, 'Failure')
     if (exitSeq._tag === 'Failure' && exitSeq.cause._tag === 'Die') {
       equal(exitSeq.cause.defect instanceof ResultTaskCauseError, true)
@@ -1058,7 +1056,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
   it('applies success continuations exactly once and preserves their defects', async () => {
     const mapBoom = new Error('map throw')
     let mapCalls = 0
-    const mapThrow = ResultTask.ok(10).map(() => {
+    const mapThrow = ResultTask.succeed(10).map(() => {
       mapCalls += 1
       throw mapBoom
     })
@@ -1072,25 +1070,25 @@ describe('ResultTask Stryker Mutant Killers', () => {
       }
     }
 
-    const andThenBoom = new Error('flatmap throw')
-    let andThenCalls = 0
-    const andThenThrow = ResultTask.ok(10).andThen(() => {
-      andThenCalls += 1
-      throw andThenBoom
+    const flatMapBoom = new Error('flatmap throw')
+    let flatMapCalls = 0
+    const flatMapThrow = ResultTask.succeed(10).flatMap(() => {
+      flatMapCalls += 1
+      throw flatMapBoom
     })
-    const exitFlatMapThrow = await ResultTask.runExit(andThenThrow as never)
-    equal(andThenCalls, 1)
+    const exitFlatMapThrow = await ResultTask.runExit(flatMapThrow as never)
+    equal(flatMapCalls, 1)
     equal(exitFlatMapThrow._tag, 'Failure')
     if (exitFlatMapThrow._tag === 'Failure') {
       equal(exitFlatMapThrow.cause._tag, 'Die')
       if (exitFlatMapThrow.cause._tag === 'Die') {
-        strictEqual(exitFlatMapThrow.cause.defect, andThenBoom)
+        strictEqual(exitFlatMapThrow.cause.defect, flatMapBoom)
       }
     }
 
     const tapBoom = new Error('tap throw')
     let tapCalls = 0
-    const tapThrow = ResultTask.ok(10).tap(() => {
+    const tapThrow = ResultTask.succeed(10).tap(() => {
       tapCalls += 1
       throw tapBoom
     })
@@ -1108,7 +1106,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
   it('applies failure continuations exactly once and preserves their defects', async () => {
     const tapErrorBoom = new Error('tapError boom')
     let tapErrorCalls = 0
-    const tapErrorThrow = ResultTask.err('err').tapError(() => {
+    const tapErrorThrow = ResultTask.fail('err').tapError(() => {
       tapErrorCalls += 1
       throw tapErrorBoom
     })
@@ -1122,19 +1120,19 @@ describe('ResultTask Stryker Mutant Killers', () => {
       }
     }
 
-    const orElseBoom = new Error('orElse boom')
-    let orElseCalls = 0
-    const orElseThrow = ResultTask.err('err').orElse(() => {
-      orElseCalls += 1
-      throw orElseBoom
+    const catchAllBoom = new Error('catchAll boom')
+    let catchAllCalls = 0
+    const catchAllThrow = ResultTask.fail('err').catchAll(() => {
+      catchAllCalls += 1
+      throw catchAllBoom
     })
-    const exitCatchAllThrow = await ResultTask.runExit(orElseThrow as never)
-    equal(orElseCalls, 1)
+    const exitCatchAllThrow = await ResultTask.runExit(catchAllThrow as never)
+    equal(catchAllCalls, 1)
     equal(exitCatchAllThrow._tag, 'Failure')
     if (exitCatchAllThrow._tag === 'Failure') {
       equal(exitCatchAllThrow.cause._tag, 'Die')
       if (exitCatchAllThrow.cause._tag === 'Die') {
-        strictEqual(exitCatchAllThrow.cause.defect, orElseBoom)
+        strictEqual(exitCatchAllThrow.cause.defect, catchAllBoom)
       }
     }
   })
@@ -1142,7 +1140,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
   it('converts a queued success into Interrupt when aborted mid-execution', async () => {
     const controller = new AbortController()
     let mapped = 0
-    const task = ResultTask.ok(1)
+    const task = ResultTask.succeed(1)
       .tap(() => {
         controller.abort('mid-run')
       })
@@ -1186,7 +1184,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
     const owner = ResultTask.makeScope()
     const controller = new AbortController()
     controller.abort('pre-aborted')
-    const exit = await ResultTask.runExit(owner.use(ResultTask.err('task-error')), {
+    const exit = await ResultTask.runExit(owner.use(ResultTask.fail('task-error')), {
       signal: controller.signal,
     })
     equal(exit._tag, 'Failure')
@@ -1208,7 +1206,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
     equal(closeExit._tag, 'Success')
 
     // Executing in closed scope (line 1275)
-    const closedExec = await ResultTask.runExit(owner.use(ResultTask.ok(1)))
+    const closedExec = await ResultTask.runExit(owner.use(ResultTask.succeed(1)))
     equal(closedExec._tag, 'Failure')
     if (closedExec._tag === 'Failure' && closedExec.cause._tag === 'Die') {
       equal(
@@ -1255,7 +1253,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
     // Test close failure propagation when cleanup fails (lines 1308)
     const owner3 = ResultTask.makeScope()
     const failingFinalizerResource = ResultTask.acquireRelease({
-      acquire: ResultTask.ok('ok'),
+      acquire: ResultTask.succeed('ok'),
       release: () =>
         ResultTask.sync(() => {
           throw new Error('finalizer failed')
@@ -1271,8 +1269,8 @@ describe('ResultTask Stryker Mutant Killers', () => {
     await ResultTask.runExit(
       owner3b.use(
         ResultTask.acquireRelease({
-          acquire: ResultTask.ok('owned'),
-          release: () => ResultTask.ok(undefined),
+          acquire: ResultTask.succeed('owned'),
+          release: () => ResultTask.succeed(undefined),
         }),
       ),
     )
@@ -1306,7 +1304,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
     // Abort listener cleanup in use (lines 1291-1294)
     const owner4 = ResultTask.makeScope()
     const ac = new AbortController()
-    const resultVal = await ResultTask.runPromise(owner4.use(ResultTask.ok('clean-run')), {
+    const resultVal = await ResultTask.runPromise(owner4.use(ResultTask.succeed('clean-run')), {
       signal: ac.signal,
     })
     equal(resultVal, 'clean-run')
@@ -1314,19 +1312,21 @@ describe('ResultTask Stryker Mutant Killers', () => {
   })
 
   it('validates curried combinators and method overloads (lines 1410, 1433, 1456)', async () => {
-    // curried andThen
-    const curriedFlatMap = ResultTask.andThen((x: number) => ResultTask.ok(x * 2))
-    const resFlatMap = await ResultTask.runPromise(curriedFlatMap(ResultTask.ok(21)))
+    // curried flatMap
+    const curriedFlatMap = ResultTask.flatMap((x: number) => ResultTask.succeed(x * 2))
+    const resFlatMap = await ResultTask.runPromise(curriedFlatMap(ResultTask.succeed(21)))
     equal(resFlatMap, 42)
 
     // curried andThen
-    const curriedAndThen = ResultTask.andThen((x: number) => ResultTask.ok(x + 5))
-    const resAndThen = await ResultTask.runPromise(curriedAndThen(ResultTask.ok(37)))
+    const curriedAndThen = ResultTask.andThen((x: number) => ResultTask.succeed(x + 5))
+    const resAndThen = await ResultTask.runPromise(curriedAndThen(ResultTask.succeed(37)))
     equal(resAndThen, 42)
 
-    // curried orElse
-    const curriedCatchAll = ResultTask.orElse((err: string) => ResultTask.ok(`caught: ${err}`))
-    const resCatchAll = await ResultTask.runPromise(curriedCatchAll(ResultTask.err('oops')))
+    // curried catchAll
+    const curriedCatchAll = ResultTask.catchAll((err: string) =>
+      ResultTask.succeed(`caught: ${err}`),
+    )
+    const resCatchAll = await ResultTask.runPromise(curriedCatchAll(ResultTask.fail('oops')))
     equal(resCatchAll, 'caught: oops')
   })
 
@@ -1436,7 +1436,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
   })
 
   it('distinguishes typed failures, defects, and interruptions at runResult', async () => {
-    const typed = await ResultTask.runResult(ResultTask.err('typed-failure'))
+    const typed = await ResultTask.runResult(ResultTask.fail('typed-failure'))
     equal(typed.isErr(), true)
     if (typed.isErr()) equal(typed.error, 'typed-failure')
 
@@ -1522,9 +1522,6 @@ describe('ResultTask Stryker Mutant Killers', () => {
       serviceResolver: undefined,
       signal: controller.signal,
       scope: new TaskScope(),
-      clock: Clock.live,
-      scheduling: createScheduling(Clock.live, { yieldEvery: Infinity }),
-      cleanup: undefined,
     })
     controller.abort('executor-aborted')
     ;(resolveResult as ((result: unknown) => void) | undefined)?.(okAsync('value'))
@@ -1556,7 +1553,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
 
   it('interrupts a successful continuation when the signal aborts during the callback', async () => {
     const controller = new AbortController()
-    const task = ResultTask.ok(1).map(() => {
+    const task = ResultTask.succeed(1).map(() => {
       controller.abort('continuation-aborted')
       return 2
     })

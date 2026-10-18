@@ -40,7 +40,7 @@ const incrementResultar = (value: number): ResultTask<number, never> => ResultTa
 const incrementEffect = (value: number): Effect.Effect<number> => Effect.succeed(value + 1);
 
 const runResultSyncChain = (): number => {
-  let current = ok<number, never>(0);
+  let current: Result<number, never> = ok(0);
   for (let step = 0; step < CHAIN_STEPS; step += 1) {
     current = current.andThen(incrementResult);
   }
@@ -97,7 +97,7 @@ const runResultarCatchTag = (): Promise<number> => {
   );
   const recovered = task
     .map((value) => value * 2)
-    .catchTag("NotFoundError", (error) => ResultTask.ok(error.id.length));
+    .catchTag("NotFoundError", (error) => ResultTask.ok(String(error.id).length));
   return ResultTask.runPromise(recovered);
 };
 
@@ -189,7 +189,7 @@ const runEffectSemaphore = (): Promise<number[]> => {
   return Effect.runPromise(Effect.all(tasks, { concurrency: "unbounded" }));
 };
 
-const acquireResultarResource = (id: number, releasedOrder: number[]): ResultTask<number, never> =>
+const acquireResultarResource = (id: number, releasedOrder: number[]) =>
   ResultTask.acquireRelease({
     acquire: ResultTask.sync(() => id),
     release: (acquired) =>

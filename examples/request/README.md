@@ -3,6 +3,10 @@
 Runnable examples for `resultar-request`, `resultar-request-typebox`, and
 `resultar-request-zod`.
 
+For new async code, prefer lazy `ResultTask` workflows with explicit runners. The request adapters
+and this server fixture retain eager `ResultAsync` compatibility contracts from the `resultar/async` subpath, deprecated since v4.
+Calling an adapter starts one shared execution; wrap the call in a Task factory to defer it.
+
 Run it from the repository root:
 
 ```sh
@@ -50,6 +54,40 @@ It shows:
 
 The smoke script checks the expected success and failure branches, including the server-backed fetch
 flow.
+
+## New Task workflows
+
+For a server that is already running, compose a fresh request per Task execution:
+
+```ts
+import { ResultTask } from 'resultar'
+import { requestJson } from 'resultar-request-typebox'
+import { Type } from 'typebox'
+
+const accountSchema = Type.Object({
+  email: Type.String(),
+  id: Type.String(),
+  plan: Type.Union([Type.Literal('free'), Type.Literal('team')]),
+  seats: Type.Number(),
+})
+
+const loadAccount = (baseUrl: string) => ResultTask.fromResultAsync(() =>
+  requestJson({
+    request: () => fetch(`${baseUrl}/accounts/team`),
+    schema: accountSchema,
+  }),
+)
+
+const result = await ResultTask.runResult(loadAccount('http://127.0.0.1:3000'))
+const label = result.match(account => account.email, error => error.message)
+```
+
+The factory starts a new adapter call on every run. `fromResultAsync(existingAsync)` reuses an
+already-started operation instead. Task has no `.then`, its `map` is synchronous, and its `match`
+returns a Task; use a runner or match the `Result` after `runResult` as above. The adapter's JSON
+validation and error mapping stay unchanged. For new server ownership code, use
+`ResultTask.acquireRelease` inside `ResultTask.scoped`; the source fixture keeps its original
+eager `withResource` bracket for compatibility coverage.
 
 ## Limitations
 

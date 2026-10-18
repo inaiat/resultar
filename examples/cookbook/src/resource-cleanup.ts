@@ -1,12 +1,12 @@
 /**
- * Bracketed Async Resource Cleanup (`ResultAsync.withResource`)
+ * Scoped Resource Cleanup (`ResultTask.scoped`, `ResultTask.acquireRelease`)
  *
  * This module demonstrates the acquire / use / release bracket pattern for
- * `ResultAsync`, where `release` always runs after `use` completes (whether with
- * `Ok`, `Err`, or cancellation) and receives the `ResultAsyncResourceReleaseContext`
- * to decide between commit/close and rollback.
+ * `ResultTask`, where a scope awaits release after success, failure, or interruption.
+ * Finalizers receive the task Exit to choose between close and rollback, and their
+ * own failures remain visible at the execution boundary.
  */
-import { ResultAsync, createTaggedError, errAsync, okAsync } from "resultar";
+import { ResultTask, createTaggedError, type Exit, type Result } from "resultar";
 
 export interface ImportSummary {
   readonly imported: number;
@@ -14,7 +14,12 @@ export interface ImportSummary {
 
 export interface ImportRun {
   readonly events: readonly string[];
-  readonly result: Awaited<ReturnType<ResultAsync<ImportSummary, ImportFailedError>["then"]>>;
+  readonly result: Result<ImportSummary, ImportFailedError>;
+}
+
+export interface ImportReleaseRun {
+  readonly events: readonly string[];
+  readonly exit: Exit<ImportSummary, ReleaseFailedError>;
 }
 
 interface Connection {
@@ -38,34 +43,38 @@ export class ReleaseFailedError extends createTaggedError({
 
 /**
  * Acquires a warehouse connection, imports rows, and guarantees `release` is
- * called with the outcome (`context.result`) so failed imports trigger a rollback.
+ * called with the Exit so failed or interrupted imports trigger a rollback.
  */
 export const importRowsWithCleanup = async (
   rows: readonly string[],
   options: { readonly failAtRow?: number } = {},
-) => {
+): Promise<ImportRun> => {
   const events: string[] = [];
 
-  const result = await ResultAsync.withResource({
-    acquire: () => {
-      events.push("acquire");
-      return okAsync<Connection, ConnectionError>({ id: "warehouse-1" });
-    },
-    release: (connection, context) => {
-      events.push(
-        `${connection.id}:release:${context.result?.isErr() === true ? "rollback" : "close"}`,
-      );
-    },
-    use: (connection) => {
+  const task = ResultTask.scoped(
+    ResultTask.gen(function* () {
+      const connection = yield* ResultTask.acquireRelease({
+        acquire: ResultTask.sync<Connection>(() => {
+          events.push("acquire");
+          return { id: "warehouse-1" };
+        }),
+        release: (connection, exit) =>
+          ResultTask.sync(() => {
+            events.push(
+              `${connection.id}:release:${exit._tag === "Failure" ? "rollback" : "close"}`,
+            );
+          }),
+      });
       events.push(`${connection.id}:use`);
 
       if (options.failAtRow !== undefined) {
-        return errAsync(new ImportFailedError({ row: options.failAtRow }));
+        return yield* ImportFailedError.taskErr({ row: options.failAtRow });
       }
 
-      return okAsync({ imported: rows.length });
-    },
-  });
+      return { imported: rows.length };
+    }),
+  );
+  const result = await ResultTask.runResult(task);
 
   return {
     events,
@@ -74,31 +83,35 @@ export const importRowsWithCleanup = async (
 };
 
 /**
- * `ResultAsync.withResource` treats `release` as best-effort cleanup: even if `release`
- * returns `Err` or rejects, the outcome of `use` is preserved without masking domain results.
+ * Fallible release is part of the task outcome. `runExit` preserves its typed failure,
+ * including composite causes if both use and release fail.
  */
-export const importRowsWithFallibleRelease = async (shouldFailRelease: boolean) => {
+export const importRowsWithFallibleRelease = async (
+  shouldFailRelease: boolean,
+): Promise<ImportReleaseRun> => {
   const events: string[] = [];
 
-  const result = await ResultAsync.withResource({
-    acquire: () => {
-      events.push("acquire");
-      return okAsync<Connection, ConnectionError>({ id: "warehouse-2" });
-    },
-    release: (connection) => {
-      events.push(`${connection.id}:release`);
-      return shouldFailRelease
-        ? errAsync(new ReleaseFailedError({ id: connection.id }))
-        : okAsync(undefined);
-    },
-    use: (connection) => {
+  const task = ResultTask.scoped(
+    ResultTask.gen(function* () {
+      const connection = yield* ResultTask.acquireRelease({
+        acquire: ResultTask.sync<Connection>(() => {
+          events.push("acquire");
+          return { id: "warehouse-2" };
+        }),
+        release: (connection) =>
+          ResultTask.gen(function* () {
+            events.push(`${connection.id}:release`);
+            if (shouldFailRelease) return yield* ReleaseFailedError.taskErr({ id: connection.id });
+          }),
+      });
       events.push(`${connection.id}:use`);
-      return okAsync<ImportSummary, ImportFailedError>({ imported: 1 });
-    },
-  });
+      return { imported: 1 };
+    }),
+  );
+  const exit = await ResultTask.runExit(task);
 
   return {
     events,
-    result,
+    exit,
   };
 };

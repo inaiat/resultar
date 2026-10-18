@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-deprecated -- These compatibility tests exercise supported legacy APIs. */
-import { equal, rejects } from 'node:assert'
+import { equal } from 'node:assert'
 import { describe, it } from 'vite-plus/test'
 
 import { err, errAsync, ok, okAsync } from '../src/index.js'
@@ -51,54 +50,32 @@ describe('Result side-effect callback failures', () => {
 })
 
 describe('ResultAsync side-effect callback failures', () => {
-  it('swallows inspect callback errors and propagates tap callback defects', async () => {
-    const result = await okAsync<number, Error>(1).inspect(() => {
+  it('swallows tap callback errors and preserves the Ok result', async () => {
+    const result = await okAsync<number, Error>(1).tap(() => {
       throw callbackError
     })
 
     equal(result.isOk(), true)
     equal(result._unsafeUnwrap(), 1)
-
-    await rejects(
-      async () =>
-        await okAsync<number, Error>(1).tap(() => {
-          throw callbackError
-        }),
-      callbackError,
-    )
   })
 
-  it('swallows rejected inspect callbacks and propagates rejected tap callbacks', async () => {
-    const result = await okAsync<number, Error>(1).inspect(
+  it('swallows rejected tap callbacks and preserves the Ok result', async () => {
+    const result = await okAsync<number, Error>(1).tap(
       async () => await Promise.reject(callbackError),
     )
 
     equal(result.isOk(), true)
     equal(result._unsafeUnwrap(), 1)
-
-    await rejects(
-      async () =>
-        await okAsync<number, Error>(1).tap(async () => await Promise.reject(callbackError)),
-      callbackError,
-    )
   })
 
-  it('swallows inspectError callback errors and propagates tapError callback defects', async () => {
+  it('swallows tapError callback errors and preserves the Err result', async () => {
     const original = new Error('original')
-    const result = await errAsync<number, Error>(original).inspectError(() => {
+    const result = await errAsync<number, Error>(original).tapError(() => {
       throw callbackError
     })
 
     equal(result.isErr(), true)
     equal(result._unsafeUnwrapErr(), original)
-
-    await rejects(
-      async () =>
-        await errAsync<number, Error>(original).tapError(() => {
-          throw callbackError
-        }),
-      callbackError,
-    )
   })
 
   it('swallows log callback errors on Ok and Err results', async () => {

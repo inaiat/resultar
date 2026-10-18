@@ -1,20 +1,24 @@
 import {
   createTaggedError,
   Fiber,
-  fromPromise,
   Match,
   ok,
   pipe,
   ResultTask,
-  runPromise,
   safeTry,
   tryResult,
-  tryResultAsync,
   type Result,
   type ResultTaskScope,
   type StrictResult,
-  type StrictResultAsync,
 } from "resultar";
+import {
+  ResultAsync,
+  fromPromise,
+  runPromise,
+  tryResultAsync,
+  type StrictResultAsync,
+} from "resultar/async";
+import { safeTry as safeTryAsync } from "resultar/async";
 import { createModule } from "resultar-di";
 
 interface User {
@@ -146,7 +150,7 @@ export const loadUserWithResultTask = (id: string): ResultTask<User, FetchUserEr
 
 // prefer-result-async: execute once and keep the returned operation composable.
 export const runUserTaskAtResultBoundary = (id: string): StrictResultAsync<User, FetchUserError> =>
-  loadUserTask(id).toResultAsync();
+  ResultAsync.fromTask(loadUserTask(id));
 
 // noUnsafeAwaitIgnoreCalls: project-level escape hatches are exact. The full
 // TypeScript checker can allow this call by configuring "startServer".
@@ -195,7 +199,7 @@ export const createUserWithGenerator = (
 // no-await-in-safe-try: async safeTry generators use yield* for ResultAsync
 // values instead of await.
 export const loadUserWithSafeTry = (id: string): StrictResultAsync<User, FetchUserError> =>
-  safeTry(async function* () {
+  safeTryAsync(async function* () {
     const user = yield* loadUser(id);
 
     return ok(user);
@@ -265,17 +269,14 @@ export const closePendingTaskScope = (
 ): ResultTask<User, FetchUserError> => ResultTask.scoped(task);
 
 // no-unscoped-acquire-release: fn acquisition also needs an explicit owning scope.
-export const scopedDisposableFn = ResultTask.fn(
-  function* (userId: string) {
-    const session = yield* ResultTask.acquireDisposable(
-      ResultTask.sync(() => ({ id: userId, [Symbol.dispose]: (): void => {} })),
-    );
-    const user = yield* loadUserTask(session.id);
+export const scopedDisposableFn = ResultTask.fn(function* (userId: string) {
+  const session = yield* ResultTask.acquireDisposable(
+    ResultTask.sync(() => ({ id: userId, [Symbol.dispose]: (): void => {} })),
+  );
+  const user = yield* loadUserTask(session.id);
 
-    return user;
-  },
-  ResultTask.scoped,
-);
+  return user;
+}, ResultTask.scoped);
 
 // unused-suppression: retain a narrow directive only at an intentional terminal boundary.
 export const throwAtTerminalBoundary = (error: FetchUserError): never => {
@@ -351,4 +352,3 @@ export const joinedForkedUser = (id: string): ResultTask<User, FetchUserError> =
       return yield* Fiber.join(fiber);
     }),
   );
-

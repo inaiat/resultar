@@ -1,9 +1,9 @@
 import { deepEqual, equal } from 'node:assert'
 import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
 
-import type { Result, ResultAsync } from '../src/index.js'
+import type { Result } from '../src/index.js'
 
-import { createTaggedError, err, errAsync, ok, okAsync } from '../src/index.js'
+import { ResultAsync, createTaggedError, err, errAsync, ok, okAsync } from '../src/index.js'
 
 class ValidationError extends createTaggedError({
   message: 'Invalid field $field',
@@ -90,7 +90,7 @@ describe('Result.matchTagsPartial', () => {
         },
       },
       (error) => {
-        expectTypeOf(error).toEqualTypeOf<PermissionError>()
+        expectTypeOf(error).toEqualTypeOf<ValidationError | PermissionError>()
         return false
       },
     )
@@ -127,7 +127,7 @@ describe('ResultAsync.matchTagsPartial', () => {
       fallback,
     )
 
-    deepEqual(value, ok('ok:123'))
+    equal(value, 'ok:123')
     equal(validationHandler.mock.calls.length, 0)
     equal(fallback.mock.calls.length, 0)
   })
@@ -145,7 +145,7 @@ describe('ResultAsync.matchTagsPartial', () => {
       fallback,
     )
 
-    deepEqual(value, ok('validation:email'))
+    equal(value, 'validation:email')
     equal(fallback.mock.calls.length, 0)
   })
 
@@ -158,7 +158,7 @@ describe('ResultAsync.matchTagsPartial', () => {
       (error) => `fallback:${error.message}`,
     )
 
-    deepEqual(value, ok('fallback:Missing permission admin:write'))
+    equal(value, 'fallback:Missing permission admin:write')
   })
 
   it('uses the Error handler for untagged errors before fallback', async () => {
@@ -172,7 +172,7 @@ describe('ResultAsync.matchTagsPartial', () => {
       fallback,
     )
 
-    deepEqual(value, ok('error:plain failure'))
+    equal(value, 'error:plain failure')
     equal(fallback.mock.calls.length, 0)
   })
 
@@ -193,12 +193,12 @@ describe('ResultAsync.matchTagsPartial', () => {
         },
       },
       (error) => {
-        expectTypeOf(error).toEqualTypeOf<PermissionError>()
+        expectTypeOf(error).toEqualTypeOf<ValidationError | PermissionError>()
         return false
       },
     )
 
-    expectTypeOf(value).toEqualTypeOf<Result<string | number | boolean, never>>()
+    expectTypeOf(value).toEqualTypeOf<string | number | boolean>()
   })
 
   it('rejects handlers for tags outside the async error union', async () => {
@@ -221,7 +221,7 @@ describe('ResultAsync.matchTagsPartial', () => {
 })
 
 describe('remaining tagged errors', () => {
-  it('retains optional handlers in the fallback channel and excludes required handlers', () => {
+  it('retains optional handlers in the fallback channel with the legacy error union', () => {
     const handlers: {
       readonly ValidationError?: (error: ValidationError) => string
       readonly PermissionError: (error: PermissionError) => string
@@ -229,7 +229,10 @@ describe('remaining tagged errors', () => {
     const value = err<number, ValidationError | PermissionError>(
       new ValidationError({ field: 'email' }),
     ).matchTagsPartial(String, handlers, (error) => {
-      expectTypeOf(error).toEqualTypeOf<ValidationError>()
+      expectTypeOf(error).toEqualTypeOf<ValidationError | PermissionError>()
+      if (error._tag !== 'ValidationError') {
+        throw new Error('The required PermissionError handler should handle this error')
+      }
       return String(error.field)
     })
 
@@ -249,11 +252,15 @@ describe('remaining tagged errors', () => {
       return error.message
     })
 
-    expectTypeOf(value).toEqualTypeOf<Result<string, never>>()
-    deepEqual(value, ok('Missing permission read'))
+    expectTypeOf(value).toEqualTypeOf<string>()
+    equal(value, 'Missing permission read')
   })
 
   it('uses required Error as a catchall for all remaining values, including primitives', () => {
+    const fallback = vi.fn((remaining: ValidationError | string) => {
+      expectTypeOf(remaining).toEqualTypeOf<ValidationError | string>()
+      return 'unreachable'
+    })
     const value = err<number, ValidationError | string>('primitive failure').matchTagsPartial(
       String,
       {
@@ -262,13 +269,11 @@ describe('remaining tagged errors', () => {
           return String(error)
         },
       },
-      (remaining) => {
-        expectTypeOf(remaining).toEqualTypeOf<never>()
-        return 'unreachable'
-      },
+      fallback,
     )
 
     equal(value, 'primitive failure')
+    equal(fallback.mock.calls.length, 0)
   })
 
   it('retains errors when an Error catchall is optional', () => {
@@ -299,14 +304,12 @@ describe('asynchronous match return contracts', () => {
       },
     )
 
-    expectTypeOf(positional).toEqualTypeOf<
-      ResultAsync<{ status: 200; id: number } | { status: 400 }, never>
-    >()
+    expectTypeOf(positional).toEqualTypeOf<Promise<{ status: 200; id: number } | { status: 400 }>>()
     expectTypeOf(object).toEqualTypeOf<
-      ResultAsync<{ status: 200 } | { status: 400; field: string | number }, never>
+      Promise<{ status: 200 } | { status: 400; field: string | number }>
     >()
-    equal((await positional)._unsafeUnwrap().status, 200)
-    equal((await object)._unsafeUnwrap().status, 400)
+    deepEqual(await positional, { status: 200, id: 1 })
+    deepEqual(await object, { status: 400, field: 'email' })
   })
 
   it('evaluates exhaustive tagged-error handlers', async () => {
@@ -317,32 +320,50 @@ describe('asynchronous match return contracts', () => {
     })
 
     expectTypeOf(pending).toEqualTypeOf<
-      ResultAsync<{ status: 200; id: number } | { status: 400; field: string | number }, never>
+      Promise<{ status: 200; id: number } | { status: 400; field: string | number }>
     >()
-    equal((await pending)._unsafeUnwrap().status, 400)
+    deepEqual(await pending, { status: 400, field: 'email' })
   })
 
-  it('evaluates partial handlers and the narrowed fallback', async () => {
+  it('evaluates partial handlers and explicitly narrows the legacy fallback union', async () => {
     const pending = errAsync<number, ValidationError | PermissionError>(
       new PermissionError({ permission: 'read' }),
     ).matchTagsPartial(
       (id) => ({ status: 200 as const, id }),
       { ValidationError: () => ({ status: 400 as const }) },
       (error) => {
-        expectTypeOf(error).toEqualTypeOf<PermissionError>()
+        expectTypeOf(error).toEqualTypeOf<ValidationError | PermissionError>()
+        if (error._tag !== 'PermissionError') {
+          throw new Error('The ValidationError handler should handle this error')
+        }
         return { status: 403 as const, permission: error.permission }
       },
     )
 
     expectTypeOf(pending).toEqualTypeOf<
-      ResultAsync<
-        | { status: 200; id: number }
-        | { status: 400 }
-        | { status: 403; permission: string | number },
-        never
+      Promise<
+        { status: 200; id: number } | { status: 400 } | { status: 403; permission: string | number }
       >
     >()
-    equal((await pending)._unsafeUnwrap().status, 403)
+    deepEqual(await pending, { status: 403, permission: 'read' })
+  })
+
+  it('keeps static partial matching compositional with a narrowed fallback', async () => {
+    const source = errAsync<number, ValidationError | PermissionError>(
+      new PermissionError({ permission: 'read' }),
+    )
+    const pending = ResultAsync.matchTagsPartial(
+      source,
+      String,
+      { ValidationError: () => 'validation' },
+      (error) => {
+        expectTypeOf(error).toEqualTypeOf<PermissionError>()
+        return String(error.permission)
+      },
+    )
+
+    expectTypeOf(pending).toEqualTypeOf<ResultAsync<string, never>>()
+    deepEqual(await pending, ok('read'))
   })
 })
 
@@ -352,10 +373,10 @@ describe('tagged handler precedence over Error catchall', () => {
       ValidationError: (_error: ValidationError) => 'specific',
       Error: (_error: ValidationError | PermissionError) => 'catchall',
     }
-    const fallback = (remaining: never): string => {
-      expectTypeOf(remaining).toEqualTypeOf<never>()
+    const fallback = vi.fn((remaining: ValidationError | PermissionError): string => {
+      expectTypeOf(remaining).toEqualTypeOf<ValidationError | PermissionError>()
       return 'unreachable'
-    }
+    })
     const tagged = err<number, ValidationError | PermissionError>(
       new ValidationError({ field: 'email' }),
     ).matchTagsPartial(String, handlers, fallback)
@@ -364,7 +385,8 @@ describe('tagged handler precedence over Error catchall', () => {
     ).matchTagsPartial(String, handlers, fallback)
 
     equal(tagged, 'specific')
-    deepEqual(remaining, ok('catchall'))
+    equal(remaining, 'catchall')
+    equal(fallback.mock.calls.length, 0)
   })
 })
 
@@ -397,7 +419,7 @@ describe('exhaustive Error fallback contracts', () => {
     })
 
     equal(value, 'PRIMITIVE FAILURE')
-    deepEqual(asyncValue, ok('PRIMITIVE FAILURE'))
+    equal(asyncValue, 'PRIMITIVE FAILURE')
     if (false) {
       // @ts-expect-error A tag table alone cannot cover primitive errors.
       input.matchTags(String, { ValidationError: (error) => error.field })
@@ -441,7 +463,7 @@ describe('exhaustive Error fallback contracts', () => {
     })
 
     equal(tagged, 'tagged')
-    deepEqual(fallback, ok('primitive'))
+    equal(fallback, 'primitive')
     equal(contextual, 'tagged')
   })
 })

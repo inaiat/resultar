@@ -1,35 +1,9 @@
 import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
-import { Match, type ResultAsync, createTaggedError, err, errAsync, ok } from '../src/index.js'
+import { Match } from '../src/index.js'
 
 type Role = { readonly role: 'admin' } | { readonly role: 'member' }
 
 describe('Match major review regressions', () => {
-  it('preserves output unions in sync and async domain partial matching tables', async () => {
-    class FirstError extends createTaggedError({ name: 'FirstError', message: 'first' }) {}
-    class SecondError extends createTaggedError({ name: 'SecondError', message: 'second' }) {}
-    type Tables =
-      | { FirstError: (error: FirstError) => string }
-      | { SecondError: (error: SecondError) => number }
-    const select = (first: boolean): Tables =>
-      first ? { FirstError: () => 'first' } : { SecondError: () => 2 }
-    const sync = err<never, FirstError | SecondError>(new FirstError()).matchTagsPartial(
-      () => false as const,
-      select(true),
-      (error) => {
-        expectTypeOf(error).toEqualTypeOf<FirstError | SecondError>()
-        return false as const
-      },
-    )
-    expectTypeOf(sync).toEqualTypeOf<string | number | false>()
-    expect(sync).toBe('first')
-    const async = errAsync<never, FirstError | SecondError>(new SecondError()).matchTagsPartial(
-      () => false as const,
-      select(false),
-      () => false as const,
-    )
-    expectTypeOf(async).toEqualTypeOf<ResultAsync<string | number | false, never>>()
-    expect(await async).toEqual(ok(2))
-  })
   it('treats array patterns as prefixes with their full required length', () => {
     const run = Match.type<[] | [undefined]>()
       .when([undefined], (value) => {

@@ -6,13 +6,12 @@ import {
   validateRetryPolicy,
 } from '../core/retry.js'
 import type { RetryContext, RetryPolicy } from '../core/retry.js'
-import type { Result } from '../result/result.js'
 import type { Cause } from './cause.js'
 import { transformCause, withoutInterruptions } from './cause-transform.js'
 import { isCleanupCause } from './cleanup-cause.js'
 import { combineExits, died, failure, success } from './exit.js'
 import type { SupervisedFiber } from './fiber-runtime.js'
-import { detachedPromise } from './promise-interruption.js'
+import { detachedPromise, NEVER_ABORTED_SIGNAL } from './promise-interruption.js'
 import type { Exit } from './result-task.js'
 import type { TaskClock } from './task-clock.js'
 import type { ResultTaskRuntimeContext } from './task-service.js'
@@ -92,51 +91,6 @@ export const getReason = (value: unknown): unknown =>
  * // Ok(42)
  * ```
  */
-export type ResultAsyncFinalizer<T, E> = (
-  value: T | undefined,
-  error: E | undefined,
-) => void | Promise<void>
-
-/**
- * Wrapper around a Result-producing Promise that also implements AsyncDisposable (`await using`).
- */
-export class DisposableResultAsync<T, E> implements PromiseLike<Result<T, E>>, AsyncDisposable {
-  readonly #promise: Promise<Result<T, E>>
-  readonly #finalizer: ResultAsyncFinalizer<T, E>
-  #disposed = false
-
-  public constructor(promise: Promise<Result<T, E>>, finalizer: ResultAsyncFinalizer<T, E>) {
-    this.#promise = promise
-    this.#finalizer = finalizer
-  }
-
-  // eslint-disable-next-line unicorn/no-thenable -- Intentional PromiseLike implementation for `await using`.
-  public then<TResult1 = Result<T, E>, TResult2 = never>(
-    onfulfilled?: ((value: Result<T, E>) => TResult1 | PromiseLike<TResult1>) | null,
-    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
-  ): Promise<TResult1 | TResult2> {
-    return this.#promise.then(onfulfilled, onrejected)
-  }
-
-  public async [Symbol.asyncDispose](): Promise<void> {
-    if (this.#disposed) {
-      return
-    }
-
-    this.#disposed = true
-    const result = await this.#promise
-
-    try {
-      await this.#finalizer(
-        result.isOk() ? result.value : undefined,
-        result.isErr() ? result.error : undefined,
-      )
-    } catch {
-      /* empty */
-    }
-  }
-}
-
 /** Scheduler defects are appended once at the cleanup boundary, never to intermediate yields. */
 export const completeCleanup = <A, E>(
   exit: Exit<A, E>,
@@ -167,17 +121,6 @@ const checkedRandom = (clock: TaskClock): number => {
   return random
 }
 
-const retryFailure = (
-  exit: Exit<unknown, unknown>,
-  retry: number,
-  options: ResultTaskRetryOptions<unknown>,
-): { readonly error: unknown } | undefined => {
-  if (exit._tag === 'Success' || exit.cause._tag !== 'Fail' || retry >= options.times)
-    return undefined
-  if (options.while?.(exit.cause.error, retry + 1) === false) return undefined
-  return { error: exit.cause.error }
-}
-
 const retryDelay = (
   retry: number,
   error: unknown,
@@ -193,14 +136,24 @@ const retryDelay = (
 }
 
 export const legacyRetryDelay = (
-  exit: Exit<unknown, unknown>,
+  error: unknown,
   retry: number,
   runtime: { readonly options: ResultTaskRetryOptions<unknown>; readonly clock: TaskClock },
 ): number | undefined => {
   const { options, clock } = runtime
-  const next = retryFailure(exit, retry, options)
-  return next === undefined ? undefined : retryDelay(retry, next.error, { options, clock })
+  if (options.while?.(error, retry + 1) === false) return undefined
+  return retryDelay(retry, error, { options, clock })
 }
+
+interface CanonicalRetryRuntime {
+  readonly policy: RetryPolicy<unknown>
+  readonly clock: TaskClock
+  readonly signal: AbortSignal
+}
+
+type RetryPlan = Exit<number | undefined, never>
+
+const ZERO_RETRY_PLAN: RetryPlan = success(0)
 
 const canonicalRetryDecision = async (
   policy: RetryPolicy<unknown>,
@@ -216,21 +169,12 @@ const canonicalRetryDecision = async (
   )
 }
 
-export const canonicalRetryDelay = async (
-  exit: Exit<unknown, unknown>,
-  attempt: number,
-  runtime: {
-    readonly policy: RetryPolicy<unknown>
-    readonly clock: TaskClock
-    readonly signal: AbortSignal
-  },
-): Promise<Exit<number | undefined, never>> => {
+const canonicalRetryDelayAsync = async (
+  error: unknown,
+  context: RetryContext,
+  runtime: CanonicalRetryRuntime,
+): Promise<RetryPlan> => {
   const { policy, clock, signal } = runtime
-  if (exit._tag === 'Success' || exit.cause._tag !== 'Fail' || attempt >= policy.times) {
-    return success(undefined)
-  }
-  const context = retryContext(attempt, policy.times)
-  const error = exit.cause.error
   const decision = await canonicalRetryDecision(policy, error, { context, signal })
   if (decision._tag === 'Failure') return decision
   if (!decision.value) return success(undefined)
@@ -241,6 +185,35 @@ export const canonicalRetryDelay = async (
   )
   if (observation._tag === 'Failure') return observation
   return success(retryPolicyDelay(policy, context, () => clock.random()))
+}
+
+export const canonicalRetryDelay = (
+  retryError: unknown,
+  attempt: number,
+  runtime: CanonicalRetryRuntime,
+): RetryPlan | Promise<RetryPlan> => {
+  const { policy, signal } = runtime
+  /* Stryker disable all: uninterruptible zero-delay fast-path is equivalent to canonicalRetryDelayAsync. */
+  if (
+    signal === NEVER_ABORTED_SIGNAL &&
+    policy.while === undefined &&
+    (policy.delayMs === undefined || policy.delayMs === 0)
+  ) {
+    if (policy.onRetry === undefined) return ZERO_RETRY_PLAN
+    const context = retryContext(attempt, policy.times)
+    try {
+      const observation = policy.onRetry(retryError, context)
+      if (observation === undefined) return ZERO_RETRY_PLAN
+      return observation.then(
+        () => ZERO_RETRY_PLAN,
+        () => ZERO_RETRY_PLAN,
+      )
+    } catch {
+      return ZERO_RETRY_PLAN
+    }
+  }
+  /* Stryker restore all */
+  return canonicalRetryDelayAsync(retryError, retryContext(attempt, policy.times), runtime)
 }
 
 export const validateTaskRetry = (options: ResultTaskRetryInput<unknown>): void => {

@@ -13,7 +13,7 @@ export interface RetryContext {
 
 /**
  * Configuration for creating a portable {@link RetryPolicy} shared by both eager `ResultAsync.retry`
- * and lazy `ResultTask.retry` / `ResultTask.retryOrElse`.
+ * and lazy `ResultTask.retry`.
  */
 export interface RetryPolicyOptions<E = unknown> {
   /** Maximum number of retry attempts after the initial execution (`0` means no retries). */
@@ -85,7 +85,7 @@ export const validateRetryPolicy = <E>(options: RetryPolicyOptions<E>): void => 
 export const Retry: {
   /**
    * Validates and freezes a portable {@link RetryPolicy} that can be passed to `ResultTask.retry`,
-   * `ResultTask.retryOrElse`, and `ResultAsync.retry`.
+   * `ResultAsync.retry`, and `ResultAsync.retryOrElse`.
    */
   readonly policy: <E = unknown>(options: RetryPolicyOptions<E>) => RetryPolicy<E>
 } = Object.freeze({

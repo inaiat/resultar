@@ -6,6 +6,10 @@ Define services once, select the part of the application you need, and keep its 
 through a `use` callback. The package handles dependency selection, lifetimes, and ownership;
 Resultar handles execution, interruption, failure causes, and cleanup.
 
+Use `ResultTask` for new async service methods as well as initialization. Tasks are lazy and
+repeatable, have no `.then`, and execute through explicit runners. `ResultAsync` and
+`StrictResultAsync` are exported from the `resultar/async` subpath and are deprecated since v4 and retain eager, single-execution compatibility.
+
 ## Contents
 
 - [Recommended API](#recommended-api)
@@ -18,6 +22,8 @@ Resultar handles execution, interruption, failure causes, and cleanup.
 - [Testing with overrides](#testing-with-overrides)
 - [Framework service facades](#framework-service-facades)
 - [Limitations](#limitations)
+
+The `resultar/async` subpath is included in the `resultar` installation.
 
 ## Install
 
@@ -99,8 +105,10 @@ With `requires`, `make` returns a synchronous value or a `ResultTask`. Prefer re
 directly for ordinary service construction; keep `ResultTask.gen` for initialization with typed
 failures, additional requirements or owned resources. Existing `ResultTask.sync` factories remain
 supported. Promises and thenables are rejected: wrap asynchronous initialization in
-`ResultTask.tryPromise` or another task. Methods on the returned service can still return
-`ResultAsync` or `StrictResultAsync`. Without `requires`, `make` accepts a task or a zero-argument factory returning a synchronous value or ResultTask. The generator form
+`ResultTask.tryPromise` or another task. Prefer `ResultTask` for new async methods on the returned
+service. Existing methods can preserve deprecated `ResultAsync` or `StrictResultAsync` contracts;
+adapt each call with `ResultTask.fromResultAsync(() => legacyMethod())` inside a new Task workflow.
+Without `requires`, `make` accepts a task or a zero-argument factory returning a synchronous value or ResultTask. The generator form
 also supports inline requirements:
 
 ```ts
@@ -148,8 +156,10 @@ export default { fetch }
 ```
 
 The caller supplies authenticated tenant data in real applications. Routes receive ordinary
-services and can keep `await users.remove(id)`. Each request gets fresh scoped services and shares
-the root singletons. Close the root when the server stops accepting requests.
+services; execute Task-returning methods with `await ResultTask.runResult(users.remove(id))` and
+match the resulting `Result`. Existing eager Async methods can keep their direct awaits during
+migration. Each request gets fresh scoped services and shares the root singletons. Close the root
+when the server stops accepting requests.
 
 The child stays open until the response body ends, errors, or is canceled. Request abort propagates
 to body cancellation. Empty responses finish cleanup before the fetch promise resolves. A handler
@@ -192,8 +202,9 @@ const App = service('app', services.http(['users'], (bindings, request) =>
 const application = createModule().singleton(App)
 ```
 
-Routes read their request's services from `context.env`; domain service methods remain ordinary
-awaitable calls. The returned application exposes `fetch(request)` and `request(path, init)` for
+Routes read their request's services from `context.env`; new async domain methods return Tasks
+and routes run them explicitly. Native HTTP methods remain Promise boundaries.
+The returned application exposes `fetch(request)` and `request(path, init)` for
 tests. Keep server execution in the owning task scope and consume or cancel response bodies.
 
 The application helpers are `createModule`, `service`, `Service` (including `Service.require`),

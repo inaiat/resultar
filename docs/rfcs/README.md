@@ -2,6 +2,11 @@
 
 This directory centralizes the architectural proposals, design decisions, and technical specifications of the **Resultar** ecosystem.
 
+These records preserve design history, including earlier recommendations for eager
+`ResultAsync` workflows. For v4 usage, start with the [gradual adoption guide](../gradual-adoption.md)
+and [migration reference](../migrations/v4.md): `ResultTask` is the default for new async work;
+`ResultAsync` and `StrictResultAsync` live in the deprecated `resultar/async` subpath of the same package. Core Async exports and methods moved to its explicit helpers; see the migration guide.
+
 ---
 
 ## RFC Index

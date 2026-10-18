@@ -3,7 +3,7 @@ import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import { createModule, Service } from "../src/index.js";
 
 class Cache extends Service<{ read: () => string }>()("cache", {
-  make: ResultTask.ok({ read: () => "ok" }),
+  make: ResultTask.succeed({ read: () => "ok" }),
 }) {}
 class Users extends Service<{ read: () => string }>()("users", {
   make: ResultTask.gen(function* createUsers() {
@@ -20,7 +20,7 @@ describe("DI guarantees", () => {
     const root = createModule()
       .resource("db", [], {
         lifetime: "singleton",
-        acquire: () => ResultTask.ok(1),
+        acquire: () => ResultTask.succeed(1),
         release: () =>
           ResultTask.sync(() => {
             released = true;
@@ -54,19 +54,19 @@ describe("DI guarantees", () => {
     class Connection extends Service<number>()("connection", {
       make: ResultTask.gen(function* connect() {
         yield* ResultTask.acquireRelease({
-          acquire: ResultTask.ok(1),
+          acquire: ResultTask.succeed(1),
           release: () =>
             ResultTask.sync(() => {
               releases += 1;
             }),
         });
         attempts += 1;
-        if (attempts === 1) return yield* ResultTask.err("retry");
+        if (attempts === 1) return yield* ResultTask.fail("retry");
         return attempts;
       }),
     }) {}
     const root = createModule().singleton(Connection).scope();
-    const read = root.use(["connection"], ({ connection }) => ResultTask.ok(connection));
+    const read = root.use(["connection"], ({ connection }) => ResultTask.succeed(connection));
     await ResultTask.runExit(read);
     expect(releases).toBe(1);
     expect(await ResultTask.runPromise(read)).toBe(2);
@@ -82,7 +82,7 @@ describe("DI guarantees", () => {
       createModule().value("cache", 123).scoped(Users);
       const forward = createModule().scoped(Users).value("cache", 123);
       // @ts-expect-error A later registration is checked at the use boundary.
-      forward.use(["users"], ({ users }) => ResultTask.ok(users));
+      forward.use(["users"], ({ users }) => ResultTask.succeed(users));
       createModule()
         .value("cache", 123)
         // @ts-expect-error Callback requirements must match registered contracts too.
@@ -151,7 +151,7 @@ describe("DI guarantees", () => {
     }) {}
     const root = createModule().singleton(Database).scope();
     const close = root.close();
-    const read = root.use(["database"], ({ database }) => ResultTask.ok(database.open));
+    const read = root.use(["database"], ({ database }) => ResultTask.succeed(database.open));
     expect(await ResultTask.runPromise(read)).toBe(true);
     expect(releases).toBe(0);
     expect(await ResultTask.runPromise(read)).toBe(true);
@@ -174,7 +174,7 @@ describe("DI guarantees", () => {
       }),
     }) {}
     const root = createModule().singleton(Database).scope();
-    const read = root.use(["database"], ({ database }) => ResultTask.ok(database));
+    const read = root.use(["database"], ({ database }) => ResultTask.succeed(database));
     const failed = await Promise.all([ResultTask.runExit(read), ResultTask.runExit(read)]);
     expect(failed).toEqual([
       { _tag: "Failure", cause: { _tag: "Fail", error: "offline" } },
@@ -207,7 +207,7 @@ describe("DI guarantees", () => {
       }),
     }) {}
     const root = createModule().singleton(Database).scope();
-    const read = root.use(["database"], ({ database }) => ResultTask.ok(database.id));
+    const read = root.use(["database"], ({ database }) => ResultTask.succeed(database.id));
     const controller = new AbortController();
     const first = ResultTask.runExit(read, { signal: controller.signal });
     await started.promise;
@@ -228,21 +228,21 @@ describe("DI guarantees", () => {
     const defect = new Error("release defect");
     const module = createModule()
       .resource("first", [], {
-        acquire: () => ResultTask.ok(1),
+        acquire: () => ResultTask.succeed(1),
         release: () =>
           ResultTask.sync(() => {
             events.push("first");
-          }).andThen(() => ResultTask.err("first failure")),
+          }).flatMap(() => ResultTask.fail("first failure")),
       })
       .resource("second", ["first"], {
-        acquire: () => ResultTask.ok(2),
+        acquire: () => ResultTask.succeed(2),
         release: () =>
           ResultTask.sync(() => {
             events.push("second");
             throw defect;
           }),
       });
-    const exit = await ResultTask.runExit(module.use(["second"], () => ResultTask.err("body")));
+    const exit = await ResultTask.runExit(module.use(["second"], () => ResultTask.fail("body")));
     expect(events).toEqual(["second", "first"]);
     expect(exit).toEqual({
       _tag: "Failure",
@@ -272,7 +272,7 @@ describe("DI guarantees", () => {
           return yield* A;
         }),
       );
-    const exit = await ResultTask.runExit(module.use(["a"], ({ a }) => ResultTask.ok(a)));
+    const exit = await ResultTask.runExit(module.use(["a"], ({ a }) => ResultTask.succeed(a)));
     expect(exit).toMatchObject({
       _tag: "Failure",
       cause: { _tag: "Die", defect: { message: "Cyclic dependencies detected: a -> b -> a" } },

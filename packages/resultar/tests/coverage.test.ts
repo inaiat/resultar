@@ -10,6 +10,7 @@ import { registerFiberTaskFactory, startFiber } from '../src/task/fiber-runtime.
 import { MissingServiceError, ResultTaskYieldTypeId } from '../src/task/result-task.js'
 import { TaskScope } from '../src/task/scope.js'
 import { schedulerCheckpoint } from '../src/task/task-scheduler.js'
+import type * as ResultAsyncAdapter from '../src/result-async-adapter.js'
 
 const resultAsyncForEach: typeof resultar.ResultAsync.forEach = resultar.ResultAsync.forEach
 
@@ -96,7 +97,6 @@ describe('coverage-focused public behavior', () => {
     equal(yielded.value, errResult)
     deepEqual(iterator.next(), { done: true, value: errResult })
 
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported legacy API compatibility assertion.
     const safeUnwrapIterator = errResult.safeUnwrap()
     const safeYielded = safeUnwrapIterator.next()
 
@@ -110,7 +110,7 @@ describe('coverage-focused public behavior', () => {
       .false(() => resultar.ok('no'))
 
     equal(ifResult._unsafeUnwrapErr(), 'failure')
-    const okTapError = resultar.ok('value').inspectError(() => {
+    const okTapError = resultar.ok('value').tapError(() => {
       throw new Error('should not run')
     })
 
@@ -235,7 +235,7 @@ describe('coverage-focused public behavior', () => {
 
     equal(ifResult._unsafeUnwrapErr(), 'async failure')
 
-    const okTapError = await resultar.okAsync('value').inspectError(() => {
+    const okTapError = await resultar.okAsync('value').tapError(() => {
       throw new Error('should not run')
     })
 
@@ -258,30 +258,30 @@ describe('coverage-focused public behavior', () => {
     const original = new Error('original')
     const unmapped = await resultar.tryResultAsync(Promise.reject(original))
     const falsePredicate = await resultar.okAsync<number, string>(0).filterOrElse(
-      (value) => value > 0,
-      () => 'invalid',
+      async (value) => value > 0,
+      async () => 'invalid',
     )
     const truePredicate = await resultar.okAsync<number, string>(1).filterOrElse(
-      (value) => value > 0,
-      () => 'invalid',
+      async (value) => value > 0,
+      async () => 'invalid',
     )
     const errPredicate = await resultar.errAsync<number, string>('failure').filterOrElse(
-      () => true,
-      () => 'invalid',
+      async () => true,
+      async () => 'invalid',
     )
 
     equal(unmapped._unsafeUnwrapErr(), original)
     equal(falsePredicate._unsafeUnwrapErr(), 'invalid')
     equal(truePredicate._unsafeUnwrap(), 1)
     equal(errPredicate._unsafeUnwrapErr(), 'failure')
-    throws(
-      () =>
-        (
+    await rejects(
+      async () =>
+        await (
           resultar.errAsync<string, string>('failure').match as unknown as (
             fnOk: (value: string) => string,
-          ) => unknown
+          ) => Promise<string>
         )((value) => value),
-      /ResultTask\.match requires both onOk and onErr callbacks/u,
+      /Result\.match requires an error handler/u,
     )
     await rejects(
       async () =>
@@ -617,13 +617,25 @@ describe('coverage-focused public behavior', () => {
     )
   })
 
+  it('covers ResultAsync adapter registration failure in isolation', async () => {
+    const legacyAdapter = (await import(
+      new URL('../src/result-async-adapter.ts', import.meta.url).href
+    )) as typeof ResultAsyncAdapter
+    const adapter = (await import(
+      new URL('../src/resultar-async/result-async-adapter.ts?coverage', import.meta.url).href
+    )) as typeof ResultAsyncAdapter
+
+    equal(typeof legacyAdapter.createResultAsync, 'function')
+    throws(() => adapter.createResultAsync(Promise.resolve(resultar.ok(1))), /not registered/u)
+  })
+
   it('covers safeTry uncaught throw and rejection branches', async () => {
     const thrown = new Error('sync generator throw')
     const rejected = new Error('async generator rejection')
 
     throws(
       () =>
-        resultar.Result.gen(function* () {
+        resultar.safeTry(function* () {
           yield* [] as Iterable<Result<never, Error>>
           throw thrown
         }),
@@ -631,10 +643,10 @@ describe('coverage-focused public behavior', () => {
     )
     await rejects(
       async () =>
-        await resultar.Result.gen(async function* () {
+        await resultar.safeTry(async function* () {
           yield* [] as Iterable<Result<never, Error>>
           await Promise.reject(rejected)
-          return 1
+          return resultar.ok(1)
         }),
       rejected,
     )
@@ -737,7 +749,6 @@ describe('coverage-focused public behavior', () => {
     equal(typeof resultar.ok, 'function')
     equal(typeof resultar.err, 'function')
     equal(typeof resultar.unit, 'function')
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported legacy API compatibility assertion.
     equal(typeof resultar.tryCatch, 'function')
     equal(typeof resultar.fromThrowable, 'function')
     equal(typeof resultar.okAsync, 'function')
@@ -748,9 +759,7 @@ describe('coverage-focused public behavior', () => {
     equal(typeof resultar.fromThrowableAsync, 'function')
     equal(typeof resultar.runPromise, 'function')
     equal(typeof resultar.runSync, 'function')
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported legacy API compatibility assertion.
     equal(typeof resultar.tryCatchAsync, 'function')
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Supported legacy API compatibility assertion.
     equal(typeof resultar.safeTry, 'function')
     equal(typeof resultar.createTaggedError, 'function')
     equal(typeof resultar.findCause, 'function')
@@ -961,9 +970,9 @@ describe('coverage-focused public behavior', () => {
     ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'body-err' } })
     expect(seenInFinally).toBe(42)
 
-    // new ResultTask(promise) interrupted while awaiting an Err result
+    // A Result-producing promise is interrupted while awaiting an Err result
     const promiseAbortController = new AbortController()
-    const promiseTask = new ResultTask(
+    const promiseTask = ResultTask.fromResultAsync(
       new Promise<Result<number, string>>((resolve) => {
         setImmediate(() => {
           promiseAbortController.abort('promise-ctor-aborted')
@@ -1340,17 +1349,21 @@ describe('coverage-focused public behavior', () => {
     expect(inspectErrAsyncDone).toBe(true)
     expect(inspectCauseAsyncDone).toBe(true)
 
-    // Non-root Async instruction sync throw (1603), async reject with continuation (1646), and reject after async resume (1750)
-    const syncThrowAsyncTask = new ResultTask((() => {
+    // Internal executors must fail without being caught by a public factory so the interpreter handles them.
+    const InternalDefectTask = ResultTask as unknown as new (
+      execute: () => Promise<never>,
+    ) => ResultTask<never, never>
+
+    // Non-root Async instruction sync throw, async reject with continuation, and reject after async resume
+    const syncThrowAsyncTask = new InternalDefectTask(() => {
       throw 'non-root-sync-boom'
-    }) as never)
+    })
     expect(await ResultTask.runExit(syncThrowAsyncTask.map((x) => x))).toEqual({
       _tag: 'Failure',
       cause: { _tag: 'Die', defect: 'non-root-sync-boom' },
     })
 
-    const rawRejectAsyncTask = new ResultTask((() =>
-      Promise.reject('non-root-async-reject')) as never)
+    const rawRejectAsyncTask = new InternalDefectTask(() => Promise.reject('non-root-async-reject'))
     expect(await ResultTask.runExit(rawRejectAsyncTask.map((x) => x))).toEqual({
       _tag: 'Failure',
       cause: { _tag: 'Die', defect: 'non-root-async-reject' },

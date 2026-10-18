@@ -1,28 +1,21 @@
 /**
- * Edge Wrapping & Boundary Unwrapping (`tryResult`, `fromThrowable`, `fromCallback`, `runSync`, `runPromise`)
+ * Edge Wrapping & Boundary Unwrapping (`tryResult`, `fromThrowable`, `ResultTask.tryPromise`, `runSync`)
  *
  * This module demonstrates how to convert exception-throwing synchronous/async
- * functions and callback-based APIs into typed `Result` / `ResultAsync` values
+ * functions and callback-based APIs into typed `Result` / `ResultTask` values
  * at system boundaries, and how to unwrap or match them when crossing back out.
  */
 import {
-  type AbortError,
+  ResultTask,
   createTaggedError,
-  fromCallback,
-  fromSafePromise,
   fromThrowable,
-  fromThrowableAsync,
   isError,
   matchError,
   matchErrorPartial,
   ok,
-  runPromise,
   runSync,
   tryResult,
-  tryResultAsync,
-  type ResultAsyncAbortSignal,
   type StrictResult,
-  type StrictResultAsync,
 } from "resultar";
 
 export interface AppConfig {
@@ -109,65 +102,81 @@ const readConfigText = async (source: string): Promise<string> => {
 };
 
 /**
- * `tryResultAsync` wraps a Promise-returning operation (with optional `AbortSignal`
- * support) and maps rejections or synchronous throws into a typed error.
+ * `ResultTask.tryPromise` creates a fresh Promise-returning operation on each run
+ * and maps rejections or synchronous throws into a typed error.
  */
-export const loadConfig = (source: string): StrictResultAsync<AppConfig, ConfigError> =>
-  tryResultAsync({
+export const loadConfig = (source: string): ResultTask<AppConfig, ConfigError> =>
+  ResultTask.tryPromise({
     try: () => readConfigText(source),
     catch: (cause) => new ReadConfigError({ cause, source }),
   }).andThen(parseConfig);
 
 /**
- * `fromThrowableAsync` lifts an async function into a reusable `ResultAsync`-returning
- * function with a typed `catch` mapper.
+ * A reusable task factory keeps the external Promise inside `tryPromise`, so reading
+ * bundled config starts only when the returned task is run.
  */
-const readBundledConfig = fromThrowableAsync(
-  async (source: string) => readConfigText(source),
-  (cause) => new ReadConfigError({ cause, source: "bundle" }),
-);
+const readBundledConfig = (source: string): ResultTask<string, ReadConfigError> =>
+  ResultTask.tryPromise({
+    try: () => readConfigText(source),
+    catch: (cause) => new ReadConfigError({ cause, source: "bundle" }),
+  });
 
-export const loadBundledConfig = (source: string): StrictResultAsync<AppConfig, ConfigError> =>
+export const loadBundledConfig = (source: string): ResultTask<AppConfig, ConfigError> =>
   readBundledConfig(source).andThen(parseConfig);
 
 /**
- * `fromSafePromise` wraps a Promise that is guaranteed never to reject (`E = never`).
+ * A known success needs only `ResultTask.ok`; no external Promise is necessary.
  */
-export const loadDefaultConfig = (): StrictResultAsync<AppConfig, never> =>
-  fromSafePromise(Promise.resolve({ mode: "dev", port: 3000 } as const));
+export const loadDefaultConfig = (): ResultTask<AppConfig, never> =>
+  ResultTask.ok({ mode: "dev", port: 3000 });
 
 /**
- * `fromCallback` adapts callback- or event-emitter-style APIs into `ResultAsync`.
- * Returning a cleanup function from `subscribe` ensures listeners/timers are
- * cleaned up when the callback resolves, rejects, or is aborted via `signal`.
+ * Adapt callback/event APIs with a signal-aware Promise factory and `ensuring`.
+ * Each run subscribes independently and removes its timer and abort listener on
+ * success, failure, or interruption. Pass cancellation to the task runner.
  */
 export const waitForConfigEvent = (
   source: "ready" | "broken",
   events: string[] = [],
-  signal?: ResultAsyncAbortSignal,
-): StrictResultAsync<AppConfig, ConfigEventError | AbortError> =>
-  fromCallback({
-    ...(signal !== undefined ? { signal } : {}),
-    catch: (cause) =>
-      new ConfigEventError({
-        cause,
-        reason: cause instanceof Error ? cause.message : String(cause),
-      }),
-    subscribe: ({ resolve, reject }) => {
-      events.push(`subscribe:${source}`);
-      const timer = setTimeout(() => {
-        if (source === "broken") {
-          reject(new Error("stream disconnected"));
-          return;
-        }
-        resolve({ mode: "prod", port: 9090 });
-      }, 1);
+): ResultTask<AppConfig, ConfigEventError> =>
+  ResultTask.gen(function* () {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let removeAbortListener: () => void = () => undefined;
+    let subscribed = false;
 
-      return () => {
-        clearTimeout(timer);
-        events.push(`cleanup:${source}`);
-      };
-    },
+    return yield* ResultTask.tryPromise({
+      try: (signal) =>
+        new Promise<AppConfig>((resolve, reject) => {
+          subscribed = true;
+          events.push(`subscribe:${source}`);
+          const onAbort = () => reject(signal.reason);
+          signal.addEventListener("abort", onAbort, { once: true });
+          removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+
+          timer = setTimeout(() => {
+            if (source === "broken") {
+              reject(new Error("stream disconnected"));
+              return;
+            }
+            resolve({ mode: "prod", port: 9090 });
+          }, 1);
+        }),
+      catch: (cause) =>
+        new ConfigEventError({
+          cause,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        }),
+    }).ensuring(() =>
+      ResultTask.sync(() => {
+        if (timer !== undefined) clearTimeout(timer);
+        removeAbortListener();
+        if (subscribed) events.push(`cleanup:${source}`);
+      }),
+    );
   });
 
 /**
@@ -202,11 +211,11 @@ export const configPortOrDefault = (raw: string): number =>
     .unwrapOr(3000);
 
 /**
- * `.unwrapOrThrow()` extracts the `Ok` value or throws/rejects the `Err` at an
- * outer boundary (e.g., CLI entrypoint or test harness).
+ * `ResultTask.runPromise` extracts a task's success value or rejects its failure
+ * at an outer boundary (e.g., CLI entrypoint or test harness).
  */
-export const loadConfigOrThrow = async (source: string): Promise<AppConfig> =>
-  loadConfig(source).unwrapOrThrow();
+export const loadConfigOrThrow = (source: string): Promise<AppConfig> =>
+  ResultTask.runPromise(loadConfig(source));
 
 /**
  * `runSync(result)` is the functional helper equivalent of `result.unwrapOrThrow()`
@@ -216,11 +225,11 @@ export const parseConfigPortSync = (raw: string): number =>
   runSync(parseConfig(raw).map((config) => config.port));
 
 /**
- * `runPromise(resultAsync)` executes a `ResultAsync` and resolves with the `Ok`
- * value or rejects the Promise with the `Err` value.
+ * `ResultTask.runPromise(task)` executes the lazy task at an outer boundary and
+ * resolves with its success value or rejects with its typed failure or Cause.
  */
 export const loadConfigPortPromise = (source: string): Promise<number> =>
-  runPromise(loadConfig(source).map((config) => config.port));
+  ResultTask.runPromise(loadConfig(source).map((config) => config.port));
 
 /**
  * `isError(value)` narrows an `unknown` value to a standard `Error` instance.

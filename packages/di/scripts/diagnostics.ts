@@ -35,12 +35,12 @@ const cases = [
   ],
   [
     "requires-wrong-contract",
-    'const User = Service("user", {requires: {cache: Cache}, make: ({cache}) => ResultTask.ok(cache)}); createModule().value("cache", "wrong").scoped(User);',
+    'const User = Service("user", {requires: {cache: Cache}, make: ({cache}) => ResultTask.succeed(cache)}); createModule().value("cache", "wrong").scoped(User);',
     "incompatibleServices",
   ],
   [
     "requires-missing-dependency",
-    'const User = Service("user", {requires: {cache: Service.require<number>()("cache")}, make: ({cache}) => ResultTask.ok(cache)}); createModule().scoped(User).http(["user"], () => new Response());',
+    'const User = Service("user", {requires: {cache: Service.require<number>()("cache")}, make: ({cache}) => ResultTask.succeed(cache)}); createModule().scoped(User).http(["user"], () => new Response());',
     "missingServices",
   ],
   [

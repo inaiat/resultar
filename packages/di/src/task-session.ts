@@ -1,13 +1,7 @@
-import {
-  err,
-  fromSafePromise,
-  ResultAsync,
-  ResultTask,
-  ResultTaskCauseError,
-  unit,
-  type Cause,
-  type ResultAsyncCallbackContext,
-} from "resultar";
+// Lifecycle sessions retain their eager ResultAsync compatibility boundary.
+/* eslint-disable typescript/no-deprecated */
+import { err, ResultTask, ResultTaskCauseError, unit, type Cause } from "resultar";
+import { fromSafePromise, ResultAsync, type ResultAsyncCallbackContext } from "resultar/async";
 
 /** A running application task whose resources remain owned until close. */
 export interface ServiceTaskSession {

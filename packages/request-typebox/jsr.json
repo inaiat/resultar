@@ -4,10 +4,11 @@
   "license": "MIT",
   "exports": "./src/index.ts",
   "imports": {
-    "resultar": "jsr:@inaiat/resultar@^3.4.0",
-    "resultar-request": "jsr:@inaiat/resultar-request@^0.1.0",
+    "resultar": "jsr:@inaiat/resultar@^4.0.0",
+    "resultar-request": "jsr:@inaiat/resultar-request@^1.0.0",
     "typebox": "npm:typebox@^1.3.3",
-    "typebox/value": "npm:typebox@^1.3.3/value"
+    "typebox/value": "npm:typebox@^1.3.3/value",
+    "resultar/async": "jsr:@inaiat/resultar@^4.0.0/async"
   },
   "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }
 }

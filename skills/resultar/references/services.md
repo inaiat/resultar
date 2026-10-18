@@ -5,11 +5,18 @@ versions. The application DI helpers are `createModule`, `service`, `Service`, a
 Named factory overloads and low-level adapter access use the same `resultar-di` entry point.
 The former `/advanced` subpath has been removed; migrate existing imports to `resultar-di`.
 
+Use `ResultTask` for new asynchronous service methods and initialization. Tasks are lazy and
+nonthenable: return them directly from methods, compose them with `andThen` or `ResultTask.gen`,
+and execute them through an explicit runner at the owning application or request boundary.
+Existing methods returning deprecated `ResultAsync` remain eager compatibility contracts; import
+that class, `StrictResultAsync`, and eager helpers from `resultar/async`. This subpath is included
+in `resultar`; existing main-entry Async exports remain supported with the same identities.
+
 - Use `ResultTask.service<Contract>()('name')` in core or `Service.require<Contract>()('name')`
   in DI to infer the literal identifier. The direct core overload remains supported; do not invent
   `Result.service`. Service requirements are represented by `R` in `ResultTask<T, E, R>`.
 - Declare class services with `Service('name', { requires: { alias: Token }, make: ({ alias }) =>
-({ ... }) })`. The readonly dependency object is inferred; `make` can return the service
+  ({ ... }) })`. The readonly dependency object is inferred; `make` can return the service
   object directly or a ResultTask. Factories remain lazy and synchronous values add no typed
   initialization errors. Promises and thenables are rejected. Use `ResultTask.gen` for
   initialization with typed failures, additional requirements or owned resources. Without `requires`, pass a task or a zero-argument factory returning a synchronous value or ResultTask. Tasks can yield requirements inline or by token.
@@ -25,6 +32,9 @@ The former `/advanced` subpath has been removed; migrate existing imports to `re
   live resource from a completed scope returns a resource whose finalizer has already run.
 - Use `createHonoApp` for Hono routes. Ordinary `await` and `result.match` inside a route are valid;
   generator-specific restrictions do not apply to a route body.
+  For a Task-returning method, compose `task.matchTags(...)` and return
+  `ResultTask.runPromise(responseTask)` from the route. For an existing Async method, awaiting it
+  still observes its eager execution; `await task` never executes a Task.
   Export `type AppHono = Hono<{ Bindings: InferRequestServices<typeof createApplication> }>`
   from `main.ts`, using `InferRequestServices` from `resultar-hono`. Separate route files import
   `AppHono` with `import type` and receive `(app: AppHono)`. Bindings follow the application
@@ -41,6 +51,12 @@ The former `/advanced` subpath has been removed; migrate existing imports to `re
   `ready()` or before the first request. Direct resources live until close and release before
   singleton dependencies; scoped/transient dependencies are rejected. A failure rolls back the
   application root, preserving cleanup causes. Hono close cancels pending startup cooperatively.
+  The low-level lifecycle sessions retain eager Async `ready` / `close` or `finish` values where
+  exposed by their installed types; these bridge an explicitly running Task and are compatibility
+  boundaries, not a recommendation to make new service methods eager.
+  Prefer the outbound adapter `ResultAsync.fromTask(task)` from `resultar/async`; static and
+  instance `ResultTask.toResultAsync` remain supported. The inbound `ResultTask.fromResultAsync` bridge accepts structural
+  `PromiseLike<Result>` values or factories and needs no class registration.
 - Use `createHonoServices(module).middleware(keys, { locals })` to add services to an existing Hono
   router. Inline route middleware infers `c.var.services` while preserving `c.env` and native RPC
   responses. Install one services middleware per request; consume/cancel responses before `close()`.
@@ -56,9 +72,12 @@ The former `/advanced` subpath has been removed; migrate existing imports to `re
   Infer decorators with `InferAppServices` / `InferRequestServices`; augment Fastify in the application
   or use its typed `getDecorator`. Annotate module/locals callback parameters with native Fastify
   types when their inferred return values participate in selection checking.
-- Keep business logic in plain factories with async methods when sufficient. Register them using
-  `service(name, dependencies, factory)`. Map results explicitly through `matchTags` and native
-  response APIs; the framework adapters install no status table or `reply.result` helper.
+- Keep business logic in plain factories with methods returning Tasks when sufficient. Register
+  them using `service(name, dependencies, factory)`. Wrap a Promise client with `ResultTask.tryPromise`
+  and keep `map` synchronous. For an existing eager Async repository or request helper, invoke it
+  inside `ResultTask.fromResultAsync((signal) => adapter(signal))` to create a fresh operation per run.
+  Map results through compositional `matchTags`, an explicit runner, and native response APIs;
+  the framework adapters install no status table or `reply.result` helper.
 - `scope.useSingletons(keys, callback)` restricts selected services and callback tokens to the root
   lifetime. Keep its callback active while serving; it is not a free-standing resolver. Factory
   initialization stays lazy until selection; resource release remains explicit.
@@ -73,6 +92,9 @@ The former `/advanced` subpath has been removed; migrate existing imports to `re
 For a complete runnable pattern, see the workspace `examples/hono/` and `examples/cookbook/`
 application lifecycle examples. The distributed guide includes the checked core recipe at
 `examples/workflow.mjs`; use the published declarations to adapt companion integrations.
+Some maintained examples and installed request adapters keep eager Async methods to demonstrate
+compatibility. Preserve that behavior during an incremental migration; new Task methods require
+explicit callers/runners and cannot be substituted by a return-type annotation alone.
 
 ## Framework DI exports
 

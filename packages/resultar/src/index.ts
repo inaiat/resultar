@@ -1,6 +1,5 @@
 /**
- * Typed synchronous and asynchronous error workflows built around `Result<T, E>` and
- * `ResultAsync<T, E>`.
+ * Typed error workflows built around `Result<T, E>` and `ResultTask<T, E, R>`.
  *
  * @module
  */
@@ -16,21 +15,23 @@ export {
   ResultAsync,
   runPromise,
   // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
+  safeTry,
+  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
+  tryAsync,
+  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
   tryCatchAsync,
   tryResultAsync,
   unitAsync,
-} from './task/result-async.js'
-
-/** @deprecated Import `tryResultAsync` instead. */
-// eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
-export { tryCatchAsync as tryAsync } from './task/result-async.js'
+} from './resultar-async/index.js'
 
 export type {
+  AsyncResultGenOptions,
   ResultAsyncAbortSignal,
   ResultAsyncCallbackCleanup,
   ResultAsyncCallbackContext,
   ResultAsyncConcurrency,
   ResultAsyncFromCallbackOptions,
+  ResultAsyncGenerator,
   ResultAsyncRaceHandle,
   ResultAsyncRaceTask,
   ResultAsyncRetryContext,
@@ -44,9 +45,11 @@ export type {
   ResultAsyncResourceUse,
   ResultAsyncTimeoutOptions,
   ResultAsyncWithResourceOptions,
+  SafeTryAsyncOptions,
+  SafeTryOptions,
   StrictResultAsync,
   TryResultAsyncOptions,
-} from './task/result-async.js'
+} from './resultar-async/index.js'
 export {
   DisposableResult,
   err,
@@ -54,8 +57,6 @@ export {
   ok,
   Result,
   runSync,
-  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
-  safeTry,
   // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
   tryCatch,
   tryResult,
@@ -67,15 +68,11 @@ export {
 export { tryCatch as default, tryCatch as try } from './result/result.js'
 
 export type {
-  AsyncResultGenOptions,
   ErrResult,
   OkResult,
-  ResultAsyncGenerator,
   ResultGenerator,
   ResultGenOptions,
   ResultOperations,
-  SafeTryAsyncOptions,
-  SafeTryOptions,
   StrictResult,
   TryResultOptions,
 } from './result/result.js'
@@ -117,7 +114,6 @@ export type {
   ResultTaskLoopOptions,
   ResultTaskMatchOptions,
   ResultTaskRunOptions,
-  ResultTaskRetryOptions,
   ResultTaskScope,
   ResultTaskScopeOwner,
   ResultTaskServiceResolver,

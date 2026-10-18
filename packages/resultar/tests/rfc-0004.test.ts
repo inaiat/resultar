@@ -43,18 +43,6 @@ describe('functional utilities', () => {
     const invalidPipeline = () => pipe(1, undefined as unknown as (value: number) => number)
     expect(invalidPipeline).toThrow(TypeError)
     expect(invalidPipeline).toThrow('pipe requires transformation functions')
-    const invalidFnPipeline = () =>
-      ResultTask.fn(
-        function* (n: number) {
-          return yield* ResultTask.ok(n)
-        },
-        undefined as unknown as (
-          self: ResultTask<number, never>,
-          arg: number,
-        ) => ResultTask<number, never>,
-      )(2)
-    expect(invalidFnPipeline).toThrow(TypeError)
-    expect(invalidFnPipeline).toThrow('pipe requires transformation functions')
     expect(ok<string, Error>('Ready').match({ ok: identity, error: constant('Unavailable') })).toBe(
       'Ready',
     )
@@ -111,6 +99,21 @@ describe('functional utilities', () => {
     }
   })
 
+  it('rejects invalid fn pipeline functions', () => {
+    const invalidFnPipeline = () =>
+      ResultTask.fn(
+        function* (n: number) {
+          return yield* ResultTask.ok(n)
+        },
+        undefined as unknown as (
+          self: ResultTask<number, never>,
+          arg: number,
+        ) => ResultTask<number, never>,
+      )(2)
+    expect(invalidFnPipeline).toThrow(TypeError)
+    expect(invalidFnPipeline).toThrow('pipe requires transformation functions')
+  })
+
   it('preserves flow parameters, receiver, and exceptions', () => {
     const composed = flow(function (this: { base: number }, value: number, extra = 0) {
       return this.base + value + extra
@@ -137,7 +140,7 @@ describe('task ergonomics', () => {
     let visits = 0
     const load = ResultTask.fn(function* (this: { base: number }, id: number, extra = 0) {
       visits += 1
-      return yield* ResultTask.ok(this.base + id + extra)
+      return yield* ResultTask.succeed(this.base + id + extra)
     })
     const task = load.call({ base: 2 }, 3)
     expect(visits).toBe(0)
@@ -153,7 +156,7 @@ describe('task ergonomics', () => {
     const load = ResultTask.fn(function* (id: string) {
       const clock = yield* Clock
       try {
-        yield* ResultTask.err<Missing>({ _tag: 'Missing', id })
+        yield* ResultTask.fail<Missing>({ _tag: 'Missing', id })
         return clock.now()
       } finally {
         yield* ResultTask.sync(() => {
@@ -171,11 +174,11 @@ describe('task ergonomics', () => {
   })
 
   it('recovers selected tags in instance, direct, and curried forms', async () => {
-    const source: ResultTask<number, Missing | Denied> = ResultTask.err({
+    const source: ResultTask<number, Missing | Denied> = ResultTask.fail({
       _tag: 'Missing',
       id: 'abc',
     })
-    const recover = (error: Missing) => ResultTask.ok(error.id)
+    const recover = (error: Missing) => ResultTask.succeed(error.id)
     const instance = source.catchTag('Missing', recover)
     expectTypeOf(instance).toEqualTypeOf<ResultTask<number | string, Denied>>()
     expect(await ResultTask.runPromise(instance)).toBe('abc')
@@ -191,7 +194,7 @@ describe('task ergonomics', () => {
     expect(await ResultTask.runPromise(partial)).toBe('abc')
     expect(
       await ResultTask.runExit(
-        ResultTask.err<Missing | Denied>({ _tag: 'Denied' }).catchTags(handlers),
+        ResultTask.fail<Missing | Denied>({ _tag: 'Denied' }).catchTags(handlers),
       ),
     ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: { _tag: 'Denied' } } })
     if (false) {
@@ -202,28 +205,30 @@ describe('task ergonomics', () => {
       // @ts-expect-error Curried recovery cannot accept an unrelated tag.
       ResultTask.catchTags({ Other: recover })(source)
       // @ts-expect-error Curried recovery cannot accept an unrelated tag.
-      ResultTask.catchTag('Other', () => ResultTask.ok(1))(source)
+      ResultTask.catchTag('Other', () => ResultTask.succeed(1))(source)
     }
   })
 
   it('preserves scope errors and composite defects during recovery', async () => {
     const releaseError: Denied = { _tag: 'Denied' }
     const acquired = ResultTask.acquireRelease({
-      acquire: ResultTask.ok(1),
-      release: () => ResultTask.err(releaseError),
+      acquire: ResultTask.succeed(1),
+      release: () => ResultTask.fail(releaseError),
     })
     const task = acquired
-      .andThen(() => ResultTask.err<Missing>({ _tag: 'Missing', id: 'abc' }))
-      .catchTag('Missing', () => ResultTask.ok(2))
+      .flatMap(() => ResultTask.fail<Missing>({ _tag: 'Missing', id: 'abc' }))
+      .catchTag('Missing', () => ResultTask.succeed(2))
     expectTypeOf(task).toEqualTypeOf<ResultTask<number, never, ResultTaskScope<Denied>>>()
     expect(await ResultTask.runExit(ResultTask.scoped(task))).toEqual({
       _tag: 'Failure',
       cause: { _tag: 'Fail', error: releaseError },
     })
     const composite = ResultTask.scoped(
-      acquired.andThen(() => ResultTask.err<Missing>({ _tag: 'Missing', id: 'abc' })),
+      acquired.flatMap(() => ResultTask.fail<Missing>({ _tag: 'Missing', id: 'abc' })),
     )
-    const exit = await ResultTask.runExit(composite.catchTags({ Missing: () => ResultTask.ok(2) }))
+    const exit = await ResultTask.runExit(
+      composite.catchTags({ Missing: () => ResultTask.succeed(2) }),
+    )
     expect(exit._tag).toBe('Failure')
     if (exit._tag === 'Failure' && exit.cause._tag === 'Die')
       expect(exit.cause.defect).toBeInstanceOf(ResultTaskCauseError)
@@ -231,7 +236,7 @@ describe('task ergonomics', () => {
 
   it('unions recovery errors and requirements and propagates callback defects', async () => {
     const Clock = ResultTask.service<{ now: () => number }>()('RecoveryClock')
-    const source: ResultTask<number, Missing | Denied> = ResultTask.err({
+    const source: ResultTask<number, Missing | Denied> = ResultTask.fail({
       _tag: 'Missing',
       id: 'abc',
     })
@@ -239,7 +244,7 @@ describe('task ergonomics', () => {
       Missing: () =>
         ResultTask.gen(function* () {
           const clock = yield* Clock
-          return yield* ResultTask.err(clock.now())
+          return yield* ResultTask.fail(clock.now())
         }),
     })
     expectTypeOf(recovered).toEqualTypeOf<ResultTask<number, Denied | number, typeof Clock>>()
@@ -267,7 +272,7 @@ describe('task ergonomics', () => {
     controller.abort('stop')
     const interrupted = source.catchTag('Missing', () => {
       called = true
-      return ResultTask.ok(1)
+      return ResultTask.succeed(1)
     })
     expect((await ResultTask.runExit(interrupted, { signal: controller.signal }))._tag).toBe(
       'Failure',
@@ -289,13 +294,13 @@ describe('task ergonomics', () => {
     const task = ResultTask.scoped(
       ResultTask.gen(function* () {
         yield* ResultTask.acquireDisposable(
-          ResultTask.ok({
+          ResultTask.succeed({
             [Symbol.dispose]: () => {
               events.push('first')
             },
           }),
         )
-        return yield* ResultTask.acquireDisposable(ResultTask.ok(resource))
+        return yield* ResultTask.acquireDisposable(ResultTask.succeed(resource))
       }),
     )
     expect(await ResultTask.runPromise(task)).toBe(resource)
@@ -307,12 +312,12 @@ describe('task ergonomics', () => {
   it('preserves body and disposal failures and cleans up during abort', async () => {
     const defect = new Error('dispose')
     const task = ResultTask.acquireDisposable(
-      ResultTask.ok({
+      ResultTask.succeed({
         [Symbol.dispose]: () => {
           throw defect
         },
       }),
-    ).andThen(() => ResultTask.err('body'))
+    ).flatMap(() => ResultTask.fail('body'))
     expect(await ResultTask.runExit(task)).toEqual({
       _tag: 'Failure',
       cause: {
@@ -342,13 +347,13 @@ describe('task ergonomics', () => {
 
   it('skips failed acquisitions and awaits rejected async disposal', async () => {
     type Resource = { [Symbol.dispose]: () => void }
-    const acquire: ResultTask<Resource, Missing> = ResultTask.err({ _tag: 'Missing', id: 'abc' })
+    const acquire: ResultTask<Resource, Missing> = ResultTask.fail({ _tag: 'Missing', id: 'abc' })
     const failed = ResultTask.acquireDisposable(acquire)
     expect((await ResultTask.runExit(failed))._tag).toBe('Failure')
     let disposed = false
     const defect = new Error('async disposal')
     const acquired = ResultTask.acquireDisposable(
-      ResultTask.ok({
+      ResultTask.succeed({
         [Symbol.asyncDispose]: async () => {
           await Promise.resolve()
           disposed = true
@@ -363,7 +368,7 @@ describe('task ergonomics', () => {
     expect(disposed).toBe(true)
     if (false) {
       // @ts-expect-error Acquisition must return a disposable resource.
-      ResultTask.acquireDisposable(ResultTask.ok({ value: 1 }))
+      ResultTask.acquireDisposable(ResultTask.succeed({ value: 1 }))
     }
   })
 })

@@ -27,11 +27,11 @@ test("infers dependency aliases, contracts, errors and additional requirements",
     .value("cache", new Map<string, string>())
     .value("prefix", "n=")
     .scoped(Users)
-    .use(["users"], ({ users }) => ResultTask.ok(users));
+    .use(["users"], ({ users }) => ResultTask.succeed(users));
   expectTypeOf(task).toEqualTypeOf<ResultTask<string, "read">>();
   const external = createModule()
     .scoped(Users)
-    .use(["users"], ({ users }) => ResultTask.ok(users));
+    .use(["users"], ({ users }) => ResultTask.succeed(users));
   expectTypeOf(external).toEqualTypeOf<ResultTask<string, "read", typeof Cache | typeof Prefix>>();
   const invalid = () => {
     // @ts-expect-error Missing external dependencies remain required at the boundary.
@@ -40,13 +40,13 @@ test("infers dependency aliases, contracts, errors and additional requirements",
     // @ts-expect-error A known provider must satisfy its required service contract.
     createModule().value("cache", 42).scoped(Users);
     // @ts-expect-error Dependencies are tokens or classes, not names.
-    Service("invalid", { requires: { storage: "cache" }, make: () => ResultTask.ok(1) });
+    Service("invalid", { requires: { storage: "cache" }, make: () => ResultTask.succeed(1) });
     Service("readonly", {
       requires: dependencies,
       make: (deps) => {
         // @ts-expect-error Injected dependency properties are readonly.
         deps.storage = new Map();
-        return ResultTask.ok(1);
+        return ResultTask.succeed(1);
       },
     });
   };
@@ -64,7 +64,7 @@ test("preserves explicit and inferred contracts in both class declaration forms"
   }) {}
   class Inferred extends Service()("inferred", {
     requires: { reader: Explicit },
-    make: ({ reader }) => ResultTask.ok(reader.find("1")),
+    make: ({ reader }) => ResultTask.succeed(reader.find("1")),
   }) {}
   class Inline extends Service<Reader>()("inline", {
     make: ResultTask.gen(function* construct() {
@@ -77,13 +77,13 @@ test("preserves explicit and inferred contracts in both class declaration forms"
     ResultTask<string | undefined, never, typeof Explicit>
   >();
   expectTypeOf(Inline.make).toEqualTypeOf<ResultTask<Reader, never, typeof Cache>>();
-  const Empty = Service()("empty", { requires: {}, make: () => ResultTask.ok(42) });
+  const Empty = Service()("empty", { requires: {}, make: () => ResultTask.succeed(42) });
   expectTypeOf(Empty.make).toEqualTypeOf<ResultTask<number>>();
   const invalid = () => {
     // @ts-expect-error Explicit contracts validate the result of make.
-    Service<Reader>()("bad", { requires: { cache: Cache }, make: () => ResultTask.ok(42) });
+    Service<Reader>()("bad", { requires: { cache: Cache }, make: () => ResultTask.succeed(42) });
     // @ts-expect-error A ready task is not a requires factory in the curried form.
-    Service<Reader>()("bad", { requires: {}, make: ResultTask.ok({ find: () => "ok" }) });
+    Service<Reader>()("bad", { requires: {}, make: ResultTask.succeed({ find: () => "ok" }) });
     // @ts-expect-error Promises are not lazy construction tasks.
     Service<Reader>()("bad", { requires: {}, make: () => Promise.resolve({ find: () => "ok" }) });
   };
@@ -119,7 +119,7 @@ test("infers synchronous factories while preserving contracts and dependency req
   expectTypeOf(Empty.make).toEqualTypeOf<ResultTask<{ value: number }>>();
   const external = createModule()
     .scoped(Inferred)
-    .use(["size"], ({ size }) => ResultTask.ok(size));
+    .use(["size"], ({ size }) => ResultTask.succeed(size));
   expectTypeOf(external).toEqualTypeOf<ResultTask<{ size: number }, never, typeof Cache>>();
   const invalid = () => {
     // @ts-expect-error A synchronous factory must satisfy an explicit contract.
@@ -140,7 +140,7 @@ test("infers synchronous factories while preserving contracts and dependency req
     // @ts-expect-error Explicit broad contracts must reject asynchronous unions too.
     Service<object>()("bad-union", { requires: {}, make: maybeAsync });
     const maybeTask = (): { value: number } | ResultTask<{ value: number }> =>
-      Math.random() > 0.5 ? { value: 42 } : ResultTask.ok({ value: 42 });
+      Math.random() > 0.5 ? { value: 42 } : ResultTask.succeed({ value: 42 });
     // @ts-expect-error A task branch must use the task overload, not leak into the service value.
     Service("bad-task-union", { requires: {}, make: maybeTask });
     Service("bad-then", {

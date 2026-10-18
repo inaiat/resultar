@@ -29,7 +29,7 @@ const parsePort = (input: string): number => {
 Resultar moves expected failures into the return type, composes them linearly with `yield*`, and enforces exhaustive handling at your application boundary:
 
 ```ts
-import { createTaggedError, ok, Result, tryResultAsync } from 'resultar'
+import { createTaggedError, ok, Result, ResultTask } from 'resultar'
 
 // 1. Define real Error subclasses with typed $prop interpolation, causes, and redaction
 class InvalidEmailError extends createTaggedError({
@@ -55,22 +55,22 @@ const normalizeEmail = (raw: string): Result<string, InvalidEmailError> => {
 
 // 3. Compose sync + async steps linearly — TypeScript infers the exact error union
 const registerAccount = (input: string) =>
-  Result.gen(async function* () {
+  ResultTask.gen(function* () {
     const email = yield* normalizeEmail(input)
 
     if (email === 'taken@example.com') {
       return yield* AccountExistsError.err({ email })
     }
 
-    return yield* tryResultAsync(
-      () => db.accounts.insert({ email }),
-      (cause) => new DatabaseError({ cause, operation: 'insert-account' }),
-    )
+    return yield* ResultTask.tryPromise({
+      try: () => db.accounts.insert({ email }),
+      catch: (cause) => new DatabaseError({ cause, operation: 'insert-account' }),
+    })
   })
-// Inferred: ResultAsync<Account, InvalidEmailError | AccountExistsError | DatabaseError>
+// Inferred: ResultTask<Account, InvalidEmailError | AccountExistsError | DatabaseError>
 
 // 4. Handle every failure exhaustively at the boundary (compile error if a tag is missed!)
-const result = await registerAccount(req.body.email)
+const result = await ResultTask.runResult(registerAccount(req.body.email))
 const response = result.matchTags(
   (account) => ({ status: 201, body: account }),
   {
@@ -104,7 +104,7 @@ Resultar began as a fork of `neverthrow` and evolved to occupy the practical mid
 | Capability | `neverthrow` | `Resultar` | `Effect` |
 | --- | --- | --- | --- |
 | **Entry cost** | 1 function (`Result<T, E>`) | **1 function (`Result<T, E>`)** | Full `Effect<A, E, R>` ecosystem |
-| **Direct `await` on async results** | Yes (`ResultAsync<T, E>`) | **Yes (`ResultAsync<T, E>` when `R = never`)** | No (requires `Effect.runPromise` / runtime) |
+| **Async execution boundary** | `await ResultAsync<T, E>` | **Explicit Task runners; deprecated `ResultAsync` remains awaitable** | `Effect.runPromise` / runtime |
 | **Tagged `Error` classes & secret redaction** | Manual | **Built-in (`createTaggedError`, `redact`)** | Built-in (`Data.TaggedError`, `Redacted`) |
 | **Retries, timeouts, races & virtual clock** | Manual | **Built-in (`Retry.policy`, `timeout`, `Clock.virtual`)** | Built-in (`Schedule`, `TestClock`) |
 | **Typed DI (`R`), LIFO resource scopes & fibers** | No | **Opt-in via `ResultTask<T, E, R>` & `resultar-di`** | Always present (`Effect<A, E, R>`, `Layer`, `Scope`) |
@@ -112,22 +112,25 @@ Resultar began as a fork of `neverthrow` and evolved to occupy the practical mid
 
 ### 2. Adopt Gradually: Three Primitives, One Mental Model
 
-You never have to rewrite your application to adopt Resultar. Every primitive shares the same methods (`map`, `andThen`, `catchTag`, `matchTags`) and interoperates inside `yield*` generators:
+Start with synchronous `Result` values and add `ResultTask` for asynchronous work. Services and scopes are optional task capabilities. Existing eager APIs can keep the deprecated `ResultAsync` contract through the `resultar/async` subpath in the same package while migrating explicitly:
 
 ```mermaid
 flowchart LR
   R["<b>Stage 1: Result&lt;T, E&gt;</b><br/>Synchronous value (Ok / Err)<br/>Zero async overhead"]
-  RA["<b>Stage 2: ResultAsync&lt;T, E&gt;</b><br/>Alias for ResultTask&lt;T, E, never&gt;<br/>Directly awaitable to Result&lt;T, E&gt;"]
-  RT["<b>Stage 3: ResultTask&lt;T, E, R&gt;</b><br/>Lazy workflow with required<br/>services &amp; resource scopes (R)"]
+  RT["<b>Stage 2: ResultTask&lt;T, E&gt;</b><br/>Lazy async workflow<br/>Explicit run boundary"]
+  RTR["<b>Stage 3: ResultTask&lt;T, E, R&gt;</b><br/>Optional service requirements<br/>and resource scopes (R)"]
+  RA["<b>resultar/async: ResultAsync&lt;T, E&gt;</b><br/>Deprecated compatibility<br/>Eager, shared execution"]
 
-  R -->|"async I/O, retry, timeout"| RA
-  RA -->|"add service(Tag) or acquireRelease"| RT
-  RT -->|".provideServices(...) / ResultTask.scoped"| RA
+  R -->|"async I/O, retry, timeout"| RT
+  RT -->|"add services or resource ownership"| RTR
+  RA -->|"fromResultAsync(factory)"| RT
+  RT -->|"ResultAsync.fromTask(task)"| RA
 ```
 
 - **Stage 1 — `Result<T, E>`**: Use in pure parsing, validation, and domain functions.
-- **Stage 2 — `ResultAsync<T, E>` (`ResultTask<T, E, never>`)**: Use when async work needs typed errors, retries, or timeouts without DI ceremony. Because `R = never`, callers can simply `await` it to get `Result<T, E>`.
-- **Stage 3 — `ResultTask<T, E, R>`**: Use when workflows need typed service dependencies (`R`), `AbortSignal` cancellation, child fibers, or guaranteed LIFO resource cleanup (`Scope`). Once all requirements in `R` are provided, the type automatically narrows back to `ResultAsync<T, E>` (`R = never`).
+- **Stage 2 — `ResultTask<T, E>`**: Use for new async operations, retries, and timeouts. Build work lazily and execute it with `runResult`, `runExit`, `runPromise`, or `runFork`.
+- **Stage 3 — `ResultTask<T, E, R>`**: Add typed service dependencies or owned resources when needed. Providing requirements leaves a Task that still needs an explicit runner.
+- **Existing APIs — deprecated `ResultAsync<T, E>`**: Import from `resultar/async` to preserve eager, single-execution behavior while migrating. Import its class, factories and eager composition helpers from that subpath; use explicit bridges between it and Task. It ships with the same `resultar` installation. See the [migration table](docs/migrations/v4.md).
 
 ```ts
 import { createTaggedError, ok, Result, ResultTask, Retry } from 'resultar'
@@ -139,14 +142,14 @@ class UserNotFoundError extends createTaggedError({ name: 'UserNotFoundError', m
 const parseUserId = (raw: string): Result<string, InvalidIdError> =>
   raw.startsWith('usr_') ? ok(raw) : InvalidIdError.err({ id: raw })
 
-// Stage 2: Requirement-free ResultAsync<T, E> (R = never, directly awaitable)
+// Stage 2: Requirement-free ResultTask<T, E>, executed at an explicit boundary
 const fetchProfile = (id: string) =>
   ResultTask.tryPromise({
     try: (signal) => fetch(`https://api.example.com/users/${id}`, { signal }).then((r) => r.json()),
     catch: (cause) => new UserNotFoundError({ id, cause }),
   }).retry(Retry.policy({ times: 2, delayMs: 50 }))
 
-// Stage 3: Lazy ResultTask<T, E, R> with typed service requirements & tagged recovery
+// Stage 3: Add typed service requirements and tagged recovery to the same Task model
 const AuditLog = ResultTask.service<{ record(id: string): ResultTask<void> }>()('AuditLog')
 
 const loadAndAuditUser = ResultTask.fn(
@@ -167,7 +170,7 @@ const loadAndAuditUser = ResultTask.fn(
 Resultar's runtime is engineered so that gradual adoption is also **pay-as-you-go at runtime**:
 
 - **Zero-microtask synchronous fast path**: `Result.gen`, synchronous `ResultTask` pipelines, and `ResultTask.scoped` workflows without async steps execute inside a tight synchronous `while` loop (`runTaskLoop` / `#runGen`) without scheduling microtasks. On the happy path, the engine reuses static singletons (`sharedSuccessExit`, `idleTaskIterator`, `idleRunContext`) until it encounters a real `Promise` or an explicit `yieldEvery` checkpoint.
-- **No hidden fiber tax**: Simple `Result` and `ResultAsync` workflows do not allocate service maps, finalizer stacks, or fiber schedulers unless the workflow actually uses `service()`, `acquireRelease()`, or `forkChild()`.
+- **Services and owned fibers are optional**: Ordinary tasks can run with `R = never`; introduce `service()`, `acquireRelease()`, and `forkChild()` when the workflow needs them.
 - **Bounded concurrency by construction**: Collection operators like `ResultTask.forEach(items, fn, { concurrency: 8 })` use a fixed worker-loop pool without per-item fiber scheduling overhead.
 
 > See [`benchmarks/README.md`](benchmarks/README.md) for reproducible benchmarks comparing Resultar with `neverthrow` and `effect`, along with the methodology and trade-offs.
@@ -296,12 +299,12 @@ The Resultar monorepo ships focused, zero-bloat companion packages for DI, HTTP 
 
 | Package | Description | Docs |
 | --- | --- | --- |
-| [`resultar`](packages/resultar/README.md) | Core `Result<T, E>`, `ResultAsync<T, E>`, `ResultTask<T, E, R>`, `Match`, `Cause`, `Retry`, `Clock`, `Fiber`, `Semaphore`. | [README](packages/resultar/README.md) · [Guide](DOCUMENTATION.md) |
+| [`resultar`](packages/resultar/README.md) | Core `Result<T, E>`, `ResultTask<T, E, R>`, `Match`, `Cause`, `Retry`, `Clock`, `Fiber`, `Semaphore`; deprecated eager APIs in `resultar/async`. | [README](packages/resultar/README.md) · [Guide](DOCUMENTATION.md) |
 | [`resultar-check`](packages/check/README.md) | Native TypeScript-Go compiler + Resultar diagnostics CLI & LSP server. | [README](packages/check/README.md) |
 | [`resultar-di`](packages/di/README.md) | Typed dependency injection, class/function services, request scopes, and test overrides for `ResultTask`. | [README](packages/di/README.md) |
 | [`resultar-hono`](packages/hono/README.md) | Typed Hono middleware & bindings with one DI resource scope per HTTP response and graceful shutdown. | [README](packages/hono/README.md) |
 | [`resultar-fastify`](packages/fastify/README.md) | Native Fastify plugin providing application & request-scoped DI services, cancellation, and cleanup. | [README](packages/fastify/README.md) |
-| [`resultar-request`](packages/request/README.md) | Fetch-first JSON HTTP client returning `ResultAsync` with retries, typed HTTP errors, and schema validation. | [README](packages/request/README.md) |
+| [`resultar-request`](packages/request/README.md) | Fetch-first JSON HTTP client preserving its eager `ResultAsync` return contract; bridge into Task workflows. | [README](packages/request/README.md) |
 | [`resultar-request-zod`](packages/request-zod/README.md) | Zod schema validation adapter for `resultar-request`. | [README](packages/request-zod/README.md) |
 | [`resultar-request-typebox`](packages/request-typebox/README.md) | TypeBox schema validation adapter for `resultar-request`. | [README](packages/request-typebox/README.md) |
 
@@ -310,7 +313,7 @@ The Resultar monorepo ships focused, zero-bloat companion packages for DI, HTTP 
 Define services once with `resultar-di` and expose them to Hono or Fastify routes with automatic per-request resource cleanup and inferred `c.env` / `request.services` types:
 
 ```ts
-import { createTaggedError, okAsync } from 'resultar'
+import { createTaggedError, ResultTask } from 'resultar'
 import { createHonoApp, createModule, Service } from 'resultar-hono'
 
 class UserNotFoundError extends createTaggedError({
@@ -321,7 +324,7 @@ class UserNotFoundError extends createTaggedError({
 class Users extends Service('users', {
   make: () => ({
     findById: (id: string) =>
-      id === '1' ? okAsync({ id, name: 'Ada Lovelace' }) : UserNotFoundError.errAsync({ id }),
+      id === '1' ? ResultTask.ok({ id, name: 'Ada Lovelace' }) : UserNotFoundError.taskErr({ id }),
   }),
 }) {}
 
@@ -329,7 +332,7 @@ const services = createModule().scoped(Users)
 
 export const app = createHonoApp({ services }, (router) => {
   router.get('/users/:id', async (c) => {
-    const result = await c.env.users.findById(c.req.param('id'))
+    const result = await ResultTask.runResult(c.env.users.findById(c.req.param('id')))
     return result.matchTags((user) => c.json(user, 200), {
       UserNotFoundError: (err) => c.json({ error: err.message }, 404),
     })
@@ -367,7 +370,7 @@ Explore complete, runnable projects in [`examples/`](examples):
 
 | Topic | Guide |
 | --- | --- |
-| **Gradual Adoption (`Result` → `ResultAsync` → `ResultTask`)** | [`docs/gradual-adoption.md`](docs/gradual-adoption.md) |
+| **Gradual Adoption (`Result` → `ResultTask`; eager compatibility bridges)** | [`docs/gradual-adoption.md`](docs/gradual-adoption.md) |
 | **Core Package Quickstart & Cookbook** | [`packages/resultar/README.md`](packages/resultar/README.md) |
 | **The Core Model (`Ok`, `Err`, `ResultTask`)** | [`DOCUMENTATION.md#the-model`](DOCUMENTATION.md#the-model) |
 | **Tagged Errors, `.withProps()`, & Redaction** | [`DOCUMENTATION.md#tagged-errors`](DOCUMENTATION.md#tagged-errors) |

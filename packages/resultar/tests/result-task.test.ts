@@ -91,9 +91,9 @@ describe('ResultTask', () => {
 
   it('composes tasks lazily and short-circuits typed failures', async () => {
     let chainedExecutions = 0
-    const task = ResultTask.ok(2)
+    const task = ResultTask.succeed(2)
       .map((value) => value + 1)
-      .andThen((value) =>
+      .flatMap((value) =>
         ResultTask.try({
           try: () => {
             chainedExecutions += 1
@@ -110,7 +110,7 @@ describe('ResultTask', () => {
     equal(chainedExecutions, 1)
 
     const recovered = await ResultTask.runResult(
-      ResultTask.err<'missing'>('missing').orElse((error) => ResultTask.ok(error.length)),
+      ResultTask.fail<'missing'>('missing').catchAll((error) => ResultTask.succeed(error.length)),
     )
 
     deepEqual(recovered, { value: 7 })
@@ -125,14 +125,16 @@ describe('ResultTask', () => {
   })
 
   it('short-circuits every composition form and supports static aliases', async () => {
-    const failed = ResultTask.err<'stop'>('stop')
+    const failed = ResultTask.fail<'stop'>('stop')
     const mapped = failed.map(() => 1)
-    const flatMapped = failed.andThen(() => ResultTask.ok(1))
-    const mappedFunction = ResultTask.map(ResultTask.ok(1), (value) => value + 1)
-    const recovered = failed.orElse((error) => ResultTask.ok(error.length))
-    const recoveredFunction = ResultTask.orElse(failed, (error) => ResultTask.ok(error.length))
-    const successfulRecovery = ResultTask.ok(1).orElse(() => ResultTask.ok(2))
-    const chained = ResultTask.ok(1).andThen((value) => ResultTask.ok(value + 1))
+    const flatMapped = failed.flatMap(() => ResultTask.succeed(1))
+    const mappedFunction = ResultTask.map(ResultTask.succeed(1), (value) => value + 1)
+    const recovered = failed.catchAll((error) => ResultTask.succeed(error.length))
+    const recoveredFunction = ResultTask.catchAll(failed, (error) =>
+      ResultTask.succeed(error.length),
+    )
+    const successfulRecovery = ResultTask.succeed(1).catchAll(() => ResultTask.succeed(2))
+    const chained = ResultTask.succeed(1).andThen((value) => ResultTask.succeed(value + 1))
 
     deepEqual(await ResultTask.runResult(mapped), { error: 'stop' })
     deepEqual(await ResultTask.runResult(flatMapped), { error: 'stop' })
@@ -143,11 +145,11 @@ describe('ResultTask', () => {
     deepEqual(await ResultTask.runResult(chained), { value: 2 })
   })
 
-  it('does not recover runtime defects with orElse', async () => {
+  it('does not recover runtime defects with catchAll', async () => {
     const defect = new Error('bug')
     const task = ResultTask.sync(() => {
       throw defect
-    }).orElse(() => ResultTask.ok('recovered'))
+    }).catchAll(() => ResultTask.succeed('recovered'))
 
     const exit = await ResultTask.runExit(task)
 
@@ -189,8 +191,8 @@ describe('ResultTask', () => {
   })
 
   it('returns the success value from runPromise and rejects typed failures', async () => {
-    equal(await ResultTask.runPromise(ResultTask.ok('ready')), 'ready')
-    await rejects(() => ResultTask.runPromise(ResultTask.err('not-found')))
+    equal(await ResultTask.runPromise(ResultTask.succeed('ready')), 'ready')
+    await rejects(() => ResultTask.runPromise(ResultTask.fail('not-found')))
   })
 
   it('passes the run signal to promise boundaries', async () => {
@@ -203,7 +205,9 @@ describe('ResultTask', () => {
   })
 
   it('supports functional combinators and public exit types', async () => {
-    const task = ResultTask.andThen(ResultTask.ok(1), (value) => ResultTask.ok(String(value)))
+    const task = ResultTask.flatMap(ResultTask.succeed(1), (value) =>
+      ResultTask.succeed(String(value)),
+    )
     const result = await ResultTask.runResult(task)
 
     deepEqual(result, { value: '1' })
@@ -218,20 +222,17 @@ describe('ResultTask', () => {
     equal(failureExit._tag, 'Failure')
 
     if (false) {
-      const taskWithReq = ResultTask.gen(function* () {
-        return yield* ResultTask.service<number, 'Num'>('Num')
-      })
-      // @ts-expect-error ResultTask with unprovided requirements cannot be awaited directly.
-      await taskWithReq
+      // @ts-expect-error ResultTask is not PromiseLike and does not execute implicitly.
+      void task.then
     }
   })
 
   it('runs generator workflows and short-circuits on the first failure', async () => {
     let skippedExecutions = 0
     const task = ResultTask.gen(function* () {
-      const first = yield* ResultTask.ok(2)
+      const first = yield* ResultTask.succeed(2)
       const second = yield* ResultTask.try({ try: () => 3, catch: () => 'unreachable' as const })
-      const skipped = yield* ResultTask.err<'stop'>('stop')
+      const skipped = yield* ResultTask.fail<'stop'>('stop')
 
       skippedExecutions += 1
       void skipped
@@ -248,7 +249,7 @@ describe('ResultTask', () => {
     let closed = false
     const task = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err<'stop'>('stop')
+        yield* ResultTask.fail<'stop'>('stop')
         return 'unreachable'
       } finally {
         closed = true
@@ -264,9 +265,9 @@ describe('ResultTask', () => {
     let cleaned = false
     const task = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err<'stop'>('stop')
+        yield* ResultTask.fail<'stop'>('stop')
       } finally {
-        cleaned = yield* ResultTask.ok(true)
+        cleaned = yield* ResultTask.succeed(true)
       }
     })
 
@@ -281,10 +282,10 @@ describe('ResultTask', () => {
     let closed = false
     const task = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err<'stop'>('stop')
+        yield* ResultTask.fail<'stop'>('stop')
       } finally {
         try {
-          yield* ResultTask.err<'cleanup'>('cleanup')
+          yield* ResultTask.fail<'cleanup'>('cleanup')
         } finally {
           closed = true
         }
@@ -303,7 +304,7 @@ describe('ResultTask', () => {
     let closed = false
     const task = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err<'stop'>('stop')
+        yield* ResultTask.fail<'stop'>('stop')
       } finally {
         try {
           yield* ResultTask.sync(() => {
@@ -331,7 +332,7 @@ describe('ResultTask', () => {
     let closed = false
     const task = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err<'stop'>('stop')
+        yield* ResultTask.fail<'stop'>('stop')
       } finally {
         const cleanup = yield* Cleanup
         cleanup.close()
@@ -358,7 +359,7 @@ describe('ResultTask', () => {
     const task = ResultTask.gen(() =>
       (function* () {
         try {
-          yield* ResultTask.err<'stop'>('stop')
+          yield* ResultTask.fail<'stop'>('stop')
         } finally {
           yield null as never
         }
@@ -380,7 +381,7 @@ describe('ResultTask', () => {
           throw taskDefect
         })
       } finally {
-        yield* ResultTask.ok(undefined)
+        yield* ResultTask.succeed(undefined)
         closed = true
       }
     })
@@ -399,7 +400,7 @@ describe('ResultTask', () => {
     }
     const task = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.err<'stop'>('stop')
+        yield* ResultTask.fail<'stop'>('stop')
       } finally {
         throwFinalizerDefect()
       }
@@ -414,17 +415,17 @@ describe('ResultTask', () => {
   it('turns generator defects and unsupported yields into Die causes', async () => {
     const generatorDefect = new Error('generator failed')
     const defective = ResultTask.gen(function* () {
-      yield* ResultTask.ok(undefined)
+      yield* ResultTask.succeed(undefined)
       throw generatorDefect
     })
-    const recovered = defective.orElse(() => ResultTask.ok('recovered'))
+    const recovered = defective.catchAll(() => ResultTask.succeed('recovered'))
     const unsupported = ResultTask.gen(() =>
       (function* () {
         try {
           yield 42 as never
           return 'unreachable'
         } finally {
-          yield* ResultTask.ok(undefined)
+          yield* ResultTask.succeed(undefined)
         }
       })(),
     )
@@ -458,7 +459,7 @@ describe('ResultTask', () => {
     )
     const wrongTagTaskYield = ResultTask.gen(() =>
       (function* () {
-        yield { _tag: 'NotResultTask', task: ResultTask.ok('unexpected') } as never
+        yield { _tag: 'NotResultTask', task: ResultTask.succeed('unexpected') } as never
         return 'unreachable'
       })(),
     )
@@ -495,7 +496,7 @@ describe('ResultTask', () => {
   })
 
   it('rejects a failed task value sent directly into its generator', () => {
-    const iterator = ResultTask.err<'stop'>('stop')[Symbol.iterator]()
+    const iterator = ResultTask.fail<'stop'>('stop')[Symbol.iterator]()
     iterator.next()
 
     throws(
@@ -579,7 +580,7 @@ describe('ResultTask', () => {
       return true
     })
     const resolved = ResultTask.provideServiceResolver(task, {
-      Logger: () => ResultTask.ok<Logger>({ info: (message) => messages.push(message) }),
+      Logger: () => ResultTask.succeed<Logger>({ info: (message) => messages.push(message) }),
     })
 
     expectTypeOf(resolved).toEqualTypeOf<ResultTask<boolean, never, never>>()
@@ -598,7 +599,7 @@ describe('ResultTask', () => {
         const clock = yield* Clock
         return clock.now()
       } finally {
-        yield* ResultTask.ok(undefined)
+        yield* ResultTask.succeed(undefined)
       }
     })
     const provided = ResultTask.provideServices(task, { Clock: { now: () => 42 } })
@@ -626,30 +627,32 @@ describe('ResultTask', () => {
     }
   })
 
-  it('is stack-safe for 10,000+ chained andThen and map calls without call stack overflow', async () => {
-    let andThenTask = ResultTask.ok(0)
+  it('is stack-safe for 10,000+ chained flatMap and map calls without call stack overflow', async () => {
+    let flatMapTask = ResultTask.succeed(0)
     for (let i = 0; i < 10_000; i += 1) {
-      andThenTask = andThenTask.andThen((x) => ResultTask.ok(x + 1))
+      flatMapTask = flatMapTask.flatMap((x) => ResultTask.succeed(x + 1))
     }
-    equal(await ResultTask.runPromise(andThenTask), 10_000)
+    equal(await ResultTask.runPromise(flatMapTask), 10_000)
 
-    let mapTask = ResultTask.ok(0)
+    let mapTask = ResultTask.succeed(0)
     for (let i = 0; i < 10_000; i += 1) {
       mapTask = mapTask.map((x) => x + 1)
     }
     equal(await ResultTask.runPromise(mapTask), 10_000)
 
-    let mixedTask = ResultTask.ok(0)
+    let mixedTask = ResultTask.succeed(0)
     for (let i = 0; i < 5000; i += 1) {
-      mixedTask = mixedTask.map((x) => x + 1).andThen((x) => ResultTask.ok(x + 1))
+      mixedTask = mixedTask.map((x) => x + 1).flatMap((x) => ResultTask.succeed(x + 1))
     }
     equal(await ResultTask.runPromise(mixedTask), 10_000)
 
-    let recoveredTask = ResultTask.err<'init-error'>('init-error').orElse(() => ResultTask.ok(0))
+    let recoveredTask = ResultTask.fail<'init-error'>('init-error').catchAll(() =>
+      ResultTask.succeed(0),
+    )
     for (let i = 0; i < 5000; i += 1) {
       recoveredTask = recoveredTask
-        .andThen((x) => ResultTask.ok(x + 1))
-        .orElse(() => ResultTask.ok(-1))
+        .flatMap((x) => ResultTask.succeed(x + 1))
+        .catchAll(() => ResultTask.succeed(-1))
     }
     equal(await ResultTask.runPromise(recoveredTask), 5000)
   })

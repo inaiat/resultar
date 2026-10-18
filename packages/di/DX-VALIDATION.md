@@ -30,6 +30,9 @@ Record time, documentation lookups, misleading errors, incorrect lifecycle assum
 
 The main guide recommends token/class registration. Named registration and framework adapter
 helpers share the same package entry point.
+For new async service methods, the v4 guide recommends lazy `ResultTask` values and explicit
+runners. `ResultAsync` and `StrictResultAsync` are exported from the `resultar/async` subpath and are deprecated since v4, with eager compatibility contracts;
+the historical integration results above do not imply a recommendation to introduce them.
 
 ## Unified API and compiler diagnostics
 

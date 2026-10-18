@@ -4,9 +4,10 @@
   "license": "MIT",
   "exports": "./src/index.ts",
   "imports": {
-    "resultar": "jsr:@inaiat/resultar@^3.4.0",
-    "resultar-request": "jsr:@inaiat/resultar-request@^0.1.0",
-    "zod": "npm:zod@^4.4.3"
+    "resultar": "jsr:@inaiat/resultar@^4.0.0",
+    "resultar-request": "jsr:@inaiat/resultar-request@^1.0.0",
+    "zod": "npm:zod@^4.4.3",
+    "resultar/async": "jsr:@inaiat/resultar@^4.0.0/async"
   },
   "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }
 }

@@ -1,8 +1,9 @@
 # Resultar
 
-> Typed, composable error handling for TypeScript: start with explicit `Result` values, keep
-> eager async workflows with `ResultAsync`, and adopt lazy `ResultTask` workflows with typed
-> services, scopes, clocks, retry, and fibers as needed. Tagged errors and
+> Typed, composable error handling for TypeScript: start with explicit `Result` values,
+> use lazy `ResultTask` for new asynchronous workflows, and retain deprecated `ResultAsync`
+> at existing eager boundaries during migration. Add typed services, scopes, clocks, retry,
+> and fibers as needed. Tagged errors and
 > compiler-backed diagnostics. Node.js 24+, ESM-only.
 
 ## Installed version first
@@ -14,7 +15,7 @@ The links below follow development on `main`; they are not a substitute for vers
 
 ## Start here
 
-- [Gradual adoption](https://raw.githubusercontent.com/inaiat/resultar/main/docs/gradual-adoption.md): start with Result, migrate existing eager async boundaries with ResultAsync, introduce ResultTask per use case, and add Clock, retry, and fibers when needed.
+- [Gradual adoption](https://raw.githubusercontent.com/inaiat/resultar/main/docs/gradual-adoption.md): start with Result, use ResultTask for new async work, bridge existing eager APIs explicitly, and add Clock, retry, and fibers when needed.
 - [Agent skill](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/SKILL.md): opinionated defaults and pointers for coding agents.
 - [Core package README](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): model, ResultTask, services, scopes, decision guide.
 - [Full guide](https://raw.githubusercontent.com/inaiat/resultar/main/DOCUMENTATION.md): complete API map and recipes.
@@ -24,8 +25,20 @@ tracks unresolved requirements in `R`. These models coexist: adopting tasks does
 rewriting existing Result helpers, eager adapters, or the whole application. Preserve existing
 execution contracts when bridging between them.
 
+`ResultAsync` and `StrictResultAsync` are deprecated since v4 and are imported from
+the `resultar/async` subpath in the same package, together with their eager factories and helpers.
+No additional package installation is needed. Task is non-thenable: use explicit
+`runResult`, `runExit`, `runPromise`, or `runFork` boundaries even when `R = never`.
+Task `map` is synchronous; compose Promise steps with `andThen` and `tryPromise`.
+`ResultTask.fromResultAsync(factory)` defers an eager adapter until each run;
+`ResultAsync.fromTask(task)` starts one eager execution for existing callers.
+Core `Result.gen` and `Result.fn` accept sync and async generators with plain return
+values; legacy `safeTry` preserves the final Result. Existing Async root imports
+remain supported; prefer `resultar/async` when migrating eager consumers.
+
 ## Packages
 
+- [Async subpath](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): deprecated eager compatibility class, factories, generators and free async composition helpers, included in `resultar`.
 - [resultar-di](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/README.md): services, typed composition, lifetimes, overrides, named registration and framework adapter APIs.
 - [resultar-hono](https://raw.githubusercontent.com/inaiat/resultar/main/packages/hono/README.md): Hono bindings, one scope per response, CloseError.
 - [resultar-fastify](https://raw.githubusercontent.com/inaiat/resultar/main/packages/fastify/README.md): native plugins, application/request services, cancellation and cleanup.
@@ -50,4 +63,4 @@ execution contracts when bridging between them.
 Package READMEs override `DOCUMENTATION.md`; both override the
 skill; RFCs are design history. The installed `node_modules` types always win over any document.
 
-- [Next major adoption](https://raw.githubusercontent.com/inaiat/resultar/main/docs/migrations/v4.md): Preserved public APIs, Match contexts, structured task concurrency and policy clocks.
+- [v4 migration](https://raw.githubusercontent.com/inaiat/resultar/main/docs/migrations/v4.md): Task-first workflows, deprecated eager Async compatibility, Match contexts, structured concurrency and policy clocks.

@@ -1,4 +1,4 @@
-import type { ResultAsync } from "resultar";
+import type { ResultAsync } from "resultar/async";
 import type { Static, TSchema } from "typebox";
 import Value from "typebox/value";
 

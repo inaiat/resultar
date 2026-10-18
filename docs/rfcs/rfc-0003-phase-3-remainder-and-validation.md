@@ -1,5 +1,10 @@
 # RFC 0003: Phase 3 remainder, live lifecycle validation, and dependency health
 
+> Design history: v4 prefers `ResultTask` for new async workflows. `ResultAsync`
+> lives in the deprecated `resultar/async` subpath of the same package with explicit bridges. For current contracts,
+> see the [core guide](../../packages/resultar/README.md) and
+> [v4 migration notes](../migrations/v4.md); retain earlier examples below as design context.
+
 - Status: Partially implemented (next major prepared)
 - Date: 2026-09-07
 - Scope: `resultar` package
@@ -48,7 +53,7 @@ Implementation update (2026-10-13): this section is implemented in the next-majo
 workspace. Current contracts are in the [adoption guide](../migrations/v4.md) and
 [core README](../../packages/resultar/README.md#task-concurrency-and-resilience).
 Regression coverage is in `result-task-concurrency.test.ts`, resource tests and the
-[resilience cookbook](../../examples/resultar/src/task-resilience.ts). The live
+[resilience cookbook](../../examples/cookbook/src/task-resilience.ts). The live
 database/session pilot in §1 remains pending; this update does not close it.
 
 

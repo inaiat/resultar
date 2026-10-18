@@ -1,7 +1,7 @@
-import { equal, rejects, strictEqual } from 'node:assert'
+import { equal, strictEqual } from 'node:assert'
 import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
 
-import { Result, type ResultAsync, err, errAsync, ok, okAsync, safeTry } from '../src/index.js'
+import { Result, err, ok, okAsync, safeTry } from '../src/index.js'
 
 describe('additive API compatibility', () => {
   it('wraps plain values in Result.gen and preserves returned Result identity in safeTry', async () => {
@@ -59,24 +59,5 @@ describe('additive API compatibility', () => {
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- Legacy error observation must remain best-effort.
     strictEqual(failed.tapError(observer), failed)
     strictEqual(failed.inspectError(observer), failed)
-  })
-
-  it('preserves async inspect observation contracts and propagates tap callback defects', async () => {
-    const value = { id: 'user-1' }
-    const original = okAsync<typeof value, string>(value)
-    const defect = new Error('observer')
-    const observer = async (): Promise<void> => {
-      throw defect
-    }
-    const tapped = original.tap(observer)
-    const recommended = original.inspect(observer)
-
-    expectTypeOf(tapped).toEqualTypeOf<ResultAsync<typeof value, string>>()
-    expectTypeOf(recommended).toEqualTypeOf<ResultAsync<typeof value, string>>()
-    await rejects(async () => await tapped, defect)
-    strictEqual((await recommended)._unsafeUnwrap(), value)
-    const failed = errAsync<number, string>('original')
-    await rejects(async () => await failed.tapError(observer), defect)
-    equal((await failed.inspectError(observer))._unsafeUnwrapErr(), 'original')
   })
 })

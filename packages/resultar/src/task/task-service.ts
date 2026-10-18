@@ -2,9 +2,10 @@ import { success } from './exit.js'
 import { NEVER_ABORTED_SIGNAL } from './promise-interruption.js'
 import type { Exit, ResultTask } from './result-task.js'
 import type { TaskScope } from './scope.js'
+import { Clock } from './task-clock.js'
 import type { TaskClock } from './task-clock.js'
 import { isObjectLike } from './task-helpers.js'
-import { forkScheduling } from './task-scheduler.js'
+import { createScheduling, forkScheduling } from './task-scheduler.js'
 import type { TaskScheduling } from './task-scheduler.js'
 
 /** Type identifier symbol for nominal `ServiceTag` branding. */
@@ -121,6 +122,24 @@ export interface ResultTaskRuntimeContext {
   readonly clock: TaskClock
   readonly scheduling: TaskScheduling
   readonly cleanup: ResultTaskCleanupScheduling | undefined
+}
+
+/** Supplies runtime defaults when an internal executor receives a context without time policies. */
+export const normalizeRuntimeContext = (
+  context: ResultTaskRuntimeContext,
+): ResultTaskRuntimeContext => {
+  if (context.clock !== undefined && context.scheduling !== undefined) return context
+  const clock = context.clock ?? Clock.live
+  return {
+    namedServices: context.namedServices,
+    services: context.services,
+    serviceResolver: context.serviceResolver,
+    signal: context.signal,
+    scope: context.scope,
+    clock,
+    scheduling: context.scheduling ?? createScheduling(clock),
+    cleanup: context.cleanup,
+  }
 }
 
 export type ResultTaskExecutor = (

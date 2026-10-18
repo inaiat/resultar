@@ -1,12 +1,7 @@
-import {
-  fromSafePromise,
-  ResultAsync,
-  ResultTask,
-  ResultTaskCauseError,
-  type Cause,
-  type Exit,
-  type ResultAsyncCallbackContext,
-} from "resultar";
+// Lifecycle sessions retain their eager ResultAsync compatibility boundary.
+/* eslint-disable typescript/no-deprecated */
+import { ResultTask, ResultTaskCauseError, type Cause, type Exit } from "resultar";
+import { fromSafePromise, ResultAsync, type ResultAsyncCallbackContext } from "resultar/async";
 
 // Native lifecycle hooks erase provider error types while preserving every cause at runtime.
 // resultar-check-disable-next-line no-unknown-result-error
@@ -31,14 +26,12 @@ export function startSession(
   // fromCallback subscribes immediately; neither signal owns a separate execution or scope.
   // eslint-disable-next-line init-declarations
   let readiness!: ResultAsyncCallbackContext<Readonly<Record<string, unknown>>>;
-  const ready = ResultTask.toResultAsync(
-    ResultAsync.fromCallback({
-      subscribe: (context: typeof readiness) => {
-        readiness = context;
-      },
-      catch: sessionError,
-    }).mapErr(sessionError),
-  );
+  const ready = ResultAsync.fromCallback({
+    subscribe: (context: typeof readiness) => {
+      readiness = context;
+    },
+    catch: sessionError,
+  }).mapErr(sessionError);
   // Initialized synchronously by the subscription below.
   // eslint-disable-next-line init-declarations
   let finish!: () => void;

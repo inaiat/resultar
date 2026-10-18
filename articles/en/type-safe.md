@@ -1,5 +1,46 @@
 # TypeScript Type-safe: Transforming Exceptions into Values with Resultar [Resultar](https://github.com/inaiat/resultar)
 
+## Current v4 guidance
+
+Use `Result<T, E>` for synchronous domain operations and `ResultTask<T, E, R>` for
+new asynchronous workflows. `ResultAsync` and `StrictResultAsync` are deprecated
+since v4 and keep their eager behavior through the `resultar/async` subpath in the same package during migration.
+
+```typescript
+import { createTaggedError, ResultTask } from 'resultar';
+
+class ReadTextError extends createTaggedError({
+  name: 'ReadTextError',
+  message: 'Could not read $url',
+}) {}
+
+const readText = (url: string) => ResultTask.tryPromise({
+  try: (signal) => fetch(url, { signal }).then((response) => response.text()),
+  catch: (cause) => new ReadTextError({ url, cause }),
+});
+
+const summarize = (url: string) => ResultTask.gen(function* () {
+  const text = yield* readText(url);
+  return { length: text.length };
+});
+
+// Building the workflow is lazy. Execute it explicitly at the application boundary.
+const result = await ResultTask.runResult(summarize('https://example.com'));
+console.log(result.match({ ok: (summary) => summary, err: (error) => error.message }));
+```
+
+See the [adoption guide](../../docs/gradual-adoption.md) and
+[v4 migration guide](../../docs/migrations/v4.md) for retries, resource cleanup,
+execution boundaries, and bridges from existing eager APIs.
+
+## Historical v3 article
+
+The article below preserves the original exception-to-value examples. Its async
+recipes use the v3 eager API and `safeTry`; in v4, import their counterparts from `resultar/async` as described in the migration guide. For new v4 code, follow
+the Task recipe above. Fetch resolves on HTTP error statuses; the short example
+above maps network/body failures, while application HTTP status policy belongs
+in the adapter or the [request packages](../../packages/request/README.md).
+
 ## The Problem with Exceptions in JavaScript
 
 JavaScript, like many dynamic languages, allows exceptions to be thrown at virtually any point in the code. This behavior, while flexible, can create several problems:
