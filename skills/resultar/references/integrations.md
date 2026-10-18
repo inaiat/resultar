@@ -79,7 +79,9 @@ const loadUser = (userId: string) =>
     }),
   );
 
-const userId = await ResultTask.runPromise(loadUser("user-1").map((user) => user.id));
+const userId = await loadUser("user-1")
+  .map((user) => user.id)
+  .runPromise();
 ```
 
 This reuses the `isUser` guard above and infers `ResultTask<User, RequestError>`. Each run creates

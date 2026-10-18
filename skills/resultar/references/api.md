@@ -68,7 +68,7 @@ at import sites. No plugin installation is needed.
 | Defer a Promise factory and catch rejection        | `ResultTask.tryPromise({ try, catch })`              |
 | Catch eagerly at an existing async boundary        | `tryResultAsync(input, toError)`                     |
 | Preserve an eager async function wrapper           | `fromThrowableAsync(fn, toError)`                    |
-| Leave a sync / Task channel at a terminal boundary | `runSync(result)` / `ResultTask.runPromise(task)`    |
+| Leave a sync / Task channel at a terminal boundary | `runSync(result)` / `task.runPromise()`              |
 | Preserve an existing eager terminal                | `runPromise(asyncResult)`                            |
 
 All eager entries in this table come from `resultar/async`; synchronous and Task entries come
@@ -83,7 +83,7 @@ const parsed = tryResult({
 });
 ```
 
-`runSync` returns the `Ok` value or throws the `Err`. `ResultTask.runPromise` executes a Task and
+`runSync` returns the `Ok` value or throws the `Err`. `task.runPromise()` executes a Task and
 resolves its success value or rejects on failure. `runPromise` from `resultar/async` is the eager
 compatibility terminal. Keep runners at framework, bootstrap, CLI, or test boundaries; Tasks need an explicit
 runner even when they have no requirements.
@@ -214,7 +214,7 @@ On deprecated Async instances, they are native `Promise<Out>` terminals that awa
 The static/direct/curried Async forms return composable `ResultAsync<Awaited<Out>, never>` values;
 static `unwrapOr` similarly returns Async while the instance method returns a Promise.
 On Task, they are lazy folds returning `ResultTask<Out, never, R>`; execute the folded
-Task with `ResultTask.runPromise` for `Out`. `unwrapOr` follows the same value / Promise /
+Task with `folded.runPromise()` for `Out`. `unwrapOr` follows the same value / Promise /
 Task distinction. Task has no `.then` method, so `await task` does not execute it.
 
 Include an `Error` handler whenever an error union can contain an untagged `Error`. Do not invent
@@ -402,6 +402,26 @@ executes it again. It has no `.then` method, including when `R = never`. Depreca
 Promise work, pass a factory to `ResultTask.tryPromise` or `fromResultAsync`; an
 already-created Promise cannot be deferred or replayed.
 
+Prefer instance runners in new recipes; static forms remain equivalent and supported:
+
+| Instance form               | Equivalent static form                  | Boundary contract                                                                                                     |
+| --------------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `task.runResult(options?)`  | `ResultTask.runResult(task, options?)`  | `Promise<Result<A, E>>`; returns a single typed failure as `Err`, rejects defects, interruption, and composite causes |
+| `task.runPromise(options?)` | `ResultTask.runPromise(task, options?)` | `Promise<A>`; resolves the value or rejects any failure                                                               |
+| `task.runExit(options?)`    | `ResultTask.runExit(task, options?)`    | `Promise<Exit<A, E>>`; preserves every outcome without rejection                                                      |
+| `task.runFork(options?)`    | `ResultTask.runFork(task, options?)`    | Starts a root fiber immediately and returns `FiberHandle<A, E>`                                                       |
+
+Both forms accept the same `ResultTaskRunOptions<R>` and check required services. Options include
+`services`, `signal`, `clock`, `scheduler`, and `yieldEvery`. Pending scope release errors join
+the runner error type (`E | ScopeError<R>` internally). Each call executes again; no runner memoizes
+the result, and there is no public `task.run()` method.
+
+```ts
+const task = ResultTask.sync(() => "ready");
+const first = await task.runResult();
+const second = await ResultTask.runResult(task); // Same contract, separate execution
+```
+
 - Build: `ok`, `err`, `fromResult`, `sync`, `try`, `tryPromise` (`try`/`tryPromise` map
   external throws into `E`; `sync` treats them as defects).
 - Compose lazily: `map`, `as`, `asVoid`, `filterOrElse`, `andThen`, `orElse`, `orElseSucceed`, `unwrapOr`, `catchCause`, `sandbox`, `unsandbox`, `catchTag`, partial `catchTags`, `catchReason`, `catchReasons`, `unwrapReason` (`andThen`/`orElse`/`catchCause`/`catchTag`/`catchTags`/`catchReason`/`catchReasons` accept callbacks returning `ResultTask` or synchronous `Result`), `match`, `matchTags`, `matchTagsPartial`, `inspect`, `inspectError`, `inspectCause`, `inspectBoth`, `tap`, `tapError`, `tapCause`, `tapBoth`, `onExit`, `delay`, `timed`, `zip` (accepting `{ concurrent?: boolean }`), `makeSemaphore` / `Semaphore`, `firstSuccessOf`, `if`, `when`, `unless`, `loop`, `iterate`, `gen` with `yield*` (constrained at compile time via `ResultTaskYieldable` to `ResultTask`, `Result`, and `ServiceTag`; `Ok` unwraps, `Err` short-circuits into `E`).
@@ -436,7 +456,7 @@ already-created Promise cannot be deferred or replayed.
 - `Fiber.join(fiber, { interruption: 'detach' })` stops waiting on waiter cancellation without
   canceling the target or consuming its failure. Default `'wait'` preserves existing behavior.
   The owning scope still closes its children on exit.
-- `ResultTask.runFork(task, options)` immediately starts a root run and returns `FiberHandle<A, E>`.
+- `task.runFork(options)` immediately starts a root run and returns `FiberHandle<A, E>`.
   Native handles from `runFork` / `forkChild` have `id`, `poll()` and `addObserver(callback)`;
   namespace `Fiber.poll` / `Fiber.addObserver` delegate the same diagnostics. Poll is `undefined`
   while running; observers and snapshots expose the full Exit after cleanup. Observers return an

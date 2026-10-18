@@ -42,6 +42,10 @@ var resultTaskStaticConsumerMethods = map[string]struct{}{
 	"runExit": {}, "runFork": {}, "runPromise": {}, "runResult": {}, "toResultAsync": {},
 }
 
+var resultTaskInstanceRunnerMethods = map[string]struct{}{
+	"runExit": {}, "runFork": {}, "runPromise": {}, "runResult": {},
+}
+
 var matchStaticConsumerMethods = map[string]struct{}{
 	"when": {}, "whenOr": {}, "whenAnd": {}, "not": {}, "tag": {}, "tags": {}, "tagStartsWith": {},
 	"tagsExhaustive": {}, "exhaustive": {}, "orElse": {}, "orElseAbsurd": {}, "result": {}, "option": {},
@@ -944,6 +948,10 @@ func (a *Analyzer) isSafeAwaitExpression(expression *ast.Node, ignoredCalls map[
 				return true
 			}
 		}
+		method, receiver, _ := methodCall(unwrapped)
+		if method == "runExit" && a.isResultTaskInstanceRunner(method, receiver) {
+			return true
+		}
 		if expressionName(unwrapped.AsCallExpression().Expression) == "runPromise" {
 			arguments := unwrapped.AsCallExpression().Arguments.Nodes
 			if len(arguments) > 0 && everyUnionPart(a.checker.GetTypeAtLocation(arguments[0]), func(part *checker.Type) bool {
@@ -1585,7 +1593,7 @@ func (a *Analyzer) isHandledReference(identifier *ast.Node) bool {
 	if parent != nil && parent.Kind == ast.KindVoidExpression && parent.Expression() == root {
 		return true
 	}
-	if isConsumedByReceiverChain(identifier) {
+	if a.isConsumedByReceiverChain(identifier) {
 		return true
 	}
 	if a.isConsumedByResultTaskStaticCall(identifier) {
@@ -1692,7 +1700,14 @@ func (a *Analyzer) isResultTaskStaticConsumerCall(expression *ast.Node) bool {
 	return false
 }
 
-func isConsumedByReceiverChain(identifier *ast.Node) bool {
+func (a *Analyzer) isResultTaskInstanceRunner(method string, receiver *ast.Node) bool {
+	if _, ok := resultTaskInstanceRunnerMethods[method]; !ok || receiver == nil {
+		return false
+	}
+	return everyUnionPart(a.checker.GetTypeAtLocation(receiver), isResultTaskLikeType)
+}
+
+func (a *Analyzer) isConsumedByReceiverChain(identifier *ast.Node) bool {
 	current := identifier
 	for parent := current.Parent; parent != nil; parent = current.Parent {
 		if isWrapperParent(parent, current) || (parent.Kind == ast.KindAwaitExpression && parent.Expression() == current) {
@@ -1704,8 +1719,10 @@ func isConsumedByReceiverChain(identifier *ast.Node) bool {
 			if _, ok := consumerProperties[name]; ok {
 				return true
 			}
-			if _, ok := consumerMethods[name]; ok && parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression && parent.Parent.AsCallExpression().Expression == parent {
-				return true
+			if parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression && parent.Parent.AsCallExpression().Expression == parent {
+				if _, ok := consumerMethods[name]; ok || a.isResultTaskInstanceRunner(name, parent.AsPropertyAccessExpression().Expression) {
+					return true
+				}
 			}
 			if name == "pipe" && parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression && parent.Parent.AsCallExpression().Expression == parent && len(parent.Parent.AsCallExpression().Arguments.Nodes) >= 1 {
 				return true
@@ -2656,9 +2673,9 @@ func (a *Analyzer) noRunInsideGen(file *ast.SourceFile) []Finding {
 				return
 			}
 			method, receiver, nameNode := methodCall(bodyNode)
-			if method == "toResultAsync" && isResultTaskLikeType(a.checker.GetTypeAtLocation(receiver)) {
+			if a.isResultTaskInstanceRunner(method, receiver) || (method == "toResultAsync" && isResultTaskLikeType(a.checker.GetTypeAtLocation(receiver))) {
 				findings = append(findings, newFinding(file, nameNode, "no-run-inside-gen", a.options.NoRunInsideGen,
-					"Do not call `toResultAsync` inside a Resultar generator. Compose with `yield*` instead so errors, requirements, and scopes propagate through the generator.", ""))
+					fmt.Sprintf("Do not call `%s` inside a Resultar generator. Compose with `yield*` instead so errors, requirements, and scopes propagate through the generator.", method), ""))
 				return
 			}
 			if (method == "_unsafeUnwrap" || method == "unwrapOrThrow") && isResultLikeType(a.checker.GetTypeAtLocation(receiver)) {

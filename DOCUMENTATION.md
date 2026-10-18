@@ -151,7 +151,7 @@ If you already know Result-style error handling, jump to:
 | Branch without throwing                     | [Conditional Helpers](#conditional-helpers)                                                               | `Result.if`, `Result.when`, `Result.unless`, `ResultTask.if`, `ResultTask.when`, `ResultTask.unless` |
 | Combine many independent results            | [Combining And Iterating](#combining-and-iterating)                                                       | `all`, `combine`, `ResultTask.all`, `ResultTask.validateAll`                                         |
 | Control async traversal concurrency         | [Async Concurrency Mapping](#async-concurrency-mapping)                                                   | `ResultTask.forEach`, `ResultTask.validateAll`, `{ concurrency }`                                    |
-| Coordinate fibers, semaphores, and yields   | [Structured Task Concurrency, Fibers, And Semaphores](#structured-task-concurrency-fibers-and-semaphores) | `ResultTask.forkChild`, `ResultTask.runFork`, `Fiber`, `Semaphore`, `yieldNow`, `yieldEvery`         |
+| Coordinate fibers, semaphores, and yields   | [Structured Task Concurrency, Fibers, And Semaphores](#structured-task-concurrency-fibers-and-semaphores) | `ResultTask.forkChild`, `task.runFork`, `Fiber`, `Semaphore`, `yieldNow`, `yieldEvery`               |
 | Race concurrent async work                  | [Concurrent Racing And Timeouts](#concurrent-racing-and-timeouts)                                         | `ResultTask.race`, `raceFirst`, `timeout`, `Clock.virtual`                                           |
 | Retry transient async work                  | [Retrying Async Work](#retrying-async-work)                                                               | `Retry.policy`, `ResultTask.retry`; eager compatibility: `ResultAsync.retry`                         |
 | Pair async acquisition with cleanup         | [Resourceful Async Iterables](#resourceful-async-iterables)                                               | `ResultTask.acquireRelease`, `acquireDisposable`, `scoped`                                           |
@@ -174,7 +174,8 @@ type Result<T, E> = Ok<T> | Err<E>;
 
 `ResultTask<T, E, R>` is a lazy, repeatable workflow. Use an explicit runner for each
 execution, including when `R = never`; Task has no `.then` method. Providing services
-or closing a required scope leaves a Task.
+or closing a required scope leaves a Task. Prefer `task.runResult()`, `task.runPromise()`,
+`task.runExit()`, or `task.runFork()` in new recipes; equivalent static runners remain supported.
 
 Deprecated `ResultAsync<T, E>` from `resultar/async` is an independent
 `PromiseLike<Result<T, E>>` class; existing main-entry exports also remain supported.
@@ -301,8 +302,8 @@ const loadLabel = ResultTask.fn(
 );
 
 const task = loadLabel("ada").provideService(Clock, { now: () => 42 });
-const first = await ResultTask.runPromise(task); // 'ADA:42'
-const second = await ResultTask.runPromise(task); // 'ADA:42'
+const first = await task.runPromise(); // 'ADA:42'
+const second = await task.runPromise(); // 'ADA:42'
 ```
 
 For `ResultTask.fn`, calling the wrapper captures its arguments and receiver without executing the
@@ -346,7 +347,7 @@ const recovered = pipe(
   }),
 );
 
-const label = await ResultTask.runPromise(recovered); // 'guest:missing'
+const label = await recovered.runPromise(); // 'guest:missing'
 ```
 
 `recovered` retains `AccessDenied` in `E`; only the handled tag is removed. Handler errors and
@@ -388,7 +389,7 @@ const program = ResultTask.scoped(
   }),
 );
 
-const label = await ResultTask.runPromise(program); // 'session'
+const label = await program.runPromise(); // 'session'
 // events: ['open', 'close']
 ```
 
@@ -433,18 +434,34 @@ Fibers keep their existing `join` / `interrupt` shape; `await` is a namespace op
 `Fiber.join(fiber, { interruption: 'detach' })` stops waiting on waiter cancellation without
 interrupting the target or consuming its failure. The default `'wait'` retains the existing
 behavior. Scope ownership still applies: canceling a scope that owns the target closes that child.
-`ResultTask.runFork(task, options)` starts an independent root execution and returns a
+`task.runFork(options)` starts an independent root execution and returns a
 `FiberHandle<T, E>` immediately. Native handles from `runFork` / `forkChild` expose `id`, `poll()`
 and `addObserver(callback)`, with namespace `Fiber.poll` / `Fiber.addObserver` equivalents.
 Poll returns `undefined` while running; snapshots and observers expose the complete Exit only
 after finalizers. Observers return an unsubscribe function and ignore callback failures.
 Diagnostics do not consume owned child failures; use `join` or `await` to compose the outcome.
 
-Return `ResultTask<T, E, R>` directly from lazy services. `runExit` returns `Promise<Exit<T, E>>`,
-`runResult` returns `Promise<Result<T, E>>` and can reject on runtime or composite causes,
-and `runPromise` returns `Promise<T>` and rejects every failure. Task is not thenable:
-`await task` returns the unexecuted Task. Use runners to supply pending service requirements;
-root scope release errors join `E` at the run boundary. `ResultTask.gen` / `fn` use plain success returns:
+Return `ResultTask<T, E, R>` directly from lazy services and execute at an outer boundary:
+
+| Instance runner             | Equivalent static runner                | Output and failure behavior                                                                                             |
+| --------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `task.runResult(options?)`  | `ResultTask.runResult(task, options?)`  | `Promise<Result<T, E>>`; a single typed failure becomes `Err`, while defects, interruption, and composite causes reject |
+| `task.runPromise(options?)` | `ResultTask.runPromise(task, options?)` | `Promise<T>`; resolves success or rejects any failure                                                                   |
+| `task.runExit(options?)`    | `ResultTask.runExit(task, options?)`    | `Promise<Exit<T, E>>`; never rejects and preserves all causes as values                                                 |
+| `task.runFork(options?)`    | `ResultTask.runFork(task, options?)`    | Starts a root execution immediately and returns its `FiberHandle<T, E>`                                                 |
+
+Both forms accept the same `ResultTaskRunOptions<R>`, including `services`, `signal`, `clock`,
+`scheduler`, and `yieldEvery`, and enforce the same service requirements. Root scope release errors
+join `E` at either boundary (`E | ScopeError<R>` internally). For a Task without pending scope errors:
+
+```ts
+const task = ResultTask.ok("ready");
+const first = await task.runResult();
+const second = await ResultTask.runResult(task); // Equivalent form; executes again
+```
+
+Every runner call starts fresh work. Task is not thenable: `await task` returns the unexecuted Task,
+and there is no public `task.run()` runner. `ResultTask.gen` / `fn` use plain success returns:
 `return yield* step` executes a final step, whereas `return step` succeeds with the unexecuted task
 as its value.
 
@@ -550,7 +567,7 @@ const failureTask = ResultTask.err(new Error("failed"));
 const completedTask = ResultTask.ok(undefined);
 const existingResultTask = ResultTask.fromResult(syncValue);
 
-const result = await ResultTask.runResult(successTask);
+const result = await successTask.runResult();
 ```
 
 `unit()` is `Ok(undefined)`. Use `ResultTask.ok(undefined)` for the corresponding Task.
@@ -731,7 +748,7 @@ const responseTask = loadProfile("usr_123").match({
   err: (error) => ({ status: 503, body: error.message }),
 });
 
-const response = await ResultTask.runPromise(responseTask);
+const response = await responseTask.runPromise();
 ```
 
 `map` and `mapErr` are synchronous transformations. Use `andThen` with another Task,
@@ -761,7 +778,7 @@ const loadUser = (id: string) =>
     }),
   );
 
-const result = await ResultTask.runResult(loadUser("usr_123"));
+const result = await loadUser("usr_123").runResult();
 ```
 
 `fromResultAsync(existing)` instead captures one already-started execution and reuses
@@ -876,7 +893,7 @@ const loadUser = (id: string) =>
     catch: (cause) => new LoadUserError({ id, cause }),
   });
 
-const result = await ResultTask.runResult(loadUser("usr_123"));
+const result = await loadUser("usr_123").runResult();
 ```
 
 Call the Promise-producing function inside `try`, so each Task run creates new work.
@@ -1492,7 +1509,7 @@ const response = createUser("person@example.com").match({
 On deprecated `ResultAsync` instances, `match`, `matchTags`, and `matchTagsPartial` return native
 `Promise<Out>` terminals and await handler results. Their static/direct/curried forms return
 composable `ResultAsync<Out, never>` values. On Task, they remain lazy operators
-returning `ResultTask<Out, never, R>`; use `ResultTask.runPromise(folded)` for `Out`, or
+returning `ResultTask<Out, never, R>`; use `folded.runPromise()` for `Out`, or
 match on the Result produced by `runResult`. For an existing Async boundary:
 
 ```ts
@@ -1778,7 +1795,7 @@ Task returns a lazy fold to execute with `runPromise`:
 
 ```ts
 const port = parsePort(process.env.PORT ?? "").unwrapOr(3000);
-const asyncPort = await ResultTask.runPromise(loadPortTask().unwrapOr(3000));
+const asyncPort = await loadPortTask().unwrapOr(3000).runPromise();
 ```
 
 Use `firstSuccessOf` when fallbacks should be lazy and ordered:
@@ -1789,7 +1806,7 @@ const userTask = ResultTask.firstSuccessOf([
   () => readUserFromPrimaryTask(id),
   () => readUserFromReplicaTask(id),
 ]);
-const user = await ResultTask.runResult(userTask);
+const user = await userTask.runResult();
 ```
 
 Guidance:
@@ -1879,7 +1896,7 @@ const fetchResponse = (url: string) =>
     catch: (cause) => new FetchPayloadError({ cause, url }),
   });
 
-const response = await ResultTask.runResult(fetchResponse(url));
+const response = await fetchResponse(url).runResult();
 ```
 
 #### Retained eager rejection wrappers
@@ -2063,7 +2080,7 @@ const replicaRace = ResultTask.race(
   .timed()
   .timeout(100, () => new QueryDeadlineError({ ms: 100 }));
 
-const running = ResultTask.runResult(replicaRace, { clock });
+const running = replicaRace.runResult({ clock });
 await clock.advanceBy(10);
 const outcome = await running; // Ok([10, "primary"])
 ```
@@ -2262,7 +2279,7 @@ const task = ResultTask.sync(() => ++attempts)
   )
   .retry(transientPolicy);
 
-const running = ResultTask.runResult(task, { clock });
+const running = task.runResult({ clock });
 await clock.advanceBy(30);
 const result = await running; // Ok("ready") after 10ms + 20ms virtual time
 ```
@@ -2367,7 +2384,7 @@ const saveBatch = ResultTask.forEach(users, (user) => saveUserTask(user), {
   concurrency: 4,
   discard: true,
 });
-const saved = await ResultTask.runResult(saveBatch);
+const saved = await saveBatch.runResult();
 ```
 
 Task collections retain service requirements and own the lifetime of active children.
@@ -2470,22 +2487,22 @@ const workflow = ResultTask.scoped(
   }),
 );
 
-const result = await ResultTask.runResult(workflow, {
+const result = await workflow.runResult({
   yieldEvery: 2,
   scheduler: Scheduler.live,
 });
 ```
 
-- **Fibers (`ResultTask.forkChild`, `ResultTask.runFork`, `Fiber`)**: `forkChild` starts a child
+- **Fibers (`ResultTask.forkChild`, `task.runFork`, `Fiber`)**: `forkChild` starts a child
   fiber attached to the current `ResultTaskScope`; closing the scope interrupts and awaits any
   still-running children. `runFork` starts an independent root fiber and returns a `FiberHandle`
-  supporting `.join()`, `.await()`, `.interrupt()`, `.poll()`, `.isRunning()`, and
-  `.addObserver(listener)`.
+  supporting `.join()`, `.interrupt()`, `.poll()`, and `.addObserver(listener)`.
+  Observe its full Exit with `Fiber.await(fiber)`; `Fiber.poll(fiber) === undefined` means it is running.
 - **Semaphores (`Semaphore.make`, `ResultTask.makeSemaphore`)**: `withPermit` and `withPermits(n)`
   gate task execution across arbitrary fibers or collection workers and automatically release
   permits on `Success`, `Fail`, `Die`, or `Interrupt`.
 - **Cooperative Yielding (`yieldEvery`, `scheduler`, `Scheduler`)**: pass `{ yieldEvery, scheduler }`
-  in `ResultTaskRunOptions` (`ResultTask.runResult`, `runPromise`, `runExit`, `runFork`) to yield
+  in `ResultTaskRunOptions` (`task.runResult`, `runPromise`, `runExit`, `runFork`) to yield
   the worker back to the runtime `TaskScheduler` (`Scheduler.live` by default) every `N` steps so
   long-running pipelines can observe interruption signals and interleave with sibling fibers.
 - **Causes, Sandboxing, and Finalizers (`Cause`, `catchCause`, `sandbox`, `unsandbox`, `ensuring`, `onExit`)**:
@@ -2626,7 +2643,7 @@ const saveUser = (email: string) =>
     return yield* insertUserTask(validEmail);
   });
 
-const result = await ResultTask.runResult(saveUser("person@example.com"));
+const result = await saveUser("person@example.com").runResult();
 ```
 
 ### Async Result generators for eager compatibility
@@ -2777,7 +2794,7 @@ Static `ResultAsync.unwrapOr` returns a composable Async value. At instance boun
 
 ```ts
 const port = parsePort(process.env.PORT ?? "").unwrapOr(3000);
-const asyncPort = await ResultTask.runPromise(loadPortTask().unwrapOr(3000));
+const asyncPort = await loadPortTask().unwrapOr(3000).runPromise();
 ```
 
 `unwrapOrThrow()` returns the success value or throws the error:
@@ -2916,13 +2933,13 @@ At a Task boundary, `runPromise` resolves success or rejects failure. Result and
 Async retain `unwrapOrThrow()` for their terminal conversion:
 
 ```ts
-const user = await ResultTask.runPromise(fetchUserTask("usr_123"));
+const user = await fetchUserTask("usr_123").runPromise();
 ```
 
 For a custom conversion, run the Task and match its Result:
 
 ```ts
-const user = (await ResultTask.runResult(fetchUserTask("usr_123"))).match(
+const user = (await fetchUserTask("usr_123").runResult()).match(
   (value) => value,
   (error) => {
     throw new Error("Could not fetch user", { cause: error });
@@ -2966,7 +2983,7 @@ const observed = fetchUserTask("usr_123")
   .inspect((user) => metrics.increment("user.loaded", { id: user.id }))
   .inspectError((error) => metrics.increment("user.failed", { tag: error.name }))
   .log((user, error) => logger.info({ error, user }, "fetch user result"));
-const result = await ResultTask.runResult(observed);
+const result = await observed.runResult();
 ```
 
 Callback errors are intentionally ignored. If callback failure should affect control flow, use
@@ -3011,11 +3028,11 @@ that cause as a value; `runResult` and `runPromise` can reject. Task `map` is sy
 it preserves a returned Promise as data, so use `andThen` plus `tryPromise` for an async step.
 
 ```ts
-const exit = await ResultTask.runExit(
-  ResultTask.ok(1).map(() => {
+const exit = await ResultTask.ok(1)
+  .map(() => {
     throw new Error("callback failed");
-  }),
-);
+  })
+  .runExit();
 // Failure with Cause.Die
 ```
 
@@ -3245,7 +3262,7 @@ Use this as the first stop when choosing an operation:
 | Preserve an infallible eager Promise boundary        | `fromSafePromise(promise)` (compatibility)                          |
 | Convert a Promise factory that may throw             | `ResultTask.tryPromise({ try, catch })`                             |
 | Convert a reusable async function                    | Return `ResultTask.tryPromise({ try, catch })` from a function      |
-| Reject a Task failure at an edge                     | `ResultTask.runPromise(task)`                                       |
+| Reject a Task failure at an edge                     | `task.runPromise()`                                                 |
 | Transform an `Ok` value                              | `map(fn)`                                                           |
 | Replace an `Ok` value                                | `as(value)`                                                         |
 | Transform an `Err` value                             | `mapErr(fn)`                                                        |
@@ -3832,7 +3849,10 @@ prototype patch or global factory registration.
 - `ResultTask.loop(initial, options)` / `ResultTask.loop(options)(initial)`
 - `ResultTask.iterate(initial, options)` / `ResultTask.iterate(options)(initial)`
 - `ResultTask.tryPromise({ try, catch, interruption: 'wait' | 'detach' })`
-- `ResultTask.runFork(task, options?)` returns a running native `FiberHandle`
+- `task.runResult(options?)` / `ResultTask.runResult(task, options?)` returns `Promise<Result<T, E>>`
+- `task.runPromise(options?)` / `ResultTask.runPromise(task, options?)` returns `Promise<T>`
+- `task.runExit(options?)` / `ResultTask.runExit(task, options?)` returns `Promise<Exit<T, E>>`
+- `task.runFork(options?)` / `ResultTask.runFork(task, options?)` returns a running native `FiberHandle`
 - `Fiber.join(fiber, options?)`, `Fiber.await(fiber)`, `Fiber.interrupt(fiber)`
 - Native fiber `id`, `Fiber.poll(fiber)` and `Fiber.addObserver(fiber, callback)`
 - Run options `yieldEvery` / `scheduler: TaskScheduler`; `Scheduler.live` is the default dispatcher

@@ -7,8 +7,6 @@
  */
 import { pathToFileURL } from "node:url";
 
-import { ResultTask } from "resultar";
-
 export * from "./async-resilience.js";
 export * from "./collections-and-control-flow.js";
 export * from "./domain-workflow.js";
@@ -41,9 +39,9 @@ const errorCode = (error: unknown): string => {
  * JSON-serializable summary.
  */
 export const runCookbook = async () => {
-  const user = await ResultTask.runResult(loadUserWithTimeout("usr_123", 1));
-  const catalog = await ResultTask.runResult(loadCatalogWithFallback("sku_123"));
-  const price = await ResultTask.runResult(fastestPrice("sku_123"));
+  const user = await loadUserWithTimeout("usr_123", 1).runResult();
+  const catalog = await loadCatalogWithFallback("sku_123").runResult();
+  const price = await fastestPrice("sku_123").runResult();
   const imported = await importRowsWithCleanup(["one", "two"]);
   const payment = settlePayment(decidePaymentState(1_900, 10));
 

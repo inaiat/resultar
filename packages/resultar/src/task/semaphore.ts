@@ -56,7 +56,7 @@ const assertPositiveSafeInteger = (permits: number, label: string): void => {
  * const tasks = [1, 2, 3, 4].map((id) =>
  *   limiter.withPermit(ResultTask.of(() => `processed-${id}`)),
  * )
- * const results = await ResultTask.all(tasks, { concurrency: 'unbounded' }).run()
+ * const results = await ResultTask.all(tasks, { concurrency: 'unbounded' }).runPromise()
  * ```
  */
 export interface Semaphore {

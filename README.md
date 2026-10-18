@@ -70,7 +70,7 @@ const registerAccount = (input: string) =>
 // Inferred: ResultTask<Account, InvalidEmailError | AccountExistsError | DatabaseError>
 
 // 4. Handle every failure exhaustively at the boundary (compile error if a tag is missed!)
-const result = await ResultTask.runResult(registerAccount(req.body.email))
+const result = await registerAccount(req.body.email).runResult()
 const response = result.matchTags(
   (account) => ({ status: 201, body: account }),
   {
@@ -131,6 +131,13 @@ flowchart LR
 - **Stage 2 — `ResultTask<T, E>`**: Use for new async operations, retries, and timeouts. Build work lazily and execute it with `runResult`, `runExit`, `runPromise`, or `runFork`.
 - **Stage 3 — `ResultTask<T, E, R>`**: Add typed service dependencies or owned resources when needed. Providing requirements leaves a Task that still needs an explicit runner.
 - **Existing APIs — deprecated `ResultAsync<T, E>`**: Import from `resultar/async` to preserve eager, single-execution behavior while migrating. Import its class, factories and eager composition helpers from that subpath; use explicit bridges between it and Task. It ships with the same `resultar` installation. See the [migration table](docs/migrations/v4.md).
+
+Prefer `task.runResult()`, `task.runPromise()`, `task.runExit()`, and `task.runFork()` in new code.
+The static forms, such as `ResultTask.runResult(task, options)`, remain equivalent and supported.
+Both forms enforce service requirements and accept the same execution options. `runResult` returns
+typed errors as `Err` and can reject defects, interruption, and composite causes; `runPromise` resolves
+the value or rejects, `runExit` preserves every outcome as a value, and `runFork` starts a root fiber
+immediately. Each call starts a new execution. See the [runner reference](packages/resultar/README.md#lazy-workflows-with-resulttask).
 
 ```ts
 import { createTaggedError, ok, Result, ResultTask, Retry } from 'resultar'
@@ -237,7 +244,7 @@ const program = ResultTask.scoped(
 
 // Test timeouts and retries deterministically in 0ms of wall-clock time:
 const clock = Clock.virtual()
-const pending = ResultTask.runResult(program, { clock })
+const pending = program.runResult({ clock })
 await clock.advanceBy(1_500)
 const result = await pending
 ```
@@ -332,7 +339,7 @@ const services = createModule().scoped(Users)
 
 export const app = createHonoApp({ services }, (router) => {
   router.get('/users/:id', async (c) => {
-    const result = await ResultTask.runResult(c.env.users.findById(c.req.param('id')))
+    const result = await c.env.users.findById(c.req.param('id')).runResult()
     return result.matchTags((user) => c.json(user, 200), {
       UserNotFoundError: (err) => c.json({ error: err.message }, 404),
     })

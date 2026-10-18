@@ -39,8 +39,9 @@ and use these samples for new code:
 
 These are independent adoption steps. Every asynchronous recipe uses `ResultTask`: it is lazy
 and repeatable, has no `.then`, and runs through explicit runners. Synchronous recipes retain
-`Result`. Native Promise boundaries use `ResultTask.runPromise`, while callers that need typed
-results use `runResult`. Use `runExit` to inspect cancellation, defects and cleanup failures.
+`Result`. Native Promise boundaries use `task.runPromise()`, while callers that need typed
+results use `task.runResult()`. Use `task.runExit()` to inspect cancellation, defects and cleanup
+failures.
 Construct promises and mutable per-run state inside the Task so repeated runs create fresh work.
 
 - [`src/sync-validation.ts`](src/sync-validation.ts): field validation with `Result.validateAll`,
@@ -55,7 +56,7 @@ Construct promises and mutable per-run state inside the Task so repeated runs cr
   wrappers (`fromThrowable`, task factories), callback subscriptions with cooperative cancellation
   and guaranteed cleanup, direct error
   matching (`matchError`, `matchErrorPartial`), and intentional unwrapping (`unwrapOr`, `unwrapOrThrow`,
-  `runSync`, `ResultTask.runPromise`) at edges.
+  `runSync`, `task.runPromise()`) at edges.
 - [`src/recovery-and-fallbacks.ts`](src/recovery-and-fallbacks.ts): `catchTag`, `catchTags`, reasoned
   errors (`catchReason`, `catchReasons`, `unwrapReason`), `orElse`, `orElseSucceed`, `firstSuccessOf`,
   and partial boundary matching (`matchTagsPartial`).
@@ -80,8 +81,8 @@ Construct promises and mutable per-run state inside the Task so repeated runs cr
   `sandbox`/`unsandbox`, `catchCause`/`inspectCause`, `Cause` diagnostics (`isCause`, `hasFails`,
   `hasDies`, `hasInterrupts`, `failures`, `defects`, `findError`, `pretty`), `yieldEvery`,
   `ResultTask.yieldNow`, custom `TaskScheduler`, `Fiber.await`/`join`/`interrupt`,
-  `ResultTask.runFork`, `ResultTask.race` and `raceFirst`, explicit task runners, and the eager
-  native Promise interoperability through `ResultTask.runPromise`.
+  `task.runFork()`, `ResultTask.race` and `raceFirst`, explicit task runners, and
+  native Promise interoperability through `task.runPromise()`.
 - [`src/resource-cleanup.ts`](src/resource-cleanup.ts): `ResultTask.acquireRelease` and `scoped` with release
   assertions for success, failure rollback, and fallible release paths observed through `runExit`.
 - [`src/application-lifecycle.ts`](src/application-lifecycle.ts): a `ResultTask.scoped` server
@@ -110,7 +111,7 @@ const task = ResultTask.gen(function* () {
   });
 });
 
-const result = await ResultTask.runResult(task);
+const result = await task.runResult();
 ```
 
 Task `map` is synchronous; compose another async step with `andThen` and `tryPromise`.

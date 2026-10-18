@@ -150,11 +150,11 @@ export const runFunctionalErgonomics = async () => {
       return `${session.label}:${label}`;
     }),
   ).provideService(WorkflowClock, { now: () => 42 });
-  const first = await ResultTask.runPromise(program);
-  const second = await ResultTask.runPromise(program);
-  const normalized = await ResultTask.runPromise(
-    loadUserLabel(" ADA ").provideService(WorkflowClock, { now: () => 42 }),
-  );
+  const first = await program.runPromise();
+  const second = await program.runPromise();
+  const normalized = await loadUserLabel(" ADA ")
+    .provideService(WorkflowClock, { now: () => 42 })
+    .runPromise();
   const roleSummary = Result.gen(function* () {
     const admin = yield* parseUserRole(" ADMIN ");
     return admin;
@@ -209,28 +209,31 @@ export const runAdvancedErgonomics = async () => {
     return `${tenant.prefix}:t=${clock.now()}`;
   });
 
-  const providedWithMap = await ResultTask.runPromise(
-    multiServiceTask.provideServices({
+  const providedWithMap = await multiServiceTask
+    .provideServices({
       TenantPrefix: { prefix: "acme" },
       WorkflowClock: { now: () => 100 },
-    }),
-  );
+    })
+    .runPromise();
 
-  const providedWithResolver = await ResultTask.runPromise(
-    multiServiceTask.provideServiceResolver({
+  const providedWithResolver = await multiServiceTask
+    .provideServiceResolver({
       TenantPrefix: () => ResultTask.ok({ prefix: "globex" }),
       WorkflowClock: () => ResultTask.sync(() => ({ now: () => 200 })),
-    }),
-  );
+    })
+    .runPromise();
 
   // 2. `Match.valueTags` and `Match.typeTags` for concise `_tag` dispatch.
-  const paidBanner = Match.valueTags<BillingNotification, {
-    InvoicePaid: (n: Extract<BillingNotification, { _tag: "InvoicePaid" }>) => string;
-    InvoiceOverdue: (n: Extract<BillingNotification, { _tag: "InvoiceOverdue" }>) => string;
-    SubscriptionCancelled: (
-      n: Extract<BillingNotification, { _tag: "SubscriptionCancelled" }>,
-    ) => string;
-  }>(
+  const paidBanner = Match.valueTags<
+    BillingNotification,
+    {
+      InvoicePaid: (n: Extract<BillingNotification, { _tag: "InvoicePaid" }>) => string;
+      InvoiceOverdue: (n: Extract<BillingNotification, { _tag: "InvoiceOverdue" }>) => string;
+      SubscriptionCancelled: (
+        n: Extract<BillingNotification, { _tag: "SubscriptionCancelled" }>,
+      ) => string;
+    }
+  >(
     { _tag: "InvoicePaid", cents: 2_500 },
     {
       InvoiceOverdue: (n) => `overdue:${n.days}`,
@@ -303,4 +306,3 @@ export const runAdvancedErgonomics = async () => {
     scores: [scoreCategory(100, 0), scoreCategory(40, 20), scoreCategory(10, 5)],
   };
 };
-

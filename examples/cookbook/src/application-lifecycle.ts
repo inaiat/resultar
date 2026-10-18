@@ -90,8 +90,8 @@ export const runManualScopeOwnerExample = async () => {
     }),
   )
 
-  const value = await ResultTask.runPromise(
-    owner.use(
+  const value = await owner
+    .use(
       ResultTask.gen(function* () {
         // Closed explicitly by owner.close() below.
         // resultar-check-disable-next-line no-unscoped-acquire-release
@@ -107,10 +107,10 @@ export const runManualScopeOwnerExample = async () => {
         })
         return resource
       }),
-    ),
-  )
+    )
+    .runPromise()
 
-  await ResultTask.runPromise(owner.close())
+  await owner.close().runPromise()
 
   return {
     events,

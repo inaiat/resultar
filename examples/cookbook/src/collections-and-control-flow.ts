@@ -364,23 +364,22 @@ export const inspectCheckoutEvents = async () => {
       },
     });
 
-  void (await ResultTask.runResult(
-    AuditWriteError.taskErr({ entry: "failed_inspect" })
-      .inspect((value) => {
-        events.push(`asyncInspect:${value}`);
-      })
-      .inspectError((error) => {
-        events.push(`asyncInspectError:${error._tag}`);
-      })
-      .inspectBoth({
-        err: (error) => {
-          events.push(`asyncBothErr:${error._tag}`);
-        },
-        ok: (value) => {
-          events.push(`asyncBothOk:${value}`);
-        },
-      }),
-  ));
+  void (await AuditWriteError.taskErr({ entry: "failed_inspect" })
+    .inspect((value) => {
+      events.push(`asyncInspect:${value}`);
+    })
+    .inspectError((error) => {
+      events.push(`asyncInspectError:${error._tag}`);
+    })
+    .inspectBoth({
+      err: (error) => {
+        events.push(`asyncBothErr:${error._tag}`);
+      },
+      ok: (value) => {
+        events.push(`asyncBothOk:${value}`);
+      },
+    })
+    .runResult());
 
   return events;
 };
@@ -449,7 +448,7 @@ export const observeTaskCheckout = async () => {
       return value;
     }),
   );
-  await ResultTask.runPromise(program);
+  await program.runPromise();
 
   return events;
 };
@@ -509,7 +508,7 @@ export const runTaskControlFlow = async () => {
     };
   });
 
-  const running = ResultTask.runPromise(taskProgram, { clock });
+  const running = taskProgram.runPromise({ clock });
   await clock.advanceBy(5);
   return running;
 };

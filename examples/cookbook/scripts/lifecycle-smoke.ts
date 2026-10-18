@@ -68,7 +68,7 @@ const fixture = (failSchema = false, failDatabaseClose = false) => {
 const live = fixture()
 const task = applicationLifecycle(live.factories)
 deepEqual(live.events, [])
-const running = ResultTask.runExit(task)
+const running = task.runExit()
 await live.ready.promise
 deepEqual(live.events, ['connect database', 'schema', 'connect session', 'serve'])
 live.stop.resolve()
@@ -84,7 +84,7 @@ deepEqual(live.events, [
 ])
 
 const rollback = fixture(true, true)
-const exit = await ResultTask.runExit(applicationLifecycle(rollback.factories))
+const exit = await applicationLifecycle(rollback.factories).runExit()
 deepEqual(rollback.events, ['connect database', 'schema', 'close database'])
 if (exit._tag !== 'Failure' || exit.cause._tag !== 'Sequential') {
   fail('Expected boot and rollback failures')

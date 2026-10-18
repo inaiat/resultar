@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 
-import { Cause, ResultTask } from "resultar";
+import { Cause } from "resultar";
 
 import {
   AccountCreateError,
@@ -168,34 +168,28 @@ const accountFromGen = createPaidAccountWithGen({
 });
 assert.equal(accountFromGen.isOk(), true);
 
-const accountFromTaskGen = await ResultTask.runResult(
-  createPaidAccountTaskWithGen({
-    cardToken: "card_4242",
-    email: "ada@example.com",
-    planCode: "team",
-  }),
-);
+const accountFromTaskGen = await createPaidAccountTaskWithGen({
+  cardToken: "card_4242",
+  email: "ada@example.com",
+  planCode: "team",
+}).runResult();
 assert.equal(accountFromTaskGen.isOk(), true);
 
-const declinedTaskAccount = await ResultTask.runResult(
-  createPaidAccountTaskWithGen({
-    cardToken: "card_declined",
-    email: "ada@example.com",
-    planCode: "team",
-  }),
-);
+const declinedTaskAccount = await createPaidAccountTaskWithGen({
+  cardToken: "card_declined",
+  email: "ada@example.com",
+  planCode: "team",
+}).runResult();
 assert.equal(declinedTaskAccount.isErr(), true);
 if (declinedTaskAccount.isErr()) {
   assert.equal(declinedTaskAccount.error instanceof PaymentDeclinedError, true);
 }
 
-const failedTaskAccount = await ResultTask.runResult(
-  createPaidAccountTaskWithGen({
-    cardToken: "card_4242",
-    email: "ada@blocked.example",
-    planCode: "team",
-  }),
-);
+const failedTaskAccount = await createPaidAccountTaskWithGen({
+  cardToken: "card_4242",
+  email: "ada@blocked.example",
+  planCode: "team",
+}).runResult();
 assert.equal(failedTaskAccount.isErr(), true);
 if (failedTaskAccount.isErr()) {
   assert.equal(failedTaskAccount.error instanceof AccountCreateError, true);
@@ -249,7 +243,7 @@ if (badJsonConfig.isErr()) {
   assert.equal(configErrorStatus(badJsonConfig.error), 400);
 }
 
-const missingConfig = await ResultTask.runResult(loadConfig("missing"));
+const missingConfig = await loadConfig("missing").runResult();
 assert.equal(missingConfig.isErr(), true);
 
 if (missingConfig.isErr()) {
@@ -257,10 +251,10 @@ if (missingConfig.isErr()) {
   assert.equal(configErrorStatus(missingConfig.error), 503);
 }
 
-const bundledConfig = await ResultTask.runResult(loadBundledConfig("memory"));
+const bundledConfig = await loadBundledConfig("memory").runResult();
 assert.equal(bundledConfig.isOk(), true);
 
-const defaultConfig = await ResultTask.runResult(loadDefaultConfig());
+const defaultConfig = await loadDefaultConfig().runResult();
 assert.equal(defaultConfig.isOk(), true);
 
 if (defaultConfig.isOk()) {
@@ -270,11 +264,11 @@ if (defaultConfig.isOk()) {
 const callbackEvents: string[] = [];
 const callbackTask = waitForConfigEvent("ready", callbackEvents);
 assert.deepEqual(callbackEvents, []);
-const callbackConfig = await ResultTask.runResult(callbackTask);
+const callbackConfig = await callbackTask.runResult();
 assert.equal(callbackConfig.isOk(), true);
 assert.deepEqual(callbackEvents, ["subscribe:ready", "cleanup:ready"]);
 
-const repeatedCallbackConfig = await ResultTask.runResult(callbackTask);
+const repeatedCallbackConfig = await callbackTask.runResult();
 assert.equal(repeatedCallbackConfig.isOk(), true);
 assert.deepEqual(callbackEvents, [
   "subscribe:ready",
@@ -284,18 +278,15 @@ assert.deepEqual(callbackEvents, [
 ]);
 
 const brokenCallbackEvents: string[] = [];
-const brokenCallbackConfig = await ResultTask.runResult(
-  waitForConfigEvent("broken", brokenCallbackEvents),
-);
+const brokenCallbackConfig = await waitForConfigEvent("broken", brokenCallbackEvents).runResult();
 assert.equal(brokenCallbackConfig.isErr(), true);
 assert.deepEqual(brokenCallbackEvents, ["subscribe:broken", "cleanup:broken"]);
 
 const interruptedCallbackEvents: string[] = [];
 const callbackController = new AbortController();
-const interruptedCallbackRun = ResultTask.runExit(
-  waitForConfigEvent("ready", interruptedCallbackEvents),
-  { signal: callbackController.signal },
-);
+const interruptedCallbackRun = waitForConfigEvent("ready", interruptedCallbackEvents).runExit({
+  signal: callbackController.signal,
+});
 assert.deepEqual(interruptedCallbackEvents, ["subscribe:ready"]);
 callbackController.abort();
 const interruptedCallback = await interruptedCallbackRun;
@@ -306,7 +297,7 @@ if (interruptedCallback._tag === "Failure") {
 assert.deepEqual(interruptedCallbackEvents, ["subscribe:ready", "cleanup:ready"]);
 
 const preAbortedEvents: string[] = [];
-const preAbortedCallback = await ResultTask.runExit(waitForConfigEvent("ready", preAbortedEvents), {
+const preAbortedCallback = await waitForConfigEvent("ready", preAbortedEvents).runExit({
   signal: callbackController.signal,
 });
 assert.equal(preAbortedCallback._tag, "Failure");
@@ -423,21 +414,21 @@ if (acknowledged.isOk()) {
   assert.equal(acknowledged.value, undefined);
 }
 
-const taskAcknowledged = await ResultTask.runResult(acknowledgeCheckoutTask());
+const taskAcknowledged = await acknowledgeCheckoutTask().runResult();
 assert.equal(taskAcknowledged.isOk(), true);
 
 if (taskAcknowledged.isOk()) {
   assert.equal(taskAcknowledged.value, undefined);
 }
 
-const enrichedBuyer = await ResultTask.runResult(enrichBuyerTask("buyer_1"));
+const enrichedBuyer = await enrichBuyerTask("buyer_1").runResult();
 assert.equal(enrichedBuyer.isOk(), true);
 
 if (enrichedBuyer.isOk()) {
   assert.equal(enrichedBuyer.value.tier, "gold");
 }
 
-const reservedValidatedLine = await ResultTask.runResult(reserveValidatedLine(orderLines[0]));
+const reservedValidatedLine = await reserveValidatedLine(orderLines[0]).runResult();
 assert.equal(reservedValidatedLine.isOk(), true);
 
 if (reservedValidatedLine.isOk()) {
@@ -535,76 +526,78 @@ if (fraudAfterFlag.isOk()) {
   assert.equal(fraudAfterFlag.value, "fraud-check-from-result");
 }
 
-const taskFulfillment = await ResultTask.runResult(chooseTaskFulfillment(false));
+const taskFulfillment = await chooseTaskFulfillment(false).runResult();
 assert.equal(taskFulfillment.isOk(), true);
 
 if (taskFulfillment.isOk()) {
   assert.equal(taskFulfillment.value.mode, "standard");
 }
 
-const taskAuditSkipped = await ResultTask.runResult(maybeTaskAudit(false));
+const taskAuditSkipped = await maybeTaskAudit(false).runResult();
 assert.equal(taskAuditSkipped.isOk(), true);
 
 if (taskAuditSkipped.isOk()) {
   assert.equal(taskAuditSkipped.value, undefined);
 }
 
-const taskAuditAfterFlag = await ResultTask.runResult(maybeTaskAuditAfterFlag(true));
+const taskAuditAfterFlag = await maybeTaskAuditAfterFlag(true).runResult();
 assert.equal(taskAuditAfterFlag.isOk(), true);
 if (taskAuditAfterFlag.isOk()) {
   assert.equal(taskAuditAfterFlag.value, "async-audit-from-result");
 }
 
-const taskFraudCheck = await ResultTask.runResult(maybeTaskFraudCheck(false));
+const taskFraudCheck = await maybeTaskFraudCheck(false).runResult();
 assert.equal(taskFraudCheck.isOk(), true);
 
 if (taskFraudCheck.isOk()) {
   assert.equal(taskFraudCheck.value, "async-fraud-check");
 }
 
-const taskFraudAfterFlag = await ResultTask.runResult(maybeTaskFraudCheckAfterFlag(false));
+const taskFraudAfterFlag = await maybeTaskFraudCheckAfterFlag(false).runResult();
 assert.equal(taskFraudAfterFlag.isOk(), true);
 if (taskFraudAfterFlag.isOk()) {
   assert.equal(taskFraudAfterFlag.value, "async-fraud-from-result");
 }
 
-const inventory = await ResultTask.runResult(reserveInventory(orderLines));
+const inventory = await reserveInventory(orderLines).runResult();
 assert.equal(inventory.isOk(), true);
 
 if (inventory.isOk()) {
   assert.equal(inventory.value.length, 2);
 }
 
-const inventoryValidation = await ResultTask.runResult(
-  validateInventory([...orderLines, { quantity: 1, sku: "missing", unitCents: 500 }]),
-);
+const inventoryValidation = await validateInventory([
+  ...orderLines,
+  { quantity: 1, sku: "missing", unitCents: 500 },
+]).runResult();
 assert.equal(inventoryValidation.isErr(), true);
 
-const auditSaved = await ResultTask.runResult(saveAuditTrail(["created", "paid"]));
+const auditSaved = await saveAuditTrail(["created", "paid"]).runResult();
 assert.equal(auditSaved.isOk(), true);
 
-const auditFailed = await ResultTask.runResult(saveAuditTrail(["created", "bad"]));
+const auditFailed = await saveAuditTrail(["created", "bad"]).runResult();
 assert.equal(auditFailed.isErr(), true);
 
-const taskOrderContext = await ResultTask.runResult(combineTaskOrderContext());
+const taskOrderContext = await combineTaskOrderContext().runResult();
 assert.equal(taskOrderContext.isOk(), true);
 
 if (taskOrderContext.isOk()) {
   assert.equal(taskOrderContext.value.payment, "authorized");
 }
 
-const allTaskChecks = await ResultTask.runResult(allTaskOrderChecks());
+const allTaskChecks = await allTaskOrderChecks().runResult();
 assert.equal(allTaskChecks.isOk(), true);
 
-const invalidTaskCheckout = await ResultTask.runResult(
-  validateTaskCheckout([{ quantity: 1, sku: "missing", unitCents: 100 }], "NOPE"),
-);
+const invalidTaskCheckout = await validateTaskCheckout(
+  [{ quantity: 1, sku: "missing", unitCents: 100 }],
+  "NOPE",
+).runResult();
 assert.equal(invalidTaskCheckout.isErr(), true);
 if (invalidTaskCheckout.isErr()) {
   assert.equal(invalidTaskCheckout.error.length, 2);
 }
 
-const validTaskCheckout = await ResultTask.runResult(validateTaskCheckout(orderLines, "SAVE10"));
+const validTaskCheckout = await validateTaskCheckout(orderLines, "SAVE10").runResult();
 assert.equal(validTaskCheckout.isOk(), true);
 if (validTaskCheckout.isOk()) {
   assert.equal(validTaskCheckout.value.coupon.discountCents, 1_000);
@@ -614,25 +607,25 @@ if (validTaskCheckout.isOk()) {
   );
 }
 
-const warehouse = await ResultTask.runResult(firstAvailableWarehouse("sku_book"));
+const warehouse = await firstAvailableWarehouse("sku_book").runResult();
 assert.equal(warehouse.isOk(), true);
 if (warehouse.isOk()) {
   assert.equal(warehouse.value.position, 1);
 }
 
-const taskSchedule = await ResultTask.runResult(taskInvoiceSchedule());
+const taskSchedule = await taskInvoiceSchedule().runResult();
 assert.equal(taskSchedule.isOk(), true);
 if (taskSchedule.isOk()) {
   assert.deepEqual(taskSchedule.value, ["async-invoice:1", "async-invoice:2", "async-invoice:3"]);
 }
 
-const taskCursor = await ResultTask.runResult(taskFinalCursor());
+const taskCursor = await taskFinalCursor().runResult();
 assert.equal(taskCursor.isOk(), true);
 if (taskCursor.isOk()) {
   assert.equal(taskCursor.value, 3);
 }
 
-const taskOrderIds = await ResultTask.runResult(zipTaskOrderIds());
+const taskOrderIds = await zipTaskOrderIds().runResult();
 assert.equal(taskOrderIds.isOk(), true);
 
 if (taskOrderIds.isOk()) {
@@ -672,24 +665,24 @@ assert.deepEqual(await runTaskControlFlow(), {
   zipped: ["left", "right"],
 });
 
-const quickUser = await ResultTask.runResult(loadUserWithTimeout("usr_123", 1));
+const quickUser = await loadUserWithTimeout("usr_123", 1).runResult();
 assert.equal(quickUser.isOk(), true);
 
-const slowUser = await ResultTask.runResult(loadUserWithTimeout("usr_123", 20));
+const slowUser = await loadUserWithTimeout("usr_123", 20).runResult();
 assert.equal(slowUser.isErr(), true);
 
 if (slowUser.isErr()) {
   assert.equal(slowUser.error._tag, "UserTimeoutError");
 }
 
-const catalog = await ResultTask.runResult(loadCatalogWithFallback("sku_123"));
+const catalog = await loadCatalogWithFallback("sku_123").runResult();
 assert.equal(catalog.isOk(), true);
 
 if (catalog.isOk()) {
   assert.equal(catalog.value.source, "cache");
 }
 
-const retriedCatalog = await ResultTask.runResult(loadCatalogAfterRetry("sku_123"));
+const retriedCatalog = await loadCatalogAfterRetry("sku_123").runResult();
 assert.equal(retriedCatalog.isOk(), true);
 
 if (retriedCatalog.isOk()) {
@@ -697,7 +690,7 @@ if (retriedCatalog.isOk()) {
 }
 
 const policyCatalogTask = loadCatalogWithRetryPolicy("sku_123");
-const policyCatalog = await ResultTask.runPromise(policyCatalogTask);
+const policyCatalog = await policyCatalogTask.runPromise();
 assert.equal(policyCatalog.attempts, 3);
 assert.equal(policyCatalog.result.isOk(), true);
 assert.deepEqual(policyCatalog.retryLog, [
@@ -705,34 +698,34 @@ assert.deepEqual(policyCatalog.retryLog, [
   "retry:1:CatalogUnavailableError",
 ]);
 
-const repeatedPolicyCatalog = await ResultTask.runPromise(policyCatalogTask);
+const repeatedPolicyCatalog = await policyCatalogTask.runPromise();
 assert.equal(repeatedPolicyCatalog.attempts, 3);
 assert.equal(repeatedPolicyCatalog.result.isOk(), true);
 assert.deepEqual(repeatedPolicyCatalog.retryLog, policyCatalog.retryLog);
 assert.notEqual(repeatedPolicyCatalog.retryLog, policyCatalog.retryLog);
 
-const price = await ResultTask.runResult(fastestPrice("sku_123"));
+const price = await fastestPrice("sku_123").runResult();
 assert.equal(price.isOk(), true);
 
 if (price.isOk()) {
   assert.equal(price.value.region, "eu-west");
 }
 
-const regionalPrice = await ResultTask.runResult(fastestRegionalPrice("sku_123"));
+const regionalPrice = await fastestRegionalPrice("sku_123").runResult();
 assert.equal(regionalPrice.isOk(), true);
 
 if (regionalPrice.isOk()) {
   assert.equal(regionalPrice.value.region, "replica");
 }
 
-const firstPrice = await ResultTask.runResult(firstCompletedPrice("sku_123"));
+const firstPrice = await firstCompletedPrice("sku_123").runResult();
 assert.equal(firstPrice.isErr(), true);
 
 if (firstPrice.isErr()) {
   assert.equal(firstPrice.error._tag, "PriceProviderError");
 }
 
-const customRacePrice = await ResultTask.runResult(fallbackPriceWithCustomRace("sku_123"));
+const customRacePrice = await fallbackPriceWithCustomRace("sku_123").runResult();
 assert.equal(customRacePrice.isOk(), true);
 
 if (customRacePrice.isOk()) {

@@ -82,9 +82,9 @@ interface Sleeper {
  * import { Clock, ResultTask } from 'resultar'
  *
  * const clock = Clock.virtual()
- * const running = ResultTask.sleep(5_000).map(() => clock.now()).run({ clock })
+ * const running = ResultTask.sleep(5_000).map(() => clock.now()).runPromise({ clock })
  * await clock.advanceBy(5_000)
- * const elapsed = (await running).unwrap() // 5000
+ * const elapsed = await running // 5000
  * ```
  */
 export class VirtualClock implements TaskClock {
@@ -176,7 +176,7 @@ export class VirtualClock implements TaskClock {
 }
 
 /**
- * Clock factories for `ResultTask` run options (`run`, `runExit`, `runPromise`, `runFork`).
+ * Clock factories for `ResultTask` run options (`runResult`, `runExit`, `runPromise`, `runFork`).
  *
  * @example
  * ```ts

@@ -84,7 +84,7 @@ import { ResultTask } from "resultar";
 
 // Inside a native Hono route handler for /users/:id:
 const task = ResultTask.fromResultAsync(() => c.env.users.findById(c.req.param("id")));
-const result = await ResultTask.runResult(task);
+const result = await task.runResult();
 return result.matchTags(
   (user) => c.json(user),
   {

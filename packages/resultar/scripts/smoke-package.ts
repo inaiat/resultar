@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -259,3 +260,103 @@ assert.equal(disposed, 1);`,
   ],
   { cwd: rootDir, stdio: 'inherit' },
 )
+
+const consumerDirectory = mkdtempSync(path.join(tmpdir(), 'resultar-instance-runners-'))
+try {
+  const archive = path.join(consumerDirectory, 'resultar.tgz')
+  execFileSync('pnpm', ['--config.ignore-scripts=true', 'pack', '--out', archive], {
+    cwd: rootDir,
+    stdio: 'pipe',
+  })
+  const installed = path.join(consumerDirectory, 'node_modules', 'resultar')
+  mkdirSync(installed, { recursive: true })
+  execFileSync('tar', ['-xzf', archive, '--strip-components=1', '-C', installed])
+  const consumer = path.join(consumerDirectory, 'instance-runners.mts')
+  writeFileSync(
+    consumer,
+    `import { Fiber, ResultTask, type Result, type Exit, type FiberHandle } from 'resultar';
+let executions = 0;
+const task = ResultTask.sync(() => ++executions);
+const result: Result<number, never> = await task.runResult();
+if (!result.isOk() || result.value !== 1) throw new Error('Invalid Result boundary');
+const value: number = await task.runPromise();
+if (value !== 2) throw new Error('Invalid Promise boundary');
+const exit: Exit<number, never> = await task.runExit();
+if (exit._tag !== 'Success' || exit.value !== 3) throw new Error('Invalid Exit boundary');
+const fiber: FiberHandle<number, never> = task.runFork();
+const forked = await Fiber.await(fiber).runPromise();
+if (forked._tag !== 'Success' || forked.value !== 4) throw new Error('Invalid Fiber boundary');
+if (await ResultTask.runPromise(task) !== 5) throw new Error('Static runner changed');
+const Config = ResultTask.service<{readonly value: number}>()('config');
+const workflow = ResultTask.gen(function*() {
+ const config = yield* Config;
+ yield* ResultTask.acquireRelease({
+  acquire: ResultTask.ok(config.value),
+  release: () => ResultTask.err('release' as const),
+ });
+ return config.value;
+});
+const options = {services: {config: {value: 42}}};
+const release: Result<number, 'release'> = await workflow.runResult(options);
+if (!release.isErr() || release.error !== 'release') throw new Error('Missing release failure');
+const releasedExit: Exit<number, 'release'> = await workflow.runExit(options);
+if (releasedExit._tag !== 'Failure') throw new Error('Missing failed Exit');
+const releasedFiber: FiberHandle<number, 'release'> = workflow.runFork(options);
+if ((await Fiber.await(releasedFiber).runPromise())._tag !== 'Failure') throw new Error('Missing failed fiber');
+if (false) {
+ const promised: Promise<number> = workflow.runPromise(options);
+ // @ts-expect-error Required services must be supplied.
+ workflow.runResult();
+ // @ts-expect-error Required services must be supplied.
+ workflow.runPromise();
+ // @ts-expect-error Required services must be supplied.
+ workflow.runExit();
+ // @ts-expect-error Required services must be supplied.
+ workflow.runFork();
+ // @ts-expect-error Run options cannot widen the service contract.
+ workflow.runResult({services: {config: {value: 'wrong'}}});
+ // @ts-expect-error Run options cannot widen the service contract.
+ workflow.runPromise({services: {config: {value: 'wrong'}}});
+ // @ts-expect-error Run options cannot widen the service contract.
+ workflow.runExit({services: {config: {value: 'wrong'}}});
+ // @ts-expect-error Run options cannot widen the service contract.
+ workflow.runFork({services: {config: {value: 'wrong'}}});
+ // @ts-expect-error Requirement-free tasks reject extra services.
+ task.runResult(options);
+ const {runResult, runPromise, runExit, runFork} = task;
+ // @ts-expect-error A runner needs its Task receiver.
+ runResult();
+ // @ts-expect-error A runner needs its Task receiver.
+ runPromise();
+ // @ts-expect-error A runner needs its Task receiver.
+ runExit();
+ // @ts-expect-error A runner needs its Task receiver.
+ runFork();
+ // @ts-expect-error Task does not become a PromiseLike.
+ const implicit: PromiseLike<number> = task;
+ // @ts-expect-error The interpreter's run method remains private.
+ task.run();
+}
+`,
+  )
+  execFileSync(
+    path.join(rootDir, 'node_modules/.bin/tsc'),
+    [
+      '--ignoreConfig',
+      '--noEmit',
+      '--strict',
+      '--exactOptionalPropertyTypes',
+      '--skipLibCheck',
+      '--module',
+      'NodeNext',
+      '--target',
+      'ESNext',
+      consumer,
+    ],
+    { stdio: 'inherit' },
+  )
+  execFileSync(process.execPath, [consumer], { stdio: 'inherit' })
+  process.stdout.write('Packed ResultTask instance runners passed types and execution.\n')
+} finally {
+  rmSync(consumerDirectory, { recursive: true, force: true })
+}

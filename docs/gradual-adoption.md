@@ -146,7 +146,7 @@ const greeting = (id: string) =>
     return `Hello, ${user.name}`;
   });
 
-const result = await ResultTask.runResult(greeting("user_123"));
+const result = await greeting("user_123").runResult();
 const response = result.match({
   ok: (message) => ({ status: 200, body: { message } }),
   err: (error) => ({ status: 503, body: { message: error.message } }),
@@ -211,7 +211,7 @@ console.log((await greeting("user_123")).unwrapOr("Unavailable"));
 
 // Callers can also pass a task to an explicit execution boundary with runtime options.
 const task = greetingTask("user_123");
-const result = await ResultTask.runResult(task);
+const result = await task.runResult();
 console.log(result.unwrapOr("Unavailable"));
 ```
 
@@ -286,7 +286,7 @@ const users: UserRepository = {
     }),
 };
 
-const result = await ResultTask.runResult(greeting, { services: { Users: users } });
+const result = await greeting.runResult({ services: { Users: users } });
 console.log(result.unwrapOr("Unavailable"));
 ```
 
@@ -326,7 +326,7 @@ const task = read.retry(policy);
 
 // Production runs use Clock.live by default. Tests supply time and randomness.
 const clock = Clock.virtual(0, () => 0.5);
-const running = ResultTask.runResult(task, { clock });
+const running = task.runResult({ clock });
 await clock.advanceBy(300);
 const result = await running;
 
@@ -383,7 +383,7 @@ const program = ResultTask.scoped(ResultTask.gen(function* () {
 }));
 
 const clock = Clock.virtual();
-const running = ResultTask.runExit(program, { clock });
+const running = program.runExit({ clock });
 await clock.advanceBy(20);
 console.log(await running);
 console.log(released); // ["primary", "secondary"]
@@ -406,6 +406,21 @@ and [application resource lifetime](../examples/cookbook/src/application-lifecyc
 
 ## 8. Choose the outer boundary explicitly
 
+Prefer instance runners in new code. Each has an equivalent static form with the same options,
+service checks, and deferred scope error types:
+
+| Instance form               | Equivalent static form                  |
+| --------------------------- | --------------------------------------- |
+| `task.runResult(options?)`  | `ResultTask.runResult(task, options?)`  |
+| `task.runPromise(options?)` | `ResultTask.runPromise(task, options?)` |
+| `task.runExit(options?)`    | `ResultTask.runExit(task, options?)`    |
+| `task.runFork(options?)`    | `ResultTask.runFork(task, options?)`    |
+
+The options include `services`, `signal`, `clock`, `scheduler`, and `yieldEvery`. Required services
+remain checked; pending release errors join the boundary error union (`E | ScopeError<R>` internally).
+Every call executes the Task again. There is no public `task.run()` method, and awaiting a Task
+without a runner leaves it unexecuted.
+
 Use `runResult` when an integration expects `Promise<Result<T, E>>` and already
 has a rejection policy for unexpected failures. It turns a single typed failure
 into `Err`; defects, interruption and composite causes reject.
@@ -423,7 +438,7 @@ class LoadUserError extends createTaggedError({
 }) {}
 
 const task = ResultTask.err(new LoadUserError({ id: "user_123" }));
-const exit = await ResultTask.runExit(task);
+const exit = await task.runExit();
 
 if (exit._tag === "Success") {
   console.log(exit.value);
@@ -437,6 +452,8 @@ if (exit._tag === "Success") {
 `runExit` retains `Fail`, `Die`, `Interrupt`, `Sequential` and `Parallel` causes.
 Use `Cause` helpers to inspect the full tree. `runPromise` is a separate adapter
 for a Promise-only boundary that deliberately resolves `T` or rejects a failure.
+`task.runFork(options)` immediately starts a root fiber and returns its `FiberHandle`,
+which owns observation, interruption, and awaited cleanup.
 Keep these execution decisions at the transport, job or application boundary;
 the inner use case can remain lazy.
 

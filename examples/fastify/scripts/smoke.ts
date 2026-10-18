@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { errAsync, ResultAsync, ResultTask } from "resultar";
+import { errAsync, ResultAsync } from "resultar";
 import { createApplication } from "../src/main.ts";
 import {
   createServices,
@@ -10,9 +10,9 @@ import {
   UserReadError,
 } from "../src/services.ts";
 
-const cache = await ResultTask.runPromise(Cache.make);
-const repository = await ResultTask.runPromise(UsersRepository.make.provideServices({ cache }));
-const healthService = await ResultTask.runPromise(Health.make.provideServices({ cache }));
+const cache = await Cache.make.runPromise();
+const repository = await UsersRepository.make.provideServices({ cache }).runPromise();
+const healthService = await Health.make.provideServices({ cache }).runPromise();
 assert.deepEqual(await healthService.check().unwrapOrThrow(), { status: "ok", users: 1 });
 cache.set("2", { id: "2", name: "Grace" });
 assert.deepEqual(await healthService.check().unwrapOrThrow(), { status: "ok", users: 2 });
@@ -26,7 +26,7 @@ assert.equal(
 const repositoryLookup = repository.findById("1");
 assert.ok(repositoryLookup instanceof ResultAsync);
 assert.equal(await repositoryLookup.map((user) => user?.name).unwrapOrThrow(), "Ada");
-const service = await ResultTask.runPromise(Users.make.provideServices({ repository }));
+const service = await Users.make.provideServices({ repository }).runPromise();
 const lookup = service.findById("1");
 assert.ok(lookup instanceof ResultAsync);
 assert.equal(await lookup.map((user) => user.name).unwrapOrThrow(), "Ada");
@@ -47,9 +47,9 @@ try {
 const cause = new Error("offline");
 const readError = new UserReadError({ id: "1", cause });
 const brokenRepository = { ...repository, findById: () => errAsync(readError) };
-const brokenService = await ResultTask.runPromise(
-  Users.make.provideServices({ repository: brokenRepository }),
-);
+const brokenService = await Users.make
+  .provideServices({ repository: brokenRepository })
+  .runPromise();
 const failedLookup = await brokenService.findById("1");
 assert.ok(failedLookup.isErr());
 assert.equal(failedLookup.error, readError);

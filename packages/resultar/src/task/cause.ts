@@ -177,7 +177,7 @@ const pretty = <E>(cause: Cause<E>): string => {
  *     firstError: Cause.findError(cause).unwrapOr('none' as const),
  *     report: Cause.pretty(cause),
  *   }))
- *   .run()
+ *   .runResult()
  * ```
  */
 export const Cause: {

@@ -79,7 +79,7 @@ import { ResultTask } from "resultar";
 const task = ResultTask.fromResultAsync(() =>
   request.services.users.findById(request.params.id),
 );
-const result = await ResultTask.runResult(task, { signal: request.signal });
+const result = await task.runResult({ signal: request.signal });
 return result.matchTags(
   (user) => reply.send(user),
   {

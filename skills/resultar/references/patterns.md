@@ -198,7 +198,7 @@ it acquires after the task has stopped waiting.
 At execution, configure cooperative yields when a long instruction chain must share the event loop:
 
 ```ts
-const exit = await ResultTask.runExit(lazy, { yieldEvery: 256 });
+const exit = await lazy.runExit({ yieldEvery: 256 });
 ```
 
 The default is 2048 instructions with `Scheduler.live`. A custom `TaskScheduler` receives the
@@ -278,7 +278,7 @@ const responseTask = createUser(input).matchTags((user) => ({ body: user, status
   SaveUserError: (error) => ({ body: error.toJSON(), statusCode: 500 }),
 });
 
-const response = await ResultTask.runPromise(responseTask);
+const response = await responseTask.runPromise();
 ```
 
 Use `matchTagsPartial` only when a shared fallback is intentional. Keep HTTP status codes out of

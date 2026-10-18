@@ -211,11 +211,11 @@ export const configPortOrDefault = (raw: string): number =>
     .unwrapOr(3000);
 
 /**
- * `ResultTask.runPromise` extracts a task's success value or rejects its failure
+ * `task.runPromise()` extracts a task's success value or rejects its failure
  * at an outer boundary (e.g., CLI entrypoint or test harness).
  */
 export const loadConfigOrThrow = (source: string): Promise<AppConfig> =>
-  ResultTask.runPromise(loadConfig(source));
+  loadConfig(source).runPromise();
 
 /**
  * `runSync(result)` is the functional helper equivalent of `result.unwrapOrThrow()`
@@ -225,11 +225,13 @@ export const parseConfigPortSync = (raw: string): number =>
   runSync(parseConfig(raw).map((config) => config.port));
 
 /**
- * `ResultTask.runPromise(task)` executes the lazy task at an outer boundary and
+ * `task.runPromise()` executes the lazy task at an outer boundary and
  * resolves with its success value or rejects with its typed failure or Cause.
  */
 export const loadConfigPortPromise = (source: string): Promise<number> =>
-  ResultTask.runPromise(loadConfig(source).map((config) => config.port));
+  loadConfig(source)
+    .map((config) => config.port)
+    .runPromise();
 
 /**
  * `isError(value)` narrows an `unknown` value to a standard `Error` instance.

@@ -5423,6 +5423,87 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
 
   /**
+   * Executes this task and returns simple typed failures as `Err`.
+   * Defects, interruptions, and composite causes reject, just as with `ResultTask.runResult`.
+   * Each call starts a new execution; required services must be supplied in the run options.
+   *
+   * @example
+   * ```ts
+   * const result = await ResultTask.ok(42).runResult()
+   * ```
+   */
+  public runResult<Task>(
+    this: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
+    ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
+  ): Promise<Result<TaskSuccess<Task>, TaskError<Task> | ScopeError<TaskRequirements<Task>>>>
+  public runResult<A0, E0, R0>(
+    this: ResultTask<A0, E0, R0>,
+    ...args: readonly [options?: ResultTaskRunOptions<R0>]
+  ): Promise<Result<A0, E0 | ScopeError<R0>>> {
+    return ResultTask.runResultInternal(this, args[0])
+  }
+
+  /**
+   * Executes this task and resolves to its success value, rejecting on any failure.
+   * Uses the same options and execution semantics as `ResultTask.runPromise`.
+   *
+   * @example
+   * ```ts
+   * const value = await ResultTask.ok(42).runPromise()
+   * ```
+   */
+  public runPromise<Task>(
+    this: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
+    ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
+  ): Promise<TaskSuccess<Task>>
+  public runPromise<A0, E0, R0>(
+    this: ResultTask<A0, E0, R0>,
+    ...args: readonly [options?: ResultTaskRunOptions<R0>]
+  ): Promise<A0> {
+    return ResultTask.runPromiseInternal(this, args[0])
+  }
+
+  /**
+   * Executes this task and preserves every outcome in an `Exit` without rejection.
+   * Uses the same options and execution semantics as `ResultTask.runExit`.
+   *
+   * @example
+   * ```ts
+   * const exit = await ResultTask.ok(42).runExit()
+   * ```
+   */
+  public runExit<Task>(
+    this: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
+    ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
+  ): Promise<Exit<TaskSuccess<Task>, TaskError<Task> | ScopeError<TaskRequirements<Task>>>>
+  public runExit<A0, E0, R0>(
+    this: ResultTask<A0, E0, R0>,
+    ...args: readonly [options?: ResultTaskRunOptions<R0>]
+  ): Promise<Exit<A0, E0 | ScopeError<R0>>> {
+    return ResultTask.runExitInternal(this, args[0])
+  }
+
+  /**
+   * Immediately starts this task as an independent root fiber.
+   * Uses the same options, interruption, and finalization as `ResultTask.runFork`.
+   *
+   * @example
+   * ```ts
+   * const fiber = ResultTask.sleep(10).as('done').runFork()
+   * ```
+   */
+  public runFork<Task>(
+    this: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
+    ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
+  ): FiberHandle<TaskSuccess<Task>, TaskError<Task> | ScopeError<TaskRequirements<Task>>>
+  public runFork<A0, E0, R0>(
+    this: ResultTask<A0, E0, R0>,
+    ...args: readonly [options?: ResultTaskRunOptions<R0>]
+  ): FiberHandle<A0, E0 | ScopeError<R0>> {
+    return ResultTask.runForkInternal(this, args[0])
+  }
+
+  /**
    * Starts an independent root fiber immediately. Its returned `FiberHandle` owns interruption,
    * status inspection, and finalization.
    *
@@ -5431,7 +5512,7 @@ export class ResultTask<out A, out E = never, out R = never> {
    * import { ResultTask } from 'resultar'
    *
    * const fiber = ResultTask.runFork(ResultTask.sleep(10).as('done'))
-   * const exit = await ResultTask.runExit(fiber.await())
+   * const exit = await fiber.join().runExit()
    * ```
    */
   public static runFork<Task>(
@@ -5451,9 +5532,16 @@ export class ResultTask<out A, out E = never, out R = never> {
     task: ResultTask<A, E, R>,
     ...args: readonly [options?: ResultTaskRunOptions<R>]
   ): FiberHandle<A, E | ScopeError<R>> {
+    return ResultTask.runForkInternal(task, args[0])
+  }
+
+  private static runForkInternal<A, E, R>(
+    task: ResultTask<A, E, R>,
+    runOptionsInput?: ResultTaskRunOptions<R>,
+  ): FiberHandle<A, E | ScopeError<R>> {
     const options: Partial<ResultTaskRunOptions<R>> = {}
     try {
-      Object.assign(options, args[0])
+      Object.assign(options, runOptionsInput)
     } catch (error) {
       return createFiberHandle({
         outcome: Promise.resolve(died(error)),

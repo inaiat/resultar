@@ -95,7 +95,7 @@ const registerAccount = (input: string) =>
 // ResultTask<Account, InvalidEmailError | AccountExistsError | DatabaseError>
 
 // 3. Handle every possible error at the HTTP boundary (compile error if a tag is missed!)
-const result = await ResultTask.runResult(registerAccount(req.body.email));
+const result = await registerAccount(req.body.email).runResult();
 const response = result.matchTags((account) => ({ status: 201, body: account }), {
   InvalidEmailError: (err) => ({ status: 400, body: { code: err._tag, message: err.message } }),
   AccountExistsError: (err) => ({ status: 409, body: { code: err._tag, message: err.message } }),
@@ -382,7 +382,7 @@ const getOrCreateAccount = ResultTask.fn(
   ResultTask.catchTag("AccountExistsError", (error) => findAccountByEmail(String(error.email))),
 );
 
-const result = await ResultTask.runResult(getOrCreateAccount(input));
+const result = await getOrCreateAccount(input).runResult();
 ```
 
 - Return `value` for success; use `return yield* step()` or `return yield* MyError.err(...)` for a final fallible step.
@@ -422,7 +422,7 @@ At the edge of your application (HTTP controllers, CLI commands, queue consumers
 - **`matchTagsPartial(onOk, handlers, onUnhandled)`**: Handle specific tags and route the rest to a fallback.
 - **`match(onOk, onErr)` / `match({ ok, err })`**: Handle `Ok` and `Err` directly when individual tags don't matter.
 
-> On `Result`, `match`, `matchTags`, `matchTagsPartial`, and `unwrapOr` return `Out` directly. On deprecated `ResultAsync` instances, they return native `Promise<Out>` terminals; their static/direct/curried forms return composable `ResultAsync<Out, never>` values. On Task, they return lazy `ResultTask<Out, never, R>` operators; use `ResultTask.runPromise(folded)` for `Out`, or match on the Result produced by `runResult`.
+> On `Result`, `match`, `matchTags`, `matchTagsPartial`, and `unwrapOr` return `Out` directly. On deprecated `ResultAsync` instances, they return native `Promise<Out>` terminals; their static/direct/curried forms return composable `ResultAsync<Out, never>` values. On Task, they return lazy `ResultTask<Out, never, R>` operators; use `folded.runPromise()` for `Out`, or match on the Result produced by `runResult`.
 
 ### Strict Error-only boundaries (`StrictResult`)
 
@@ -441,6 +441,8 @@ Prefer `ok` / `err`, `mapErr`, `andThen`, and `orElse` in new code. Deprecated `
 `mapError`, `flatMap`, and `catchAll` retain their original contracts, as do older retry options
 and match handler objects; prefer `Retry.policy(...)` and `{ ok, err }` for new recipes.
 Task has no `.then` method; `await task` leaves it unexecuted, including when `R = never`.
+Prefer the instance runners in new recipes: `task.runResult()`, `task.runPromise()`,
+`task.runExit()`, and `task.runFork()`. The static runners remain supported with the same behavior.
 
 Use `ok`, `err`, `mapErr`, `andThen` and `orElse` as the Task API names. Object handlers
 use `{ ok, err }`, and retries take a policy created with `Retry.policy(...)`.
@@ -457,15 +459,27 @@ const fetchUser = (id: string) =>
 const task = fetchUser("user_123"); // Nothing has executed yet!
 
 // Execute explicitly at your application boundary:
-const result = await ResultTask.runResult(task);
+const result = await task.runResult();
 ```
 
-| Execution boundary                      | Return type             | When to use                                                                                                                     |
-| --------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `ResultTask.runResult(task, options?)`  | `Promise<Result<T, E>>` | Standard boundary with runtime options (`services`, `signal`, `clock`, `scheduler`)                                             |
-| `ResultTask.runExit(task, options?)`    | `Promise<Exit<T, E>>`   | Total boundary: never rejects; captures typed `Fail`, unexpected `Die` defects, `Interrupt`, and `Sequential`/`Parallel` causes |
-| `ResultTask.runPromise(task, options?)` | `Promise<T>`            | Promise-only interop: resolves `T` or rejects any failure                                                                       |
-| `ResultTask.runFork(task, options?)`    | `FiberHandle<T, E>`     | Background execution: starts a root fiber with `.id`, `Fiber.poll`, `Fiber.await`, and `Fiber.interrupt`                        |
+| Instance boundary           | Equivalent static boundary              | Return type             | Behavior                                                                                     |
+| --------------------------- | --------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------- |
+| `task.runResult(options?)`  | `ResultTask.runResult(task, options?)`  | `Promise<Result<T, E>>` | Returns a single typed failure as `Err`; rejects defects, interruption, and composite causes |
+| `task.runPromise(options?)` | `ResultTask.runPromise(task, options?)` | `Promise<T>`            | Resolves the success value; rejects every failure                                            |
+| `task.runExit(options?)`    | `ResultTask.runExit(task, options?)`    | `Promise<Exit<T, E>>`   | Never rejects; preserves every success or failure cause as a value                           |
+| `task.runFork(options?)`    | `ResultTask.runFork(task, options?)`    | `FiberHandle<T, E>`     | Starts a root fiber immediately, with interruption, observation, and cleanup ownership       |
+
+Both forms accept the same `ResultTaskRunOptions<R>`: `services`, `signal`, `clock`, `scheduler`,
+and `yieldEvery`. Missing or incompatible services remain compile-time errors. If `R` includes
+pending scope release errors, `runResult`, `runExit`, and `runFork` include them in their error
+types (`E | ScopeError<R>` internally). Every call starts a separate execution; results are not
+memoized. There is no public `task.run()` runner.
+
+```ts
+const task = ResultTask.sync(() => "ready");
+const first = await task.runResult();
+const second = await ResultTask.runResult(task); // Same contract, another execution
+```
 
 ### Parameterized tasks and tagged recovery
 
@@ -495,7 +509,7 @@ const loadUserDisplayName = ResultTask.fn(
 // Type: (id: string) => ResultTask<string, never, Service<'UsersRepo', ...>>
 
 // Provide services at the boundary (or ahead of time via ResultTask.provideServices)
-const nameResult = await ResultTask.runResult(loadUserDisplayName("u_42"), {
+const nameResult = await loadUserDisplayName("u_42").runResult({
   services: {
     UsersRepo: {
       findById: (id) => UserNotFoundError.taskErr({ id }),
@@ -547,7 +561,7 @@ const resilientTask = fetchUser("user_123")
 
 // Deterministic testing with a virtual clock (no real timers):
 const clock = Clock.virtual();
-const pending = ResultTask.runResult(resilientTask, { clock });
+const pending = resilientTask.runResult({ clock });
 await clock.advanceBy(2_000);
 const outcome = await pending;
 ```
@@ -571,17 +585,17 @@ const transientPolicy = Retry.policy({
 });
 
 const taskWithRetry = fetchUser("user_123").retry(transientPolicy);
-const result = await ResultTask.runResult(taskWithRetry);
+const result = await taskWithRetry.runResult();
 ```
 
 ### Inspect failure causes
 
-When executing a task with `ResultTask.runExit(task)`, failures are represented as a `Cause<E>` tree (`Fail`, `Die`, `Interrupt`, `Sequential`, or `Parallel`). Use the `Cause` namespace to inspect or format them:
+When executing a task with `task.runExit()`, failures are represented as a `Cause<E>` tree (`Fail`, `Die`, `Interrupt`, `Sequential`, or `Parallel`). Use the `Cause` namespace to inspect or format them:
 
 ```ts
 import { Cause, ResultTask } from "resultar";
 
-const exit = await ResultTask.runExit(queryProgram);
+const exit = await queryProgram.runExit();
 
 if (exit._tag === "Failure") {
   Cause.failures(exit.cause); // E[] — all expected typed errors in order
@@ -695,7 +709,7 @@ const loadLegacyAccount = (id: string) =>
 
 // The factory creates a fresh eager operation on each Task run.
 const task = ResultTask.fromResultAsync(() => loadLegacyAccount("acct_1"));
-const result = await ResultTask.runResult(task);
+const result = await task.runResult();
 
 // The reverse bridge starts one requirement-free Task run immediately.
 const legacy = ResultAsync.fromTask(task);
@@ -837,31 +851,31 @@ const loadAccount = (id: string) =>
     }),
   );
 
-const result = await ResultTask.runResult(loadAccount("acct_1"));
+const result = await loadAccount("acct_1").runResult();
 ```
 
 ---
 
 ## API Decision Guide
 
-| Goal                                           | Recommended API                                                                        |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Create success or failure                      | Sync: `ok`, `err`, `unit`; Task: `ResultTask.ok`, `ResultTask.err`                     |
-| Define a structured error class                | `createTaggedError({ name, message })` (`.withProps<...>()` for custom field types)    |
-| Lift nullable values or predicates             | `Result.fromNullishOr`, `Result.liftPredicate`                                         |
-| Wrap throwing sync or async code               | Sync: `tryResult` / `fromThrowable`; async: `ResultTask.tryPromise`                    |
-| Transform or chain results                     | `map`, `mapErr`, `andThen`, `filterOrElse`, `as`, `asVoid`; Task `map` is synchronous  |
-| Write linear generator workflows               | `Result.gen`, `Result.fn`, `ResultTask.gen`, `ResultTask.fn`                           |
-| Recover from specific errors                   | `catchTag`, `catchTags`, `orElse`, `orElseSucceed`, `unwrapOr`                         |
-| Handle results at a boundary                   | `matchTags`, `matchTagsPartial`, `match`                                               |
-| Combine multiple results                       | Sync: `Result.all`; Task: `ResultTask.all`, `forEach`, `validateAll`, `firstSuccessOf` |
-| Add async timeout, retry, or race              | `task.timeout`, `task.retry`, `ResultTask.race`, `raceFirst`, `Retry.policy`           |
-| Build lazy, cancelable workflows               | `ResultTask.tryPromise`, `sync`, `try`, `service`, `provideServices`                   |
-| Manage resource lifecycles                     | `ResultTask.acquireRelease`, `acquireDisposable`, `scoped`, `ensuring`                 |
-| Run lazy tasks at an edge                      | `ResultTask.runResult`, `runExit`, `runPromise`, `runFork`                             |
-| Observe without altering the channel           | `inspect`, `inspectError`, `inspectBoth`, `log`                                        |
-| Preserve an existing eager Async boundary      | `tryResultAsync`, `fromPromise`, `fromThrowableAsync`, `okAsync`, `errAsync`           |
-| Adapt eager Async or request helpers into Task | `ResultTask.fromResultAsync(signal => load(signal))`                                   |
+| Goal                                           | Recommended API                                                                            |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Create success or failure                      | Sync: `ok`, `err`, `unit`; Task: `ResultTask.ok`, `ResultTask.err`                         |
+| Define a structured error class                | `createTaggedError({ name, message })` (`.withProps<...>()` for custom field types)        |
+| Lift nullable values or predicates             | `Result.fromNullishOr`, `Result.liftPredicate`                                             |
+| Wrap throwing sync or async code               | Sync: `tryResult` / `fromThrowable`; async: `ResultTask.tryPromise`                        |
+| Transform or chain results                     | `map`, `mapErr`, `andThen`, `filterOrElse`, `as`, `asVoid`; Task `map` is synchronous      |
+| Write linear generator workflows               | `Result.gen`, `Result.fn`, `ResultTask.gen`, `ResultTask.fn`                               |
+| Recover from specific errors                   | `catchTag`, `catchTags`, `orElse`, `orElseSucceed`, `unwrapOr`                             |
+| Handle results at a boundary                   | `matchTags`, `matchTagsPartial`, `match`                                                   |
+| Combine multiple results                       | Sync: `Result.all`; Task: `ResultTask.all`, `forEach`, `validateAll`, `firstSuccessOf`     |
+| Add async timeout, retry, or race              | `task.timeout`, `task.retry`, `ResultTask.race`, `raceFirst`, `Retry.policy`               |
+| Build lazy, cancelable workflows               | `ResultTask.tryPromise`, `sync`, `try`, `service`, `provideServices`                       |
+| Manage resource lifecycles                     | `ResultTask.acquireRelease`, `acquireDisposable`, `scoped`, `ensuring`                     |
+| Run lazy tasks at an edge                      | `task.runResult()`, `runExit()`, `runPromise()`, `runFork()` (static forms also supported) |
+| Observe without altering the channel           | `inspect`, `inspectError`, `inspectBoth`, `log`                                            |
+| Preserve an existing eager Async boundary      | `tryResultAsync`, `fromPromise`, `fromThrowableAsync`, `okAsync`, `errAsync`               |
+| Adapt eager Async or request helpers into Task | `ResultTask.fromResultAsync(signal => load(signal))`                                       |
 
 See the [Complete API Map](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#api-map) for all overloads, collection helpers, and compatibility aliases.
 

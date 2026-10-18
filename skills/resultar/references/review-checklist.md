@@ -128,7 +128,9 @@ validation. Report only issues supported by the installed Resultar version and r
   semantics. Prefer canonical Task names while preserving deprecated aliases during migration.
 - Stable checker names such as `preferResultAsync` describe an existing eager-contract policy,
   scoped deliberately; they do not override the Task default for new workflows.
-- `runResult` rejection paths and deferred release errors are handled at the owning boundary.
+- Instance `task.runResult()`, `runPromise()`, `runExit()`, and `runFork()` use the same options,
+  service checks, and deferred release error types as their supported static forms. Prefer instance
+  runners in new recipes. `runResult` rejection paths and deferred release errors are handled at the owning boundary.
 - An intentional-discard fix is not mistaken for executing or handling a lazy task.
 
 ## Validation Order

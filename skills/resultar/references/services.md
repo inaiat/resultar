@@ -33,7 +33,7 @@ in `resultar`; existing main-entry Async exports remain supported with the same 
 - Use `createHonoApp` for Hono routes. Ordinary `await` and `result.match` inside a route are valid;
   generator-specific restrictions do not apply to a route body.
   For a Task-returning method, compose `task.matchTags(...)` and return
-  `ResultTask.runPromise(responseTask)` from the route. For an existing Async method, awaiting it
+  `responseTask.runPromise()` from the route. For an existing Async method, awaiting it
   still observes its eager execution; `await task` never executes a Task.
   Export `type AppHono = Hono<{ Bindings: InferRequestServices<typeof createApplication> }>`
   from `main.ts`, using `InferRequestServices` from `resultar-hono`. Separate route files import

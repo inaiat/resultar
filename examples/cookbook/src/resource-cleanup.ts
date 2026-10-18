@@ -74,7 +74,7 @@ export const importRowsWithCleanup = async (
       return { imported: rows.length };
     }),
   );
-  const result = await ResultTask.runResult(task);
+  const result = await task.runResult();
 
   return {
     events,
@@ -108,7 +108,7 @@ export const importRowsWithFallibleRelease = async (
       return { imported: 1 };
     }),
   );
-  const exit = await ResultTask.runExit(task);
+  const exit = await task.runExit();
 
   return {
     events,

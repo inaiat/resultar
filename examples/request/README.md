@@ -78,7 +78,7 @@ const loadAccount = (baseUrl: string) => ResultTask.fromResultAsync(() =>
   }),
 )
 
-const result = await ResultTask.runResult(loadAccount('http://127.0.0.1:3000'))
+const result = await loadAccount('http://127.0.0.1:3000').runResult()
 const label = result.match(account => account.email, error => error.message)
 ```
 

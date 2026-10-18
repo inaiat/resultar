@@ -6,7 +6,7 @@
  * - Scoped resource acquisition (`ResultTask.scoped`, `ResultTask.acquireRelease`)
  * - Retries (`Retry.policy`), timeouts (`.timeout`), and bounded concurrency (`ResultTask.forEach`)
  * - Racing (`ResultTask.raceFirst`, `ResultTask.race`) with automatic loser interruption
- * - Child and root fibers (`ResultTask.forkChild`, `ResultTask.runFork`, `Fiber.await`,
+ * - Child and root fibers (`ResultTask.forkChild`, `task.runFork()`, `Fiber.await`,
  *   `Fiber.join`, `Fiber.interrupt`, `Fiber.poll`, `Fiber.addObserver`)
  * - Concurrency limiting (`Semaphore.make`, `withPermit`, `withPermits`)
  * - Lossless failure trees (`Cause`, `sandbox`, `unsandbox`, `catchCause`, `inspectCause`, `onExit`)
@@ -70,7 +70,7 @@ export const runTaskResilience = async () => {
     }),
   );
 
-  const retryRun = ResultTask.runResult(loadFromProvider, { clock });
+  const retryRun = loadFromProvider.runResult({ clock });
   await clock.advanceBy(15);
   const retried = await retryRun;
   const retryElapsedMs = clock.now();
@@ -99,15 +99,13 @@ export const runTaskResilience = async () => {
       ),
     { concurrency: 2 },
   );
-  const batchRun = ResultTask.runPromise(batch, { clock });
+  const batchRun = batch.runPromise({ clock });
   await clock.advanceBy(4);
   const values = await batchRun;
-  const record = await ResultTask.runPromise(
-    ResultTask.all({
-      count: ResultTask.ok(values.length),
-      status: ResultTask.ok("complete"),
-    }),
-  );
+  const record = await ResultTask.all({
+    count: ResultTask.ok(values.length),
+    status: ResultTask.ok("complete"),
+  }).runPromise();
 
   // 3. `.timeout()` interrupts the hung promise (`interruption: "detach"`) and runs scope finalizers.
   const timeoutEvents: string[] = [];
@@ -127,7 +125,7 @@ export const runTaskResilience = async () => {
       });
     }),
   ).timeout(5, () => new TaskDeadlineError({ milliseconds: 5 }));
-  const timeoutRun = ResultTask.runResult(slowQuery, { clock });
+  const timeoutRun = slowQuery.runResult({ clock });
   await clock.advanceBy(7);
   const timedOut = await timeoutRun;
 
@@ -147,27 +145,24 @@ export const runTaskResilience = async () => {
         return name;
       }),
     );
-  const raceRun = ResultTask.runPromise(
-    ResultTask.raceFirst(replica("fast", 2), replica("slow", 20)),
-    { clock },
-  );
+  const raceRun = ResultTask.raceFirst(replica("fast", 2), replica("slow", 20)).runPromise({
+    clock,
+  });
   await clock.advanceBy(3);
   const winner = await raceRun;
 
   // 5. Structured child fiber (`ResultTask.forkChild` + `Fiber.await`) and root fiber (`runFork`).
-  const observed = await ResultTask.runPromise(
-    ResultTask.gen(function* () {
-      const fiber = yield* ResultTask.forkChild(ResultTask.ok("observed"));
-      return yield* Fiber.await(fiber);
-    }),
-  );
+  const observed = await ResultTask.gen(function* () {
+    const fiber = yield* ResultTask.forkChild(ResultTask.ok("observed"));
+    return yield* Fiber.await(fiber);
+  }).runPromise();
 
-  const background = ResultTask.runFork(ResultTask.sleep(2).as("background ready"), { clock });
+  const background = ResultTask.sleep(2).as("background ready").runFork({ clock });
   const backgroundExits: string[] = [];
   const unsubscribe = Fiber.addObserver(background, (exit) => backgroundExits.push(exit._tag));
   const backgroundWasRunning = Fiber.poll(background) === undefined;
   await clock.advanceBy(2);
-  const backgroundExit = await ResultTask.runPromise(Fiber.await(background));
+  const backgroundExit = await Fiber.await(background).runPromise();
   unsubscribe();
 
   // 6. `Semaphore.make(1)` serializes access to a critical section across concurrent tasks.
@@ -181,41 +176,34 @@ export const runTaskResilience = async () => {
       return "permit-ok";
     }),
   );
-  const semaphoreValues = await ResultTask.runPromise(
-    ResultTask.all([guard, guard], { concurrency: "unbounded" }),
-    { yieldEvery: 1 },
-  );
+  const semaphoreValues = await ResultTask.all([guard, guard], {
+    concurrency: "unbounded",
+  }).runPromise({ yieldEvery: 1 });
 
   // 7. `.ensuring()`, `.sandbox()`, `Cause.findError`, and `.unsandbox()` for lossless Cause recovery.
   const cleanupLog: string[] = [];
-  const sandboxedRecovery = await ResultTask.runPromise(
-    ResultTask.err(new TaskProviderError({ attempt: 9 }))
-      .ensuring(() =>
-        ResultTask.sync(() => {
-          cleanupLog.push("ensured");
-        }),
-      )
-      .sandbox()
-      .mapErr((cause): Cause<string> => ({
-        _tag: "Fail",
-        error: Cause.findError(cause).match({
-          ok: (failure) => `recovered:${failure._tag}:${failure.attempt}`,
-          err: () => "recovered:unknown",
-        }),
-      }))
-      .unsandbox()
-      .orElse((label) => ResultTask.ok(label)),
-  );
+  const sandboxedRecovery = await ResultTask.err(new TaskProviderError({ attempt: 9 }))
+    .ensuring(() =>
+      ResultTask.sync(() => {
+        cleanupLog.push("ensured");
+      }),
+    )
+    .sandbox()
+    .mapErr((cause): Cause<string> => ({
+      _tag: "Fail",
+      error: Cause.findError(cause).match({
+        ok: (failure) => `recovered:${failure._tag}:${failure.attempt}`,
+        err: () => "recovered:unknown",
+      }),
+    }))
+    .unsandbox()
+    .orElse((label) => ResultTask.ok(label))
+    .runPromise();
 
   // 8. `ResultTask.validateAll` accumulates all errors across items.
-  const validatedErrors = await ResultTask.runResult(
-    ResultTask.validateAll([1, 2, 3], (item) =>
-      item % 2 === 0
-        ? ResultTask.err(new TaskProviderError({ attempt: item }))
-        : ResultTask.ok(item),
-    ),
-    { yieldEvery: 2 },
-  );
+  const validatedErrors = await ResultTask.validateAll([1, 2, 3], (item) =>
+    item % 2 === 0 ? ResultTask.err(new TaskProviderError({ attempt: item })) : ResultTask.ok(item),
+  ).runResult({ yieldEvery: 2 });
 
   return {
     retry: {
@@ -261,7 +249,7 @@ export const runAdvancedTaskResilience = async () => {
     ResultTask.err(new TaskProviderError({ attempt: 1 })),
   );
   const slowOk = ResultTask.sleep(3).as("backup-winner" as const);
-  const raceOkRun = ResultTask.runPromise(ResultTask.race(fastFail, slowOk), { clock });
+  const raceOkRun = ResultTask.race(fastFail, slowOk).runPromise({ clock });
   await clock.advanceBy(3);
   const raceOkWinner = await raceOkRun;
 
@@ -282,13 +270,13 @@ export const runAdvancedTaskResilience = async () => {
   }).onExit((exit) => {
     lifecycleEvents.push(`fiberWorkflow:${exit._tag}`);
   });
-  const fiberResult = await ResultTask.runPromise(fiberWorkflow, { clock });
+  const fiberResult = await fiberWorkflow.runPromise({ clock });
 
   // 3. `Semaphore.withPermits(2)` acquires multiple permits atomically.
   const pool = Semaphore.make(2);
-  const multiPermitValue = await ResultTask.runPromise(
-    pool.withPermits(2, ResultTask.ok("two-permits-acquired" as const)),
-  );
+  const multiPermitValue = await pool
+    .withPermits(2, ResultTask.ok("two-permits-acquired" as const))
+    .runPromise();
 
   // 4. `.inspectCause()`, `.catchCause()`, and `Cause` tree inspection helpers.
   const causeEvents: string[] = [];
@@ -308,19 +296,18 @@ export const runAdvancedTaskResilience = async () => {
     prettyIncludesFail: Cause.pretty(compositeCause).includes("TaskProviderError"),
   };
 
-  const recoveredFromCause = await ResultTask.runPromise(
-    ResultTask.err(new TaskProviderError({ attempt: 4 }))
-      .inspectCause((cause) => {
-        causeEvents.push(`inspectCause:${Cause.hasFails(cause)}`);
-      })
-      .catchCause((cause) =>
-        ResultTask.ok(
-          `caught:${Cause.failures(cause)
-            .map((e) => e.attempt)
-            .join(",")}`,
-        ),
+  const recoveredFromCause = await ResultTask.err(new TaskProviderError({ attempt: 4 }))
+    .inspectCause((cause) => {
+      causeEvents.push(`inspectCause:${Cause.hasFails(cause)}`);
+    })
+    .catchCause((cause) =>
+      ResultTask.ok(
+        `caught:${Cause.failures(cause)
+          .map((e) => e.attempt)
+          .join(",")}`,
       ),
-  );
+    )
+    .runPromise();
 
   // 5. Custom `TaskScheduler` (`yieldEvery: 1`) and explicit execution / Promise interoperability.
   let schedulerYields = 0;
@@ -331,20 +318,17 @@ export const runAdvancedTaskResilience = async () => {
     },
   };
 
-  const yieldedValue = await ResultTask.runPromise(
-    ResultTask.gen(function* () {
-      const step1 = yield* ResultTask.ok("step-1" as const);
-      const step2 = yield* ResultTask.ok(`${step1}->after-yield` as const);
-      return step2;
-    }),
-    { scheduler: countingScheduler, yieldEvery: 1 },
-  );
+  const yieldedValue = await ResultTask.gen(function* () {
+    const step1 = yield* ResultTask.ok("step-1" as const);
+    const step2 = yield* ResultTask.ok(`${step1}->after-yield` as const);
+    return step2;
+  }).runPromise({ scheduler: countingScheduler, yieldEvery: 1 });
 
   // Run tasks explicitly; `runPromise` starts one execution and returns a native Promise.
-  const explicitlyRun = await ResultTask.runPromise(ResultTask.ok("direct-await" as const));
-  const promiseInterop = await ResultTask.runPromise(
-    ResultTask.ok("promise-interop" as const),
-  ).then((value) => value);
+  const explicitlyRun = await ResultTask.ok("direct-await" as const).runPromise();
+  const promiseInterop = await ResultTask.ok("promise-interop" as const)
+    .runPromise()
+    .then((value) => value);
 
   return {
     awaitedDirectly: explicitlyRun,

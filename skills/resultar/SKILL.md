@@ -56,7 +56,9 @@ are deprecated and implemented in `packages/resultar/src/resultar-async`. Async-
 there as well; core modules that previously declared them retain type-only re-exports.
 `ResultAsync` is a deprecated PromiseLike class: work starts eagerly and repeated awaits
 observe the same execution. `ResultTask` has no `.then` method; use explicit runners for every
-Task, including when `R = never`. Satisfying services and scopes leaves a Task. Adapt Async with
+Task, including when `R = never`. Prefer `task.runResult()`, `task.runPromise()`, `task.runExit()`,
+and `task.runFork()` in new code; static runners remain equivalent and supported. Satisfying services
+and scopes leaves a Task. Adapt Async with
 `ResultTask.fromResultAsync`; `ResultAsync.fromTask(task)` from `resultar/async` eagerly starts one
 Task execution for legacy callers. The inbound Task bridge accepts any `PromiseLike<Result<A, E>>`
 or signal-aware factory, without requiring an Async instance. Read the
@@ -79,8 +81,13 @@ pnpm add resultar
 | Cleanup                    | Disposal callbacks are best-effort                                  | `withResource` starts eagerly and releases best-effort                | `acquireRelease` + `scoped` await release and preserve failures               |
 
 Prefer Task for new asynchronous workflows. Preserve the eager Async facade where callers depend
-on it while migrating explicitly. `ResultTask.runResult` can reject on defects, interruption,
-and composite causes. Use `runExit` when the boundary must inspect every exit without rejection.
+on it while migrating explicitly. `task.runResult()` returns a single typed failure as `Err`
+and rejects defects, interruption, and composite causes. `task.runPromise()` resolves the value or
+rejects any failure; `task.runExit()` preserves every exit without rejection; `task.runFork()`
+starts a root fiber immediately. Both instance and static runners enforce service requirements and
+accept the same `ResultTaskRunOptions<R>` (`services`, `signal`, `clock`, `scheduler`, `yieldEvery`).
+Deferred scope release errors join the runner's error type (`E | ScopeError<R>` internally).
+Every runner call starts another execution; there is no public `task.run()` method.
 See [API details](references/api.md).
 For DI, Hono and Fastify, read [services and HTTP scopes](references/services.md). Use
 `ResultTask.service<T>()(name)` or DI `Service.require<T>()(name)` for inferred identifiers. Class
@@ -223,7 +230,7 @@ to compose another Task or a synchronous Result.
 - Use `ResultTask.forEach` for bounded first-error batch work and `validateAll` to collect
   independent validation errors.
 - Use `acquireRelease` + `scoped` for awaited, failure-preserving resource cleanup.
-- Fold a Task with `match` / `matchTags`, then execute that fold with `ResultTask.runPromise`.
+- Fold a Task with `match` / `matchTags`, then execute that fold with `folded.runPromise()`.
   Use `runResult` for a Result boundary or `runExit` to inspect every cause without rejection.
 
 Request helpers and existing callback adapters still return eager, deprecated `ResultAsync`.
@@ -236,7 +243,7 @@ subscriptions with cleanup. Its `ResultAsync.retry` / `retryOrElse`, `timeout`, 
 `raceFirst`, collections, and best-effort `withResource` remain supported; their semantics differ
 from Task ownership. Do not replace such a boundary with a Task without migrating its callers.
 `runPromise(asyncResult)` imported from `resultar/async` is the legacy terminal; core Task uses
-`ResultTask.runPromise(task)`.
+`task.runPromise()` (or the equivalent `ResultTask.runPromise(task)`).
 
 Use `Retry.policy(options)` for retry configuration shared by ResultAsync and ResultTask. It keeps
 attempt state per execution and supplies the same zero-based callback context in both models;
@@ -258,7 +265,7 @@ the child result and `interrupt` requests cancellation. Task runs yield every 20
 default; `yieldEvery` / `scheduler` run options configure cooperative scheduling, not preemption of
 synchronous callbacks. See [task API semantics](references/api.md#resulttask-lazy-workflows).
 
-Use `ResultTask.runFork(task, options)` when a terminal boundary needs an immediately running
+Use `task.runFork(options)` when a terminal boundary needs an immediately running
 root fiber. Its native `FiberHandle` exposes `id`, `poll()` and removable `addObserver` diagnostics
 after finalizers; diagnostics do not consume owned failures. `forkChild` returns the same native
 handle within its scope. `Fiber.join(fiber, { interruption: 'detach' })` cancels the wait without

@@ -40,8 +40,7 @@ const live: TaskScheduler = Object.freeze({
  * import { ResultTask, Scheduler } from 'resultar'
  *
  * const result = await ResultTask.ok(42)
- *   .yieldEvery(64)
- *   .run({ scheduler: Scheduler.live, yieldEvery: 128 })
+ *   .runResult({ scheduler: Scheduler.live, yieldEvery: 128 })
  * ```
  */
 export const Scheduler: {
