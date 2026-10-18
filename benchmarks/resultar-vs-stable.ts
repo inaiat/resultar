@@ -29,7 +29,7 @@ type StableResultarModule = Pick<typeof localResultar, 'ok' | 'err' | 'okAsync' 
   >
 }
 type BenchFn = () => unknown
-type AsyncBenchFn = () => Promise<unknown>
+type AsyncBenchFn = () => PromiseLike<unknown>
 
 interface Bench {
   readonly name: string
