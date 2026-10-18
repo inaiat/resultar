@@ -8,13 +8,13 @@ their usage examples, checker configuration, editor tooling, and workspace valid
 
 Resultar is a small TypeScript library for explicit error handling.
 
-Its core primitives are `Result` and `ResultTask`. Deprecated eager compatibility
-lives in the `resultar/async` subpath of the same npm package:
+Its core primitives are `Result` (synchronous value), `ResultTask` (lazy async workflow), and
+`ResultAsync` (in-flight `Result` returned by `task.runResult()`):
 
 ```ts
 Result<T, E>;
 ResultTask<T, E, R>;
-ResultAsync<T, E>; // prefer resultar/async; root exports remain supported
+ResultAsync<T, E>;
 ```
 
 Use them when a function can fail and that failure should be visible in the type signature instead
@@ -22,13 +22,12 @@ of hidden behind `throw`, rejected promises, nullable returns, or ad hoc `T | Er
 
 Use `Result` for synchronous domain code and prefer `ResultTask` for new asynchronous
 workflows. Tasks are lazy and repeatable, with explicit runners; add service requirements
-(`R`), time, retry, concurrency and resources as needed. Deprecated `ResultAsync` remains a
-separate eager facade in `resultar/async`: repeated awaits observe one execution.
-One installation provides both entry points; existing main-entry Async exports remain supported.
-All Async-specific factories and helpers, including `okAsync` and `errAsync`, are deprecated APIs
-implemented in `packages/resultar/src/resultar-async`. Async-only types are declared there;
-core modules that previously declared them provide type-only re-exports, preserving existing
-imports and identities.
+(`R`), time, retry, concurrency and resources as needed. Executing a task with `task.runResult()`
+returns `ResultAsync<T, E>` — an in-flight `Result` (`PromiseLike<Result<T, E>>`) that can be
+awaited directly or transformed and folded with the same methods as `Result`. Eager constructors
+(`okAsync`, `errAsync`, `tryResultAsync`, `fromPromise`, etc.) and orchestration helpers on
+`ResultAsync` remain deprecated in `resultar/async` (and re-exported from `resultar`) for
+gradual migration.
 Adoption can happen one function or workflow at a time.
 
 ## Install
@@ -177,10 +176,11 @@ execution, including when `R = never`; Task has no `.then` method. Providing ser
 or closing a required scope leaves a Task. Prefer `task.runResult()`, `task.runPromise()`,
 `task.runExit()`, or `task.runFork()` in new recipes; equivalent static runners remain supported.
 
-Deprecated `ResultAsync<T, E>` from `resultar/async` is an independent
-`PromiseLike<Result<T, E>>` class; existing main-entry exports also remain supported.
-Its factories start eagerly, and repeated awaits observe the same execution. Its
-prototype and terminal Promise contracts remain separate from Task.
+`ResultAsync<T, E>` (exported from `resultar` and `resultar/async`) is the in-flight `Result`
+(`PromiseLike<Result<T, E>>`), returned by `task.runResult()` / `ResultTask.runResult(task)` and
+async `Result` chains. Repeated awaits on the same `ResultAsync` observe the same execution, and
+it shares the transformation and consumption surface of `Result`. Eager constructors and
+orchestration static methods on `ResultAsync` remain deprecated for existing eager contracts.
 
 Across these APIs:
 
@@ -194,8 +194,7 @@ For local code, `Result<T, E>` can use strings, enums, or small domain objects a
 
 At synchronous application boundaries, `StrictResult<T, E extends Error>` constrains
 failures to real Error instances. For new async boundaries, return `ResultTask<T, DomainError>`
-with a concrete Error union. Deprecated `StrictResultAsync<T, E extends Error>` remains
-available for existing eager signatures; it does not turn Async into a Task.
+with a concrete Error union; `task.runResult()` returns `StrictResultAsync<T, DomainError>`.
 
 ## Lazy tasks and service requirements
 
@@ -403,13 +402,12 @@ before the next task continues.
 
 ### Execution compatibility
 
-Deprecated `ResultAsync<T, E>` preserves eager, single-execution behavior independently
-of the lazy Task interpreter. `fromResultAsync(existing)` reuses that execution;
-`fromResultAsync(factory)` invokes the factory on each Task run. The bridge is structural:
-it accepts `PromiseLike<Result<T, E>>` without requiring an instance of the compatibility class.
-`ResultAsync.fromTask(task)` in `resultar/async` starts a requirement-free Task once
-and returns a memoized Async facade. Static and instance `ResultTask.toResultAsync` remain
-supported bridges; no factory registration is required from the caller.
+`ResultAsync<T, E>` represents an in-flight `Result` (`PromiseLike<Result<T, E>>`), returned by
+`task.runResult()` / `ResultTask.runResult(task)` and async `Result` chains. `fromResultAsync(existing)`
+reuses an already-started execution; `fromResultAsync(factory)` invokes the factory on each Task run.
+The bridge is structural: it accepts `PromiseLike<Result<T, E>>` without requiring an instance of
+`ResultAsync`. Static and instance `ResultTask.toResultAsync` and `ResultAsync.fromTask(task)` remain
+supported as deprecated aliases of `runResult()`.
 
 Scope-owned fibers, task `race` / `raceFirst` / `timeout`, bounded collections and
 `Cause.Parallel` belong to Task. Existing Async policies retain their own Promise
@@ -443,12 +441,12 @@ Diagnostics do not consume owned child failures; use `join` or `await` to compos
 
 Return `ResultTask<T, E, R>` directly from lazy services and execute at an outer boundary:
 
-| Instance runner             | Equivalent static runner                | Output and failure behavior                                                                                             |
-| --------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `task.runResult(options?)`  | `ResultTask.runResult(task, options?)`  | `Promise<Result<T, E>>`; a single typed failure becomes `Err`, while defects, interruption, and composite causes reject |
-| `task.runPromise(options?)` | `ResultTask.runPromise(task, options?)` | `Promise<T>`; resolves success or rejects any failure                                                                   |
-| `task.runExit(options?)`    | `ResultTask.runExit(task, options?)`    | `Promise<Exit<T, E>>`; never rejects and preserves all causes as values                                                 |
-| `task.runFork(options?)`    | `ResultTask.runFork(task, options?)`    | Starts a root execution immediately and returns its `FiberHandle<T, E>`                                                 |
+| Instance runner             | Equivalent static runner                | Output and failure behavior                                                                                                               |
+| --------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `task.runResult(options?)`  | `ResultTask.runResult(task, options?)`  | `ResultAsync<T, E>`; an in-flight `Result` where a single typed failure becomes `Err` and defects, interruption, or composite causes reject |
+| `task.runPromise(options?)` | `ResultTask.runPromise(task, options?)` | `Promise<T>`; resolves success or rejects any failure                                                                                     |
+| `task.runExit(options?)`    | `ResultTask.runExit(task, options?)`    | `Promise<Exit<T, E>>`; never rejects and preserves all causes as values                                                                   |
+| `task.runFork(options?)`    | `ResultTask.runFork(task, options?)`    | Starts a root execution immediately and returns its `FiberHandle<T, E>`                                                                   |
 
 Both forms accept the same `ResultTaskRunOptions<R>`, including `services`, `signal`, `clock`,
 `scheduler`, and `yieldEvery`, and enforce the same service requirements. Root scope release errors
@@ -594,9 +592,10 @@ Async is PromiseLike and works with Promise combinators. Task is not thenable:
 
 ## Strict Results
 
-`StrictResult<T, E extends Error>` is a type-only alias for synchronous Error-only
-failure channels. New async signatures use `ResultTask<T, E>` with concrete domain
-errors. `StrictResultAsync` is deprecated and retained for eager compatibility.
+`StrictResult<T, E extends Error>` and `StrictResultAsync<T, E extends Error>` are type-only
+aliases for synchronous and in-flight Error-only failure channels. New async workflow definitions
+use `ResultTask<T, E>` with concrete domain errors, and `task.runResult()` returns
+`StrictResultAsync<T, E>`.
 
 ```ts
 import { createTaggedError, err, ok, ResultTask } from "resultar";
@@ -754,8 +753,8 @@ const response = await responseTask.runPromise();
 `map` and `mapErr` are synchronous transformations. Use `andThen` with another Task,
 or `yield*` inside `ResultTask.gen(function* () { ... })`, for asynchronous work.
 Task `match` is a lazy fold; `runPromise` above unwraps its output. Use `runResult`
-for `Promise<Result<T, E>>`, or `runExit` to inspect all causes as values. Task has
-no `.then` method, including when `R = never`.
+for an in-flight `ResultAsync<T, E>` (which can be awaited or chained with `.match(...)`),
+or `runExit` to inspect all causes as values. Task has no `.then` method, including when `R = never`.
 
 ### Adapt request helpers and existing Async operations
 
@@ -782,16 +781,18 @@ const result = await loadUser("usr_123").runResult();
 ```
 
 `fromResultAsync(existing)` instead captures one already-started execution and reuses
-it on every Task run. `ResultAsync.fromTask(task)` from `resultar/async` starts one requirement-free Task
-execution eagerly for existing Async callers. Neither bridge changes the original API's contract.
+it on every Task run. `task.runResult()` starts a requirement-free Task execution and returns
+`ResultAsync` (`ResultAsync.fromTask(task)` and `task.toResultAsync()` remain deprecated aliases).
 
 <a id="resultasync"></a>
 
-## Deprecated ResultAsync Compatibility
+## In-Flight `ResultAsync` & Deprecated Eager Compatibility
 
-The deprecated `ResultAsync<T, E>` facade preserves eager, single-execution contracts.
-Prefer `ResultTask<T, E, R>` for new asynchronous workflows and execute it explicitly.
-The following reference describes the APIs in `resultar/async`. Install `resultar` once:
+`ResultAsync<T, E>` (and `StrictResultAsync<T, E>`) is the official in-flight `Result`
+(`PromiseLike<Result<T, E>>`), returned by `task.runResult()` / `ResultTask.runResult(task)` and
+async `Result` chains. Eager constructors and static orchestration methods on `ResultAsync`
+remain deprecated for existing eager contracts. Prefer `ResultTask<T, E, R>` for new asynchronous
+workflows and execute it explicitly. Install `resultar` once:
 
 ```sh
 pnpm add resultar
@@ -3849,7 +3850,7 @@ prototype patch or global factory registration.
 - `ResultTask.loop(initial, options)` / `ResultTask.loop(options)(initial)`
 - `ResultTask.iterate(initial, options)` / `ResultTask.iterate(options)(initial)`
 - `ResultTask.tryPromise({ try, catch, interruption: 'wait' | 'detach' })`
-- `task.runResult(options?)` / `ResultTask.runResult(task, options?)` returns `Promise<Result<T, E>>`
+- `task.runResult(options?)` / `ResultTask.runResult(task, options?)` returns `ResultAsync<T, E | ScopeError<R>>`
 - `task.runPromise(options?)` / `ResultTask.runPromise(task, options?)` returns `Promise<T>`
 - `task.runExit(options?)` / `ResultTask.runExit(task, options?)` returns `Promise<Exit<T, E>>`
 - `task.runFork(options?)` / `ResultTask.runFork(task, options?)` returns a running native `FiberHandle`
@@ -3974,7 +3975,7 @@ These helpers do not execute tasks or change `runExit`, `runResult`, or `runProm
 
 ### Deprecated ResultAsync helpers
 
-These deprecated entries belong to `src/resultar-async`. Prefer importing them from `resultar/async`;
+These deprecated entries belong to `src/result-async`. Prefer importing them from `resultar/async`;
 existing main-entry exports retain the same identities. The facade preserves eager, single-execution
 compatibility; prefer Task for new async workflows.
 

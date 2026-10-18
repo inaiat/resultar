@@ -1201,7 +1201,7 @@ func (a *Analyzer) asyncCompatibilityFunctionName(expression *ast.Node) string {
 			continue
 		}
 		path := strings.ReplaceAll(string(file.FileName()), "\\", "/")
-		if strings.Contains(path, "/packages/resultar/src/resultar-async/") || strings.Contains(path, "/packages/resultar/dist/") || strings.Contains(path, "/node_modules/resultar/dist/") {
+		if strings.Contains(path, "/packages/resultar/src/result-async/") || strings.Contains(path, "/packages/resultar/dist/") || strings.Contains(path, "/node_modules/resultar/dist/") {
 			return name
 		}
 	}
@@ -1531,7 +1531,7 @@ func isCallLikeDiscard(expression *ast.Node) bool {
 	}
 	switch expression.Kind {
 	case ast.KindAwaitExpression:
-		return isCallLikeDiscard(expression.Expression())
+		return true
 	case ast.KindCallExpression:
 		return true
 	case ast.KindConditionalExpression:
@@ -1592,6 +1592,17 @@ func (a *Analyzer) isHandledReference(identifier *ast.Node) bool {
 	}
 	if parent != nil && parent.Kind == ast.KindVoidExpression && parent.Expression() == root {
 		return true
+	}
+	if parent != nil && parent.Kind == ast.KindVariableDeclaration {
+		declaration := parent.AsVariableDeclaration()
+		if declaration.Initializer == root &&
+			parent.Name() != nil &&
+			parent.Name().Kind == ast.KindIdentifier &&
+			!isExplicitDiscard(root) &&
+			isCallLikeDiscard(root) &&
+			isMustUseResultarType(a.checker.GetTypeAtLocation(root)) {
+			return true
+		}
 	}
 	if a.isConsumedByReceiverChain(identifier) {
 		return true

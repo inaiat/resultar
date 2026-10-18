@@ -3,6 +3,7 @@ import { describe, expectTypeOf, it } from 'vite-plus/test'
 import type {
   Exit,
   Result,
+  ResultAsync,
   ResultTaskGenerator,
   ResultTaskRunOptions,
   ResultTaskServices,
@@ -139,7 +140,7 @@ describe('ResultTask public types', () => {
     expectTypeOf(oneProvided).toEqualTypeOf<ResultTask<number, never, never>>()
     expectTypeOf(allProvided).toEqualTypeOf<ResultTask<number, never, never>>()
     expectTypeOf(ResultTask.runExit(oneProvided)).toEqualTypeOf<Promise<Exit<number, never>>>()
-    expectTypeOf(ResultTask.runResult(allProvided)).toEqualTypeOf<Promise<Result<number, never>>>()
+    expectTypeOf(ResultTask.runResult(allProvided)).toEqualTypeOf<ResultAsync<number, never>>()
 
     if (false) {
       const Other = ResultTask.service<{ readonly value: string }, 'Other'>('Other')

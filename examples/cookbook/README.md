@@ -40,8 +40,10 @@ and use these samples for new code:
 These are independent adoption steps. Every asynchronous recipe uses `ResultTask`: it is lazy
 and repeatable, has no `.then`, and runs through explicit runners. Synchronous recipes retain
 `Result`. Native Promise boundaries use `task.runPromise()`, while callers that need typed
-results use `task.runResult()`. Use `task.runExit()` to inspect cancellation, defects and cleanup
-failures.
+results use `task.runResult()`, which returns an in-flight `ResultAsync<T, E>` (`PromiseLike<Result<T, E>>`)
+that resolves to `Result<T, E>` when awaited and also supports direct `Result`-style chaining
+(`.match(...)`, `.matchTags(...)`, `.unwrapOr(...)`, etc.). Use `task.runExit()` to inspect
+cancellation, defects and cleanup failures.
 Construct promises and mutable per-run state inside the Task so repeated runs create fresh work.
 
 - [`src/sync-validation.ts`](src/sync-validation.ts): field validation with `Result.validateAll`,
@@ -112,12 +114,20 @@ const task = ResultTask.gen(function* () {
 });
 
 const result = await task.runResult();
+
+// Or chain Result methods directly on the in-flight ResultAsync returned by runResult():
+const status = await task.runResult().match(
+  (response) => response.status,
+  () => 503,
+);
 ```
 
 Task `map` is synchronous; compose another async step with `andThen` and `tryPromise`.
 Task uses `ok`, `err`, `mapErr`, `andThen`, and `orElse`; retries take a `Retry.policy(...)`.
-Task `match` returns a lazy Task, so either run the folded task with `runPromise` or match the
-`Result` returned by `runResult`. Its object handlers use `{ ok, err }`.
+Task `match` returns a lazy Task (with `{ ok, err }` handlers), whereas `task.runResult()` starts
+execution and returns an in-flight `ResultAsync` (`PromiseLike<Result<T, E>>`), so you can either
+chain `.runResult().match(...)` directly, `await task.runResult()` to get a `Result`, or fold inside
+the lazy task and run with `runPromise`.
 
 See the [ResultTask package guide](../../packages/resultar/README.md#lazy-workflows-with-resulttask)
 and [major adoption guide](../../docs/migrations/v4.md) for the new runtime capabilities.

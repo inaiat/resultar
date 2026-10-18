@@ -127,7 +127,10 @@ export const runTaskResilience = async () => {
   ).timeout(5, () => new TaskDeadlineError({ milliseconds: 5 }));
   const timeoutRun = slowQuery.runResult({ clock });
   await clock.advanceBy(7);
-  const timedOut = await timeoutRun;
+  const timedOut = await timeoutRun.match({
+    ok: () => "unexpected-success",
+    err: (error) => error._tag,
+  });
 
   // 4. `ResultTask.raceFirst` interrupts the slower branch and awaits its finalizer before returning.
   const raceEvents: string[] = [];
@@ -215,7 +218,7 @@ export const runTaskResilience = async () => {
     batch: { maxConcurrency, record, values },
     timeout: {
       events: timeoutEvents,
-      tag: timedOut.match({ ok: () => "unexpected-success", err: (error) => error._tag }),
+      tag: timedOut,
     },
     race: { events: raceEvents, winner },
     fiber: observed,

@@ -29,8 +29,9 @@ import { type FnPipe, Pipeable, runFnPipe } from '../core/pipe.js'
 import type { Result } from '../result/result.js'
 import { createEmptyResultsCollectionError, err, ok } from '../result/result.js'
 import { AbortError } from '../core/abort-error.js'
-import { createResultAsync } from '../resultar-async/result-async-adapter.js'
-import type { ResultAsync } from '../resultar-async/result-async.js'
+import { createResultAsync } from '../result-async/result-async-adapter.js'
+import '../result-async/result-async.js'
+import type { ResultAsync } from '../result-async/result-async.js'
 import { TaskScope } from './scope.js'
 import { Cause } from './cause.js'
 import { Clock } from './task-clock.js'
@@ -71,8 +72,10 @@ import {
   isExternalInterruptOnly,
   isObjectLike,
   isPlainRecord,
+  isResultTask,
   legacyRetryDelay,
   ResultTaskCauseError,
+  ResultTaskTypeId,
   taskFailureHandler,
   taskSuccessHandler,
   throwDefect,
@@ -128,7 +131,7 @@ import type {
 export { Fiber } from './fiber.js'
 export type { FiberHandle } from './fiber.js'
 export { Semaphore } from './semaphore.js'
-export { ResultTaskCauseError } from './task-helpers.js'
+export { isResultTask, ResultTaskCauseError, ResultTaskTypeId } from './task-helpers.js'
 export type {
   ResultTaskConcurrencyOptions,
   ResultTaskMatchOptions,
@@ -143,9 +146,6 @@ export {
   ServiceTagTypeId,
 } from './task-service.js'
 export type { ResultTaskServiceResolver, ResultTaskServices, ServiceTag } from './task-service.js'
-
-/** Type identifier symbol for nominal `ResultTask` branding and variance checks. */
-export const ResultTaskTypeId: unique symbol = Symbol.for('resultar/ResultTask')
 
 declare const scopeTypeId: unique symbol
 
@@ -401,11 +401,6 @@ type TaskReasonHandlers<E, ErrorTag extends string, H> = CatchReasonHandlers<
 type ResultTaskRunArguments<R> = [WithoutScope<R>] extends [never]
   ? [options?: ResultTaskRunOptions<R>]
   : [options: ResultTaskRunOptions<R>]
-
-/** Returns true if a value is a `ResultTask` instance. */
-export const isResultTask = (value: unknown): value is ResultTask<unknown, unknown, unknown> =>
-  value instanceof ResultTask ||
-  (isObjectLike(value) && (value as Record<symbol, unknown>)[ResultTaskTypeId] !== undefined)
 
 const isResultTaskYield = (value: unknown): value is ResultTaskYield<unknown, unknown, unknown> =>
   // Stryker disable next-line ConditionalExpression,LogicalOperator: instanceof fast-path is equivalent to the structural brand check below.
@@ -2530,9 +2525,13 @@ export class ResultTask<out A, out E = never, out R = never> {
     )
   }
 
-  /** Converts this task into one eagerly started ResultAsync execution. */
+  /**
+   * Converts this task into one eagerly started ResultAsync execution.
+   *
+   * @deprecated Since v4. Use task.runResult() instead.
+   */
   public toResultAsync(this: ResultTask<A, E, never>): ResultAsync<A, E> {
-    return ResultTask.toResultAsync(this)
+    return this.runResult()
   }
 
   /** Provides one required service and removes it from the task's requirements. */
@@ -5194,9 +5193,13 @@ export class ResultTask<out A, out E = never, out R = never> {
     })
   }
 
-  /** Starts one requirement-free task execution for awaitable Async consumers. */
+  /**
+   * Starts one requirement-free task execution for awaitable Async consumers.
+   *
+   * @deprecated Since v4. Use ResultTask.runResult(task) instead.
+   */
   public static toResultAsync<A, E>(task: ResultTask<A, E, never>): ResultAsync<A, E> {
-    return createResultAsync<ResultAsync<A, E>>(ResultTask.runResult(task))
+    return ResultTask.runResult(task)
   }
 
   static #idleRunContext: ResultTaskRuntimeContext | undefined
@@ -5380,7 +5383,7 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
   /* Stryker restore all */
 
-  private static runResultInternal<A, E, R>(
+  private static runResultPromiseInternal<A, E, R>(
     task: ResultTask<A, E, R>,
     options?: ResultTaskRunOptions<R>,
   ): Promise<Result<A, E | ScopeError<R>>> {
@@ -5405,6 +5408,15 @@ export class ResultTask<out A, out E = never, out R = never> {
     }
   }
 
+  private static runResultInternal<A, E, R>(
+    task: ResultTask<A, E, R>,
+    options?: ResultTaskRunOptions<R>,
+  ): ResultAsync<A, E | ScopeError<R>> {
+    return createResultAsync<ResultAsync<A, E | ScopeError<R>>>(
+      ResultTask.runResultPromiseInternal(task, options),
+    )
+  }
+
   private static runPromiseInternal<A, E, R>(
     task: ResultTask<A, E, R>,
     options?: ResultTaskRunOptions<R>,
@@ -5423,7 +5435,7 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
 
   /**
-   * Executes this task and returns simple typed failures as `Err`.
+   * Executes this task and returns simple typed failures as `Err` wrapped in `ResultAsync`.
    * Defects, interruptions, and composite causes reject, just as with `ResultTask.runResult`.
    * Each call starts a new execution; required services must be supplied in the run options.
    *
@@ -5435,11 +5447,11 @@ export class ResultTask<out A, out E = never, out R = never> {
   public runResult<Task>(
     this: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
     ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
-  ): Promise<Result<TaskSuccess<Task>, TaskError<Task> | ScopeError<TaskRequirements<Task>>>>
+  ): ResultAsync<TaskSuccess<Task>, TaskError<Task> | ScopeError<TaskRequirements<Task>>>
   public runResult<A0, E0, R0>(
     this: ResultTask<A0, E0, R0>,
     ...args: readonly [options?: ResultTaskRunOptions<R0>]
-  ): Promise<Result<A0, E0 | ScopeError<R0>>> {
+  ): ResultAsync<A0, E0 | ScopeError<R0>> {
     return ResultTask.runResultInternal(this, args[0])
   }
 
@@ -5609,7 +5621,7 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
 
   /**
-   * Runs a task and returns single typed failures as `Err<E>`; rejects defects (`Die`),
+   * Runs a task and returns single typed failures as `Err<E>` wrapped in `ResultAsync`; rejects defects (`Die`),
    * interruptions (`AbortError`), and composite causes (`ResultTaskCauseError`).
    *
    * @example
@@ -5622,20 +5634,20 @@ export class ResultTask<out A, out E = never, out R = never> {
   public static runResult<Task>(
     task: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
     ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
-  ): Promise<Result<TaskSuccess<Task>, TaskError<Task> | ScopeError<TaskRequirements<Task>>>>
-  public static runResult<A, E>(task: ResultTask<A, E, never>): Promise<Result<A, E>>
+  ): ResultAsync<TaskSuccess<Task>, TaskError<Task> | ScopeError<TaskRequirements<Task>>>
+  public static runResult<A, E>(task: ResultTask<A, E, never>): ResultAsync<A, E>
   public static runResult<A, E, R>(
     task: ResultTask<A, E, R> & ([WithoutScope<R>] extends [never] ? unknown : never),
     options?: NoInfer<ResultTaskRunOptions<R>>,
-  ): Promise<Result<A, E | ScopeError<R>>>
+  ): ResultAsync<A, E | ScopeError<R>>
   public static runResult<A, E, R>(
     task: ResultTask<A, E, R>,
     options: NoInfer<ResultTaskRunOptions<R>>,
-  ): Promise<Result<A, E | ScopeError<R>>>
+  ): ResultAsync<A, E | ScopeError<R>>
   public static runResult<A, E, R>(
     task: ResultTask<A, E, R>,
     options?: ResultTaskRunOptions<R>,
-  ): Promise<Result<A, E | ScopeError<R>>> {
+  ): ResultAsync<A, E | ScopeError<R>> {
     return ResultTask.runResultInternal(task, options)
   }
 
@@ -5675,6 +5687,7 @@ export class ResultTask<out A, out E = never, out R = never> {
 ;(ResultTask.prototype as unknown as { pipe: unknown }).pipe = (
   Pipeable.prototype as unknown as { pipe: unknown }
 ).pipe
+;(ResultTask.prototype as unknown as Record<symbol, unknown>)[ResultTaskTypeId] = ResultTaskTypeId
 /* Stryker restore all */
 
 const executeTryPromise = (

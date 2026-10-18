@@ -1,10 +1,13 @@
 import type { ErrResult } from '../result/result.js'
 
 import { isRedacted, stringifyRedacted } from '../core/redacted.js'
-import type { ResultAsync } from '../resultar-async/result-async.js'
-import { createResultAsync } from '../resultar-async/result-async-adapter.js'
+import type { ResultAsync } from '../result-async/result-async.js'
+import { createResultAsync } from '../result-async/result-async-adapter.js'
 import { ResultTask } from '../task/result-task.js'
 import { err as resultErr } from '../result/result.js'
+import { isError } from './tagged-match.js'
+
+export { isError } from './tagged-match.js'
 
 type Alpha =
   | 'a'
@@ -360,7 +363,6 @@ type PartialMatchHandlers<ErrorType extends Error, ReturnType> = Partial<
 const defaultBaseError: ErrorBaseConstructor = Error
 const defaultMessageTemplate = '$message'
 
-const nativeError = Error as typeof Error & { isError?: (value: unknown) => boolean }
 const templateVariableMatcher = /\$(?<name>[a-zA-Z_][a-zA-Z0-9_]*)/gu
 const reservedTemplateVariables = new Set<ReservedTemplateVariable>([
   '_tag',
@@ -373,15 +375,6 @@ const reservedTemplateVariables = new Set<ReservedTemplateVariable>([
 ])
 
 type TemplateValueStringifier = (value: unknown) => string
-
-/**
- * Narrows a value to native or platform-recognized Error.
- */
-export function isError(value: unknown): value is Error
-export function isError<Value>(value: Value): value is Extract<Value, Error>
-export function isError(value: unknown): value is Error {
-  return nativeError.isError?.(value) ?? value instanceof Error
-}
 
 const stringifyDirectTemplateValue: TemplateValueStringifier = String
 

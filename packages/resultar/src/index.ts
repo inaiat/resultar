@@ -22,7 +22,7 @@ export {
   tryCatchAsync,
   tryResultAsync,
   unitAsync,
-} from './resultar-async/index.js'
+} from './result-async/index.js'
 
 export type {
   AsyncResultGenOptions,
@@ -49,7 +49,7 @@ export type {
   SafeTryOptions,
   StrictResultAsync,
   TryResultAsyncOptions,
-} from './resultar-async/index.js'
+} from './result-async/index.js'
 export {
   DisposableResult,
   err,

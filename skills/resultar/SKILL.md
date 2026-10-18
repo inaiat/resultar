@@ -21,7 +21,7 @@ the domain boundary to the final transport, job, CLI, or integration boundary.
    using companion-package recipes. Online `main` documentation may describe a newer release.
 3. In the Resultar repository, use these sources in order:
    - `packages/resultar/src/index.ts` for public exports.
-   - `packages/resultar/src/resultar-async/index.ts` for the `resultar/async` compatibility exports.
+   - `packages/resultar/src/result-async/index.ts` for the `resultar/async` compatibility exports.
    - `packages/resultar/README.md` and `DOCUMENTATION.md` for current semantics and examples.
    - `packages/check/README.md` for diagnostics.
    - `packages/request*/README.md` and `examples/request/` for request integrations.
@@ -36,8 +36,9 @@ application rewrite or a move to services, scopes, clocks, or fibers before type
 1. Start with `Result<T, E>` in one synchronous validation, parser, or domain operation. `T` is
    the success value and `E` is the expected error type; Result's second parameter is not a
    service requirement.
-2. Retain deprecated `ResultAsync<T, E>` from `resultar/async` at existing eager, Promise-shaped
-   boundaries. Migrate imports, then one adapter or use case at a time while preserving execution.
+2. Use `ResultAsync<T, E>` (`StrictResultAsync<T, E>`) as the in-flight `Result` returned by
+   `task.runResult()` or at existing eager, Promise-shaped boundaries. Migrate eager factory imports
+   to `resultar/async`, then one adapter or use case at a time while preserving execution.
 3. Prefer `ResultTask<T, E, R>` for new asynchronous workflows. It supplies lazy, repeatable
    work; add typed service requirements, owned resources, or structured concurrency when needed.
    `R` tracks unresolved requirements; ordinary tasks use its default `never`.
@@ -51,16 +52,16 @@ Keep existing Result helpers and eager adapters in use as tasks are adopted. One
 installation provides both entry points. Import eager compatibility helpers and types from
 `resultar/async` in new eager code. Existing Async exports from `resultar` remain available for
 compatibility and refer to the same classes and helpers.
-All Async-specific factories and helpers, including `okAsync`, `errAsync`, and `tryResultAsync`,
-are deprecated and implemented in `packages/resultar/src/resultar-async`. Async-only types belong
+All Async-specific eager factories and orchestration helpers, including `okAsync`, `errAsync`, and `tryResultAsync`,
+are deprecated and implemented in `packages/resultar/src/result-async`. Async-only types belong
 there as well; core modules that previously declared them retain type-only re-exports.
-`ResultAsync` is a deprecated PromiseLike class: work starts eagerly and repeated awaits
+`ResultAsync` is a `PromiseLike<Result<T, E>>` class representing an in-flight `Result`: work starts eagerly (or when `task.runResult()` is called) and repeated awaits
 observe the same execution. `ResultTask` has no `.then` method; use explicit runners for every
 Task, including when `R = never`. Prefer `task.runResult()`, `task.runPromise()`, `task.runExit()`,
 and `task.runFork()` in new code; static runners remain equivalent and supported. Satisfying services
 and scopes leaves a Task. Adapt Async with
-`ResultTask.fromResultAsync`; `ResultAsync.fromTask(task)` from `resultar/async` eagerly starts one
-Task execution for legacy callers. The inbound Task bridge accepts any `PromiseLike<Result<A, E>>`
+`ResultTask.fromResultAsync`; `task.toResultAsync()` and `ResultAsync.fromTask(task)` are deprecated
+aliases of `task.runResult()`. The inbound Task bridge accepts any `PromiseLike<Result<A, E>>`
 or signal-aware factory, without requiring an Async instance. Read the
 [gradual adoption guide](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md).
 
@@ -70,9 +71,9 @@ pnpm add resultar
 
 ## Choose The Execution Model
 
-| Contract                   | `Result` / `Result.gen`                                             | Deprecated `ResultAsync<T, E>`                                        | `ResultTask<T, E, R>`                                                         |
+| Contract                   | `Result` / `Result.gen`                                             | `ResultAsync<T, E>` (in-flight `Result`)                              | `ResultTask<T, E, R>`                                                         |
 | -------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Execution                  | Sync values; async `Result.gen` / `fn` return eager Async             | Starts eagerly; repeated awaits observe one execution                 | Lazy blueprint; each explicit `run*` executes again                           |
+| Execution                  | Sync values; async `Result.gen` / `fn` return eager Async             | Starts eagerly (via `task.runResult()` or legacy factories); repeated awaits observe one execution | Lazy blueprint; each explicit `run*` executes again                           |
 | Generator return           | `return value`; `yield*` short-circuits failures                    | `gen` / `fn` from `resultar/async`; bridge into Task generators       | `return value`; compose tasks, services and Results with `yield*`             |
 | Error transform / recovery | `mapErr` / `orElse` / `orElseSucceed`; `unwrapOr` returns a value   | `mapErr` / `orElse` / `orElseSucceed`; `unwrapOr` returns a Promise   | `mapErr` / `orElse` / `orElseSucceed`; `unwrapOr` returns a Task              |
 | Boundary fold              | `match` / `matchTags` / `matchTagsPartial` return `Out`             | Instance: `Promise<Out>`; static: `ResultAsync<Out, never>`               | Return `ResultTask<Out, never, R>`; execute with `runPromise` for `Out`       |
@@ -81,8 +82,9 @@ pnpm add resultar
 | Cleanup                    | Disposal callbacks are best-effort                                  | `withResource` starts eagerly and releases best-effort                | `acquireRelease` + `scoped` await release and preserve failures               |
 
 Prefer Task for new asynchronous workflows. Preserve the eager Async facade where callers depend
-on it while migrating explicitly. `task.runResult()` returns a single typed failure as `Err`
-and rejects defects, interruption, and composite causes. `task.runPromise()` resolves the value or
+on it while migrating explicitly. `task.runResult()` returns `ResultAsync<A, E | ScopeError<R>>`,
+converting a single typed failure to `Err` and rejecting defects, interruption, and composite causes.
+`task.runPromise()` resolves the value or
 rejects any failure; `task.runExit()` preserves every exit without rejection; `task.runFork()`
 starts a root fiber immediately. Both instance and static runners enforce service requirements and
 accept the same `ResultTaskRunOptions<R>` (`services`, `signal`, `clock`, `scheduler`, `yieldEvery`).
@@ -98,9 +100,9 @@ remains available. Check installed versions before using these overloads.
 ## Apply Opinionated Defaults
 
 - Return `Result<T, E>` for synchronous fallible work and prefer `ResultTask<T, E, R>` for new
-  asynchronous workflows. Retain deprecated `ResultAsync<T, E>` for existing eager contracts.
-- Prefer `StrictResult<T, E extends Error>` when errors must extend `Error`. Preserve deprecated
-  `StrictResultAsync<T, E extends Error>` on existing eager boundaries; keep concrete `E` and `R`
+  asynchronous workflows. Use `ResultAsync<T, E>` as the in-flight `Result` returned by `task.runResult()` or for existing eager contracts.
+- Prefer `StrictResult<T, E extends Error>` when errors must extend `Error`. Use
+  `StrictResultAsync<T, E extends Error>` on eager boundaries; keep concrete `E` and `R`
   on task boundaries.
 - When migrating an eager async service or repository, return `ResultAsync` / `StrictResultAsync`
   directly instead of `Promise<T>`, `Promise<Result>` or `Promise<StrictResult>`. Map external
@@ -121,7 +123,7 @@ remains available. Check installed versions before using these overloads.
 - Wrap third-party throws and promise rejections at the edge, then keep the internal flow Resultar-
   native.
 - `ResultTask.map` is synchronous. Compose asynchronous steps with `andThen` and `tryPromise`;
-  deprecated `ResultAsync.map` and `mapErr` continue to await Promise-returning callbacks.
+  `ResultAsync.map` and `mapErr` continue to await Promise-returning callbacks.
 - Avoid `T | Error`, sentinel `null`, broad `try/catch`, rejected expected failures, and unsafe casts
   as substitutes for a Resultar error channel.
 - Keep `_unsafeUnwrap()` and `_unsafeUnwrapErr()` in tests. Use `unwrapOrThrow()` only when throwing
@@ -158,7 +160,7 @@ do not prove exhaustive coverage. See [API details](references/api.md#pattern-ma
 Use Task's canonical `ok`, `err`, `mapErr`, `andThen`, and `orElse` in new code. Deprecated
 `succeed` / `fail`, `mapError`, `flatMap`, and `catchAll` retain their contracts. Prefer `{ ok, err }`
 object handlers and `Retry.policy(...)`; older handler shapes and Task retry options remain supported.
-Prefer `ResultAsync.fromTask` from `resultar/async`; static and instance `toResultAsync` remain callable.
+Prefer `task.runResult()` (or `ResultTask.runResult(task)`); `ResultAsync.fromTask` and static/instance `toResultAsync` remain callable as deprecated aliases.
 Prefer core `tryResult` and compatibility-subpath `tryResultAsync`; their supported aliases retain
 deprecation annotations. Tagged errors keep `.err()`, `.taskErr()`, and `.errAsync()`; new eager code
 can use `errAsync(new DomainError(props))`, importing `errAsync` from `resultar/async`.

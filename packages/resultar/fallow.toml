@@ -1,4 +1,4 @@
-entry = ["src/index.ts", "src/resultar-async/index.ts"]
+entry = ["src/index.ts", "src/result-async/index.ts"]
 publicPackages = ["resultar"]
 # Stryker loads its runner by name; vitest is the alias target in
 # vitest-stryker.config.ts, which is excluded from entry analysis below.

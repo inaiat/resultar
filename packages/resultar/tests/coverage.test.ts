@@ -10,7 +10,7 @@ import { registerFiberTaskFactory, startFiber } from '../src/task/fiber-runtime.
 import { MissingServiceError, ResultTaskYieldTypeId } from '../src/task/result-task.js'
 import { TaskScope } from '../src/task/scope.js'
 import { schedulerCheckpoint } from '../src/task/task-scheduler.js'
-import type * as ResultAsyncAdapter from '../src/resultar-async/result-async-adapter.js'
+import type * as ResultAsyncAdapter from '../src/result-async/result-async-adapter.js'
 
 const resultAsyncForEach: typeof resultar.ResultAsync.forEach = resultar.ResultAsync.forEach
 
@@ -619,7 +619,7 @@ describe('coverage-focused public behavior', () => {
 
   it('covers ResultAsync adapter registration failure in isolation', async () => {
     const adapter = (await import(
-      new URL('../src/resultar-async/result-async-adapter.ts?coverage', import.meta.url).href
+      new URL('../src/result-async/result-async-adapter.ts?coverage', import.meta.url).href
     )) as typeof ResultAsyncAdapter
 
     throws(() => adapter.createResultAsync(Promise.resolve(resultar.ok(1))), /not registered/u)
@@ -1730,5 +1730,125 @@ describe('coverage-focused public behavior', () => {
       _tag: 'Success',
       value: 7,
     })
+
+    // Result.fromThrowable without errorFn with >1 argument (result.ts:971)
+    const sumNoMapper = resultar.Result.fromThrowable((a: number, b: number) => a + b)
+    expect(sumNoMapper(2, 3)).toEqual(resultar.ok(5))
+
+    // ResultTask.mapErr and ResultTask.orElse missing callback validation (result-task.ts:3619, 3726)
+    expect(() => (ResultTask.mapErr as (...args: unknown[]) => unknown)(ResultTask.ok(1))).toThrow(
+      new TypeError('ResultTask.mapErr requires an error mapping function'),
+    )
+    expect(() => (ResultTask.orElse as (...args: unknown[]) => unknown)(ResultTask.ok(1))).toThrow(
+      new TypeError('ResultTask.orElse requires a recovery function'),
+    )
+
+    // #stepFlatMapFastPath synchronous throw for Error and non-Error (result-task.ts:5352-5354)
+    await expect(
+      ResultTask.ok(1)
+        .andThen(() => {
+          throw new Error('fastpath-andthen-error')
+        })
+        .runResult(),
+    ).rejects.toThrow('fastpath-andthen-error')
+    await expect(
+      ResultTask.ok(1)
+        .andThen(() => {
+          throw 'fastpath-andthen-non-error'
+        })
+        .runResult(),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        message: 'fastpath-andthen-non-error',
+        cause: 'fastpath-andthen-non-error',
+      }),
+    )
+
+    // runTryPromiseResult fast-path branches (result-task.ts:5742, 5754-5757, 5776, 5785)
+    await expect(
+      ResultTask.tryPromise({
+        try: () => Promise.reject(new Error('rejected')),
+        catch: () => {
+          throw new Error('catch-defect')
+        },
+      }).runResult(),
+    ).rejects.toThrow('catch-defect')
+    expect(
+      await ResultTask.tryPromise(() => {
+        throw 'sync-throw-no-mapper'
+      }).runResult(),
+    ).toEqual(err('sync-throw-no-mapper'))
+    expect(
+      await ResultTask.tryPromise({
+        try: () => {
+          throw 'sync-throw-with-mapper'
+        },
+        catch: (e) => `mapped:${String(e)}`,
+      }).runResult(),
+    ).toEqual(err('mapped:sync-throw-with-mapper'))
+    await expect(
+      ResultTask.tryPromise({
+        try: () => {
+          throw 'sync-throw'
+        },
+        catch: () => {
+          throw new Error('sync-catch-error')
+        },
+      }).runResult(),
+    ).rejects.toThrow('sync-catch-error')
+    await expect(
+      ResultTask.tryPromise({
+        try: () => {
+          throw 'sync-throw'
+        },
+        catch: () => {
+          throw 'sync-catch-non-error'
+        },
+      }).runResult(),
+    ).rejects.toThrow(
+      expect.objectContaining({ message: 'sync-catch-non-error', cause: 'sync-catch-non-error' }),
+    )
+
+    // canonicalRetryDelay zero-delay uninterruptible fast-path with resolving async onRetry (task-helpers.ts:208)
+    let retryAttempts = 0
+    const retryObserved: number[] = []
+    const zeroDelayAsyncOnRetry = ResultTask.sync(() => {
+      retryAttempts += 1
+      return retryAttempts
+    })
+      .andThen((attempt) => (attempt === 1 ? ResultTask.err('first-fail') : ResultTask.ok(attempt)))
+      .retry(
+        resultar.Retry.policy({
+          times: 1,
+          onRetry: async (_err, ctx) => {
+            await Promise.resolve()
+            retryObserved.push(ctx.attempt)
+          },
+        }),
+      )
+    expect(await zeroDelayAsyncOnRetry.runResult()).toEqual(resultar.ok(2))
+    expect(retryObserved).toEqual([0])
+
+    // ResultTask.run root flatMap fast-path with err Result (result-task.ts:718)
+    // and runTaskLoop flatMap continuation with ok Result (result-task.ts:981)
+    // and ResultTask.match 2-callback positional form on Err (result-task.ts:2485)
+    expect(
+      await ResultTask.ok(1)
+        .andThen(() => err('root-flatmap-err'))
+        .runExit(),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'root-flatmap-err' } })
+    expect(
+      await ResultTask.sync(() => 1)
+        .andThen((v) => resultar.ok(v + 1))
+        .runExit(),
+    ).toEqual({ _tag: 'Success', value: 2 })
+    expect(
+      await ResultTask.err<string, number>(42)
+        .match(
+          (v) => `ok:${v}`,
+          (e) => `err:${String(e)}`,
+        )
+        .runResult(),
+    ).toEqual(resultar.ok('err:42'))
   })
 })

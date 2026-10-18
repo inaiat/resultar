@@ -43,7 +43,7 @@ export interface HonoApplication<CloseError = never, RequestServices extends obj
   readonly serviceTypes?: { readonly request: RequestServices };
   readonly fetch: (request: Request) => Promise<Response>;
   readonly request: (input: string | Request, init?: RequestInit) => Promise<Response>;
-  readonly close: () => Promise<Result<void, CloseError>>;
+  readonly close: () => ResultAsync<void, CloseError>;
 }
 
 /** Infers selected bindings from an application or its factory. */
@@ -105,7 +105,7 @@ export function createHonoApp<
   const dispatch = bind(keys, (resolvedBindings, request) =>
     router.fetch(request, resolvedBindings),
   );
-  let closing: Promise<Result<void, ServiceScopeError<R>>> | undefined = undefined;
+  let closing: ResultAsync<void, ServiceScopeError<R>> | undefined = undefined;
   let resourcesClosing: ResultAsync<Exit<void, ServiceScopeError<R>>, never> | undefined =
     undefined;
   let session: ServiceTaskSession | undefined = undefined;
@@ -189,17 +189,14 @@ export function createHonoApp<
         closing ??= ResultTask.runResult(root.close());
         return closing;
       }
-      closing ??= closeResources().match(
-        (exit): Result<void, ServiceScopeError<R>> => {
-          if (exit._tag === "Success") return unit();
-          if (exit.cause._tag === "Fail") return err(exit.cause.error);
-          if (exit.cause._tag === "Die") throw exit.cause.defect;
-          if (exit.cause._tag === "Interrupt")
-            throw new AbortError("ResultTask execution interrupted", { cause: exit.cause.reason });
-          throw new ResultTaskCauseError(exit.cause);
-        },
-        (error: never) => error,
-      );
+      closing ??= closeResources().andThen((exit): Result<void, ServiceScopeError<R>> => {
+        if (exit._tag === "Success") return unit();
+        if (exit.cause._tag === "Fail") return err(exit.cause.error);
+        if (exit.cause._tag === "Die") throw exit.cause.defect;
+        if (exit.cause._tag === "Interrupt")
+          throw new AbortError("ResultTask execution interrupted", { cause: exit.cause.reason });
+        throw new ResultTaskCauseError(exit.cause);
+      });
       return closing;
     },
   };

@@ -12,13 +12,20 @@ import (
 )
 
 const resultAsyncTypes = `
-export interface Result<T, E> { readonly value: T; readonly error: E }
+export interface Result<T, E> {
+  readonly value: T
+  readonly error: E
+  match<U>(handlers: { readonly ok: (value: T) => U; readonly err: (error: E) => U }): U
+}
 export type StrictResult<T, E extends Error> = Result<T, E>
 export interface ResultAsync<T, E> extends PromiseLike<Result<T, E>> {
   map<U>(fn: (value: T) => U): ResultAsync<U, E>
 }
 export type StrictResultAsync<T, E extends Error> = ResultAsync<T, E>
-export interface ResultTask<T, E> { readonly task: () => Result<T, E> }
+export interface ResultTask<T, E> {
+  readonly task: () => Result<T, E>
+  runResult(): ResultAsync<T, E>
+}
 export declare function ok<T>(value: T): Result<T, never>
 export declare function fromPromise<T, E>(value: Promise<T>, mapError: (cause: unknown) => E): ResultAsync<T, E>
 `
@@ -220,3 +227,41 @@ func writeResultAsyncFixture(t *testing.T, source string) string {
 	}
 	return directory
 }
+
+func TestNoDiscardResultAsyncAwaitTransfer(t *testing.T) {
+	source := `import type {ResultTask} from "resultar"
+declare const task: ResultTask<number, Error>
+export async function runHandled(): Promise<number> {
+  const pending = task.runResult()
+  const resolved = await pending
+  return resolved.match({ ok: value => value, err: () => 0 })
+}
+export async function runUnhandled(): Promise<void> {
+  const pendingUnhandled = task.runResult()
+  const unhandledResolved = await pendingUnhandled
+  const pendingBareAwait = task.runResult()
+  await pendingBareAwait
+  const neverAwaited = task.runResult()
+}
+`
+	directory := writeResultAsyncFixture(t, source)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil || len(diagnostics) != 0 {
+		t.Fatalf("open: %v, compiler diagnostics: %v", err, diagnostics)
+	}
+	options := config.Defaults()
+	options.NoUnsafeAwait = config.SeverityOff
+	options.PreferResultAsync = config.SeverityOff
+	options.NoDiscard = config.SeverityWarning
+	options.NoDiscardMode = "must-use"
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertInstanceRunnerFindingLines(t, source, findings, []string{
+		"const unhandledResolved = await pendingUnhandled",
+		"await pendingBareAwait",
+		"const neverAwaited = task.runResult()",
+	})
+}
+

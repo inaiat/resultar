@@ -19,7 +19,7 @@ export default defineConfig({
     clean: true,
     dts: { sourcemap: false },
     deps: { onlyBundle: false },
-    entry: { index: 'src/index.ts', async: 'src/resultar-async/index.ts' },
+    entry: { index: 'src/index.ts', async: 'src/result-async/index.ts' },
     format: ['esm'],
     outExtensions: () => ({ dts: '.d.ts', js: '.js' }),
     sourcemap: false,
@@ -90,7 +90,7 @@ export default defineConfig({
     },
     overrides: [
       {
-        files: ['src/resultar-async/**/*.ts'],
+        files: ['src/result-async/**/*.ts'],
         rules: {
           '@typescript-eslint/no-explicit-any': 'allow',
           '@typescript-eslint/no-deprecated': 'allow',
@@ -150,7 +150,16 @@ export default defineConfig({
   },
   test: {
     coverage: {
-      exclude: ['node_modules/', 'dist/', 'tests/', 'src/index.ts'],
+      exclude: [
+        'node_modules/',
+        'dist/',
+        'tests/',
+        'src/index.ts',
+        'src/internal.ts',
+        'src/result-async/index.ts',
+        'src/result-async/async-composition.ts',
+        'src/result-async/generators.ts',
+      ],
       reporter: ['text', 'json', 'html', 'lcov'],
     },
     globals: true,

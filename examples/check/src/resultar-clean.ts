@@ -12,7 +12,6 @@ import {
   type StrictResult,
 } from "resultar";
 import {
-  ResultAsync,
   fromPromise,
   runPromise,
   tryResultAsync,
@@ -150,7 +149,7 @@ export const loadUserWithResultTask = (id: string): ResultTask<User, FetchUserEr
 
 // prefer-result-async: execute once and keep the returned operation composable.
 export const runUserTaskAtResultBoundary = (id: string): StrictResultAsync<User, FetchUserError> =>
-  ResultAsync.fromTask(loadUserTask(id));
+  loadUserTask(id).runResult();
 
 // noUnsafeAwaitIgnoreCalls: project-level escape hatches are exact. The full
 // TypeScript checker can allow this call by configuring "startServer".

@@ -1,6 +1,7 @@
 /**
- * Deprecated eager asynchronous compatibility at the resultar/async subpath.
- * Prefer ResultTask from resultar for new asynchronous workflows.
+ * In-flight asynchronous `Result` (`ResultAsync`) and legacy eager async compatibility at `resultar/async`.
+ * Prefer `ResultTask` from `resultar` for building and orchestrating new asynchronous workflows,
+ * and `task.runResult()` / `ResultTask.runResult(task)` to obtain an in-flight `ResultAsync`.
  * @module
  */
 export * from './result-async.js'

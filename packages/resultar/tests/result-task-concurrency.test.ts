@@ -256,7 +256,7 @@ describe('ResultTask race and timeout', () => {
         right: { _tag: 'Fail', error: 'right' },
       },
     })
-    await rejects(ResultTask.runResult(task), ResultTaskCauseError)
+    await rejects(async () => await ResultTask.runResult(task), ResultTaskCauseError)
     const recovered = await ResultTask.runExit(task.orElse(() => ResultTask.ok('recovered')))
     equal(recovered._tag, 'Failure')
     if (recovered._tag === 'Failure') equal(recovered.cause._tag, 'Die')
@@ -649,7 +649,7 @@ describe('ResultTask collections', () => {
       if (exit.cause._tag === 'Parallel')
         deepEqual(exit.cause.right, { _tag: 'Fail', error: ['invalid'] })
     }
-    await rejects(ResultTask.runResult(task), ResultTaskCauseError)
+    await rejects(async () => await ResultTask.runResult(task), ResultTaskCauseError)
   })
 })
 

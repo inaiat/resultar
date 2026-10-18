@@ -26,16 +26,16 @@ import type {
   TagsOf,
   TagsWithReasonOf,
 } from '../tagged/tagged-types.js'
-import { createResultAsync } from '../resultar-async/result-async-adapter.js'
-import type { ResultAsync } from '../resultar-async/result-async.js'
-import type { ResultAsyncAndThen, ResultAsyncMap } from '../resultar-async/async-types.js'
+import { createResultAsync } from '../result-async/result-async-adapter.js'
+import type { ResultAsync } from '../result-async/result-async.js'
+import type { ResultAsyncAndThen, ResultAsyncMap } from '../result-async/async-types.js'
 import type {
   AsyncResultGenGuard,
   AsyncResultGenOptions,
   LegacySafeTry,
   SafeTryAsyncOptions,
   SafeTryOptions,
-} from '../resultar-async/generator-types.js'
+} from '../result-async/generator-types.js'
 import {
   callSyncSideEffect,
   createEmptyResultsCollectionError,
@@ -121,7 +121,7 @@ import type {
 } from './result-types.js'
 
 export { createEmptyResultsCollectionError, DisposableResult } from './result-helpers.js'
-export type { AsyncResultGenOptions } from '../resultar-async/generator-types.js'
+export type { AsyncResultGenOptions } from '../result-async/generator-types.js'
 export type {
   ErrResult,
   OkResult,
@@ -135,20 +135,14 @@ export type {
 export type Result<T, E> = OkResult<T, E> | ErrResult<T, E>
 
 const combineResultList = <T, E>(resultList: readonly Result<T, E>[]): Result<readonly T[], E> => {
-  const len = resultList.length
   const values: T[] = []
 
-  /* Stryker disable all: indexed loop is behaviorally equivalent to for-of over dense array. */
-  for (let index = 0; index < len; index += 1) {
-    const result = resultList[index]
-    if (result !== undefined) {
-      /* Stryker restore all */
-      if (result.isErr()) {
-        return err(result.error)
-      }
-
-      values.push(result.value)
+  for (const result of resultList) {
+    if (result.isErr()) {
+      return err(result.error)
     }
+
+    values.push(result.value)
   }
 
   return ok(values)

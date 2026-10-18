@@ -39,8 +39,18 @@ const errorCode = (error: unknown): string => {
  * JSON-serializable summary.
  */
 export const runCookbook = async () => {
-  const user = await loadUserWithTimeout("usr_123", 1).runResult();
-  const catalog = await loadCatalogWithFallback("sku_123").runResult();
+  const user = await loadUserWithTimeout("usr_123", 1)
+    .runResult()
+    .match(
+      (value) => value,
+      (error) => ({ code: errorCode(error) }),
+    );
+  const catalog = await loadCatalogWithFallback("sku_123")
+    .runResult()
+    .match(
+      (value) => value,
+      (error) => ({ code: errorCode(error) }),
+    );
   const price = await fastestPrice("sku_123").runResult();
   const imported = await importRowsWithCleanup(["one", "two"]);
   const payment = settlePayment(decidePaymentState(1_900, 10));
@@ -53,10 +63,7 @@ export const runCookbook = async () => {
       email: "ada@example.com",
       planCode: "team",
     }),
-    catalog: catalog.match(
-      (value) => value,
-      (error) => ({ code: errorCode(error) }),
-    ),
+    catalog,
     imported: imported.result.match(
       (value) => value,
       (error) => ({ code: errorCode(error) }),
@@ -74,10 +81,7 @@ export const runCookbook = async () => {
       email: "ADA@example.com",
       password: "correct-horse-battery-staple",
     }),
-    user: user.match(
-      (value) => value,
-      (error) => ({ code: errorCode(error) }),
-    ),
+    user,
   };
 };
 

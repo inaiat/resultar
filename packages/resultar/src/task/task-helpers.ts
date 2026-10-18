@@ -12,7 +12,7 @@ import { isCleanupCause } from './cleanup-cause.js'
 import { combineExits, died, failure, success } from './exit.js'
 import type { SupervisedFiber } from './fiber-runtime.js'
 import { detachedPromise, NEVER_ABORTED_SIGNAL } from './promise-interruption.js'
-import type { Exit } from './result-task.js'
+import type { Exit, ResultTask } from './result-task.js'
 import type { TaskClock } from './task-clock.js'
 import type { ResultTaskRuntimeContext } from './task-service.js'
 
@@ -275,6 +275,13 @@ export const throwDefect = (defect: unknown): never => {
 
 export const isObjectLike = (value: unknown): value is Record<PropertyKey, unknown> =>
   (typeof value === 'object' || typeof value === 'function') && value !== null
+
+/** Type identifier symbol for nominal `ResultTask` branding and variance checks. */
+export const ResultTaskTypeId: unique symbol = Symbol.for('resultar/ResultTask')
+
+/** Returns true if a value is a `ResultTask` instance. */
+export const isResultTask = (value: unknown): value is ResultTask<unknown, unknown, unknown> =>
+  isObjectLike(value) && (value as Record<symbol, unknown>)[ResultTaskTypeId] !== undefined
 
 export const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

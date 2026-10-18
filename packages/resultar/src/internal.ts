@@ -22,6 +22,7 @@ export { createEmptyResultsCollectionError, getMatchErrorHandler } from './resul
 export {
   callTaggedHandler,
   hasTag,
+  isError,
   isTaggedHandlerMatch,
   matchTaggedOr,
 } from './tagged/tagged-match.js'

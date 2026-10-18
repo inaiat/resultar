@@ -10,8 +10,7 @@ Core helpers such as `ResultTask` continue to come from `resultar`.
 The DI package has one entry point; migrate old `resultar-di/advanced` imports to `resultar-di`.
 
 Prefer lazy `ResultTask` values for new async service methods and run them explicitly in routes.
-`ResultAsync` and `StrictResultAsync` are exported from the `resultar/async` subpath and are deprecated since v4; existing eager contracts keep one
-shared execution and can be adapted with `ResultTask.fromResultAsync(() => legacyMethod())`.
+`ResultTask.runResult` returns `ResultAsync<T, E>` (an in-flight `PromiseLike<Result<T, E>>`); existing eager `ResultAsync` service contracts can also be adapted back into lazy workflows with `ResultTask.fromResultAsync(() => legacyMethod())`.
 
 ## Add services to an existing Hono router
 
@@ -200,11 +199,10 @@ without starting the Node server because startup is guarded by `import.meta.main
 
 - `fetch(request)` serves requests using one shared root and a fresh child scope per response.
 - `request(input, init?)` uses the same path for tests. Relative paths resolve against localhost.
-- `ready()` runs the optional startup task once and returns an eager compatibility `ResultAsync`;
-  this public lifecycle contract is retained despite the facade's v4 deprecation. Call it before opening a
+- `ready()` runs the optional startup task once and returns an in-flight `ResultAsync`. Call it before opening a
   server listener when startup errors should be handled explicitly.
-- `close()` returns a Promise of Result, retaining the module's typed release failures. Concurrent
-  and repeated calls return the same promise; requests after close are rejected. Defects or
+- `close()` returns an in-flight `ResultAsync`, retaining the module's typed release failures. Concurrent
+  and repeated calls return the same `ResultAsync`; requests after close are rejected. Defects or
   composite causes that cannot be represented by Result may reject with ResultTaskCauseError,
   following `ResultTask.runResult` semantics.
 

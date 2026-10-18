@@ -104,7 +104,7 @@ Resultar began as a fork of `neverthrow` and evolved to occupy the practical mid
 | Capability | `neverthrow` | `Resultar` | `Effect` |
 | --- | --- | --- | --- |
 | **Entry cost** | 1 function (`Result<T, E>`) | **1 function (`Result<T, E>`)** | Full `Effect<A, E, R>` ecosystem |
-| **Async execution boundary** | `await ResultAsync<T, E>` | **Explicit Task runners; deprecated `ResultAsync` remains awaitable** | `Effect.runPromise` / runtime |
+| **Async execution boundary** | `await ResultAsync<T, E>` | **Explicit Task runners (`task.runResult()` returns `ResultAsync<T, E>`)** | `Effect.runPromise` / runtime |
 | **Tagged `Error` classes & secret redaction** | Manual | **Built-in (`createTaggedError`, `redact`)** | Built-in (`Data.TaggedError`, `Redacted`) |
 | **Retries, timeouts, races & virtual clock** | Manual | **Built-in (`Retry.policy`, `timeout`, `Clock.virtual`)** | Built-in (`Schedule`, `TestClock`) |
 | **Typed DI (`R`), LIFO resource scopes & fibers** | No | **Opt-in via `ResultTask<T, E, R>` & `resultar-di`** | Always present (`Effect<A, E, R>`, `Layer`, `Scope`) |
@@ -112,30 +112,30 @@ Resultar began as a fork of `neverthrow` and evolved to occupy the practical mid
 
 ### 2. Adopt Gradually: Three Primitives, One Mental Model
 
-Start with synchronous `Result` values and add `ResultTask` for asynchronous work. Services and scopes are optional task capabilities. Existing eager APIs can keep the deprecated `ResultAsync` contract through the `resultar/async` subpath in the same package while migrating explicitly:
+Start with synchronous `Result` values and add `ResultTask` for asynchronous workflows. Executing a task with `task.runResult()` returns `ResultAsync<T, E>` — an in-flight `Result` (`PromiseLike<Result<T, E>>`) that can be awaited directly or transformed and folded with the same methods as `Result`:
 
 ```mermaid
 flowchart LR
   R["<b>Stage 1: Result&lt;T, E&gt;</b><br/>Synchronous value (Ok / Err)<br/>Zero async overhead"]
   RT["<b>Stage 2: ResultTask&lt;T, E&gt;</b><br/>Lazy async workflow<br/>Explicit run boundary"]
   RTR["<b>Stage 3: ResultTask&lt;T, E, R&gt;</b><br/>Optional service requirements<br/>and resource scopes (R)"]
-  RA["<b>resultar/async: ResultAsync&lt;T, E&gt;</b><br/>Deprecated compatibility<br/>Eager, shared execution"]
+  RA["<b>ResultAsync&lt;T, E&gt;</b><br/>In-flight Result (PromiseLike)<br/>Await or chain like Result"]
 
   R -->|"async I/O, retry, timeout"| RT
   RT -->|"add services or resource ownership"| RTR
+  RT -->|"task.runResult()"| RA
   RA -->|"fromResultAsync(factory)"| RT
-  RT -->|"ResultAsync.fromTask(task)"| RA
 ```
 
 - **Stage 1 — `Result<T, E>`**: Use in pure parsing, validation, and domain functions.
 - **Stage 2 — `ResultTask<T, E>`**: Use for new async operations, retries, and timeouts. Build work lazily and execute it with `runResult`, `runExit`, `runPromise`, or `runFork`.
 - **Stage 3 — `ResultTask<T, E, R>`**: Add typed service dependencies or owned resources when needed. Providing requirements leaves a Task that still needs an explicit runner.
-- **Existing APIs — deprecated `ResultAsync<T, E>`**: Import from `resultar/async` to preserve eager, single-execution behavior while migrating. Import its class, factories and eager composition helpers from that subpath; use explicit bridges between it and Task. It ships with the same `resultar` installation. See the [migration table](docs/migrations/v4.md).
+- **In-flight Result — `ResultAsync<T, E>`**: Returned by `task.runResult()` / `ResultTask.runResult(task)` (and async `Result` helpers). Await it directly for `Result<T, E>` or chain `.map()`, `.andThen()`, `.catchTag()`, `.match()`, `.unwrapOr()`, and `.unwrapOrThrow()`. Eager `ResultAsync` constructors and orchestration helpers in `resultar/async` remain deprecated for existing API compatibility; see the [migration table](docs/migrations/v4.md).
 
 Prefer `task.runResult()`, `task.runPromise()`, `task.runExit()`, and `task.runFork()` in new code.
 The static forms, such as `ResultTask.runResult(task, options)`, remain equivalent and supported.
-Both forms enforce service requirements and accept the same execution options. `runResult` returns
-typed errors as `Err` and can reject defects, interruption, and composite causes; `runPromise` resolves
+Both forms enforce service requirements and accept the same execution options. `runResult` returns a `ResultAsync`
+that resolves typed errors as `Err` (and rejects defects, interruption, and composite causes); `runPromise` resolves
 the value or rejects, `runExit` preserves every outcome as a value, and `runFork` starts a root fiber
 immediately. Each call starts a new execution. See the [runner reference](packages/resultar/README.md#lazy-workflows-with-resulttask).
 

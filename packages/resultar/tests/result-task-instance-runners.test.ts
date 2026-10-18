@@ -6,12 +6,14 @@ import {
   Cause,
   Clock,
   Fiber,
+  ResultAsync,
   ResultTask,
   ResultTaskCauseError,
+  createTaggedError,
   err,
   ok,
 } from '../src/index.js'
-import type { Exit, FiberHandle, Result, ResultTaskScope } from '../src/index.js'
+import type { Exit, FiberHandle, Result, ResultTaskScope, StrictResultAsync } from '../src/index.js'
 
 describe('ResultTask instance runners', () => {
   it('starts a fresh execution for each runner and stores methods on the prototype', async () => {
@@ -73,7 +75,10 @@ describe('ResultTask instance runners', () => {
     const task = ResultTask.sync((): never => {
       throw defect
     })
-    await rejects(task.runResult(), (caught: unknown) => caught === defect)
+    await rejects(
+      async () => await task.runResult(),
+      (caught: unknown) => caught === defect,
+    )
     await rejects(task.runPromise(), (caught: unknown) => caught === defect)
     deepEqual(await task.runExit(), { _tag: 'Failure', cause: { _tag: 'Die', defect } })
     deepEqual(await Fiber.await(task.runFork()).runPromise(), {
@@ -115,7 +120,7 @@ describe('ResultTask instance runners', () => {
       })
       return yield* ResultTask.err(useError)
     })
-    await rejects(task.runResult(), ResultTaskCauseError)
+    await rejects(async () => await task.runResult(), ResultTaskCauseError)
     await rejects(task.runPromise(), ResultTaskCauseError)
     for (const exit of [await task.runExit(), await Fiber.await(task.runFork()).runPromise()]) {
       assertOk(exit._tag === 'Failure')
@@ -133,7 +138,7 @@ describe('ResultTask instance runners', () => {
       return executions
     })
     const options = { signal: controller.signal }
-    await rejects(task.runResult(options), AbortError)
+    await rejects(async () => await task.runResult(options), AbortError)
     await rejects(task.runPromise(options), AbortError)
     const expected = { _tag: 'Failure', cause: { _tag: 'Interrupt', reason: 'already stopped' } }
     deepEqual(await task.runExit(options), expected)
@@ -231,7 +236,7 @@ describe('ResultTask instance runners', () => {
     >()
 
     if (false) {
-      expectTypeOf(narrow.runResult()).toEqualTypeOf<Promise<Result<'ready', 'missing'>>>()
+      expectTypeOf(narrow.runResult()).toEqualTypeOf<ResultAsync<'ready', 'missing'>>()
       expectTypeOf(narrow.runPromise()).toEqualTypeOf<Promise<'ready'>>()
       expectTypeOf(narrow.runExit()).toEqualTypeOf<Promise<Exit<'ready', 'missing'>>>()
       expectTypeOf(narrow.runFork()).toEqualTypeOf<FiberHandle<'ready', 'missing'>>()
@@ -243,9 +248,7 @@ describe('ResultTask instance runners', () => {
         acquire: ResultTask.ok<number, 'acquire'>(1),
         release: () => ResultTask.err('release' as const),
       })
-      expectTypeOf(scoped.runResult()).toEqualTypeOf<
-        Promise<Result<number, 'acquire' | 'release'>>
-      >()
+      expectTypeOf(scoped.runResult()).toEqualTypeOf<ResultAsync<number, 'acquire' | 'release'>>()
       expectTypeOf(scoped.runExit()).toEqualTypeOf<Promise<Exit<number, 'acquire' | 'release'>>>()
       expectTypeOf(scoped.runFork()).toEqualTypeOf<FiberHandle<number, 'acquire' | 'release'>>()
       // eslint-disable-next-line @typescript-eslint/unbound-method -- Intentionally verify calls without a receiver fail type checking.
@@ -272,5 +275,127 @@ describe('ResultTask instance runners', () => {
       // @ts-expect-error Tasks with no requirements cannot accept unrelated services.
       void narrow.runFork({ services: { config: { value: 1 } } })
     }
+  })
+
+  it('returns a fluent ResultAsync from runResult and supports toResultAsync / ResultAsync.fromTask aliases', async () => {
+    class MissingError extends createTaggedError({
+      name: 'Missing',
+      message: 'Missing $id',
+    }).withProps<{ readonly id: string }>() {}
+
+    class ForbiddenError extends createTaggedError({
+      name: 'Forbidden',
+      message: 'Forbidden $id',
+    }).withProps<{ readonly id: string }>() {}
+
+    let runs = 0
+    const countTask = ResultTask.sync(() => {
+      runs += 1
+      return runs
+    })
+
+    const instanceRun = countTask.runResult()
+    const staticRun = ResultTask.runResult(countTask)
+    /* eslint-disable @typescript-eslint/no-deprecated -- Verify retained alias methods delegate to runResult(). */
+    const instanceAlias = countTask.toResultAsync()
+    const staticAlias = ResultTask.toResultAsync(countTask)
+    const asyncAlias = ResultAsync.fromTask(countTask)
+    /* eslint-enable @typescript-eslint/no-deprecated */
+
+    assertOk(instanceRun instanceof ResultAsync)
+    assertOk(staticRun instanceof ResultAsync)
+    assertOk(instanceAlias instanceof ResultAsync)
+    assertOk(staticAlias instanceof ResultAsync)
+    assertOk(asyncAlias instanceof ResultAsync)
+
+    expectTypeOf(instanceRun).toEqualTypeOf<StrictResultAsync<number, never>>()
+    expectTypeOf(staticRun).toEqualTypeOf<ResultAsync<number, never>>()
+
+    deepEqual(await instanceRun, ok(1))
+    deepEqual(await staticRun, ok(2))
+    deepEqual(await instanceAlias, ok(3))
+    deepEqual(await staticAlias, ok(4))
+    deepEqual(await asyncAlias, ok(5))
+
+    const chainedSuccess = await ResultTask.ok<number, MissingError | ForbiddenError>(10)
+      .runResult()
+      .map((value) => value * 2)
+      .andThen((value) => ok(value + 1))
+      .filterOrElse(
+        (value) => value > 10,
+        () => new ForbiddenError({ id: 'too-small' }),
+      )
+      .as('completed' as const)
+      .match(
+        (status) => `ok:${status}`,
+        (error) => `err:${error._tag}`,
+      )
+    equal(chainedSuccess, 'ok:completed')
+
+    const failingTask = ResultTask.err<number, MissingError | ForbiddenError>(
+      new MissingError({ id: 'user_42' }),
+    )
+    const recoveredTag = await ResultTask.runResult(failingTask)
+      .catchTag('Missing', (error) => ok(error.id.length))
+      .unwrapOr(0)
+    equal(recoveredTag, 7)
+
+    const matchedTags = await failingTask
+      .runResult()
+      .matchTags((value) => `value:${String(value)}`, {
+        Missing: (error) => `missing:${error.id}`,
+        Forbidden: (error) => `forbidden:${error.id}`,
+      })
+    equal(matchedTags, 'missing:user_42')
+
+    const partialMatched = await failingTask.runResult().matchTagsPartial(
+      (value) => `value:${String(value)}`,
+      { Forbidden: (error) => `forbidden:${error.id}` },
+      (error) => `fallback:${error._tag}`,
+    )
+    equal(partialMatched, 'fallback:Missing')
+
+    equal(await ResultTask.ok(99).runResult().unwrapOrThrow(), 99)
+  })
+
+  it('propagates defects, interruptions, and composite causes through runResult() ResultAsync chains', async () => {
+    const defect = new Error('defect-boom')
+    const dieTask = ResultTask.sync((): number => {
+      throw defect
+    })
+    await rejects(
+      async () => await dieTask.runResult().map((value) => value * 2),
+      (error: unknown) => error === defect,
+    )
+    const caughtViaThen = await dieTask.runResult().then(
+      () => 'unexpected',
+      (error: unknown) => (error instanceof Error ? `caught:${error.message}` : 'other'),
+    )
+    equal(caughtViaThen, 'caught:defect-boom')
+
+    const abortController = new AbortController()
+    abortController.abort('cancelled')
+    await rejects(
+      async () =>
+        await ResultTask.ok(1)
+          .runResult({ signal: abortController.signal })
+          .match(
+            () => 'ok',
+            () => 'err',
+          ),
+      (error: unknown) => error instanceof AbortError && error.cause === 'cancelled',
+    )
+
+    const compositeTask = ResultTask.gen(function* () {
+      yield* ResultTask.acquireRelease({
+        acquire: ResultTask.ok(undefined),
+        release: () => ResultTask.err('second' as const),
+      })
+      return yield* ResultTask.err('first' as const)
+    })
+    await rejects(
+      async () => await compositeTask.runResult().unwrapOr('fallback' as never),
+      ResultTaskCauseError,
+    )
   })
 })

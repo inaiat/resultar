@@ -20,8 +20,8 @@ import type {
   TagsOf,
   TagsWithReasonOf,
 } from '../tagged/tagged-types.js'
-import type { ResultAsyncOperations } from '../resultar-async/async-types.js'
-import type { AsyncResultFnGuard, AsyncResultFnOutput } from '../resultar-async/generator-types.js'
+import type { ResultAsyncOperations } from '../result-async/async-types.js'
+import type { AsyncResultFnGuard, AsyncResultFnOutput } from '../result-async/generator-types.js'
 import type { ResultTask } from '../task/result-task.js'
 import type { Result } from './result.js'
 import type { DisposableResult } from './result-helpers.js'

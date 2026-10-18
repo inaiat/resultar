@@ -187,7 +187,7 @@ describe('ResultTask', () => {
       equal(exit.cause._tag, 'Die')
     }
 
-    await rejects(() => ResultTask.runResult(task), defect)
+    await rejects(async () => await ResultTask.runResult(task), defect)
   })
 
   it('returns the success value from runPromise and rejects typed failures', async () => {

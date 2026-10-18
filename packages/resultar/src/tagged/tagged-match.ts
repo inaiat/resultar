@@ -62,3 +62,14 @@ export const matchTaggedOr = <E, R, F, Remaining = E>(
 
   return isTaggedHandlerMatch(handled) ? handled.value : fallback(error as unknown as Remaining)
 }
+
+const nativeError = Error as typeof Error & { isError?: (value: unknown) => boolean }
+
+/**
+ * Narrows a value to native or platform-recognized Error.
+ */
+export function isError(value: unknown): value is Error
+export function isError<Value>(value: Value): value is Extract<Value, Error>
+export function isError(value: unknown): value is Error {
+  return nativeError.isError?.(value) ?? value instanceof Error
+}
