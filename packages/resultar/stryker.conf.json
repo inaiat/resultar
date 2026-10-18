@@ -19,7 +19,6 @@
     "src/core/redacted.ts",
     "src/result/result-helpers.ts",
     "src/result/result.ts",
-    "src/task/result-async.ts",
     "src/task/result-task.ts",
     "src/task/task-helpers.ts",
     "src/task/task-service.ts",

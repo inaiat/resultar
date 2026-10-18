@@ -10,7 +10,7 @@ import { registerFiberTaskFactory, startFiber } from '../src/task/fiber-runtime.
 import { MissingServiceError, ResultTaskYieldTypeId } from '../src/task/result-task.js'
 import { TaskScope } from '../src/task/scope.js'
 import { schedulerCheckpoint } from '../src/task/task-scheduler.js'
-import type * as ResultAsyncAdapter from '../src/result-async-adapter.js'
+import type * as ResultAsyncAdapter from '../src/resultar-async/result-async-adapter.js'
 
 const resultAsyncForEach: typeof resultar.ResultAsync.forEach = resultar.ResultAsync.forEach
 
@@ -618,14 +618,10 @@ describe('coverage-focused public behavior', () => {
   })
 
   it('covers ResultAsync adapter registration failure in isolation', async () => {
-    const legacyAdapter = (await import(
-      new URL('../src/result-async-adapter.ts', import.meta.url).href
-    )) as typeof ResultAsyncAdapter
     const adapter = (await import(
       new URL('../src/resultar-async/result-async-adapter.ts?coverage', import.meta.url).href
     )) as typeof ResultAsyncAdapter
 
-    equal(typeof legacyAdapter.createResultAsync, 'function')
     throws(() => adapter.createResultAsync(Promise.resolve(resultar.ok(1))), /not registered/u)
   })
 

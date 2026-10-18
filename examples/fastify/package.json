@@ -9,7 +9,7 @@
     "smoke": "pnpm run build:deps && pnpm run check && node --import tsx scripts/smoke.ts"
   },
   "dependencies": {
-    "@fastify/type-provider-typebox": "6.1.0",
+    "@fastify/type-provider-typebox": "6.2.0",
     "fastify": "catalog:",
     "resultar": "workspace:*",
     "resultar-fastify": "workspace:*",
