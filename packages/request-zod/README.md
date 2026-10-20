@@ -65,7 +65,7 @@ const userTask: ResultTask<User, RequestError> = ResultTask.fromResultAsync(() =
 )
 
 const userLabelTask = userTask.map(({ email, seatLabel }) => `${email} (${seatLabel})`)
-const result = await ResultTask.runResult(userLabelTask)
+const result = await userLabelTask.runResult()
 ```
 
 The adapter call itself returns `ResultAsync<User, RequestError>`. Zod validates the unknown JSON response,

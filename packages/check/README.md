@@ -324,7 +324,7 @@ The new requirements and suppression rules default to `suggestion`; the default
 | `yield-star-in-result-task-gen`        | `yieldStarInResultTaskGen`         | `warning`    | Requires `yield*` for tasks and services inside `ResultTask.gen` / `ResultTask.fn`                                                                                         |
 | `yield-star-in-safe-try`               | `yieldStarInSafeTry`               | `warning`    | Requires `yield*` to compose Resultar values inside `safeTry` / `Result.gen` / `Result.fn`                                                                                 |
 
-Rules understand both method, static data-first, and curried `pipe` composition forms where applicable (including `Semaphore.withPermit` / `withPermits`, `Fiber` operations, `Match` finalizers, and static `Result` / `ResultAsync` / `ResultTask` helpers). ResultTask-aware checks
+Rules understand both method, static data-first, and curried `pipe` composition forms where applicable (including `Semaphore.withPermit` / `withPermits`, `Fiber` operations, `Match` finalizers, and static `Result` / `ResultAsync` / `ResultTask` helpers). In `no-discard`, `Promise<Result>` / `Promise.all(...).then(...)` and array `.map` / `.forEach` / `.flatMap` chains are tracked through callback targets—including curried/static Resultar consumers, transformers, and tuple combiners (`Result.all`, `Result.combine`, `Result.validateAll`), `.bind(...)`, conditional callbacks, object-literal property callbacks, and higher-order callback factories—when the outer Promise or mapped collection is consumed or returned. ResultTask-aware checks
 cover ignored tasks, unknown or narrowed error and requirements channels, nested tasks returned from `map`, Promises
 stored in task successes, useless recovery, and generator composition. Task checks and recovery refactors
 prefer `ok` / `err`, `mapErr`, `andThen`, and `orElse`. The checker also recognizes the retained
@@ -337,12 +337,11 @@ generator recognition resolve imported symbols, including renamed imports, names
 and barrel reexports. Rule IDs retain the `safe-try` spelling for `safeTry`, `Result.gen`, and `Result.fn`.
 
 For v4 application code, prefer lazy `ResultTask` workflows and explicit runners (`task.runResult()` returns an in-flight `ResultAsync`). `ResultAsync`
-and `StrictResultAsync` are also re-exported from the `resultar/async` subpath and preserve eager, single-execution contracts.
+and `StrictResultAsync` are exported from both `resultar` and the `resultar/async` compatibility subpath and preserve eager, single-execution contracts.
 The legacy rule name `prefer-result-async` is retained for teams enforcing an existing eager
 boundary policy; it is not a general recommendation to introduce Async into new Task workflows.
 Set `"preferResultAsync": "off"` if that policy does not apply to your project.
-The main `resultar` entry point contains synchronous `Result.gen` / `Result.fn` and lazy tasks.
-Eager `ResultAsync`, async `gen` / `fn`, and async `safeTry` are imported from `resultar/async`.
+The main `resultar` entry point exports `Result`, `ResultTask`, and in-flight `ResultAsync` helpers, while free eager helpers (`gen`, `fn`, `asyncMap`, `asyncAndThen`) live in `resultar/async`.
 
 The rule checks type references (including aliases, interface properties and methods) and
 inferred function returns. `preferResultAsyncMode` controls its scope:
@@ -369,7 +368,7 @@ const load = (): ResultTask<User, LoadError> =>
     catch: (cause) => new LoadError({ cause }),
   });
 
-const result = await ResultTask.runResult(load());
+const result = await load().runResult();
 ```
 
 Task has no `.then`; `map` is synchronous, and `match` produces another Task to run. Match the

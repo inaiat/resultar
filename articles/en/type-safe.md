@@ -25,7 +25,7 @@ const summarize = (url: string) => ResultTask.gen(function* () {
 });
 
 // Building the workflow is lazy. Execute it explicitly at the application boundary.
-const result = await ResultTask.runResult(summarize('https://example.com'));
+const result = await summarize('https://example.com').runResult();
 console.log(result.match({ ok: (summary) => summary, err: (error) => error.message }));
 ```
 

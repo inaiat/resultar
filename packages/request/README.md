@@ -58,13 +58,13 @@ const userTask = ResultTask.fromResultAsync(() =>
   }),
 )
 
-const result = await ResultTask.runResult(userTask)
+const result = await userTask.runResult()
 const label = result.match(user => user.email, error => error.message)
 ```
 
 Every run calls `requestJson` afresh. `fromResultAsync(existingResultAsync)` instead observes the
-same already-started execution on every run. Task is lazy and has no `.then`; use `runResult`,
-`runPromise`, or `runExit` at the application boundary. Its `map` callback is synchronous.
+same already-started execution on every run. Task is lazy and has no `.then`; use `.runResult()`,
+`.runPromise()`, or `.runExit()` (or their `ResultTask.run*(task)` static equivalents) at the application boundary. Its `map` callback is synchronous.
 
 The option examples below show the underlying eager request API for compatibility. Put the whole
 `requestJson(...)` call inside the factory above when composing a new Task workflow.

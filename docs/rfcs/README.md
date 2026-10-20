@@ -5,7 +5,7 @@ This directory centralizes the architectural proposals, design decisions, and te
 These records preserve design history, including earlier recommendations for eager
 `ResultAsync` workflows. For v4 usage, start with the [gradual adoption guide](../gradual-adoption.md)
 and [migration reference](../migrations/v4.md): `ResultTask` is the default for new async work;
-`ResultAsync` and `StrictResultAsync` live in the deprecated `resultar/async` subpath of the same package. Core Async exports and methods moved to its explicit helpers; see the migration guide.
+`ResultAsync` and `StrictResultAsync` are the active in-flight `Result` types returned by `task.runResult()` (and exported from both `resultar` and `resultar/async`), while deprecated eager orchestration helpers live in the `resultar/async` compatibility subpath.
 
 ---
 

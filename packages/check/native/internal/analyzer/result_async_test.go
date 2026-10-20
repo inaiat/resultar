@@ -17,6 +17,12 @@ export interface Result<T, E> {
   readonly error: E
   match<U>(handlers: { readonly ok: (value: T) => U; readonly err: (error: E) => U }): U
 }
+export declare const Result: {
+  match<T, E, U>(handlers: { readonly ok: (value: T) => U; readonly err: (error: E) => U }): (result: Result<T, E>) => U
+  unwrapOr<T2>(fallback: T2): <T, E>(result: Result<T, E>) => T | T2
+  map<T, U>(fn: (value: T) => U): <E>(result: Result<T, E>) => Result<U, E>
+  combine<T, E>(results: readonly Result<T, E>[]): Result<T[], E>
+}
 export type StrictResult<T, E extends Error> = Result<T, E>
 export interface ResultAsync<T, E> extends PromiseLike<Result<T, E>> {
   map<U>(fn: (value: T) => U): ResultAsync<U, E>
@@ -215,6 +221,15 @@ func writeResultAsyncFixture(t *testing.T, source string) string {
 		"node_modules/resultar/index.d.ts":   resultAsyncTypes,
 		"barrel.ts":                          `export type {StrictResult as DomainResult} from "resultar"`,
 		"native.d.ts":                        `export declare function read(): Promise<number>`,
+		"handlers.ts": `import {Result} from "resultar"
+export function foldImported(result: Result<number, Error>): number {
+  return result.match({ ok: value => value, err: () => 0 })
+}
+export function ignoreImported(_result: Result<number, Error>): number {
+  return 0
+}
+export const matchAlias = Result.match
+`,
 	}
 	for name, contents := range files {
 		path := filepath.Join(directory, name)
@@ -313,7 +328,9 @@ export async function runUnhandled(): Promise<void> {
 }
 
 func TestNoDiscardResultAsyncRegressions(t *testing.T) {
-	source := `import type {ResultTask} from "resultar"
+	source := `import {Result, type ResultTask} from "resultar"
+import * as namespace from "./handlers.js"
+import {foldImported} from "./handlers.js"
 declare const task: ResultTask<number, Error>
 declare const dynamicIdx: number
 
@@ -743,6 +760,77 @@ export function runThenWrappedInObjectOrConditionalUnhandled(
   void ignoredPassthroughChain.then().then(() => 0)
   return conditionalUnionUnhandled.then(x => (dynamicIdx > 0 ? x : 0)).then(() => 0)
 }
+
+export function runCallAndMemberCallbacksHandled(): PromiseLike<number> {
+  const pendingMatch = task.runResult()
+  const pendingUnwrapOr = task.runResult()
+  const pendingMapThenMatch = task.runResult()
+  const pendingNamespaceFold = task.runResult()
+  const pendingNamespaceBracketFold = task.runResult()
+  const pendingDirectImportedFold = task.runResult()
+  const pendingObjectFold = task.runResult()
+  const pendingDestructuredFold = task.runResult()
+  const pendingHigherOrder = task.runResult()
+  const pendingNamespaceMatchAlias = task.runResult()
+  const combineFirst = task.runResult()
+  const combineSecond = task.runResult()
+
+  const handlers = { ok: (value: number) => value, err: () => 0 }
+  const tupleHandlers = { ok: (values: number[]) => values.length, err: () => 0 }
+  const localBox = {
+    fold: foldImported,
+  }
+  const { fold: destructuredFold } = localBox
+  const makeHandler = () => (result: Result<number, Error>) => result.match(handlers)
+
+  void pendingMatch.then(Result.match(handlers))
+  void pendingUnwrapOr.then(Result.unwrapOr(0))
+  void pendingMapThenMatch.then(Result.map((value: number) => value + 1)).then(Result.match(handlers))
+  void pendingNamespaceFold.then(namespace.foldImported)
+  void pendingNamespaceBracketFold.then(namespace["foldImported"])
+  void pendingDirectImportedFold.then(foldImported)
+  void pendingObjectFold.then(localBox.fold)
+  void pendingDestructuredFold.then(destructuredFold)
+  void pendingHigherOrder.then(makeHandler())
+  void Promise.all([combineFirst, combineSecond]).then(Result.combine).then(Result.match(tupleHandlers))
+  return pendingNamespaceMatchAlias.then(namespace.matchAlias(handlers))
+}
+
+export function runCallAndMemberCallbacksUnhandled(): PromiseLike<number> {
+  const curriedMapThenIgnored = task.runResult()
+  const namespaceIgnoreUnhandled = task.runResult()
+  const mutatedObjectFoldUnhandled = task.runResult()
+  const mutatedBracketObjectFoldUnhandled = task.runResult()
+  const higherOrderIgnoredUnhandled = task.runResult()
+  const combineThenIgnoredFirst = task.runResult()
+  const combineThenIgnoredSecond = task.runResult()
+  const shadowedResultMatchUnhandled = task.runResult()
+
+  const mutableBox: { fold: (result: Result<number, Error>) => number } = {
+    fold: foldImported,
+  }
+  mutableBox.fold = () => 0
+
+  const bracketBox: Record<string, (result: Result<number, Error>) => number> = {
+    fold: foldImported,
+  }
+  bracketBox["fold"] = () => 0
+
+  const makeIgnoredHandler = () => (_result: Result<number, Error>) => 0
+
+  void curriedMapThenIgnored.then(Result.map((value: number) => value + 1)).then(() => 0)
+  void namespaceIgnoreUnhandled.then(namespace.ignoreImported)
+  void mutatedObjectFoldUnhandled.then(mutableBox.fold)
+  void mutatedBracketObjectFoldUnhandled.then(bracketBox["fold"])
+  void higherOrderIgnoredUnhandled.then(makeIgnoredHandler())
+  void Promise.all([combineThenIgnoredFirst, combineThenIgnoredSecond]).then(Result.combine).then(() => 0)
+  {
+    const Result = {
+      match: (_h: unknown) => (_r: Result<number, Error>) => 0,
+    }
+    return shadowedResultMatchUnhandled.then(Result.match({}))
+  }
+}
 `
 	directory := writeResultAsyncFixture(t, source)
 	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
@@ -799,5 +887,13 @@ export function runThenWrappedInObjectOrConditionalUnhandled(
 		"const ignoredPassthroughThen = task.runResult()",
 		"const ignoredNullThen = task.runResult()",
 		"const ignoredPassthroughChain = task.runResult()",
+		"const curriedMapThenIgnored = task.runResult()",
+		"const namespaceIgnoreUnhandled = task.runResult()",
+		"const mutatedObjectFoldUnhandled = task.runResult()",
+		"const mutatedBracketObjectFoldUnhandled = task.runResult()",
+		"const higherOrderIgnoredUnhandled = task.runResult()",
+		"const combineThenIgnoredFirst = task.runResult()",
+		"const combineThenIgnoredSecond = task.runResult()",
+		"const shadowedResultMatchUnhandled = task.runResult()",
 	})
 }

@@ -1174,14 +1174,9 @@ func (a *Analyzer) canonicalExpressionName(expression *ast.Node) string {
 	if expression == nil {
 		return ""
 	}
-	symbol := a.checker.GetSymbolAtLocation(expression)
+	symbol := a.resolveAliasedSymbol(a.checker.GetSymbolAtLocation(expression))
 	if symbol != nil {
-		if symbol.Flags()&ast.SymbolFlagsAlias != 0 {
-			symbol = a.checker.GetAliasedSymbol(symbol)
-		}
-		if symbol != nil {
-			return symbol.Name()
-		}
+		return symbol.Name()
 	}
 	return expressionName(expression)
 }
@@ -1881,27 +1876,68 @@ func isAssignmentOperatorKind(kind ast.Kind) bool {
 	return false
 }
 
+func (a *Analyzer) resolveAliasedSymbol(symbol *ast.Symbol) *ast.Symbol {
+	for symbol != nil && symbol.Flags()&ast.SymbolFlagsAlias != 0 {
+		aliased := a.checker.GetAliasedSymbol(symbol)
+		if aliased == nil || aliased == symbol {
+			break
+		}
+		symbol = aliased
+	}
+	return symbol
+}
+
+func (a *Analyzer) resolveSymbolAtNode(node *ast.Node) *ast.Symbol {
+	node = unwrapExpression(node)
+	if node == nil {
+		return nil
+	}
+	var symbol *ast.Symbol
+	switch node.Kind {
+	case ast.KindIdentifier:
+		if node.Parent != nil && node.Parent.Kind == ast.KindShorthandPropertyAssignment && node.Parent.Name() == node {
+			symbol = a.checker.GetShorthandAssignmentValueSymbol(node.Parent)
+		} else {
+			symbol = a.checker.GetSymbolAtLocation(node)
+		}
+	case ast.KindPropertyAccessExpression:
+		symbol = a.checker.GetSymbolAtLocation(node)
+		if symbol == nil && node.Name() != nil {
+			symbol = a.checker.GetSymbolAtLocation(node.Name())
+		}
+		if symbol == nil && node.Name() != nil {
+			if objType := a.checker.GetTypeAtLocation(node.AsPropertyAccessExpression().Expression); objType != nil {
+				symbol = a.checker.GetPropertyOfType(objType, node.Name().Text())
+			}
+		}
+	case ast.KindElementAccessExpression:
+		symbol = a.checker.GetSymbolAtLocation(node)
+		if symbol == nil {
+			if propName, ok := a.staticElementIndex(node.AsElementAccessExpression().ArgumentExpression); ok {
+				if objType := a.checker.GetTypeAtLocation(node.AsElementAccessExpression().Expression); objType != nil {
+					symbol = a.checker.GetPropertyOfType(objType, propName)
+				}
+			}
+		}
+	default:
+		symbol = a.checker.GetSymbolAtLocation(node)
+	}
+	return a.resolveAliasedSymbol(symbol)
+}
+
 func (a *Analyzer) nodeReferencesSymbol(node *ast.Node, target *ast.Symbol) bool {
 	if node == nil || target == nil {
 		return false
 	}
 	found := false
 	visit(node, func(n *ast.Node) {
-		if found || n == nil || n.Kind != ast.KindIdentifier {
+		if found || n == nil {
 			return
 		}
-		var sym *ast.Symbol
-		if n.Parent != nil && n.Parent.Kind == ast.KindShorthandPropertyAssignment && n.Parent.Name() == n {
-			sym = a.checker.GetShorthandAssignmentValueSymbol(n.Parent)
-		} else {
-			sym = a.checker.GetSymbolAtLocation(n)
+		if n.Kind != ast.KindIdentifier && n.Kind != ast.KindPropertyAccessExpression && n.Kind != ast.KindElementAccessExpression {
+			return
 		}
-		if sym != nil && sym.Flags()&ast.SymbolFlagsAlias != 0 {
-			if aliased := a.checker.GetAliasedSymbol(sym); aliased != nil {
-				sym = aliased
-			}
-		}
-		if sym == target {
+		if a.resolveSymbolAtNode(n) == target {
 			found = true
 		}
 	})
@@ -1958,39 +1994,885 @@ func (a *Analyzer) variableIsReassigned(symbol *ast.Symbol, file *ast.SourceFile
 	return reassigned
 }
 
-func (a *Analyzer) resolveCallbackNode(callback *ast.Node) *ast.Node {
-	return a.resolveCallbackNodeWithVisited(callback, nil)
+func (a *Analyzer) isSymbolReassigned(symbol *ast.Symbol, declFile, callFile *ast.SourceFile) bool {
+	if symbol == nil {
+		return true
+	}
+	if declFile != nil && !declFile.IsDeclarationFile && a.variableIsReassigned(symbol, declFile) {
+		return true
+	}
+	if callFile != nil && callFile != declFile && !callFile.IsDeclarationFile && a.variableIsReassigned(symbol, callFile) {
+		return true
+	}
+	return false
 }
 
-func (a *Analyzer) resolveCallbackNodeWithVisited(callback *ast.Node, visited map[*ast.Symbol]bool) *ast.Node {
-	cb := unwrapExpression(callback)
-	if cb == nil {
-		return nil
+func (a *Analyzer) nodeAccessesPropertyOnSymbol(node *ast.Node, target *ast.Symbol, propName string) bool {
+	if node == nil || target == nil || propName == "" {
+		return false
 	}
-	switch cb.Kind {
-	case ast.KindArrowFunction, ast.KindFunctionExpression, ast.KindFunctionDeclaration, ast.KindMethodDeclaration:
-		if cb.Body() != nil {
-			return cb
+	found := false
+	visit(node, func(n *ast.Node) {
+		if found || n == nil {
+			return
 		}
-		return nil
-	}
-	if cb.Kind != ast.KindIdentifier {
-		return nil
-	}
-	symbol := a.checker.GetSymbolAtLocation(cb)
-	if symbol == nil {
-		return nil
-	}
-	if symbol.Flags()&ast.SymbolFlagsAlias != 0 {
-		if aliased := a.checker.GetAliasedSymbol(symbol); aliased != nil {
-			symbol = aliased
+		switch n.Kind {
+		case ast.KindPropertyAccessExpression:
+			recv := unwrapExpression(n.AsPropertyAccessExpression().Expression)
+			if a.resolveSymbolAtNode(recv) == target && (n.Name() == nil || n.Name().Text() == propName) {
+				found = true
+			}
+		case ast.KindElementAccessExpression:
+			elem := n.AsElementAccessExpression()
+			recv := unwrapExpression(elem.Expression)
+			if a.resolveSymbolAtNode(recv) == target {
+				if name, ok := a.staticElementIndex(elem.ArgumentExpression); !ok || name == propName {
+					found = true
+				}
+			}
 		}
+	})
+	return found
+}
+
+func (a *Analyzer) propertyOnSymbolIsReassigned(symbol *ast.Symbol, propName string, file *ast.SourceFile) bool {
+	if symbol == nil || propName == "" || file == nil {
+		return true
+	}
+	reassigned := false
+	visit(file.AsNode(), func(node *ast.Node) {
+		if reassigned || node == nil {
+			return
+		}
+		switch node.Kind {
+		case ast.KindBinaryExpression:
+			bin := node.AsBinaryExpression()
+			if isAssignmentOperatorKind(bin.OperatorToken.Kind) && a.nodeAccessesPropertyOnSymbol(bin.Left, symbol, propName) {
+				reassigned = true
+			}
+		case ast.KindPrefixUnaryExpression:
+			u := node.AsPrefixUnaryExpression()
+			if (u.Operator == ast.KindPlusPlusToken || u.Operator == ast.KindMinusMinusToken) && a.nodeAccessesPropertyOnSymbol(u.Operand, symbol, propName) {
+				reassigned = true
+			}
+		case ast.KindPostfixUnaryExpression:
+			u := node.AsPostfixUnaryExpression()
+			if (u.Operator == ast.KindPlusPlusToken || u.Operator == ast.KindMinusMinusToken) && a.nodeAccessesPropertyOnSymbol(u.Operand, symbol, propName) {
+				reassigned = true
+			}
+		case ast.KindDeleteExpression:
+			if a.nodeAccessesPropertyOnSymbol(node.Expression(), symbol, propName) {
+				reassigned = true
+			}
+		case ast.KindForInStatement, ast.KindForOfStatement:
+			init := node.AsForInOrOfStatement().Initializer
+			if init != nil && init.Kind != ast.KindVariableDeclarationList && a.nodeAccessesPropertyOnSymbol(init, symbol, propName) {
+				reassigned = true
+			}
+		case ast.KindCallExpression:
+			call := node.AsCallExpression()
+			if a.staticNamespace(call.Expression, "assign") == "Object" && len(call.Arguments.Nodes) > 0 &&
+				a.resolveSymbolAtNode(call.Arguments.Nodes[0]) == symbol {
+				reassigned = true
+			}
+		}
+	})
+	return reassigned
+}
+
+func (a *Analyzer) isPropertyOnSymbolReassigned(symbol *ast.Symbol, propName string, declFile, callFile *ast.SourceFile) bool {
+	if symbol == nil || propName == "" {
+		return true
+	}
+	if declFile != nil && !declFile.IsDeclarationFile && a.propertyOnSymbolIsReassigned(symbol, propName, declFile) {
+		return true
+	}
+	if callFile != nil && callFile != declFile && !callFile.IsDeclarationFile && a.propertyOnSymbolIsReassigned(symbol, propName, callFile) {
+		return true
+	}
+	return false
+}
+
+func (a *Analyzer) bindingElementTarget(decl *ast.Node) (*ast.Node, string, bool, bool) {
+	if decl == nil || decl.Kind != ast.KindBindingElement {
+		return nil, "", false, false
+	}
+	bindingElem := decl.AsBindingElement()
+	if bindingElem.DotDotDotToken != nil || bindingElem.Initializer != nil {
+		return nil, "", false, false
+	}
+	if decl.Parent == nil || decl.Parent.Kind != ast.KindObjectBindingPattern {
+		return nil, "", false, false
+	}
+	parent := decl.Parent.Parent
+	if parent == nil || parent.Kind != ast.KindVariableDeclaration {
+		return nil, "", false, false
+	}
+	varDecl := parent.AsVariableDeclaration()
+	if varDecl.Initializer == nil {
+		return nil, "", false, false
+	}
+	var propName string
+	if bindingElem.PropertyName != nil {
+		switch bindingElem.PropertyName.Kind {
+		case ast.KindIdentifier, ast.KindStringLiteral, ast.KindNumericLiteral, ast.KindNoSubstitutionTemplateLiteral:
+			propName = bindingElem.PropertyName.Text()
+		case ast.KindComputedPropertyName:
+			name, ok := a.staticElementIndex(bindingElem.PropertyName.Expression())
+			if !ok {
+				return nil, "", false, false
+			}
+			propName = name
+		default:
+			return nil, "", false, false
+		}
+	} else if bindingElem.Name() != nil && bindingElem.Name().Kind == ast.KindIdentifier {
+		propName = bindingElem.Name().Text()
+	}
+	if propName == "" {
+		return nil, "", false, false
+	}
+	isConst := parent.Parent != nil &&
+		parent.Parent.Kind == ast.KindVariableDeclarationList &&
+		parent.Parent.Flags&ast.NodeFlagsConst != 0
+	return unwrapExpression(varDecl.Initializer), propName, isConst, true
+}
+
+func (a *Analyzer) isCallbackReceiverReassigned(node *ast.Node) bool {
+	callFile := ast.GetSourceFileOfNode(node)
+	curr := unwrapExpression(node)
+	for curr != nil && (curr.Kind == ast.KindPropertyAccessExpression || curr.Kind == ast.KindElementAccessExpression) {
+		var recv *ast.Node
+		var propName string
+		if curr.Kind == ast.KindPropertyAccessExpression {
+			if curr.Name() == nil {
+				return true
+			}
+			recv = unwrapExpression(curr.AsPropertyAccessExpression().Expression)
+			propName = curr.Name().Text()
+		} else {
+			elem := curr.AsElementAccessExpression()
+			name, ok := a.staticElementIndex(elem.ArgumentExpression)
+			if !ok {
+				return true
+			}
+			recv = unwrapExpression(elem.Expression)
+			propName = name
+		}
+		if recv == nil || propName == "" {
+			return true
+		}
+		sym := a.resolveSymbolAtNode(recv)
+		if sym != nil {
+			if a.isPropertyOnSymbolReassigned(sym, propName, nil, callFile) {
+				return true
+			}
+			for _, decl := range sym.Declarations() {
+				if decl == nil {
+					continue
+				}
+				declFile := ast.GetSourceFileOfNode(decl)
+				if a.isPropertyOnSymbolReassigned(sym, propName, declFile, callFile) {
+					return true
+				}
+				switch decl.Kind {
+				case ast.KindVariableDeclaration:
+					isConst := decl.Parent != nil &&
+						decl.Parent.Kind == ast.KindVariableDeclarationList &&
+						decl.Parent.Flags&ast.NodeFlagsConst != 0
+					if !isConst && a.isSymbolReassigned(sym, declFile, callFile) {
+						return true
+					}
+				case ast.KindBindingElement:
+					if recvInit, boundProp, isConst, ok := a.bindingElementTarget(decl); !ok ||
+						(!isConst && a.isSymbolReassigned(sym, declFile, callFile)) ||
+						a.isCallbackReceiverReassigned(recvInit) ||
+						(a.resolveSymbolAtNode(recvInit) != nil && a.isPropertyOnSymbolReassigned(a.resolveSymbolAtNode(recvInit), boundProp, declFile, callFile)) {
+						return true
+					}
+				case ast.KindParameter, ast.KindPropertyAssignment, ast.KindShorthandPropertyAssignment, ast.KindPropertyDeclaration:
+					if a.isSymbolReassigned(sym, declFile, callFile) {
+						return true
+					}
+				}
+			}
+		}
+		curr = recv
+	}
+	return false
+}
+
+type resultCallbackKind uint8
+
+const (
+	resultCallbackNone resultCallbackKind = iota
+	resultCallbackConsumer
+	resultCallbackTransformer
+	resultCallbackTupleCombiner
+)
+
+var curriedResultTransformerMethods = map[string]struct{}{
+	"map":                    {},
+	"mapErr":                 {},
+	"mapError":               {},
+	"andThen":                {},
+	"flatMap":                {},
+	"filterOrElse":           {},
+	"catchTag":               {},
+	"catchTags":              {},
+	"catchReason":            {},
+	"catchReasons":           {},
+	"unwrapReason":           {},
+	"tap":                    {},
+	"tapError":               {},
+	"tapCause":               {},
+	"tapBoth":                {},
+	"inspect":                {},
+	"inspectError":           {},
+	"inspectCause":           {},
+	"inspectBoth":            {},
+	"as":                     {},
+	"asVoid":                 {},
+	"asyncMap":               {},
+	"asyncAndThen":           {},
+	"sandbox":                {},
+	"unsandbox":              {},
+	"retryOrElse":            {},
+	"timeout":                {},
+	"delay":                  {},
+	"timed":                  {},
+	"ensuring":               {},
+	"onExit":                 {},
+	"when":                   {},
+	"unless":                 {},
+	"provideService":         {},
+	"provideServices":        {},
+	"provideServiceResolver": {},
+}
+
+func isResultarStaticNamespaceName(name string) bool {
+	switch name {
+	case "Result", "ResultAsync", "ResultTask", "Match", "Fiber":
+		return true
+	}
+	return false
+}
+
+func (a *Analyzer) resolveStaticNamespaceWithVisited(node *ast.Node, visited map[*ast.Symbol]bool) string {
+	node = unwrapExpression(node)
+	if node == nil || a.isCallbackReceiverReassigned(node) {
+		return ""
+	}
+	sym := a.resolveSymbolAtNode(node)
+	if sym == nil {
+		if propInit := a.resolveObjectLiteralPropertyInitializer(node, cloneSymbolVisited(visited)); propInit != nil {
+			return a.resolveStaticNamespaceWithVisited(propInit, visited)
+		}
+		return ""
 	}
 	if visited == nil {
 		visited = make(map[*ast.Symbol]bool)
 	}
-	if visited[symbol] {
+	if visited[sym] {
+		return ""
+	}
+	visited[sym] = true
+	callFile := ast.GetSourceFileOfNode(node)
+	hasNonInitializerDecl := false
+	for _, decl := range sym.Declarations() {
+		if decl == nil {
+			continue
+		}
+		declFile := ast.GetSourceFileOfNode(decl)
+		if declFile != nil {
+			path := strings.ReplaceAll(string(declFile.FileName()), "\\", "/")
+			if declFile.IsDeclarationFile || strings.Contains(path, "/packages/resultar/") || strings.Contains(path, "/node_modules/resultar/") {
+				if isResultarStaticNamespaceName(sym.Name()) {
+					return sym.Name()
+				}
+			}
+		}
+		switch decl.Kind {
+		case ast.KindVariableDeclaration:
+			varDecl := decl.AsVariableDeclaration()
+			if varDecl.Initializer == nil {
+				hasNonInitializerDecl = true
+				continue
+			}
+			isConst := decl.Parent != nil &&
+				decl.Parent.Kind == ast.KindVariableDeclarationList &&
+				decl.Parent.Flags&ast.NodeFlagsConst != 0
+			if !isConst && a.isSymbolReassigned(sym, declFile, callFile) {
+				return ""
+			}
+			if ns := a.resolveStaticNamespaceWithVisited(varDecl.Initializer, visited); ns != "" {
+				return ns
+			}
+		case ast.KindBindingElement:
+			recv, propName, isConst, ok := a.bindingElementTarget(decl)
+			if !ok || (!isConst && a.isSymbolReassigned(sym, declFile, callFile)) || a.isCallbackReceiverReassigned(recv) {
+				return ""
+			}
+			if recvSym := a.resolveSymbolAtNode(recv); recvSym != nil && a.isPropertyOnSymbolReassigned(recvSym, propName, declFile, callFile) {
+				return ""
+			}
+			if propInit := a.resolveObjectLiteralPropertyInitializerFromRecv(recv, propName, cloneSymbolVisited(visited)); propInit != nil {
+				if ns := a.resolveStaticNamespaceWithVisited(propInit, visited); ns != "" {
+					return ns
+				}
+			}
+			if recvType := a.checker.GetTypeAtLocation(recv); recvType != nil {
+				if propSym := a.resolveAliasedSymbol(a.checker.GetPropertyOfType(recvType, propName)); propSym != nil && isResultarStaticNamespaceName(propSym.Name()) {
+					return propSym.Name()
+				}
+			}
+		case ast.KindPropertyAssignment:
+			if a.isSymbolReassigned(sym, declFile, callFile) {
+				return ""
+			}
+			if ns := a.resolveStaticNamespaceWithVisited(decl.AsPropertyAssignment().Initializer, visited); ns != "" {
+				return ns
+			}
+		case ast.KindShorthandPropertyAssignment:
+			if a.isSymbolReassigned(sym, declFile, callFile) {
+				return ""
+			}
+			valSym := a.resolveAliasedSymbol(a.checker.GetShorthandAssignmentValueSymbol(decl))
+			if valSym != nil && valSym != sym {
+				for _, valDecl := range valSym.Declarations() {
+					if valDecl != nil && valDecl.Name() != nil {
+						if ns := a.resolveStaticNamespaceWithVisited(valDecl.Name(), visited); ns != "" {
+							return ns
+						}
+					}
+				}
+			}
+		case ast.KindTypeAliasDeclaration, ast.KindInterfaceDeclaration:
+			continue
+		default:
+			hasNonInitializerDecl = true
+		}
+	}
+	if hasNonInitializerDecl && isResultarStaticNamespaceName(sym.Name()) {
+		return sym.Name()
+	}
+	return ""
+}
+
+func (a *Analyzer) staticMemberAccess(expression *ast.Node) (string, string) {
+	return a.staticMemberAccessWithVisited(expression, nil)
+}
+
+func (a *Analyzer) staticMemberAccessWithVisited(expression *ast.Node, visited map[*ast.Symbol]bool) (string, string) {
+	expression = unwrapExpression(expression)
+	if expression == nil || a.isCallbackReceiverReassigned(expression) {
+		return "", ""
+	}
+	switch expression.Kind {
+	case ast.KindPropertyAccessExpression:
+		if expression.Name() == nil {
+			return "", ""
+		}
+		recv := expression.AsPropertyAccessExpression().Expression
+		propName := expression.Name().Text()
+		if ns := a.resolveStaticNamespaceWithVisited(recv, cloneSymbolVisited(visited)); ns != "" {
+			return ns, propName
+		}
+	case ast.KindElementAccessExpression:
+		elem := expression.AsElementAccessExpression()
+		propName, ok := a.staticElementIndex(elem.ArgumentExpression)
+		if !ok {
+			return "", ""
+		}
+		if ns := a.resolveStaticNamespaceWithVisited(elem.Expression, cloneSymbolVisited(visited)); ns != "" {
+			return ns, propName
+		}
+	case ast.KindIdentifier:
+	default:
+		return "", ""
+	}
+	sym := a.resolveSymbolAtNode(expression)
+	if sym != nil {
+		if visited == nil {
+			visited = make(map[*ast.Symbol]bool)
+		}
+		if visited[sym] {
+			return "", ""
+		}
+		visited[sym] = true
+		callFile := ast.GetSourceFileOfNode(expression)
+		if ns, member := a.staticMemberAccessFromSymbolDeclarations(sym, callFile, visited); ns != "" && member != "" {
+			return ns, member
+		}
+	}
+	if expression.Kind == ast.KindPropertyAccessExpression || expression.Kind == ast.KindElementAccessExpression {
+		if propInit := a.resolveObjectLiteralPropertyInitializer(expression, cloneSymbolVisited(visited)); propInit != nil {
+			return a.staticMemberAccessWithVisited(propInit, visited)
+		}
+	}
+	return "", ""
+}
+
+func (a *Analyzer) staticMemberAccessFromSymbolDeclarations(sym *ast.Symbol, callFile *ast.SourceFile, visited map[*ast.Symbol]bool) (string, string) {
+	for _, decl := range sym.Declarations() {
+		if decl == nil {
+			continue
+		}
+		declFile := ast.GetSourceFileOfNode(decl)
+		switch decl.Kind {
+		case ast.KindVariableDeclaration:
+			varDecl := decl.AsVariableDeclaration()
+			if varDecl.Initializer == nil {
+				continue
+			}
+			isConst := decl.Parent != nil &&
+				decl.Parent.Kind == ast.KindVariableDeclarationList &&
+				decl.Parent.Flags&ast.NodeFlagsConst != 0
+			if !isConst && a.isSymbolReassigned(sym, declFile, callFile) {
+				continue
+			}
+			if ns, member := a.staticMemberAccessWithVisited(varDecl.Initializer, visited); ns != "" && member != "" {
+				return ns, member
+			}
+		case ast.KindBindingElement:
+			recv, propName, isConst, ok := a.bindingElementTarget(decl)
+			if !ok || (!isConst && a.isSymbolReassigned(sym, declFile, callFile)) || a.isCallbackReceiverReassigned(recv) {
+				continue
+			}
+			if recvSym := a.resolveSymbolAtNode(recv); recvSym != nil && a.isPropertyOnSymbolReassigned(recvSym, propName, declFile, callFile) {
+				continue
+			}
+			if ns := a.resolveStaticNamespaceWithVisited(recv, cloneSymbolVisited(visited)); ns != "" {
+				return ns, propName
+			}
+			if propInit := a.resolveObjectLiteralPropertyInitializerFromRecv(recv, propName, cloneSymbolVisited(visited)); propInit != nil {
+				if ns, member := a.staticMemberAccessWithVisited(propInit, visited); ns != "" && member != "" {
+					return ns, member
+				}
+			}
+			if recvType := a.checker.GetTypeAtLocation(recv); recvType != nil {
+				if propSym := a.resolveAliasedSymbol(a.checker.GetPropertyOfType(recvType, propName)); propSym != nil && !visited[propSym] {
+					visited[propSym] = true
+					if ns, member := a.staticMemberAccessFromSymbolDeclarations(propSym, callFile, visited); ns != "" && member != "" {
+						return ns, member
+					}
+				}
+			}
+		case ast.KindPropertyAssignment:
+			if a.isSymbolReassigned(sym, declFile, callFile) {
+				continue
+			}
+			if ns, member := a.staticMemberAccessWithVisited(decl.AsPropertyAssignment().Initializer, visited); ns != "" && member != "" {
+				return ns, member
+			}
+		case ast.KindShorthandPropertyAssignment:
+			if a.isSymbolReassigned(sym, declFile, callFile) {
+				continue
+			}
+			valSym := a.resolveAliasedSymbol(a.checker.GetShorthandAssignmentValueSymbol(decl))
+			if valSym != nil && !visited[valSym] {
+				visited[valSym] = true
+				if ns, member := a.staticMemberAccessFromSymbolDeclarations(valSym, callFile, visited); ns != "" && member != "" {
+					return ns, member
+				}
+			}
+		case ast.KindPropertyDeclaration:
+			propDecl := decl.AsPropertyDeclaration()
+			if propDecl.Initializer == nil || a.isSymbolReassigned(sym, declFile, callFile) {
+				continue
+			}
+			if ns, member := a.staticMemberAccessWithVisited(propDecl.Initializer, visited); ns != "" && member != "" {
+				return ns, member
+			}
+		case ast.KindExportAssignment:
+			exportAssign := decl.AsExportAssignment()
+			if exportAssign.Expression != nil {
+				if ns, member := a.staticMemberAccessWithVisited(exportAssign.Expression, visited); ns != "" && member != "" {
+					return ns, member
+				}
+			}
+		}
+	}
+	return "", ""
+}
+
+func isZeroArgCurriedMethod(member string) bool {
+	switch member {
+	case "asVoid", "sandbox", "unsandbox", "unwrapOrThrow", "_unsafeUnwrap", "_unsafeUnwrapErr",
+		"runResult", "runPromise", "runExit", "runFork", "toResultAsync",
+		"join", "await", "interrupt", "exhaustive", "orElseAbsurd", "option", "result", "tagsExhaustive":
+		return true
+	}
+	return false
+}
+
+func (a *Analyzer) classifyResultCallback(node *ast.Node) resultCallbackKind {
+	node = unwrapExpression(node)
+	if node == nil {
+		return resultCallbackNone
+	}
+	if node.Kind == ast.KindCallExpression {
+		call := node.AsCallExpression()
+		if method, recv, _ := methodCall(node); method == "bind" && len(call.Arguments.Nodes) <= 1 {
+			return a.classifyResultCallback(recv)
+		}
+		callType := a.checker.GetTypeAtLocation(node)
+		if callType == nil || len(a.checker.GetCallSignatures(callType)) == 0 {
+			return resultCallbackNone
+		}
+		args := call.Arguments.Nodes
+		if len(args) > 0 && isResultLikeType(a.checker.GetTypeAtLocation(args[0])) {
+			return resultCallbackNone
+		}
+		if compat := a.asyncCompatibilityFunctionName(node); compat == "asyncMap" || compat == "asyncAndThen" {
+			return resultCallbackTransformer
+		}
+		ns, member := a.staticMemberAccess(call.Expression)
+		switch ns {
+		case "Result", "ResultAsync", "ResultTask":
+			if len(args) == 0 && !isZeroArgCurriedMethod(member) {
+				return resultCallbackNone
+			}
+			if member == "validateAll" && len(args) == 1 {
+				return resultCallbackTupleCombiner
+			}
+			if _, ok := consumerMethods[member]; ok {
+				return resultCallbackConsumer
+			}
+			if _, ok := resultTaskInstanceRunnerMethods[member]; ok {
+				return resultCallbackConsumer
+			}
+			if _, ok := curriedResultTransformerMethods[member]; ok {
+				return resultCallbackTransformer
+			}
+		case "Match":
+			if len(args) == 0 && !isZeroArgCurriedMethod(member) {
+				return resultCallbackNone
+			}
+			if _, ok := consumerMethods[member]; ok {
+				return resultCallbackConsumer
+			}
+			if _, ok := matchStaticConsumerMethods[member]; ok {
+				return resultCallbackTransformer
+			}
+		case "Fiber":
+			if _, ok := fiberStaticConsumerMethods[member]; ok {
+				return resultCallbackConsumer
+			}
+		}
+		return resultCallbackNone
+	}
+	ns, member := a.staticMemberAccess(node)
+	switch ns {
+	case "Result", "ResultAsync", "ResultTask":
+		switch member {
+		case "combine", "all", "combineWithAllErrors", "validateAll", "firstSuccessOf":
+			return resultCallbackTupleCombiner
+		case "unwrapOrThrow", "_unsafeUnwrap", "_unsafeUnwrapErr", "isOk", "isErr",
+			"runResult", "runPromise", "runExit", "runFork", "toResultAsync":
+			return resultCallbackConsumer
+		case "fromResult", "fromTask", "fromResultAsync", "asVoid", "sandbox", "unsandbox":
+			return resultCallbackTransformer
+		}
+	case "Match":
+		switch member {
+		case "exhaustive", "orElseAbsurd", "option", "result", "tagsExhaustive":
+			return resultCallbackConsumer
+		case "value":
+			return resultCallbackTransformer
+		}
+	case "Fiber":
+		if _, ok := fiberStaticConsumerMethods[member]; ok {
+			return resultCallbackConsumer
+		}
+	}
+	if name := a.canonicalExpressionName(node); name == "runSync" || name == "runPromise" {
+		if sym := a.resolveSymbolAtNode(node); sym != nil {
+			for _, decl := range sym.Declarations() {
+				if decl != nil {
+					if file := ast.GetSourceFileOfNode(decl); file != nil && file.IsDeclarationFile {
+						return resultCallbackConsumer
+					}
+				}
+			}
+		}
+	}
+	return resultCallbackNone
+}
+
+func statementAlwaysReturns(stmt *ast.Node) bool {
+	if stmt == nil {
+		return false
+	}
+	switch stmt.Kind {
+	case ast.KindReturnStatement:
+		return stmt.AsReturnStatement().Expression != nil
+	case ast.KindBlock:
+		for _, child := range stmt.Statements() {
+			if statementAlwaysReturns(child) {
+				return true
+			}
+		}
+		return false
+	case ast.KindIfStatement:
+		ifStmt := stmt.AsIfStatement()
+		return ifStmt.ElseStatement != nil &&
+			statementAlwaysReturns(ifStmt.ThenStatement) &&
+			statementAlwaysReturns(ifStmt.ElseStatement)
+	}
+	return false
+}
+
+func functionReturnedCallbackExpressions(fn *ast.Node) ([]*ast.Node, bool) {
+	if fn == nil || !isFunctionLikeNode(fn) || fn.Body() == nil {
+		return nil, false
+	}
+	body := fn.Body()
+	if fn.Kind == ast.KindArrowFunction && body.Kind != ast.KindBlock {
+		return []*ast.Node{body}, true
+	}
+	if body.Kind != ast.KindBlock || !statementAlwaysReturns(body) {
+		return nil, false
+	}
+	exprs := make([]*ast.Node, 0, 2)
+	hasEmptyReturn := false
+	var inspect func(*ast.Node)
+	inspect = func(n *ast.Node) {
+		if n == nil || hasEmptyReturn {
+			return
+		}
+		if n != body && isFunctionLikeNode(n) {
+			return
+		}
+		if n.Kind == ast.KindReturnStatement {
+			retExpr := n.AsReturnStatement().Expression
+			if retExpr == nil {
+				hasEmptyReturn = true
+				return
+			}
+			exprs = append(exprs, retExpr)
+			return
+		}
+		n.ForEachChild(func(child *ast.Node) bool {
+			inspect(child)
+			return false
+		})
+	}
+	inspect(body)
+	if hasEmptyReturn || len(exprs) == 0 {
+		return nil, false
+	}
+	return exprs, true
+}
+
+func (a *Analyzer) resolveObjectLiteralPropertyInitializer(access *ast.Node, visited map[*ast.Symbol]bool) *ast.Node {
+	access = unwrapExpression(access)
+	if access == nil {
 		return nil
+	}
+	var recv *ast.Node
+	var propName string
+	switch access.Kind {
+	case ast.KindPropertyAccessExpression:
+		if access.Name() == nil {
+			return nil
+		}
+		recv = unwrapExpression(access.AsPropertyAccessExpression().Expression)
+		propName = access.Name().Text()
+	case ast.KindElementAccessExpression:
+		elem := access.AsElementAccessExpression()
+		name, ok := a.staticElementIndex(elem.ArgumentExpression)
+		if !ok {
+			return nil
+		}
+		recv = unwrapExpression(elem.Expression)
+		propName = name
+	default:
+		return nil
+	}
+	return a.resolveObjectLiteralPropertyInitializerFromRecv(recv, propName, visited)
+}
+
+func (a *Analyzer) resolveObjectLiteralPropertyInitializerFromRecv(recv *ast.Node, propName string, visited map[*ast.Symbol]bool) *ast.Node {
+	if recv == nil || propName == "" {
+		return nil
+	}
+	objLit := a.resolveObjectLiteralNode(recv, visited)
+	if objLit == nil || objLit.Kind != ast.KindObjectLiteralExpression {
+		return nil
+	}
+	var found *ast.Node
+	for _, prop := range objLit.AsObjectLiteralExpression().Properties.Nodes {
+		if prop == nil {
+			continue
+		}
+		if prop.Kind == ast.KindSpreadAssignment {
+			return nil
+		}
+		if prop.Name() == nil || prop.Name().Text() != propName {
+			continue
+		}
+		switch prop.Kind {
+		case ast.KindPropertyAssignment:
+			found = prop.AsPropertyAssignment().Initializer
+		case ast.KindShorthandPropertyAssignment:
+			found = prop.Name()
+		case ast.KindMethodDeclaration:
+			found = prop
+		default:
+			return nil
+		}
+	}
+	return found
+}
+
+func (a *Analyzer) resolveObjectLiteralNode(node *ast.Node, visited map[*ast.Symbol]bool) *ast.Node {
+	node = unwrapExpression(node)
+	if node == nil {
+		return nil
+	}
+	if node.Kind == ast.KindObjectLiteralExpression {
+		return node
+	}
+	sym := a.resolveSymbolAtNode(node)
+	if sym == nil {
+		return nil
+	}
+	if visited == nil {
+		visited = make(map[*ast.Symbol]bool)
+	}
+	if visited[sym] {
+		return nil
+	}
+	visited[sym] = true
+	callFile := ast.GetSourceFileOfNode(node)
+	for _, decl := range sym.Declarations() {
+		if decl == nil {
+			continue
+		}
+		declFile := ast.GetSourceFileOfNode(decl)
+		switch decl.Kind {
+		case ast.KindVariableDeclaration:
+			varDecl := decl.AsVariableDeclaration()
+			if varDecl.Initializer == nil {
+				continue
+			}
+			isConst := decl.Parent != nil &&
+				decl.Parent.Kind == ast.KindVariableDeclarationList &&
+				decl.Parent.Flags&ast.NodeFlagsConst != 0
+			if !isConst && a.isSymbolReassigned(sym, declFile, callFile) {
+				continue
+			}
+			if resolved := a.resolveObjectLiteralNode(varDecl.Initializer, visited); resolved != nil {
+				return resolved
+			}
+		case ast.KindBindingElement:
+			recv, propName, isConst, ok := a.bindingElementTarget(decl)
+			if !ok || (!isConst && a.isSymbolReassigned(sym, declFile, callFile)) || a.isCallbackReceiverReassigned(recv) {
+				continue
+			}
+			if recvSym := a.resolveSymbolAtNode(recv); recvSym != nil && a.isPropertyOnSymbolReassigned(recvSym, propName, declFile, callFile) {
+				continue
+			}
+			if propInit := a.resolveObjectLiteralPropertyInitializerFromRecv(recv, propName, cloneSymbolVisited(visited)); propInit != nil {
+				if resolved := a.resolveObjectLiteralNode(propInit, visited); resolved != nil {
+					return resolved
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (a *Analyzer) resolveCallbackTargets(callback *ast.Node) ([]*ast.Node, bool) {
+	return a.resolveCallbackTargetsWithVisited(callback, nil, 0)
+}
+
+func (a *Analyzer) resolveCallbackTargetsWithVisited(callback *ast.Node, visited map[*ast.Symbol]bool, depth int) ([]*ast.Node, bool) {
+	if depth > 8 {
+		return nil, false
+	}
+	cb := unwrapExpression(callback)
+	if cb == nil {
+		return nil, false
+	}
+	switch cb.Kind {
+	case ast.KindArrowFunction, ast.KindFunctionExpression, ast.KindFunctionDeclaration, ast.KindMethodDeclaration:
+		if cb.Body() != nil {
+			return []*ast.Node{cb}, true
+		}
+		return nil, false
+	case ast.KindConditionalExpression:
+		cond := cb.AsConditionalExpression()
+		left, okLeft := a.resolveCallbackTargetsWithVisited(cond.WhenTrue, cloneSymbolVisited(visited), depth+1)
+		if !okLeft || len(left) == 0 {
+			return nil, false
+		}
+		right, okRight := a.resolveCallbackTargetsWithVisited(cond.WhenFalse, cloneSymbolVisited(visited), depth+1)
+		if !okRight || len(right) == 0 {
+			return nil, false
+		}
+		return append(left, right...), true
+	case ast.KindCallExpression:
+		call := cb.AsCallExpression()
+		if method, recv, _ := methodCall(cb); method == "bind" && len(call.Arguments.Nodes) <= 1 {
+			return a.resolveCallbackTargetsWithVisited(recv, visited, depth+1)
+		}
+		if a.classifyResultCallback(cb) != resultCallbackNone {
+			return []*ast.Node{cb}, true
+		}
+		calleeTargets, ok := a.resolveCallbackTargetsWithVisited(call.Expression, cloneSymbolVisited(visited), depth+1)
+		if !ok || len(calleeTargets) == 0 {
+			return nil, false
+		}
+		resolved := make([]*ast.Node, 0, len(calleeTargets))
+		for _, calleeTarget := range calleeTargets {
+			retExprs, ok := functionReturnedCallbackExpressions(calleeTarget)
+			if !ok || len(retExprs) == 0 {
+				return nil, false
+			}
+			for _, retExpr := range retExprs {
+				subTargets, ok := a.resolveCallbackTargetsWithVisited(retExpr, cloneSymbolVisited(visited), depth+1)
+				if !ok || len(subTargets) == 0 {
+					return nil, false
+				}
+				resolved = append(resolved, subTargets...)
+			}
+		}
+		return resolved, len(resolved) > 0
+	case ast.KindIdentifier, ast.KindPropertyAccessExpression, ast.KindElementAccessExpression:
+		if a.isCallbackReceiverReassigned(cb) {
+			return nil, false
+		}
+		if a.classifyResultCallback(cb) != resultCallbackNone {
+			return []*ast.Node{cb}, true
+		}
+		callFile := ast.GetSourceFileOfNode(cb)
+		symbol := a.resolveSymbolAtNode(cb)
+		if visited == nil {
+			visited = make(map[*ast.Symbol]bool)
+		}
+		if symbol != nil {
+			if targets, ok := a.resolveSymbolDeclarationsTargets(symbol, callFile, visited, depth); ok {
+				return targets, true
+			}
+		}
+		if (cb.Kind == ast.KindPropertyAccessExpression || cb.Kind == ast.KindElementAccessExpression) &&
+			(symbol == nil || !a.isSymbolReassigned(symbol, nil, callFile)) {
+			if propInit := a.resolveObjectLiteralPropertyInitializer(cb, cloneSymbolVisited(visited)); propInit != nil {
+				if propSym := a.resolveSymbolAtNode(propInit.Parent); propSym != nil && a.isSymbolReassigned(propSym, ast.GetSourceFileOfNode(propInit), callFile) {
+					return nil, false
+				}
+				return a.resolveCallbackTargetsWithVisited(propInit, visited, depth+1)
+			}
+		}
+	}
+	return nil, false
+}
+
+func (a *Analyzer) resolveSymbolDeclarationsTargets(symbol *ast.Symbol, callFile *ast.SourceFile, visited map[*ast.Symbol]bool, depth int) ([]*ast.Node, bool) {
+	if symbol == nil || visited[symbol] {
+		return nil, false
 	}
 	visited[symbol] = true
 	for _, decl := range symbol.Declarations() {
@@ -2004,10 +2886,10 @@ func (a *Analyzer) resolveCallbackNodeWithVisited(callback *ast.Node, visited ma
 		switch decl.Kind {
 		case ast.KindFunctionDeclaration, ast.KindMethodDeclaration:
 			if decl.Body() != nil {
-				if decl.Kind == ast.KindFunctionDeclaration && declFile != nil && a.variableIsReassigned(symbol, declFile) {
-					continue
+				if a.isSymbolReassigned(symbol, declFile, callFile) {
+					return nil, false
 				}
-				return decl
+				return []*ast.Node{decl}, true
 			}
 		case ast.KindVariableDeclaration:
 			varDecl := decl.AsVariableDeclaration()
@@ -2017,15 +2899,78 @@ func (a *Analyzer) resolveCallbackNodeWithVisited(callback *ast.Node, visited ma
 			isConst := decl.Parent != nil &&
 				decl.Parent.Kind == ast.KindVariableDeclarationList &&
 				decl.Parent.Flags&ast.NodeFlagsConst != 0
-			if !isConst && (declFile == nil || a.variableIsReassigned(symbol, declFile)) {
-				continue
+			if !isConst && a.isSymbolReassigned(symbol, declFile, callFile) {
+				return nil, false
 			}
-			if resolved := a.resolveCallbackNodeWithVisited(varDecl.Initializer, visited); resolved != nil {
-				return resolved
+			if targets, ok := a.resolveCallbackTargetsWithVisited(varDecl.Initializer, visited, depth+1); ok {
+				return targets, true
+			}
+		case ast.KindBindingElement:
+			recv, propName, isConst, ok := a.bindingElementTarget(decl)
+			if !ok || (!isConst && a.isSymbolReassigned(symbol, declFile, callFile)) || a.isCallbackReceiverReassigned(recv) {
+				return nil, false
+			}
+			if recvSym := a.resolveSymbolAtNode(recv); recvSym != nil && a.isPropertyOnSymbolReassigned(recvSym, propName, declFile, callFile) {
+				return nil, false
+			}
+			if propInit := a.resolveObjectLiteralPropertyInitializerFromRecv(recv, propName, cloneSymbolVisited(visited)); propInit != nil {
+				if targets, ok := a.resolveCallbackTargetsWithVisited(propInit, visited, depth+1); ok {
+					return targets, true
+				}
+			}
+			if recvType := a.checker.GetTypeAtLocation(recv); recvType != nil {
+				if propSym := a.resolveAliasedSymbol(a.checker.GetPropertyOfType(recvType, propName)); propSym != nil && !visited[propSym] {
+					if targets, ok := a.resolveSymbolDeclarationsTargets(propSym, callFile, visited, depth+1); ok {
+						return targets, true
+					}
+				}
+			}
+		case ast.KindPropertyAssignment:
+			if a.isSymbolReassigned(symbol, declFile, callFile) {
+				return nil, false
+			}
+			if targets, ok := a.resolveCallbackTargetsWithVisited(decl.AsPropertyAssignment().Initializer, visited, depth+1); ok {
+				return targets, true
+			}
+		case ast.KindShorthandPropertyAssignment:
+			if a.isSymbolReassigned(symbol, declFile, callFile) {
+				return nil, false
+			}
+			valSym := a.resolveAliasedSymbol(a.checker.GetShorthandAssignmentValueSymbol(decl))
+			if valSym != nil && !visited[valSym] {
+				if targets, ok := a.resolveSymbolDeclarationsTargets(valSym, callFile, visited, depth+1); ok {
+					return targets, true
+				}
+			}
+		case ast.KindPropertyDeclaration:
+			propDecl := decl.AsPropertyDeclaration()
+			if propDecl.Initializer == nil || a.isSymbolReassigned(symbol, declFile, callFile) {
+				return nil, false
+			}
+			if targets, ok := a.resolveCallbackTargetsWithVisited(propDecl.Initializer, visited, depth+1); ok {
+				return targets, true
+			}
+		case ast.KindExportAssignment:
+			exportAssign := decl.AsExportAssignment()
+			if exportAssign.Expression != nil {
+				if targets, ok := a.resolveCallbackTargetsWithVisited(exportAssign.Expression, visited, depth+1); ok {
+					return targets, true
+				}
 			}
 		}
 	}
-	return nil
+	return nil, false
+}
+
+func cloneSymbolVisited(visited map[*ast.Symbol]bool) map[*ast.Symbol]bool {
+	if len(visited) == 0 {
+		return nil
+	}
+	cloned := make(map[*ast.Symbol]bool, len(visited))
+	for k, v := range visited {
+		cloned[k] = v
+	}
+	return cloned
 }
 
 func (a *Analyzer) isOuterCallExpressionReturnedOrVoided(callNode *ast.Node, state *handleSearchState) bool {
@@ -2392,45 +3337,83 @@ func isTupleElementCallbackMethod(name string) bool {
 }
 
 func (a *Analyzer) isTupleElementCallbackHandled(callback *ast.Node, callNode *ast.Node, method string, state *handleSearchState) bool {
-	cb := a.resolveCallbackNode(callback)
-	if cb == nil || len(cb.Parameters()) == 0 {
+	targets, ok := a.resolveCallbackTargets(callback)
+	if !ok || len(targets) == 0 {
 		return false
 	}
-	param := cb.Parameters()[0].Name()
-	if param == nil || param.Kind != ast.KindIdentifier {
-		return false
+	for _, cb := range targets {
+		switch a.classifyResultCallback(cb) {
+		case resultCallbackConsumer:
+			continue
+		case resultCallbackTransformer:
+			if (method == "map" || method == "flatMap") &&
+				(a.isOuterCallExpressionReturnedOrVoided(callNode, state) || a.isConsumedByResultTaskStaticCall(callNode)) {
+				continue
+			}
+			return false
+		case resultCallbackTupleCombiner:
+			return false
+		}
+		if len(cb.Parameters()) == 0 {
+			return false
+		}
+		param := cb.Parameters()[0].Name()
+		if param == nil || param.Kind != ast.KindIdentifier {
+			return false
+		}
+		targetCb := cb
+		if !state.withCallback(targetCb, callNode, method, -1, func() bool {
+			return a.isIdentifierVariableHandled(param, state)
+		}) {
+			return false
+		}
 	}
-	return state.withCallback(cb, callNode, method, -1, func() bool {
-		return a.isIdentifierVariableHandled(param, state)
-	})
+	return true
 }
 
 func (a *Analyzer) isSingleResultThenCallbackHandled(callback *ast.Node, callNode *ast.Node, state *handleSearchState) bool {
-	cb := a.resolveCallbackNode(callback)
-	if cb == nil {
+	targets, ok := a.resolveCallbackTargets(callback)
+	if !ok || len(targets) == 0 {
 		return false
 	}
-	params := cb.Parameters()
-	if len(params) == 0 || params[0].Name() == nil {
-		return false
-	}
-	paramNode := params[0]
-	param := paramNode.Name()
-	return state.withCallback(cb, callNode, "then", -1, func() bool {
-		if paramNode.AsParameterDeclaration().DotDotDotToken != nil {
-			if param.Kind == ast.KindIdentifier {
-				return a.isTupleVariableElementHandled(param, 0, state)
-			}
-			if param.Kind == ast.KindArrayBindingPattern {
-				return a.isArrayBindingElementHandled(param, 0, false, state.sourceSymbol, state)
+	for _, cb := range targets {
+		switch a.classifyResultCallback(cb) {
+		case resultCallbackConsumer:
+			continue
+		case resultCallbackTransformer:
+			if a.isHandledReferenceWithState(callNode, state) {
+				continue
 			}
 			return false
+		case resultCallbackTupleCombiner:
+			return false
 		}
-		if param.Kind == ast.KindIdentifier {
-			return a.isIdentifierVariableHandled(param, state)
+		params := cb.Parameters()
+		if len(params) == 0 || params[0].Name() == nil {
+			return false
 		}
-		return false
-	})
+		paramNode := params[0]
+		param := paramNode.Name()
+		targetCb := cb
+		if !state.withCallback(targetCb, callNode, "then", -1, func() bool {
+			if paramNode.AsParameterDeclaration().DotDotDotToken != nil {
+				if param.Kind == ast.KindIdentifier {
+					return a.isTupleVariableElementHandled(param, 0, state)
+				}
+				if param.Kind == ast.KindArrayBindingPattern {
+					return a.isArrayBindingElementHandled(param, 0, false, state.sourceSymbol, state)
+				}
+				return false
+			}
+			if param.Kind == ast.KindIdentifier {
+				return a.isIdentifierVariableHandled(param, state)
+			}
+			return false
+		}) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *Analyzer) isArrayBindingElementHandled(patternNode *ast.Node, elemIndex int, allowMustUseBinding bool, sourceSymbol *ast.Symbol, state *handleSearchState) bool {
@@ -2626,24 +3609,39 @@ func (a *Analyzer) isPromiseAllCallElementHandled(allExpr *ast.Node, elemIndex i
 }
 
 func (a *Analyzer) isPromiseAllThenCallbackHandled(callback *ast.Node, callNode *ast.Node, elemIndex int, state *handleSearchState) bool {
-	cb := a.resolveCallbackNode(callback)
-	if cb == nil {
+	targets, ok := a.resolveCallbackTargets(callback)
+	if !ok || len(targets) == 0 {
 		return false
 	}
-	params := cb.Parameters()
-	if len(params) == 0 || params[0].Name() == nil {
-		return false
+	for _, cb := range targets {
+		switch a.classifyResultCallback(cb) {
+		case resultCallbackTupleCombiner:
+			if a.isHandledReferenceWithState(callNode, state) {
+				continue
+			}
+			return false
+		case resultCallbackConsumer, resultCallbackTransformer:
+			return false
+		}
+		params := cb.Parameters()
+		if len(params) == 0 || params[0].Name() == nil {
+			return false
+		}
+		paramName := params[0].Name()
+		targetCb := cb
+		if !state.withCallback(targetCb, callNode, "then", elemIndex, func() bool {
+			if paramName.Kind == ast.KindArrayBindingPattern {
+				return a.isArrayBindingElementHandled(paramName, elemIndex, false, state.sourceSymbol, state)
+			}
+			if paramName.Kind == ast.KindIdentifier {
+				return a.isTupleVariableElementHandled(paramName, elemIndex, state)
+			}
+			return false
+		}) {
+			return false
+		}
 	}
-	paramName := params[0].Name()
-	return state.withCallback(cb, callNode, "then", elemIndex, func() bool {
-		if paramName.Kind == ast.KindArrayBindingPattern {
-			return a.isArrayBindingElementHandled(paramName, elemIndex, false, state.sourceSymbol, state)
-		}
-		if paramName.Kind == ast.KindIdentifier {
-			return a.isTupleVariableElementHandled(paramName, elemIndex, state)
-		}
-		return false
-	})
+	return true
 }
 
 func (a *Analyzer) isPromiseAllVariableElementHandled(nameNode *ast.Node, elemIndex int, state *handleSearchState) bool {

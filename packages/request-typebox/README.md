@@ -77,7 +77,7 @@ const userTask = ResultTask.fromResultAsync(() =>
 )
 
 const userLabelTask = userTask.map(({ email, plan }) => `${email} (${plan})`)
-const result = await ResultTask.runResult(userLabelTask)
+const result = await userLabelTask.runResult()
 ```
 
 `Static<typeof userSchema>` is the success type, so the adapter call itself returns

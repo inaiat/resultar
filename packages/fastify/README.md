@@ -123,7 +123,7 @@ declare module 'fastify' {
 const app = Fastify()
 await app.register(plugin)
 app.get<{ Params: { name: string } }>('/hello/:name', async (request, reply) => {
-  const result = await ResultTask.runResult(request.services.greeting.greet(request.params.name))
+  const result = await request.services.greeting.greet(request.params.name).runResult()
   return result.match(value => reply.send(value), () => reply.code(500).send())
 })
 await app.listen({ port: 3000 })
@@ -210,7 +210,7 @@ are not automatically disposed by inspecting their methods.
 The adapter keeps `scope.use` callbacks alive through the response, including streamed replies.
 Completion, client disconnect and transport failure release each child once. `request.signal`
 propagates native disconnect/handler-timeout cancellation to acquisition; pass the same signal to
-your own clients and `ResultTask.run*` calls. Cancellation is cooperative.
+your own clients and `task.run*` / `ResultTask.run*` calls. Cancellation is cooperative.
 
 Fastify 5.12 can emit a generic abort when a fully received request body closes. The adapter
 ignores that input-completion signal so JSON uploads retain their scopes through the response.

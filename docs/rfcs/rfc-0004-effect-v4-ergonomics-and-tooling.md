@@ -1,7 +1,7 @@
 # RFC 0004: Functional ergonomics and developer tooling
 
-> Design history: v4 prefers `ResultTask` for new async workflows. `ResultAsync`
-> lives in the deprecated `resultar/async` subpath of the same package with explicit bridges. For current contracts,
+> Design history: v4 prefers `ResultTask` for new async workflows. `ResultAsync` (`StrictResultAsync`)
+> is the active in-flight `Result` returned by `task.runResult()`, while deprecated eager orchestration helpers live in the `resultar/async` subpath with explicit bridges. For current contracts,
 > see the [core guide](../../packages/resultar/README.md) and
 > [v4 migration notes](../migrations/v4.md); retain earlier examples below as design context.
 

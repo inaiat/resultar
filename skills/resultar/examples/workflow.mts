@@ -17,7 +17,7 @@ export const account = (email: string): StrictResult<{ email: string }, InvalidE
     return { email: normalized }
   })
 
-export const Greeting = ResultTask.service<string, 'greeting'>('greeting')
+export const Greeting = ResultTask.service<string>()('greeting')
 
 // Creating this task runs no work. The boundary supplies its typed dependency.
 export const welcome = (email: string) =>

@@ -847,7 +847,7 @@ Resultar's companion packages integrate directly with the core primitives:
 Deprecated eager compatibility is included in `resultar` through the
 [`resultar/async` subpath](#in-flight-resultasync--deprecated-eager-compatibility); no additional package is needed.
 
-Request helpers still return eager `ResultAsync` from `resultar/async`. Their public
+Request helpers return an in-flight `ResultAsync` (`StrictResultAsync`) that starts executing on call. Their public
 execution contract is unchanged. Wrap the call in a factory to create a new request per Task run:
 
 ```ts

@@ -3105,7 +3105,7 @@ saveUser(input).match(handleSaved, handleError);
 
 The default mode is neverthrow-style `must-use`: it also reports assigned `Result` values that are
 only passed around and never consumed with `match`, `unwrapOr`, `_unsafeUnwrap`, `isOk`, `isErr`,
-returned, or explicitly discarded. Use `--mode direct` for the lower-noise expression-only check.
+returned, or explicitly discarded (including across `Promise<Result>` / `Promise.all(...).then(...)` and array `.map` / `.forEach` / `.flatMap` callbacks when the outer Promise or collection is consumed). Use `--mode direct` for the lower-noise expression-only check.
 
 Configure Resultar rules in `tsconfig.json`:
 

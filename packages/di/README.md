@@ -54,12 +54,11 @@ const storage = createModule().singleton(Cache)
 const features = createModule().scoped(Users)
 const application = storage.merge(features).scope()
 
-const result = await ResultTask.runResult(
-  application.withServices({ tenant: 'acme' }).use(['users'], ({ users }) =>
-    ResultTask.sync(() => users.find('1')),
-  ),
-)
-await ResultTask.runPromise(application.close())
+const result = await application
+  .withServices({ tenant: 'acme' })
+  .use(['users'], ({ users }) => ResultTask.sync(() => users.find('1')))
+  .runResult()
+await application.close().runPromise()
 ```
 
 `merge` preserves types and rejects duplicate names. `withServices` returns a facade over the same
@@ -144,7 +143,7 @@ The Fetch adapter needs no Hono dependency. Select a request-scoped Hono router 
 its `fetch` method:
 
 ```ts
-const RequestInfo = ResultTask.service<Request, 'request'>('request')
+const RequestInfo = ResultTask.service<Request>()('request')
 const Router = service('router', { users: Users, request: RequestInfo }, createHttpApp)
 const application = storage.merge(features).scoped(Router).scope()
 
@@ -156,7 +155,7 @@ export default { fetch }
 ```
 
 The caller supplies authenticated tenant data in real applications. Routes receive ordinary
-services; execute Task-returning methods with `await ResultTask.runResult(users.remove(id))` and
+services; execute Task-returning methods with `await users.remove(id).runResult()` and
 match the resulting `Result`. Existing eager Async methods can keep their direct awaits during
 migration. Each request gets fresh scoped services and shares the root singletons. Close the root
 when the server stops accepting requests.
@@ -310,20 +309,20 @@ const program = application.use(["users", "sessions"], ({ users, sessions }) =>
   }),
 );
 
-const first = await ResultTask.runResult(program);
+const first = await program.runResult();
 // Ok({ cacheInstance: 1, sameInstance: true, status: 'ready' })
 
-const second = await ResultTask.runResult(
-  application.use(["users", "sessions"], ({ users, sessions }) =>
+const second = await application
+  .use(["users", "sessions"], ({ users, sessions }) =>
     ResultTask.sync(() => ({
       cacheInstance: cacheCreations,
       sameInstance: users.cache === sessions.cache,
       status: sessions.cache.get("status"),
     })),
-  ),
-);
+  )
+  .runResult();
 // Ok({ cacheInstance: 1, sameInstance: true, status: 'ready' })
-await ResultTask.runPromise(application.close());
+await application.close().runPromise();
 ```
 
 `users` and `sessions` share one cache in each child scope, while both child scopes share the
@@ -344,8 +343,8 @@ const sharedProgram = sharedServices.use(["cache"], ({ cache }) =>
   }),
 );
 
-const first = await ResultTask.runResult(sharedProgram); // Ok(false)
-const second = await ResultTask.runResult(sharedProgram); // Ok(true): same cache
+const first = await sharedProgram.runResult(); // Ok(false)
+const second = await sharedProgram.runResult(); // Ok(true): same cache
 ```
 
 `value` uses the supplied instance directly; it does not create or dispose it.
@@ -402,7 +401,7 @@ const services = createModule()
 // connectDatabase, connectSession, serve, close, and waitForShutdown return ResultTask.
 // createHealthUseCase is an ordinary synchronous factory.
 const program = services.use(["server"], ({ server }) => server.waitForShutdown());
-const exit = await ResultTask.runExit(program);
+const exit = await program.runExit();
 ```
 
 Nothing is acquired until `program` runs. Shutdown releases server, session, then database.
@@ -451,7 +450,7 @@ their release logic.
 ```ts
 const testing = services.override("database", fakeDatabase);
 
-const result = await ResultTask.runResult(testing.use(["health"], ({ health }) => health.check()));
+const result = await testing.use(["health"], ({ health }) => health.check()).runResult();
 ```
 
 Only health and its selected dependencies are resolved. Database acquisition is replaced entirely;

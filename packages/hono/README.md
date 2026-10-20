@@ -10,7 +10,7 @@ Core helpers such as `ResultTask` continue to come from `resultar`.
 The DI package has one entry point; migrate old `resultar-di/advanced` imports to `resultar-di`.
 
 Prefer lazy `ResultTask` values for new async service methods and run them explicitly in routes.
-`ResultTask.runResult` returns `ResultAsync<T, E>` (an in-flight `PromiseLike<Result<T, E>>`); existing eager `ResultAsync` service contracts can also be adapted back into lazy workflows with `ResultTask.fromResultAsync(() => legacyMethod())`.
+`task.runResult()` (or `ResultTask.runResult(task)`) returns `ResultAsync<T, E>` (an in-flight `PromiseLike<Result<T, E>>`); existing eager `ResultAsync` service contracts can also be adapted back into lazy workflows with `ResultTask.fromResultAsync(() => legacyMethod())`.
 
 ## Add services to an existing Hono router
 
@@ -79,7 +79,7 @@ The callback receives a real Hono instance and configures it synchronously once.
 `HonoOptions` (`strict`, `router` and `getPath`) are forwarded to `new Hono(...)` without
 attaching Resultar options to the router instance. Bindings are inferred from the selected DI
 services. Unknown names and missing dependencies are compile-time errors. Run Task-returning
-methods with `await ResultTask.runResult(task)` and use `result.match` inside routes. Native Hono
+methods with `await task.runResult()` (or `await ResultTask.runResult(task)`) and use `result.match` inside routes. Native Hono
 and lifecycle Promise boundaries retain ordinary `await`. Configure middleware (such as `logger` from `hono/logger`),
 `onError` and `notFound` on the supplied Hono instance as usual.
 
@@ -170,9 +170,7 @@ import type { AppHono } from "./main.ts";
 
 export const healthRoutes = (app: AppHono) => {
   app.get("/health", async (c) => {
-    const result = await ResultTask.runResult(
-      ResultTask.fromResultAsync(() => c.env.health.check()),
-    );
+    const result = await ResultTask.fromResultAsync(() => c.env.health.check()).runResult();
     return result.match(
       (health) => c.json(health),
       () => c.json({ error: "Health unavailable" }, 503),
@@ -204,7 +202,7 @@ without starting the Node server because startup is guarded by `import.meta.main
 - `close()` returns an in-flight `ResultAsync`, retaining the module's typed release failures. Concurrent
   and repeated calls return the same `ResultAsync`; requests after close are rejected. Defects or
   composite causes that cannot be represented by Result may reject with ResultTaskCauseError,
-  following `ResultTask.runResult` semantics.
+  following `task.runResult()` / `ResultTask.runResult` semantics.
 
 The application type is `HonoApplication<CloseError, RequestServices>`. The second parameter
 defaults to `object`, preserving `HonoApplication<CloseError>`. `createHonoApp` retains both

@@ -15,7 +15,10 @@ when the eager policy is not wanted. Its existing default severity and modes rem
 
 Task diagnostics and refactors prefer `ok` / `err`, `mapErr`, `andThen`, and `orElse`, while
 recognizing the retained deprecated aliases. Prefer `RetryPolicy` for retry and `{ ok, err }`
-for object-form matching. The eager entry point retains its existing compatibility contracts.
+for object-form matching. `no-discard` also tracks `Promise<Result>` / `Promise.all(...).then(...)`
+and array `.map` / `.forEach` / `.flatMap` chains through curried/static Resultar consumers,
+transformers, tuple combiners, `.bind(...)`, conditional callbacks, object-literal property callbacks,
+and higher-order callback factories. The eager entry point retains its existing compatibility contracts.
 
 The native backend implements these stable rule IDs and their tsconfig options:
 
