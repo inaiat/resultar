@@ -82,7 +82,7 @@ Construct promises and mutable per-run state inside the Task so repeated runs cr
   bounded collections, `Semaphore.make` (`withPermit`, `withPermits`), `ensuring`, `onExit`,
   `sandbox`/`unsandbox`, `catchCause`/`inspectCause`, `Cause` diagnostics (`isCause`, `hasFails`,
   `hasDies`, `hasInterrupts`, `failures`, `defects`, `findError`, `pretty`), `yieldEvery`,
-  `ResultTask.yieldNow`, custom `TaskScheduler`, `Fiber.await`/`join`/`interrupt`,
+  custom `TaskScheduler`, `Fiber.await`/`join`/`interrupt`,
   `task.runFork()`, `ResultTask.race` and `raceFirst`, explicit task runners, and
   native Promise interoperability through `task.runPromise()`.
 - [`src/resource-cleanup.ts`](src/resource-cleanup.ts): `ResultTask.acquireRelease` and `scoped` with release

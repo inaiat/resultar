@@ -34,7 +34,7 @@ import type { StrictResult, StrictResultAsync } from "resultar";
 
 `try`, the default export, and `tryCatch` remain deprecated aliases of `tryResult`.
 `ResultAsync` and `StrictResultAsync` are the official in-flight `Result` types (`PromiseLike<Result<T, E>>`), returned by `task.runResult()` / `ResultTask.runResult(task)`.
-The `resultar/async` subpath contains the deprecated eager constructors and orchestration helpers alongside `ResultAsync` and `StrictResultAsync`.
+The `resultar/async` subpath contains active in-flight constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) and deprecated eager adapters/orchestration helpers alongside `ResultAsync` and `StrictResultAsync`.
 It ships in the same `resultar` installation. Existing main-entry Async exports remain
 available; prefer the subpath for explicit eager compatibility imports. Its `tryAsync` / `tryCatchAsync` aliases
 retain `tryResultAsync` behavior.
@@ -61,19 +61,18 @@ at import sites. No plugin installation is needed.
 | Successful synchronous / lazy value                | `ok(value)` / `ResultTask.ok(value)`                 |
 | Successful synchronous / lazy `undefined`          | `unit()` / `ResultTask.ok(undefined)`                |
 | Expected synchronous / lazy failure                | `err(error)` / `ResultTask.err(error)`               |
-| Existing eager constructors                        | `okAsync(value)` / `unitAsync()` / `errAsync(error)` |
+| In-flight / eager constructors                     | `okAsync(value)` / `unitAsync()` / `errAsync(error)` |
 | Reject a missing value                             | `Result.fromNullishOr(value, onNullish)`             |
 | Construct from a predicate or refinement           | `Result.liftPredicate(value, predicate, onFalse)`    |
 | Catch synchronous throws now                       | `tryResult(fn, toError)`                             |
 | Wrap a synchronous throwing function               | `fromThrowable(fn, toError)`                         |
 | Defer a Promise factory and catch rejection        | `ResultTask.tryPromise({ try, catch })`              |
-| Catch eagerly at an existing async boundary        | `tryResultAsync(input, toError)`                     |
-| Preserve an eager async function wrapper           | `fromThrowableAsync(fn, toError)`                    |
+| Wrap an in-flight Promise or catch eagerly         | `fromPromise(p, toError)` / `tryResultAsync(input, toError)` |
+| Preserve a deprecated eager async function wrapper | `fromThrowableAsync(fn, toError)`                    |
 | Leave a sync / Task channel at a terminal boundary | `runSync(result)` / `task.runPromise()`              |
-| Preserve an existing eager terminal                | `runPromise(asyncResult)`                            |
+| Unwrap an in-flight `ResultAsync` at a boundary    | `runPromise(asyncResult)` (deprecated)               |
 
-All eager constructors and wrappers in this table come from `resultar/async`; synchronous, `ResultAsync` / `StrictResultAsync`, and Task entries come
-from `resultar`.
+Active in-flight constructors (`okAsync`, `unitAsync`, `errAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) are exported from both `resultar` and `resultar/async`; deprecated eager compatibility helpers (`fromThrowableAsync`, `fromCallback`, `tryAsync`, `tryCatchAsync`, `safeTry`, `runPromise`) are also exported from both entrypoints, while free `gen`, `fn`, `asyncMap`, and `asyncAndThen` are exported from `resultar/async` only.
 
 Use the named options form when it improves readability:
 
@@ -163,7 +162,7 @@ const missing = UserNotFoundError.err({ userId, source: "database" });
 - Use `findCause` or an instance's `findCause` to inspect a typed cause chain.
 - `createTaggedError(options).withProps<Props>()` refines declared template fields and adds typed
   optional or structured metadata. Template fields remain required. Existing factory calls keep
-  their inferred `string | number`
+  their inferred `string | number | Redacted<unknown>`
   fields. Each typed declaration creates a fresh nominal class with the same configuration,
   preserving metadata from getters and non-enumerable properties. Constructor input types are
   checked by TypeScript, without runtime validation.
@@ -210,7 +209,7 @@ Use branch methods inside an algorithm and matching when converting the complete
 - `matchErrorPartial(error, handlers, fallback)` partially handles an error value.
 
 On synchronous `Result`, `match`, `matchTags`, and `matchTagsPartial` return `Out`.
-On deprecated Async instances, they are native `Promise<Out>` terminals that await handler returns.
+On `ResultAsync` instances, they are native `Promise<Out>` terminals that await handler returns.
 The static/direct/curried Async forms return composable `ResultAsync<Awaited<Out>, never>` values;
 static `unwrapOr` similarly returns Async while the instance method returns a Promise.
 On Task, they are lazy folds returning `ResultTask<Out, never, R>`; execute the folded
@@ -223,12 +222,12 @@ Include an `Error` handler whenever an error union can contain an untagged `Erro
 ## Async Boundaries
 
 Prefer `ResultTask.tryPromise({ try, catch })` for new asynchronous workflows. Its
-factory starts on each explicit task run. For existing eager Async contracts, the
-following wrappers from `resultar/async` retain their behavior and share one execution across awaits:
+factory starts on each explicit task run. For in-flight or eager `ResultAsync` contracts, the
+following constructors and wrappers (exported from `resultar` and `resultar/async`) share one execution across awaits:
 
 - `fromPromise(existingPromise, toError)` wraps a promise that has already been created.
 - `tryResultAsync(() => createPromise(), toError)` also catches synchronous factory throws and is
-  preferred when the agent controls creation.
+  preferred when the caller controls creation of an in-flight `ResultAsync`.
 - `fromSafePromise(promise)` is only for promises guaranteed not to reject by contract.
 - `fromCallback(options)` adapts callback or subscription APIs and returns
   `ResultAsync<T, E | AbortError>`. Supply cleanup and forward cancellation where supported.
@@ -249,9 +248,9 @@ Async until each Task run. The bridge accepts structural `PromiseLike<Result<A, 
 signal-aware factories, including native Promises; callers need not construct a ResultAsync instance.
 Passing an existing Async captures its already-started execution.
 Request-package helpers remain eager Async APIs; create them inside the factory when composing
-new Task work. `ResultAsync.fromTask(task)` imported from `resultar/async` eagerly starts one
-requirement-free Task for a legacy caller. Static and instance `ResultTask.toResultAsync` remain
-supported bridges with the same execution boundary.
+new Task work. Prefer `task.runResult()` (or `ResultTask.runResult(task)`) to start one
+requirement-free Task as an in-flight `ResultAsync`. `ResultAsync.fromTask(task)` and static/instance
+`ResultTask.toResultAsync` remain supported as deprecated compatibility aliases with the same execution boundary.
 
 ## Task Policies
 
@@ -272,7 +271,7 @@ for interruption and cause semantics.
 
 ## Eager Async Compatibility Policies
 
-The deprecated `ResultAsync` facade retains the following APIs for existing eager contracts.
+While `ResultAsync` and `StrictResultAsync` are the official in-flight `Result` types, `ResultAsync` also retains the following deprecated static orchestration APIs for existing eager contracts.
 Use its built-in signal-aware policies when maintaining those contracts:
 
 - `ResultAsync.retry(task, options)` retries typed failures and includes `AbortError` in the error

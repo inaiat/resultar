@@ -47,7 +47,7 @@ export interface FiberHandle<out A, out E = never> extends Fiber<A, E> {
  * import { Fiber, ResultTask } from 'resultar'
  *
  * const workflow = ResultTask.gen(function* () {
- *   const child = yield* ResultTask.of(() => 'computed').forkChild()
+ *   const child = yield* ResultTask.forkChild(ResultTask.sync(() => 'computed'))
  *   const value = yield* Fiber.join(child)
  *   return value
  * })

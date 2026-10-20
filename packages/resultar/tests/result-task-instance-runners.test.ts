@@ -277,6 +277,67 @@ describe('ResultTask instance runners', () => {
     }
   })
 
+  it('supports binding instance runners and single-callback ResultAsync.then inference', async () => {
+    const task = ResultTask.ok<'ready', 'missing'>('ready')
+    const boundRunResult = task.runResult.bind(task)
+    const boundRunPromise = task.runPromise.bind(task)
+    const boundRunExit = task.runExit.bind(task)
+    const boundRunFork = task.runFork.bind(task)
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Verify retained toResultAsync alias also binds cleanly.
+    const boundToResultAsync = task.toResultAsync.bind(task)
+
+    expectTypeOf(boundRunResult()).toEqualTypeOf<ResultAsync<'ready', 'missing'>>()
+    expectTypeOf(boundRunPromise()).toEqualTypeOf<Promise<'ready'>>()
+    expectTypeOf(boundRunExit()).toEqualTypeOf<Promise<Exit<'ready', 'missing'>>>()
+    expectTypeOf(boundRunFork()).toEqualTypeOf<FiberHandle<'ready', 'missing'>>()
+    expectTypeOf(boundToResultAsync()).toEqualTypeOf<ResultAsync<'ready', 'missing'>>()
+
+    deepEqual(await boundRunResult(), ok('ready'))
+    equal(await boundRunPromise(), 'ready')
+    deepEqual(await boundRunExit(), { _tag: 'Success', value: 'ready' })
+    deepEqual(await Fiber.await(boundRunFork()).runPromise(), { _tag: 'Success', value: 'ready' })
+    deepEqual(await boundToResultAsync(), ok('ready'))
+
+    const singleCallbackThen = task.runResult().then((res) => (res.isOk() ? res.value.length : 0))
+    expectTypeOf(singleCallbackThen).toEqualTypeOf<PromiseLike<number>>()
+    equal(await singleCallbackThen, 5)
+    const noCallbackThen = task.runResult().then()
+    expectTypeOf(noCallbackThen).toEqualTypeOf<PromiseLike<Result<'ready', 'missing'>>>()
+    deepEqual(await noCallbackThen, ok('ready'))
+  })
+
+  it('supports binding instance runners for service-requiring tasks', async () => {
+    const Config = ResultTask.service<{ readonly port: number }>()('config')
+    const serviceWorkflow = ResultTask.gen(function* () {
+      const config = yield* Config
+      return config.port
+    })
+    const boundServiceRunResult = serviceWorkflow.runResult.bind(serviceWorkflow)
+    const boundServiceRunPromise = serviceWorkflow.runPromise.bind(serviceWorkflow)
+    const boundServiceRunExit = serviceWorkflow.runExit.bind(serviceWorkflow)
+    const boundServiceRunFork = serviceWorkflow.runFork.bind(serviceWorkflow)
+    const serviceOptions = { services: { config: { port: 8080 } } }
+
+    deepEqual(await boundServiceRunResult(serviceOptions), ok(8080))
+    equal(await boundServiceRunPromise(serviceOptions), 8080)
+    deepEqual(await boundServiceRunExit(serviceOptions), { _tag: 'Success', value: 8080 })
+    deepEqual(await Fiber.await(boundServiceRunFork(serviceOptions)).runPromise(), {
+      _tag: 'Success',
+      value: 8080,
+    })
+
+    if (false) {
+      // @ts-expect-error Bound runner for a service-requiring task still requires options.
+      void boundServiceRunResult()
+      // @ts-expect-error Bound runner for a service-requiring task still requires options.
+      void boundServiceRunPromise()
+      // @ts-expect-error Bound runner for a service-requiring task still requires options.
+      void boundServiceRunExit()
+      // @ts-expect-error Bound runner for a service-requiring task still requires options.
+      void boundServiceRunFork()
+    }
+  })
+
   it('returns a fluent ResultAsync from runResult and supports toResultAsync / ResultAsync.fromTask aliases', async () => {
     class MissingError extends createTaggedError({
       name: 'Missing',

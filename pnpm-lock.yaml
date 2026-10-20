@@ -183,8 +183,8 @@ catalogs:
       specifier: 3.34.1
       version: 3.34.1
     fastify:
-      specifier: 5.12.5
-      version: 5.12.5
+      specifier: 5.12.7
+      version: 5.12.7
     fastify-plugin:
       specifier: 6.0.1
       version: 6.0.1
@@ -296,11 +296,11 @@ importers:
   examples/fastify:
     dependencies:
       '@fastify/type-provider-typebox':
-        specifier: 6.2.0
-        version: 6.2.0(ajv-formats@3.0.1)(typebox@1.4.2)
+        specifier: 6.3.0
+        version: 6.3.0(ajv-formats@3.0.1)(typebox@1.4.2)
       fastify:
         specifier: 'catalog:'
-        version: 5.12.5
+        version: 5.12.7
       resultar:
         specifier: workspace:*
         version: link:../../packages/resultar
@@ -327,8 +327,8 @@ importers:
   examples/hono:
     dependencies:
       '@hono/node-server':
-        specifier: 2.1.4
-        version: 2.1.4(hono@4.13.13)
+        specifier: 2.1.5
+        version: 2.1.5(hono@4.13.13)
       hono:
         specifier: 'catalog:'
         version: 4.13.13
@@ -489,7 +489,7 @@ importers:
         version: 3.34.1
       fastify:
         specifier: 'catalog:'
-        version: 5.12.5
+        version: 5.12.7
       tsx:
         specifier: 'catalog:'
         version: 4.23.15
@@ -1183,14 +1183,14 @@ packages:
   '@fastify/proxy-addr@5.1.1':
     resolution: {integrity: sha512-zv07Y9GEuDsJPegZoDFd4SDWaZOW8N2pa0GSrYmKpId/tjt1Hgo3BjZBVjdVpfVrHaA+Qv5jawtS2O50J5xM9g==}
 
-  '@fastify/type-provider-typebox@6.2.0':
-    resolution: {integrity: sha512-atChgjMPHqP/1WphOlN5tMt3qOpolDyedbdDIw91wIoZxku3x1p+bqLKqhXNoaTFX2tqT56LeuIKYH5BDutDFA==}
+  '@fastify/type-provider-typebox@6.3.0':
+    resolution: {integrity: sha512-zsaoyyAdNvkuf2HOMJvf7vykRTFA/1M9J3HC0vHNtFhxNhwL36iDJl/2Tpl0XzMR0f0aATSeDV20ChH720wXYQ==}
     peerDependencies:
       ajv-formats: ^3.0.1
       typebox: ^1.1.14
 
-  '@hono/node-server@2.1.4':
-    resolution: {integrity: sha512-2g1qeHl4BduwDn6L8nkAvDrPUWPMlkQ//a5NhP/zIyaXKMjZNRV+cG9Csu+BiJFf6+68pqzjf4Hi5sJGKHuS1g==}
+  '@hono/node-server@2.1.5':
+    resolution: {integrity: sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4 || ^5.0.0-0
@@ -2320,8 +2320,8 @@ packages:
   fastify-plugin@6.0.1:
     resolution: {integrity: sha512-4wW4RxSmvPXLrh5mgQEiu43qU3bw44N2ss4FTkTkQIbprUhE+/s43QX0j/ttcztdWK7PEkHqVthdc5GdEGDvjA==}
 
-  fastify@5.12.5:
-    resolution: {integrity: sha512-OB2k1dlxs5/NAABqeKV2FUHkSD2BbENsCak8yULVcymn3fHIPDVa9TI3SDnJSWYSllZmSYuZXy2gTnsT+Sut1A==}
+  fastify@5.12.7:
+    resolution: {integrity: sha512-v4pEPsTRPuqlDIYiQFB+BHjVN4SdHX9u0ABk0ZDUKbbdY1vsNryUd1j4Z+jQEZajvYIVk047Kimva9/AJ79GYw==}
 
   fastq@1.20.3:
     resolution: {integrity: sha512-XKv5nnLs6nLF71NgiKJLIZFLkPyIEuOselLG7ujZnGrRfQK8HpvY+WqKhAJUAdLomwVHErVS4LfxFlPq0/FTAw==}
@@ -3564,12 +3564,12 @@ snapshots:
       '@fastify/forwarded': 3.0.2
       ipaddr.js: 2.5.0
 
-  '@fastify/type-provider-typebox@6.2.0(ajv-formats@3.0.1)(typebox@1.4.2)':
+  '@fastify/type-provider-typebox@6.3.0(ajv-formats@3.0.1)(typebox@1.4.2)':
     dependencies:
       ajv-formats: 3.0.1
       typebox: 1.4.2
 
-  '@hono/node-server@2.1.4(hono@4.13.13)':
+  '@hono/node-server@2.1.5(hono@4.13.13)':
     dependencies:
       hono: 4.13.13
 
@@ -4522,7 +4522,7 @@ snapshots:
 
   fastify-plugin@6.0.1: {}
 
-  fastify@5.12.5:
+  fastify@5.12.7:
     dependencies:
       '@fastify/ajv-compiler': 4.0.6
       '@fastify/error': 4.2.0

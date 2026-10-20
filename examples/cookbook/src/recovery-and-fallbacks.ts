@@ -11,6 +11,7 @@ import {
   err,
   ok,
   taggedEnum,
+  type Redacted,
   type Result as ResultValue,
   type StrictResult,
   type TaggedEnum,
@@ -136,13 +137,13 @@ const readLocalProfile = (
 ): StrictResult<Profile, ProfileCacheMissError | ProfileNotFoundError> =>
   id === "missing" ? ProfileNotFoundError.err({ id }) : readProfileFromCache(id);
 
-const draftProfile = (id: number | string): Profile => ({
+const draftProfile = (id: number | string | Redacted<unknown>): Profile => ({
   id: String(id),
   name: "Draft profile",
   source: "draft",
 });
 
-const emptyProfile = (id: number | string): Profile => ({
+const emptyProfile = (id: number | string | Redacted<unknown>): Profile => ({
   id: String(id),
   name: "Empty profile",
   source: "empty",

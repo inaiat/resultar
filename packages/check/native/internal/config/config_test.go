@@ -445,4 +445,3 @@ func TestDiagnosticSeverityShorthandAndWildcard(t *testing.T) {
 		}
 	}
 }
-

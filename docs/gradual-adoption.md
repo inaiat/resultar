@@ -3,7 +3,7 @@
 Start by making one expected failure explicit with `Result<T, E>`. Keep existing
 Promise APIs at their boundaries and prefer `ResultTask` for new asynchronous
 workflows. Add time policies, service requirements or owned concurrent work as
-needed. `ResultAsync` represents an in-flight `Result` returned at execution boundaries (`runResult()`), while deprecated eager constructors from `resultar/async` preserve legacy boundaries during migration.
+needed. `ResultAsync` represents an in-flight `Result` returned at execution boundaries (`runResult()`) and by active in-flight constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`), while deprecated eager orchestration helpers from `resultar/async` preserve legacy boundaries during migration.
 Each step is useful on its own; an application can keep all three models.
 
 `Result<T, E>` uses `T` for success and `E` for expected errors.
@@ -19,7 +19,7 @@ their preferred names; changing those spellings is independent of adopting tasks
 | --- | --- | --- |
 | One synchronous validation or domain operation | `Result<T, E>` | When the function is called |
 | New async work, with optional service/scope requirements (`R`) and runtime options | `ResultTask<T, E, R>` | At an explicit `run*` boundary, again on each run |
-| An in-flight async `Result` (`task.runResult()`) or existing eager async contract | `ResultAsync<T, E>` | Immediately when `runResult()` (or a legacy eager constructor) is called; repeated awaits observe one execution |
+| An in-flight async `Result` (`task.runResult()`) or existing eager async contract | `ResultAsync<T, E>` | Immediately when `runResult()` (or an in-flight constructor) is called; repeated awaits observe one execution |
 
 The TypeScript blocks below are independent examples. Copy one into an ESM
 module; blocks using `await` use top-level await.
@@ -169,16 +169,15 @@ Runnable examples: [task resilience](../examples/cookbook/src/task-resilience.ts
 ## 4. Bridge existing eager APIs during migration
 
 `ResultAsync` and `StrictResultAsync` represent an in-flight `Result` (`PromiseLike<Result<T, E>>`)
-and are exported from both `resultar` and `resultar/async`. Deprecated eager constructors
-such as `tryResultAsync` live in the `resultar/async` subpath to keep
+and are exported from both `resultar` and `resultar/async`. Active in-flight constructors
+such as `tryResultAsync` and `fromPromise` are also exported from both entry points to keep
 their eager, single-execution behavior where existing callers
 depend on that contract. For a new Task workflow, adapt the existing operation with
 `fromResultAsync`; a factory creates fresh work on each run. The following
 `loadUser` represents such an existing eager adapter.
 
 ```ts
-import { ResultTask, createTaggedError, ok, type Result, type ResultAsync } from "resultar";
-import { tryResultAsync } from "resultar/async";
+import { ResultTask, createTaggedError, ok, tryResultAsync, type Result, type ResultAsync } from "resultar";
 
 class InvalidIdError extends createTaggedError({
   name: "InvalidIdError",

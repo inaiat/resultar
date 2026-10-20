@@ -3,8 +3,8 @@
 ## Orientação atual para a v4
 
 Use `Result<T, E>` para operações síncronas de domínio e `ResultTask<T, E, R>`
-para novos fluxos assíncronos. `ResultAsync` e `StrictResultAsync` estão depreciados
-desde a v4 e preservam o comportamento eager no subpath `resultar/async` do mesmo pacote durante a migração.
+para novos fluxos assíncronos. `ResultAsync` e `StrictResultAsync` representam valores
+`Result` em andamento (retornados por `task.runResult()`) e continuam suportados para contratos eager existentes junto ao subpath de compatibilidade `resultar/async`.
 
 ```typescript
 import { createTaggedError, ResultTask } from 'resultar';

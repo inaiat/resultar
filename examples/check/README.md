@@ -14,7 +14,7 @@ It deliberately keeps three independent projects:
   legacy policy fixture, not the v4 recommendation for new async application code.
 
 Prefer lazy `ResultTask` workflows with explicit runners in new async code. `ResultAsync` and
-`StrictResultAsync` are exported from the `resultar/async` subpath and are deprecated since v4 and retain one eager execution for compatibility.
+`StrictResultAsync` are exported from `resultar` and `resultar/async` as in-flight `Result` representations (`task.runResult()`), while their standalone eager constructors live in `resultar/async`.
 The legacy `preferResultAsync` option remains available to enforce existing eager contracts;
 disable it with `"preferResultAsync": "off"` when that project policy does not apply.
 The fixture imports eager helpers and async `safeTry` from `resultar/async`; the synchronous

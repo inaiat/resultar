@@ -540,20 +540,20 @@ export const sUseless = () => ResultTask.orElse(infallibleTask, () => infallible
 		counts[f.Rule]++
 	}
 	expected := map[string]int{
-		"no-discard":                    2,
-		"typed-catch-mapper":            1,
-		"no-run-inside-gen":             2,
-		"no-promise-in-result-success":  2,
-		"prefer-map":                    3,
-		"prefer-and-then":               2,
-		"prefer-map-err":                2,
-		"prefer-catch-reason":           2,
-		"prefer-or-else-succeed":        2,
-		"prefer-tap":                    2,
-		"prefer-tap-error":              2,
-		"prefer-as-void":                2,
-		"prefer-filter-or-else":         1,
-		"no-useless-recovery":           1,
+		"no-discard":                   2,
+		"typed-catch-mapper":           1,
+		"no-run-inside-gen":            2,
+		"no-promise-in-result-success": 2,
+		"prefer-map":                   3,
+		"prefer-and-then":              2,
+		"prefer-map-err":               2,
+		"prefer-catch-reason":          2,
+		"prefer-or-else-succeed":       2,
+		"prefer-tap":                   2,
+		"prefer-tap-error":             2,
+		"prefer-as-void":               2,
+		"prefer-filter-or-else":        1,
+		"no-useless-recovery":          1,
 	}
 	for rule, want := range expected {
 		if counts[rule] != want {
@@ -577,5 +577,3 @@ export const sUseless = () => ResultTask.orElse(infallibleTask, () => infallible
 		}
 	}
 }
-
-

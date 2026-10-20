@@ -2253,11 +2253,13 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
   /**
    * Returns a ResultAsync instance that is immediately resolved with a Result.ok(value).
    *
-   * @deprecated Since v4. Use ResultTask.ok for new workflows.
    * @param {T} value - The value to be wrapped in a Result.ok.
    * @return {ResultAsync<T, E>} A ResultAsync instance with the given value and error type E.
    */
   public static ok<T, E = never>(this: void, value: T): ResultAsync<T, E>
+  /**
+   * Returns a ResultAsync instance that is immediately resolved with a Result.ok(undefined).
+   */
   public static ok<E = never>(this: void, value: void): ResultAsync<void, E>
   public static ok<T, E = never>(this: void, value: T): ResultAsync<T, E> {
     return ResultAsync.okAsync<T, E>(value)
@@ -2266,11 +2268,13 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
   /**
    * Returns a ResultAsync instance that is immediately resolved with a Result.ok(value).
    *
-   * @deprecated Since v4. Use ResultTask.ok for new workflows.
    * @param {T} value - The value to be wrapped in a Result.ok.
    * @return {ResultAsync<T, E>} A ResultAsync instance with the given value and error type E.
    */
   public static okAsync<T, E = never>(this: void, value: T): ResultAsync<T, E>
+  /**
+   * Returns a ResultAsync instance that is immediately resolved with a Result.ok(undefined).
+   */
   public static okAsync<E = never>(this: void, value: void): ResultAsync<void, E>
   public static okAsync<T, E = never>(this: void, value: T): ResultAsync<T, E> {
     return new ResultAsync<T, E>(Promise.resolve(resultOk<T, E>(value)))
@@ -2279,7 +2283,15 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
   /**
    * Returns a ResultAsync that is immediately resolved with a Result.ok(undefined) value.
    *
-   * @deprecated Since v4. Use ResultTask.ok(undefined) for new workflows.
+   * @return {ResultAsync<undefined, E>} A ResultAsync instance with undefined as the value type and E as the error type.
+   */
+  public static unit<E = never>(this: void): ResultAsync<undefined, E> {
+    return ResultAsync.unitAsync<E>()
+  }
+
+  /**
+   * Returns a ResultAsync that is immediately resolved with a Result.ok(undefined) value.
+   *
    * @return {ResultAsync<undefined, E>} A ResultAsync instance with undefined as the value type and E as the error type.
    */
   public static unitAsync<E = never>(this: void): ResultAsync<undefined, E> {
@@ -2289,11 +2301,13 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
   /**
    * Returns a ResultAsync instance that is immediately resolved with a Result.err(error).
    *
-   * @deprecated Since v4. Use ResultTask.err for new workflows.
    * @param {E} error - The error to be wrapped in a Result.err.
    * @return {ResultAsync<T, E>} A ResultAsync instance with the given error and value type T.
    */
   public static err<T = never, E = unknown>(this: void, err: E): ResultAsync<T, E>
+  /**
+   * Returns a ResultAsync instance that is immediately resolved with a Result.err(undefined).
+   */
   public static err<T = never>(this: void, err: void): ResultAsync<T, void>
   public static err<T = never, E = unknown>(this: void, error: E): ResultAsync<T, E> {
     return ResultAsync.errAsync<T, E>(error)
@@ -2302,22 +2316,32 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
   /**
    * Returns a ResultAsync instance that is immediately resolved with a Result.err(error).
    *
-   * @deprecated Since v4. Use ResultTask.err for new workflows.
    * @param {E} error - The error to be wrapped in a Result.err.
    * @return {ResultAsync<T, E>} A ResultAsync instance with the given error and value type T.
    */
   public static errAsync<T = never, E = unknown>(this: void, err: E): ResultAsync<T, E>
+  /**
+   * Returns a ResultAsync instance that is immediately resolved with a Result.err(undefined).
+   */
   public static errAsync<T = never>(this: void, err: void): ResultAsync<T, void>
   public static errAsync<T = never, E = unknown>(this: void, error: E): ResultAsync<T, E> {
     return new ResultAsync<T, E>(Promise.resolve(err<T, E>(error)))
   }
 
   /**
+   * Captures a promise or async factory into `ResultAsync<T, E>`.
+   *
+   * Supports `ResultAsync.try(promiseOrFn, catchFn)` and `ResultAsync.try({ try, catch })`.
+   */
+  public static readonly try: typeof tryResultAsync = tryResultAsync
+
+  /**
    * Creates a ResultAsync from a Promise, catching any errors that occur during its execution.
    *
-   * Compatibility alias. Prefer `ResultTask.tryPromise` in new code.
+   * Compatibility alias. Prefer `ResultAsync.try` or `tryResultAsync` for in-flight boundaries,
+   * or `ResultTask.tryPromise` for lazy workflows.
    *
-   * @deprecated Since v4. Use ResultTask.tryPromise for new workflows.
+   * @deprecated Use ResultAsync.try or tryResultAsync instead; this alias retains its existing behavior.
    * @param fn - The Promise or a function returning a Promise to be wrapped in a ResultAsync.
    * @param errorFn - Optional function to transform the caught error into a specific error type.
    *                  If not provided, the original error will be used.
@@ -2328,6 +2352,11 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
     this: void,
     fn: Promise<T> | (() => Promise<T>),
   ): ResultAsync<T, unknown>
+  /**
+   * Creates a ResultAsync from a Promise, catching any errors and mapping them with `errorFn`.
+   *
+   * @deprecated Use ResultAsync.try or tryResultAsync instead; this alias retains its existing behavior.
+   */
   public static tryCatch<T, E>(
     this: void,
     fn: Promise<T> | (() => Promise<T>),
@@ -2354,7 +2383,6 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
    * Returns a ResultAsync instance that is resolved with a Result.ok(value) or Result.err(error)
    * based on the provided promise.
    *
-   * @deprecated Since v4. Use ResultTask.tryPromise with a Promise factory for new workflows.
    * @param {Promise<T>} promise - The promise to be wrapped in a ResultAsync.
    * @return {ResultAsync<T, E>} A ResultAsync instance with the given promise and error type E.
    */
@@ -2385,7 +2413,6 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
    * Returns a ResultAsync instance that is resolved with a Result.ok(value) or Result.err(error)
    * based on the provided promise.
    *
-   * @deprecated Since v4. Use ResultTask.tryPromise with a Promise factory for new workflows.
    * @param {Promise<T>} promise - The promise to be wrapped in a ResultAsync.
    * @param {(e: unknown) => E} errorFn - A function that transforms the error from the promise into the error type E.
    * @return {ResultAsync<T, E>} A ResultAsync instance with the given promise and error type E.
@@ -2412,7 +2439,7 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
    *
    * The returned cleanup function runs once after resolve, reject, cancellation, or synchronous
    * subscription failure. Cleanup errors are ignored.
-   * @deprecated Since v4. Use ResultTask.async for new workflows; keep this adapter for legacy callbacks.
+   * @deprecated Since v4. Use ResultTask.tryPromise or ResultTask.fromResultAsync for new workflows; keep this adapter for legacy callbacks.
    */
   public static fromCallback<T, E>(
     this: void,
@@ -2431,14 +2458,29 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
   public static combine<
     T extends readonly [ResultAsync<unknown, unknown>, ...ResultAsync<unknown, unknown>[]],
   >(this: void, asyncResultList: T): CombineResultAsyncs<T>
+  /**
+   * Combines an array of ResultAsync values and stops at the first Err.
+   *
+   * @deprecated Since v4. Use ResultTask.all for new workflows.
+   */
   public static combine<T extends readonly ResultAsync<unknown, unknown>[]>(
     this: void,
     asyncResultList: T,
   ): CombineResultAsyncs<T>
+  /**
+   * Combines a record of ResultAsync values and stops at the first Err.
+   *
+   * @deprecated Since v4. Use ResultTask.all for new workflows.
+   */
   public static combine<T extends ResultAsyncRecord>(
     this: void,
     asyncResultRecord: T,
   ): CombineResultAsyncsRecord<T>
+  /**
+   * Combines an iterable of ResultAsync values and stops at the first Err.
+   *
+   * @deprecated Since v4. Use ResultTask.all for new workflows.
+   */
   public static combine<R extends ResultAsync<unknown, unknown>>(
     this: void,
     asyncResults: Iterable<R>,
@@ -2481,14 +2523,29 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
   public static all<
     T extends readonly [ResultAsync<unknown, unknown>, ...ResultAsync<unknown, unknown>[]],
   >(this: void, asyncResultList: T): CombineResultAsyncs<T>
+  /**
+   * Combines an array of ResultAsync values and stops at the first Err.
+   *
+   * @deprecated Since v4. Use ResultTask.all for new workflows.
+   */
   public static all<T extends readonly ResultAsync<unknown, unknown>[]>(
     this: void,
     asyncResultList: T,
   ): CombineResultAsyncs<T>
+  /**
+   * Combines a record of ResultAsync values and stops at the first Err.
+   *
+   * @deprecated Since v4. Use ResultTask.all for new workflows.
+   */
   public static all<T extends ResultAsyncRecord>(
     this: void,
     asyncResultRecord: T,
   ): CombineResultAsyncsRecord<T>
+  /**
+   * Combines an iterable of ResultAsync values and stops at the first Err.
+   *
+   * @deprecated Since v4. Use ResultTask.all for new workflows.
+   */
   public static all<R extends ResultAsync<unknown, unknown>>(
     this: void,
     asyncResults: Iterable<R>,
@@ -2517,14 +2574,29 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
   public static combineWithAllErrors<
     T extends readonly [ResultAsync<unknown, unknown>, ...ResultAsync<unknown, unknown>[]],
   >(this: void, asyncResultList: T): CombineResultsWithAllErrorsArrayAsync<T>
+  /**
+   * Combines an array of ResultAsync values and collects every Err.
+   *
+   * @deprecated Since v4. Use ResultTask.validateAll for new workflows.
+   */
   public static combineWithAllErrors<T extends readonly ResultAsync<unknown, unknown>[]>(
     this: void,
     asyncResultList: T,
   ): CombineResultsWithAllErrorsArrayAsync<T>
+  /**
+   * Combines a record of ResultAsync values and collects every Err.
+   *
+   * @deprecated Since v4. Use ResultTask.validateAll for new workflows.
+   */
   public static combineWithAllErrors<T extends ResultAsyncRecord>(
     this: void,
     asyncResultRecord: T,
   ): CombineResultAsyncsRecordWithAllErrors<T>
+  /**
+   * Combines an iterable of ResultAsync values and collects every Err.
+   *
+   * @deprecated Since v4. Use ResultTask.validateAll for new workflows.
+   */
   public static combineWithAllErrors<R extends ResultAsync<unknown, unknown>>(
     this: void,
     asyncResults: Iterable<R>,
@@ -2570,10 +2642,20 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
   public static validateAll<
     T extends readonly [ResultAsync<unknown, unknown>, ...ResultAsync<unknown, unknown>[]],
   >(this: void, asyncResultList: T): CombineResultsWithAllErrorsArrayAsync<T>
+  /**
+   * Validates an array of ResultAsync values and collects every Err.
+   *
+   * @deprecated Since v4. Use ResultTask.validateAll for new workflows.
+   */
   public static validateAll<T extends readonly ResultAsync<unknown, unknown>[]>(
     this: void,
     asyncResultList: T,
   ): CombineResultsWithAllErrorsArrayAsync<T>
+  /**
+   * Maps items to ResultAsync values and collects every Err.
+   *
+   * @deprecated Since v4. Use ResultTask.validateAll for new workflows.
+   */
   public static validateAll<Item, R extends ResultAsync<unknown, unknown>>(
     this: void,
     items: Iterable<Item>,
@@ -2623,6 +2705,11 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
       readonly signal?: ResultAsyncAbortSignal
     },
   ): ResultAsync<ResultAsyncRetryTaskOk<Task>, ResultAsyncRetryTaskErr<Task> | AbortError>
+  /**
+   * Retries a ResultAsync task according to retry options.
+   *
+   * @deprecated Since v4. Use ResultTask.retry for new workflows.
+   */
   public static retry<Task extends ResultAsyncRetryTask<unknown, unknown>>(
     this: void,
     task: Task,
@@ -2638,7 +2725,7 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
 
   /**
    * Retries a ResultAsync task and falls back to another Resultar operation after retry exhaustion.
-   * @deprecated Since v4. Use ResultTask.retryOrElse for new workflows.
+   * @deprecated Since v4. Compose task.retry(policy).orElse(fallback) (or ResultTask.retry and ResultTask.orElse) for new workflows.
    */
   public static retryOrElse<Task extends ResultAsyncRetryCandidate, U, F>(
     this: void,
@@ -2651,6 +2738,11 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
       ) => Result<U, F> | ResultAsync<U, F>
     },
   ): ResultAsync<ResultAsyncRetryTaskOk<Task> | U, F | AbortError>
+  /**
+   * Retries a ResultAsync task according to retry options and falls back to another operation after exhaustion.
+   *
+   * @deprecated Since v4. Compose task.retry(policy).orElse(fallback) (or ResultTask.retry and ResultTask.orElse) for new workflows.
+   */
   public static retryOrElse<Task extends ResultAsyncRetryTask<unknown, unknown>, U, F>(
     this: void,
     task: Task,
@@ -2669,7 +2761,7 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
    *
    * Release errors are intentionally not part of the success/error channel; model cleanup failures
    * in `use` when they should affect control flow.
-   * @deprecated Since v4. Use ResultTask.acquireUseRelease for new workflows.
+   * @deprecated Since v4. Use ResultTask.acquireRelease (or ResultTask.acquireDisposable) with ResultTask.scoped for new workflows.
    */
   public static withResource<Resource, AcquireError, T, UseError>(
     this: void,
@@ -2704,7 +2796,7 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
    *
    * Earlier Err results do not finish the race. If every task fails, returns the last completed Err.
    * Pending losers are aborted without waiting for their settlement or cleanup.
-   * @deprecated Since v4. Use ResultTask.raceAll for new workflows.
+   * @deprecated Since v4. Use ResultTask.race or ResultTask.firstSuccessOf for new workflows.
    */
   public static raceAll<
     Tasks extends readonly [
@@ -2751,7 +2843,7 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
    * settles first.
    *
    * Handlers receive the settled Result and a handle to the still-running opposite task.
-   * @deprecated Since v4. Use ResultTask.raceWith for new workflows.
+   * @deprecated Since v4. Use ResultTask.race, ResultTask.raceFirst, or ResultTask.forkChild for new workflows.
    */
   public static raceWith<
     Left extends ResultAsyncRaceTask<unknown, unknown>,
@@ -3020,16 +3112,31 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
     initial: State,
     options: ResultAsyncLoopOptions<State, BodyState, R>,
   ): ResultAsyncLoopCollected<R>
+  /**
+   * Repeats a ResultAsync-producing body while a boolean condition holds.
+   *
+   * @deprecated Since v4. Use ResultTask.loop for new workflows.
+   */
   public static loop<State, R extends ResultAsync<unknown, unknown>>(
     this: void,
     initial: State,
     options: ResultAsyncLoopBooleanOptions<State, R>,
   ): ResultAsyncLoopCollected<R>
+  /**
+   * Repeats a ResultAsync-producing body while a condition holds and discards collected Ok values.
+   *
+   * @deprecated Since v4. Use ResultTask.loop for new workflows.
+   */
   public static loop<State, BodyState extends State, R extends ResultAsync<unknown, unknown>>(
     this: void,
     initial: State,
     options: ResultAsyncLoopDiscardOptions<State, BodyState, R>,
   ): ResultAsyncLoopDiscarded<R>
+  /**
+   * Repeats a ResultAsync-producing body while a boolean condition holds and discards collected Ok values.
+   *
+   * @deprecated Since v4. Use ResultTask.loop for new workflows.
+   */
   public static loop<State, R extends ResultAsync<unknown, unknown>>(
     this: void,
     initial: State,
@@ -3060,6 +3167,11 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
     initial: State,
     options: ResultAsyncIterateOptions<WidenLiteral<State>, BodyState, R>,
   ): ResultAsyncIterated<WidenLiteral<State>, R>
+  /**
+   * Repeatedly transforms state with a ResultAsync-producing body while a boolean condition holds.
+   *
+   * @deprecated Since v4. Use ResultTask.iterate for new workflows.
+   */
   public static iterate<State, R extends ResultAsync<WidenLiteral<State>, unknown>>(
     this: void,
     initial: State,
@@ -3091,6 +3203,11 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
     f: (value: Item, index: number) => R,
     options?: ResultAsyncForEachOptions,
   ): ResultAsyncForEachCollected<R>
+  /**
+   * Runs a ResultAsync-producing mapper for each item and discards collected Ok values.
+   *
+   * @deprecated Since v4. Use ResultTask.forEach for new workflows.
+   */
   public static forEach<Item, R extends ResultAsync<unknown, unknown>>(
     this: void,
     items: Iterable<Item>,
@@ -3150,9 +3267,9 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
    * Prefer ResultAsync combinators for application flow; this exists so ResultAsync can be awaited
    * and used by Promise APIs.
    */
-  public then<A, B>(
-    successCallback?: (res: Result<T, E>) => A | PromiseLike<A>,
-    failureCallback?: (reason: unknown) => B | PromiseLike<B>,
+  public then<A = Result<T, E>, B = never>(
+    successCallback?: ((res: Result<T, E>) => A | PromiseLike<A>) | null,
+    failureCallback?: ((reason: unknown) => B | PromiseLike<B>) | null,
   ): PromiseLike<A | B> {
     return this.innerPromise.then(successCallback, failureCallback)
   }
@@ -3657,12 +3774,10 @@ export type StrictResultAsync<T, E extends Error = Error> = ResultAsync<T, E>
 
 /**
  * Creates an Ok ResultAsync.
- * @deprecated Since v4. Use ResultTask.ok for new workflows; legacy execution is unchanged.
  */
 export const okAsync: typeof ResultAsync.okAsync = ResultAsync.okAsync
 /**
  * Creates an Err ResultAsync.
- * @deprecated Since v4. Use ResultTask.err for new workflows; legacy execution is unchanged.
  */
 export const errAsync: typeof ResultAsync.errAsync = ResultAsync.errAsync
 /**
@@ -3672,19 +3787,16 @@ export const errAsync: typeof ResultAsync.errAsync = ResultAsync.errAsync
 export const fromCallback: typeof ResultAsync.fromCallback = ResultAsync.fromCallback
 /**
  * Converts an existing promise into a ResultAsync and maps rejection into a typed Err.
- * @deprecated Since v4. Use ResultTask.tryPromise with a Promise factory for new workflows.
  */
 export const fromPromise: typeof ResultAsync.fromPromise = ResultAsync.fromPromise
 /**
  * Converts an existing promise that is expected not to reject into a ResultAsync.
  *
  * Use `fromPromise` or `tryResultAsync` when rejection should become a typed Err.
- * @deprecated Since v4. Use ResultTask.tryPromise with a Promise factory for new workflows.
  */
 export const fromSafePromise: typeof ResultAsync.fromSafePromise = ResultAsync.fromSafePromise
 /**
  * Creates an Ok ResultAsync with `undefined`.
- * @deprecated Since v4. Use ResultTask.ok(undefined) for new workflows.
  */
 export const unitAsync: typeof ResultAsync.unitAsync = ResultAsync.unitAsync
 /**
@@ -3696,12 +3808,11 @@ export const fromThrowableAsync: typeof ResultAsync.fromThrowable = ResultAsync.
 /**
  * Captures a promise or async factory into `ResultAsync<T, E>`.
  *
- * Use `tryResultAsync` at the edge of uncontrolled async code: network calls, file I/O,
+ * Use `tryResultAsync` (or `ResultAsync.try`) at the edge of uncontrolled async code: network calls, file I/O,
  * third-party SDKs, JSON parsing promises, and framework APIs that can reject. The mapper receives
  * the rejected or thrown `unknown` cause and returns the typed error for the Resultar channel.
  *
  * Passing a factory is preferred when creating the promise can throw synchronously.
- * @deprecated Since v4. Use ResultTask.tryPromise for new workflows.
  *
  * @example
  * ```ts
@@ -3720,7 +3831,6 @@ export function tryResultAsync<T, E>(
  *
  * This is equivalent to `tryResultAsync(() => ..., toError)`, but it reads better for reusable
  * infrastructure helpers where the label, task, and mapper live together.
- * @deprecated Since v4. Use ResultTask.tryPromise for new workflows.
  *
  * @example
  * ```ts
@@ -3738,7 +3848,6 @@ export function tryResultAsync<T, E>(
  *
  * Prefer the overload with a catch mapper in application code so the error channel stays documented.
  * This overload is useful while adapting unknown external failures or during migration.
- * @deprecated Since v4. Use ResultTask.tryPromise for new workflows.
  */
 export function tryResultAsync<T>(
   input: Promise<T> | (() => Promise<T>) | TryResultAsyncOptions<T>,
@@ -3773,7 +3882,7 @@ export function tryResultAsync<T, E = unknown>(
  */
 export const runPromise = <T, E>(result: ResultAsync<T, E>): Promise<T> => result.unwrapOrThrow()
 
-/** @deprecated Use tryResultAsync; this alias retains its existing behavior. */
+/** @deprecated Use ResultAsync.try or tryResultAsync; this alias retains its existing behavior. */
 export const tryCatchAsync: typeof tryResultAsync = tryResultAsync
 
 // Combines the array of async results into one result.

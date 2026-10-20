@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/microsoft/TypeScript/tsc/internal/ast"
@@ -29,7 +30,7 @@ var recoveryMethods = map[string]struct{}{
 }
 
 var asyncAwaitBoundaryCallNames = map[string]struct{}{
-	"fromThrowableAsync": {}, "tryAsync": {}, "tryCatchAsync": {}, "tryCatch": {}, "tryPromise": {}, "tryResultAsync": {},
+	"fromThrowableAsync": {}, "try": {}, "tryAsync": {}, "tryCatchAsync": {}, "tryCatch": {}, "tryPromise": {}, "tryResultAsync": {},
 }
 
 var resultTaskStaticConsumerMethods = map[string]struct{}{
@@ -124,30 +125,54 @@ func (a *Analyzer) collectTrackedResults(file *ast.SourceFile) []*trackedResult 
 		declaration := node.AsVariableDeclaration()
 		name := node.Name()
 		initializer := declaration.Initializer
-		if name == nil || name.Kind != ast.KindIdentifier || initializer == nil || !isCallLikeDiscard(initializer) || nodeCannotBeResultarType(initializer) {
+		if name == nil || initializer == nil || !isCallLikeDiscard(initializer) || nodeCannotBeResultarType(initializer) {
 			return
 		}
-		type_ := a.checker.GetTypeAtLocation(initializer)
-		if !isMustUseResultarType(type_) {
+		if name.Kind == ast.KindIdentifier {
+			type_ := a.checker.GetTypeAtLocation(initializer)
+			if !isMustUseResultarType(type_) {
+				return
+			}
+			symbol := a.checker.GetSymbolAtLocation(name)
+			if symbol == nil {
+				return
+			}
+			tracked = append(tracked, &trackedResult{
+				identifier: name,
+				name:       name.Text(),
+				symbol:     symbol,
+				typeName:   a.checker.TypeToStringEx(type_, initializer, checker.TypeFormatFlagsNoTruncation, nil),
+			})
 			return
 		}
-		symbol := a.checker.GetSymbolAtLocation(name)
-		if symbol == nil {
-			return
+		if name.Kind == ast.KindArrayBindingPattern || name.Kind == ast.KindObjectBindingPattern {
+			visit(name, func(bindingNode *ast.Node) {
+				if bindingNode.Kind != ast.KindIdentifier || bindingNode.Parent == nil || bindingNode.Parent.Kind != ast.KindBindingElement || bindingNode.Parent.Name() != bindingNode {
+					return
+				}
+				type_ := a.checker.GetTypeAtLocation(bindingNode)
+				if !isMustUseResultarType(type_) {
+					return
+				}
+				symbol := a.checker.GetSymbolAtLocation(bindingNode)
+				if symbol == nil {
+					return
+				}
+				tracked = append(tracked, &trackedResult{
+					identifier: bindingNode,
+					name:       bindingNode.Text(),
+					symbol:     symbol,
+					typeName:   a.checker.TypeToStringEx(type_, bindingNode, checker.TypeFormatFlagsNoTruncation, nil),
+				})
+			})
 		}
-		tracked = append(tracked, &trackedResult{
-			identifier: name,
-			name:       name.Text(),
-			symbol:     symbol,
-			typeName:   a.checker.TypeToStringEx(type_, initializer, checker.TypeFormatFlagsNoTruncation, nil),
-		})
 	})
 	return tracked
 }
 
 func (a *Analyzer) markTrackedResultUses(file *ast.SourceFile, tracked []*trackedResult) {
 	visit(file.AsNode(), func(node *ast.Node) {
-		if node.Kind != ast.KindIdentifier {
+		if node.Kind != ast.KindIdentifier || isDeclarationIdentifier(node) {
 			return
 		}
 		var symbol *ast.Symbol
@@ -174,6 +199,13 @@ func (a *Analyzer) markTrackedResultUses(file *ast.SourceFile, tracked []*tracke
 }
 
 func (a *Analyzer) isInsideDiscardedResultExpression(identifier *ast.Node) bool {
+	return a.isInsideDiscardedResultExpressionWithVisited(identifier, nil)
+}
+
+func (a *Analyzer) isInsideDiscardedResultExpressionWithVisited(identifier *ast.Node, visited map[*ast.Symbol]bool) bool {
+	if identifier == nil {
+		return false
+	}
 	for current := identifier; current != nil; current = current.Parent {
 		if current.Kind != ast.KindExpressionStatement {
 			continue
@@ -183,6 +215,19 @@ func (a *Analyzer) isInsideDiscardedResultExpression(identifier *ast.Node) bool 
 			return false
 		}
 		return isMustUseResultarType(a.checker.GetTypeAtLocation(expression))
+	}
+	root, parent := a.referenceChainRoot(identifier)
+	if parent != nil && parent.Kind == ast.KindVariableDeclaration {
+		declaration := parent.AsVariableDeclaration()
+		if declaration.Initializer == root && parent.Name() != nil && parent.Name().Kind == ast.KindIdentifier &&
+			!isExplicitDiscard(root) &&
+			a.checker.GetSymbolAtLocation(parent.Name()) != a.checker.GetSymbolAtLocation(identifier) {
+			rootType := a.checker.GetTypeAtLocation(root)
+			if !(isCallLikeDiscard(root) && isMustUseResultarType(rootType)) &&
+				(isMustUseResultarType(rootType) || a.isPromiseOfResultLikeType(rootType) || a.isPassthroughThenCall(root)) {
+				return a.variableHasDiscardedResultUse(parent.Name(), visited)
+			}
+		}
 	}
 	return false
 }
@@ -828,7 +873,7 @@ func (a *Analyzer) resultarAwaitBoundaryBody(node *ast.Node) *ast.Node {
 	if _, ok := asyncAwaitBoundaryCallNames[name]; !ok || len(call.Arguments.Nodes) == 0 {
 		return nil
 	}
-	if name == "tryCatch" && a.staticNamespace(call.Expression, "tryCatch") != "ResultAsync" {
+	if (name == "try" || name == "tryCatch") && a.staticNamespace(call.Expression, name) != "ResultAsync" {
 		return nil
 	}
 	if name == "tryPromise" && !a.isResultTaskStaticCall(call.Expression, "tryPromise") {
@@ -1534,6 +1579,8 @@ func isCallLikeDiscard(expression *ast.Node) bool {
 		return true
 	case ast.KindCallExpression:
 		return true
+	case ast.KindElementAccessExpression:
+		return isCallLikeDiscard(expression.AsElementAccessExpression().Expression)
 	case ast.KindConditionalExpression:
 		conditional := expression.AsConditionalExpression()
 		return isCallLikeDiscard(conditional.WhenTrue) || isCallLikeDiscard(conditional.WhenFalse)
@@ -1559,35 +1606,561 @@ func isWrapperParent(parent, child *ast.Node) bool {
 	return false
 }
 
-func referenceChainRoot(identifier *ast.Node) (*ast.Node, *ast.Node) {
+func (a *Analyzer) isPromiseResolveCall(parent, child *ast.Node) bool {
+	if parent == nil || parent.Kind != ast.KindCallExpression {
+		return false
+	}
+	call := parent.AsCallExpression()
+	return a.staticNamespace(call.Expression, "resolve") == "Promise" &&
+		len(call.Arguments.Nodes) == 1 &&
+		call.Arguments.Nodes[0] == child
+}
+
+func (a *Analyzer) isPromiseAllCall(parent, child *ast.Node) bool {
+	if parent == nil || parent.Kind != ast.KindCallExpression {
+		return false
+	}
+	call := parent.AsCallExpression()
+	return a.staticNamespace(call.Expression, "all") == "Promise" &&
+		len(call.Arguments.Nodes) == 1 &&
+		call.Arguments.Nodes[0] == child
+}
+
+func (a *Analyzer) isNullishThenCallback(arg *ast.Node) bool {
+	arg = unwrapExpression(arg)
+	if arg == nil {
+		return true
+	}
+	switch arg.Kind {
+	case ast.KindNullKeyword, ast.KindVoidExpression:
+		return true
+	case ast.KindIdentifier:
+		if arg.Text() == "undefined" {
+			if symbol := a.checker.GetSymbolAtLocation(arg); symbol == nil || len(symbol.Declarations()) == 0 {
+				return true
+			}
+		}
+	}
+	t := a.checker.GetTypeAtLocation(arg)
+	return t != nil && everyUnionPart(t, func(part *checker.Type) bool {
+		return part.Flags()&(checker.TypeFlagsUndefined|checker.TypeFlagsNull|checker.TypeFlagsVoid) != 0
+	})
+}
+
+func (a *Analyzer) isPassthroughThenCall(callNode *ast.Node) bool {
+	if callNode == nil || callNode.Kind != ast.KindCallExpression {
+		return false
+	}
+	call := callNode.AsCallExpression()
+	callee := unwrapExpression(call.Expression)
+	if callee == nil || callee.Kind != ast.KindPropertyAccessExpression ||
+		callee.Name() == nil || callee.Name().Text() != "then" {
+		return false
+	}
+	args := call.Arguments.Nodes
+	return len(args) == 0 || a.isNullishThenCallback(args[0])
+}
+
+func (a *Analyzer) referenceChainRoot(identifier *ast.Node) (*ast.Node, *ast.Node) {
 	current := identifier
 	for parent := current.Parent; parent != nil; parent = current.Parent {
-		if isWrapperParent(parent, current) || (parent.Kind == ast.KindAwaitExpression && parent.Expression() == current) {
+		if isWrapperParent(parent, current) ||
+			(parent.Kind == ast.KindAwaitExpression && parent.Expression() == current) ||
+			a.isPromiseResolveCall(parent, current) {
 			current = parent
 			continue
 		}
 		if parent.Kind == ast.KindPropertyAccessExpression && parent.AsPropertyAccessExpression().Expression == current {
-			current = parent
-			continue
-		}
-		if parent.Kind == ast.KindCallExpression && parent.AsCallExpression().Expression == current {
-			current = parent
-			continue
+			if parent.Name() != nil && parent.Name().Text() == "then" {
+				if parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression &&
+					parent.Parent.AsCallExpression().Expression == parent &&
+					a.isPassthroughThenCall(parent.Parent) {
+					current = parent.Parent
+					continue
+				}
+				return current, parent
+			}
+			if parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression &&
+				parent.Parent.AsCallExpression().Expression == parent {
+				callType := a.checker.GetTypeAtLocation(parent.Parent)
+				if isMustUseResultarType(callType) || a.isPromiseOfResultLikeType(callType) {
+					current = parent.Parent
+					continue
+				}
+			}
+			return current, parent
 		}
 		return current, parent
 	}
 	return current, nil
 }
 
+func isDeclarationIdentifier(node *ast.Node) bool {
+	if node == nil || node.Parent == nil {
+		return false
+	}
+	switch node.Parent.Kind {
+	case ast.KindVariableDeclaration, ast.KindParameter, ast.KindBindingElement:
+		return node.Parent.Name() == node
+	}
+	return false
+}
+
+func enclosingFunction(returnOrArrow *ast.Node) *ast.Node {
+	if returnOrArrow == nil {
+		return nil
+	}
+	if returnOrArrow.Kind == ast.KindArrowFunction {
+		return returnOrArrow
+	}
+	for curr := returnOrArrow.Parent; curr != nil; curr = curr.Parent {
+		if isFunctionLikeNode(curr) || curr.Kind == ast.KindGetAccessor || curr.Kind == ast.KindSetAccessor || curr.Kind == ast.KindConstructor {
+			return curr
+		}
+	}
+	return nil
+}
+
+func enclosingCallbackCall(fn *ast.Node) (*ast.Node, string) {
+	if fn == nil {
+		return nil, ""
+	}
+	fnRoot := fn
+	for fnRoot.Parent != nil && isWrapperParent(fnRoot.Parent, fnRoot) {
+		fnRoot = fnRoot.Parent
+	}
+	parent := fnRoot.Parent
+	if parent == nil || parent.Kind != ast.KindCallExpression {
+		return nil, ""
+	}
+	call := parent.AsCallExpression()
+	isArg := false
+	for _, arg := range call.Arguments.Nodes {
+		if arg == fnRoot {
+			isArg = true
+			break
+		}
+	}
+	if !isArg {
+		return nil, ""
+	}
+	method, _, _ := methodCall(parent)
+	return parent, method
+}
+
+type nodeVisitKind uint8
+
+const (
+	nodeVisitRef nodeVisitKind = iota
+	nodeVisitOuterCall
+	nodeVisitPromiseAll
+)
+
+type nodeVisitKey struct {
+	node        *ast.Node
+	elemIndex   int
+	kind        nodeVisitKind
+	callContext *ast.Node
+}
+
+type symbolVisitKind uint8
+
+const (
+	symVisitSingle symbolVisitKind = iota
+	symVisitPromiseAll
+	symVisitTuple
+)
+
+type symbolVisitKey struct {
+	symbol      *ast.Symbol
+	elemIndex   int
+	kind        symbolVisitKind
+	callContext *ast.Node
+}
+
+type callbackFrame struct {
+	fn       *ast.Node
+	callNode *ast.Node
+	method   string
+}
+
+type callbackVisitKey struct {
+	fn        *ast.Node
+	callNode  *ast.Node
+	elemIndex int
+}
+
+type handleSearchState struct {
+	sourceSymbol     *ast.Symbol
+	visitedNodes     map[nodeVisitKey]bool
+	visitedSymbols   map[symbolVisitKey]bool
+	visitedCallbacks map[callbackVisitKey]bool
+	callbackStack    []callbackFrame
+}
+
+func newHandleSearchState(sourceSymbol *ast.Symbol) *handleSearchState {
+	visitedSymbols := make(map[symbolVisitKey]bool)
+	if sourceSymbol != nil {
+		visitedSymbols[symbolVisitKey{symbol: sourceSymbol, elemIndex: -1, kind: symVisitSingle}] = true
+	}
+	return &handleSearchState{
+		sourceSymbol:     sourceSymbol,
+		visitedNodes:     make(map[nodeVisitKey]bool),
+		visitedSymbols:   visitedSymbols,
+		visitedCallbacks: make(map[callbackVisitKey]bool),
+	}
+}
+
+func (s *handleSearchState) activeCallContext() *ast.Node {
+	if s == nil || len(s.callbackStack) == 0 {
+		return nil
+	}
+	return s.callbackStack[len(s.callbackStack)-1].callNode
+}
+
+func (s *handleSearchState) withCallback(cb *ast.Node, callNode *ast.Node, method string, elemIndex int, fn func() bool) bool {
+	if s == nil || cb == nil {
+		return false
+	}
+	if callNode == nil {
+		return fn()
+	}
+	key := callbackVisitKey{fn: cb, callNode: callNode, elemIndex: elemIndex}
+	if s.visitedCallbacks[key] || len(s.callbackStack) >= 16 {
+		return false
+	}
+	s.visitedCallbacks[key] = true
+	defer delete(s.visitedCallbacks, key)
+	s.callbackStack = append(s.callbackStack, callbackFrame{fn: cb, callNode: callNode, method: method})
+	defer func() {
+		s.callbackStack = s.callbackStack[:len(s.callbackStack)-1]
+	}()
+	return fn()
+}
+
+func (s *handleSearchState) resolveCallbackReturn(fn *ast.Node) (*ast.Node, string, func()) {
+	if s != nil {
+		for i := len(s.callbackStack) - 1; i >= 0; i-- {
+			if s.callbackStack[i].fn == fn {
+				saved := append([]callbackFrame(nil), s.callbackStack[i:]...)
+				callNode := s.callbackStack[i].callNode
+				method := s.callbackStack[i].method
+				s.callbackStack = s.callbackStack[:i]
+				return callNode, method, func() {
+					s.callbackStack = append(s.callbackStack, saved...)
+				}
+			}
+		}
+	}
+	if callNode, method := enclosingCallbackCall(fn); callNode != nil {
+		return callNode, method, func() {}
+	}
+	return nil, "", func() {}
+}
+
+func isAssignmentOperatorKind(kind ast.Kind) bool {
+	switch kind {
+	case ast.KindEqualsToken,
+		ast.KindPlusEqualsToken,
+		ast.KindMinusEqualsToken,
+		ast.KindAsteriskAsteriskEqualsToken,
+		ast.KindAsteriskEqualsToken,
+		ast.KindSlashEqualsToken,
+		ast.KindPercentEqualsToken,
+		ast.KindAmpersandEqualsToken,
+		ast.KindBarEqualsToken,
+		ast.KindCaretEqualsToken,
+		ast.KindLessThanLessThanEqualsToken,
+		ast.KindGreaterThanGreaterThanGreaterThanEqualsToken,
+		ast.KindGreaterThanGreaterThanEqualsToken,
+		ast.KindBarBarEqualsToken,
+		ast.KindAmpersandAmpersandEqualsToken,
+		ast.KindQuestionQuestionEqualsToken:
+		return true
+	}
+	return false
+}
+
+func (a *Analyzer) nodeReferencesSymbol(node *ast.Node, target *ast.Symbol) bool {
+	if node == nil || target == nil {
+		return false
+	}
+	found := false
+	visit(node, func(n *ast.Node) {
+		if found || n == nil || n.Kind != ast.KindIdentifier {
+			return
+		}
+		var sym *ast.Symbol
+		if n.Parent != nil && n.Parent.Kind == ast.KindShorthandPropertyAssignment && n.Parent.Name() == n {
+			sym = a.checker.GetShorthandAssignmentValueSymbol(n.Parent)
+		} else {
+			sym = a.checker.GetSymbolAtLocation(n)
+		}
+		if sym != nil && sym.Flags()&ast.SymbolFlagsAlias != 0 {
+			if aliased := a.checker.GetAliasedSymbol(sym); aliased != nil {
+				sym = aliased
+			}
+		}
+		if sym == target {
+			found = true
+		}
+	})
+	return found
+}
+
+func (a *Analyzer) variableIsReassigned(symbol *ast.Symbol, file *ast.SourceFile) bool {
+	if symbol == nil || file == nil {
+		return true
+	}
+	initCount := 0
+	for _, decl := range symbol.Declarations() {
+		if decl == nil {
+			continue
+		}
+		if decl.Kind == ast.KindVariableDeclaration && decl.AsVariableDeclaration().Initializer != nil {
+			initCount++
+		}
+		if decl.Kind == ast.KindFunctionDeclaration && decl.Body() != nil {
+			initCount++
+		}
+	}
+	if initCount > 1 {
+		return true
+	}
+	reassigned := false
+	visit(file.AsNode(), func(node *ast.Node) {
+		if reassigned || node == nil {
+			return
+		}
+		switch node.Kind {
+		case ast.KindBinaryExpression:
+			bin := node.AsBinaryExpression()
+			if isAssignmentOperatorKind(bin.OperatorToken.Kind) && a.nodeReferencesSymbol(bin.Left, symbol) {
+				reassigned = true
+			}
+		case ast.KindPrefixUnaryExpression:
+			u := node.AsPrefixUnaryExpression()
+			if (u.Operator == ast.KindPlusPlusToken || u.Operator == ast.KindMinusMinusToken) && a.nodeReferencesSymbol(u.Operand, symbol) {
+				reassigned = true
+			}
+		case ast.KindPostfixUnaryExpression:
+			u := node.AsPostfixUnaryExpression()
+			if (u.Operator == ast.KindPlusPlusToken || u.Operator == ast.KindMinusMinusToken) && a.nodeReferencesSymbol(u.Operand, symbol) {
+				reassigned = true
+			}
+		case ast.KindForInStatement, ast.KindForOfStatement:
+			init := node.AsForInOrOfStatement().Initializer
+			if init != nil && init.Kind != ast.KindVariableDeclarationList && a.nodeReferencesSymbol(init, symbol) {
+				reassigned = true
+			}
+		}
+	})
+	return reassigned
+}
+
+func (a *Analyzer) resolveCallbackNode(callback *ast.Node) *ast.Node {
+	return a.resolveCallbackNodeWithVisited(callback, nil)
+}
+
+func (a *Analyzer) resolveCallbackNodeWithVisited(callback *ast.Node, visited map[*ast.Symbol]bool) *ast.Node {
+	cb := unwrapExpression(callback)
+	if cb == nil {
+		return nil
+	}
+	switch cb.Kind {
+	case ast.KindArrowFunction, ast.KindFunctionExpression, ast.KindFunctionDeclaration, ast.KindMethodDeclaration:
+		if cb.Body() != nil {
+			return cb
+		}
+		return nil
+	}
+	if cb.Kind != ast.KindIdentifier {
+		return nil
+	}
+	symbol := a.checker.GetSymbolAtLocation(cb)
+	if symbol == nil {
+		return nil
+	}
+	if symbol.Flags()&ast.SymbolFlagsAlias != 0 {
+		if aliased := a.checker.GetAliasedSymbol(symbol); aliased != nil {
+			symbol = aliased
+		}
+	}
+	if visited == nil {
+		visited = make(map[*ast.Symbol]bool)
+	}
+	if visited[symbol] {
+		return nil
+	}
+	visited[symbol] = true
+	for _, decl := range symbol.Declarations() {
+		if decl == nil {
+			continue
+		}
+		declFile := ast.GetSourceFileOfNode(decl)
+		if declFile != nil && declFile.IsDeclarationFile {
+			continue
+		}
+		switch decl.Kind {
+		case ast.KindFunctionDeclaration, ast.KindMethodDeclaration:
+			if decl.Body() != nil {
+				if decl.Kind == ast.KindFunctionDeclaration && declFile != nil && a.variableIsReassigned(symbol, declFile) {
+					continue
+				}
+				return decl
+			}
+		case ast.KindVariableDeclaration:
+			varDecl := decl.AsVariableDeclaration()
+			if varDecl.Initializer == nil {
+				continue
+			}
+			isConst := decl.Parent != nil &&
+				decl.Parent.Kind == ast.KindVariableDeclarationList &&
+				decl.Parent.Flags&ast.NodeFlagsConst != 0
+			if !isConst && (declFile == nil || a.variableIsReassigned(symbol, declFile)) {
+				continue
+			}
+			if resolved := a.resolveCallbackNodeWithVisited(varDecl.Initializer, visited); resolved != nil {
+				return resolved
+			}
+		}
+	}
+	return nil
+}
+
+func (a *Analyzer) isOuterCallExpressionReturnedOrVoided(callNode *ast.Node, state *handleSearchState) bool {
+	if callNode == nil || state == nil {
+		return false
+	}
+	key := nodeVisitKey{node: callNode, elemIndex: -1, kind: nodeVisitOuterCall, callContext: state.activeCallContext()}
+	if state.visitedNodes[key] {
+		return false
+	}
+	state.visitedNodes[key] = true
+	current := callNode
+	for current.Parent != nil {
+		parent := current.Parent
+		if isReturnValueContainer(parent, current) ||
+			(parent.Kind == ast.KindAwaitExpression && parent.Expression() == current) ||
+			a.isPromiseResolveCall(parent, current) {
+			current = parent
+			continue
+		}
+		if parent.Kind == ast.KindPropertyAccessExpression &&
+			parent.AsPropertyAccessExpression().Expression == current &&
+			parent.Name() != nil && parent.Name().Text() == "then" &&
+			parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression &&
+			parent.Parent.AsCallExpression().Expression == parent &&
+			a.isPassthroughThenCall(parent.Parent) {
+			current = parent.Parent
+			continue
+		}
+		break
+	}
+	parent := current.Parent
+	if parent == nil {
+		return false
+	}
+	if parent.Kind == ast.KindVoidExpression && parent.Expression() == current {
+		return true
+	}
+	if parent.Kind == ast.KindYieldExpression && parent.AsYieldExpression().AsteriskToken != nil && parent.Expression() == current {
+		return true
+	}
+	if (parent.Kind == ast.KindReturnStatement && parent.AsReturnStatement().Expression == current) ||
+		(parent.Kind == ast.KindArrowFunction && parent.Body() == current) {
+		return a.isReturnedSingleResultHandled(parent, current, nil, state)
+	}
+	return false
+}
+
+func (a *Analyzer) isReturnedSingleResultHandled(returnOrArrow *ast.Node, expr *ast.Node, root *ast.Node, state *handleSearchState) bool {
+	if state == nil {
+		return false
+	}
+	fn := enclosingFunction(returnOrArrow)
+	if fn == nil {
+		return false
+	}
+	callNode, method, restore := state.resolveCallbackReturn(fn)
+	defer restore()
+	if callNode != nil {
+		if method == "then" {
+			exprType := a.checker.GetTypeAtLocation(expr)
+			if root != nil {
+				if unwrapExpression(expr) == unwrapExpression(root) {
+					return a.isHandledReferenceWithState(callNode, state)
+				}
+				unwrappedExpr := unwrapExpression(expr)
+				if unwrappedExpr != nil && unwrappedExpr.Kind == ast.KindArrayLiteralExpression {
+					for i, elem := range unwrappedExpr.Elements() {
+						if unwrapExpression(elem) == unwrapExpression(root) {
+							return a.isPromiseAllCallElementHandled(callNode, i, state)
+						}
+					}
+				}
+				if everyUnionPart(exprType, isResultLikeType) || a.isPromiseOfResultLikeType(exprType) || a.isPassthroughThenCall(unwrappedExpr) {
+					return a.isHandledReferenceWithState(callNode, state)
+				}
+				return false
+			}
+			if everyUnionPart(exprType, isResultLikeType) || a.isPromiseOfResultLikeType(exprType) || a.isPassthroughThenCall(unwrapExpression(expr)) {
+				return a.isHandledReferenceWithState(callNode, state)
+			}
+			return a.isOuterCallExpressionReturnedOrVoided(callNode, state)
+		}
+		if isTupleElementCallbackMethod(method) {
+			if method == "map" || method == "flatMap" {
+				return a.isOuterCallExpressionReturnedOrVoided(callNode, state) || a.isConsumedByResultTaskStaticCall(callNode)
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func (a *Analyzer) isReturnedTupleHandled(returnOrArrow *ast.Node, elemIndex int, state *handleSearchState) bool {
+	if state == nil {
+		return false
+	}
+	fn := enclosingFunction(returnOrArrow)
+	if fn == nil {
+		return false
+	}
+	callNode, method, restore := state.resolveCallbackReturn(fn)
+	defer restore()
+	if callNode != nil {
+		if method == "then" {
+			return a.isPromiseAllCallElementHandled(callNode, elemIndex, state)
+		}
+		if isTupleElementCallbackMethod(method) {
+			if method == "map" || method == "flatMap" {
+				return a.isOuterCallExpressionReturnedOrVoided(callNode, state) || a.isConsumedByResultTaskStaticCall(callNode)
+			}
+			return false
+		}
+	}
+	return true
+}
+
 func (a *Analyzer) isHandledReference(identifier *ast.Node) bool {
-	root, parent := referenceChainRoot(identifier)
+	if identifier == nil {
+		return false
+	}
+	return a.isHandledReferenceWithState(identifier, newHandleSearchState(a.checker.GetSymbolAtLocation(identifier)))
+}
+
+func (a *Analyzer) isHandledReferenceWithState(identifier *ast.Node, state *handleSearchState) bool {
+	if identifier == nil || state == nil {
+		return false
+	}
+	key := nodeVisitKey{node: identifier, elemIndex: -1, kind: nodeVisitRef, callContext: state.activeCallContext()}
+	if state.visitedNodes[key] {
+		return false
+	}
+	state.visitedNodes[key] = true
+	root, parent := a.referenceChainRoot(identifier)
 	if parent != nil && parent.Kind == ast.KindYieldExpression && parent.AsYieldExpression().AsteriskToken != nil && parent.Expression() == root {
-		return true
-	}
-	if parent != nil && parent.Kind == ast.KindReturnStatement && parent.AsReturnStatement().Expression == root {
-		return true
-	}
-	if parent != nil && parent.Kind == ast.KindArrowFunction && parent.Body() == root {
 		return true
 	}
 	if parent != nil && parent.Kind == ast.KindVoidExpression && parent.Expression() == root {
@@ -1598,41 +2171,665 @@ func (a *Analyzer) isHandledReference(identifier *ast.Node) bool {
 		if declaration.Initializer == root &&
 			parent.Name() != nil &&
 			parent.Name().Kind == ast.KindIdentifier &&
-			!isExplicitDiscard(root) &&
-			isCallLikeDiscard(root) &&
-			isMustUseResultarType(a.checker.GetTypeAtLocation(root)) {
-			return true
+			!isExplicitDiscard(root) {
+			rootType := a.checker.GetTypeAtLocation(root)
+			targetSymbol := a.checker.GetSymbolAtLocation(parent.Name())
+			if targetSymbol != a.checker.GetSymbolAtLocation(identifier) &&
+				(state.sourceSymbol == nil || targetSymbol != state.sourceSymbol) {
+				if isCallLikeDiscard(root) && isMustUseResultarType(rootType) {
+					return true
+				}
+				if (isMustUseResultarType(rootType) || a.isPromiseOfResultLikeType(rootType) || a.isPassthroughThenCall(root)) &&
+					a.isIdentifierVariableHandled(parent.Name(), state) {
+					return true
+				}
+			}
 		}
 	}
-	if a.isConsumedByReceiverChain(identifier) {
+	if a.isConsumedByReceiverChainWithState(identifier, state) {
 		return true
 	}
 	if a.isConsumedByResultTaskStaticCall(identifier) {
 		return true
 	}
+	if a.isConsumedByPromiseAll(identifier, state) {
+		return true
+	}
 
-	current := identifier
+	current := root
 	for parent := current.Parent; parent != nil; parent = current.Parent {
 		if isReturnValueContainer(parent, current) {
 			current = parent
 			continue
 		}
-		return (parent.Kind == ast.KindReturnStatement && parent.AsReturnStatement().Expression == current) ||
-			(parent.Kind == ast.KindArrowFunction && parent.Body() == current)
+		if (parent.Kind == ast.KindReturnStatement && parent.AsReturnStatement().Expression == current) ||
+			(parent.Kind == ast.KindArrowFunction && parent.Body() == current) {
+			return a.isReturnedSingleResultHandled(parent, current, root, state)
+		}
+		return false
 	}
 	return false
+}
+
+func (a *Analyzer) isIdentifierVariableHandled(nameNode *ast.Node, state *handleSearchState) bool {
+	if nameNode == nil || nameNode.Kind != ast.KindIdentifier || state == nil {
+		return false
+	}
+	symbol := a.checker.GetSymbolAtLocation(nameNode)
+	file := ast.GetSourceFileOfNode(nameNode)
+	if symbol == nil || file == nil {
+		return false
+	}
+	key := symbolVisitKey{symbol: symbol, elemIndex: -1, kind: symVisitSingle, callContext: state.activeCallContext()}
+	if state.visitedSymbols[key] {
+		return false
+	}
+	state.visitedSymbols[key] = true
+	handled := false
+	visit(file.AsNode(), func(node *ast.Node) {
+		if handled || node == nameNode || node.Kind != ast.KindIdentifier || isDeclarationIdentifier(node) {
+			return
+		}
+		var refSymbol *ast.Symbol
+		if node.Parent != nil && node.Parent.Kind == ast.KindShorthandPropertyAssignment && node.Parent.Name() == node {
+			refSymbol = a.checker.GetShorthandAssignmentValueSymbol(node.Parent)
+		} else {
+			refSymbol = a.checker.GetSymbolAtLocation(node)
+		}
+		if refSymbol == symbol && a.isHandledReferenceWithState(node, state) {
+			handled = true
+		}
+	})
+	return handled
+}
+
+func (a *Analyzer) variableHasDiscardedResultUse(nameNode *ast.Node, visited map[*ast.Symbol]bool) bool {
+	if nameNode == nil || nameNode.Kind != ast.KindIdentifier {
+		return false
+	}
+	symbol := a.checker.GetSymbolAtLocation(nameNode)
+	file := ast.GetSourceFileOfNode(nameNode)
+	if symbol == nil || file == nil {
+		return false
+	}
+	if visited == nil {
+		visited = make(map[*ast.Symbol]bool)
+	}
+	if visited[symbol] {
+		return false
+	}
+	visited[symbol] = true
+	discarded := false
+	visit(file.AsNode(), func(node *ast.Node) {
+		if discarded || node == nameNode || node.Kind != ast.KindIdentifier || isDeclarationIdentifier(node) {
+			return
+		}
+		if a.checker.GetSymbolAtLocation(node) == symbol && a.isInsideDiscardedResultExpressionWithVisited(node, visited) {
+			discarded = true
+		}
+	})
+	return discarded
+}
+
+func (a *Analyzer) unwrappedExpressionSymbol(node *ast.Node) *ast.Symbol {
+	current := node
+	for current != nil {
+		unwrapped := unwrapExpression(current)
+		if unwrapped == nil {
+			return nil
+		}
+		if unwrapped.Kind == ast.KindAwaitExpression {
+			current = unwrapped.Expression()
+			continue
+		}
+		if unwrapped.Kind == ast.KindCallExpression {
+			call := unwrapped.AsCallExpression()
+			if len(call.Arguments.Nodes) == 1 && (a.staticNamespace(call.Expression, "resolve") == "Promise" || a.staticNamespace(call.Expression, "all") == "Promise") {
+				current = call.Arguments.Nodes[0]
+				continue
+			}
+			if a.isPassthroughThenCall(unwrapped) {
+				if expr := unwrapExpression(call.Expression); expr != nil && expr.Kind == ast.KindPropertyAccessExpression &&
+					expr.Name() != nil && expr.Name().Text() == "then" {
+					current = expr.AsPropertyAccessExpression().Expression
+					continue
+				}
+			}
+		}
+		current = unwrapped
+		break
+	}
+	if current != nil && current.Kind == ast.KindIdentifier {
+		return a.checker.GetSymbolAtLocation(current)
+	}
+	return nil
+}
+
+func (a *Analyzer) staticElementIndex(node *ast.Node) (string, bool) {
+	return a.staticElementIndexWithVisited(node, nil)
+}
+
+func (a *Analyzer) staticElementIndexWithVisited(node *ast.Node, visited map[*ast.Symbol]bool) (string, bool) {
+	node = unwrapExpression(node)
+	if node == nil {
+		return "", false
+	}
+	switch node.Kind {
+	case ast.KindNumericLiteral:
+		if t := a.checker.GetTypeAtLocation(node); t != nil && t.IsNumberLiteral() {
+			return t.AsLiteralType().String(), true
+		}
+		return node.Text(), true
+	case ast.KindStringLiteral, ast.KindNoSubstitutionTemplateLiteral:
+		return node.Text(), true
+	case ast.KindPrefixUnaryExpression:
+		unary := node.AsPrefixUnaryExpression()
+		switch unary.Operator {
+		case ast.KindPlusToken, ast.KindMinusToken:
+			operandText, ok := a.staticElementIndexWithVisited(unary.Operand, visited)
+			if !ok {
+				break
+			}
+			n, err := strconv.Atoi(operandText)
+			if err != nil {
+				break
+			}
+			if unary.Operator == ast.KindMinusToken {
+				n = -n
+			}
+			return strconv.Itoa(n), true
+		}
+	case ast.KindIdentifier:
+		symbol := a.checker.GetSymbolAtLocation(node)
+		if symbol != nil && symbol.Flags()&ast.SymbolFlagsAlias != 0 {
+			symbol = a.checker.GetAliasedSymbol(symbol)
+		}
+		if symbol != nil {
+			if visited == nil {
+				visited = make(map[*ast.Symbol]bool)
+			}
+			if !visited[symbol] {
+				visited[symbol] = true
+				for _, decl := range symbol.Declarations() {
+					if decl != nil && decl.Kind == ast.KindVariableDeclaration &&
+						decl.Parent != nil && decl.Parent.Kind == ast.KindVariableDeclarationList &&
+						decl.Parent.Flags&ast.NodeFlagsConst != 0 {
+						if idx, ok := a.staticElementIndexWithVisited(decl.AsVariableDeclaration().Initializer, visited); ok {
+							return idx, true
+						}
+					}
+				}
+			}
+		}
+	}
+	if t := a.checker.GetTypeAtLocation(node); t != nil {
+		if t.IsNumberLiteral() {
+			return t.AsLiteralType().String(), true
+		}
+		if t.IsStringLiteral() {
+			if s, ok := t.AsLiteralType().Value().(string); ok {
+				return s, true
+			}
+		}
+	}
+	return "", false
+}
+
+func (a *Analyzer) elementAccessMatchesIndex(elemAccessNode *ast.Node, elemIndex int) bool {
+	if elemAccessNode == nil || elemAccessNode.Kind != ast.KindElementAccessExpression {
+		return false
+	}
+	idxText, ok := a.staticElementIndex(elemAccessNode.AsElementAccessExpression().ArgumentExpression)
+	return ok && idxText == strconv.Itoa(elemIndex)
+}
+
+func isTupleElementCallbackMethod(name string) bool {
+	switch name {
+	case "forEach", "map", "every", "some", "find", "filter", "flatMap":
+		return true
+	}
+	return false
+}
+
+func (a *Analyzer) isTupleElementCallbackHandled(callback *ast.Node, callNode *ast.Node, method string, state *handleSearchState) bool {
+	cb := a.resolveCallbackNode(callback)
+	if cb == nil || len(cb.Parameters()) == 0 {
+		return false
+	}
+	param := cb.Parameters()[0].Name()
+	if param == nil || param.Kind != ast.KindIdentifier {
+		return false
+	}
+	return state.withCallback(cb, callNode, method, -1, func() bool {
+		return a.isIdentifierVariableHandled(param, state)
+	})
+}
+
+func (a *Analyzer) isSingleResultThenCallbackHandled(callback *ast.Node, callNode *ast.Node, state *handleSearchState) bool {
+	cb := a.resolveCallbackNode(callback)
+	if cb == nil {
+		return false
+	}
+	params := cb.Parameters()
+	if len(params) == 0 || params[0].Name() == nil {
+		return false
+	}
+	paramNode := params[0]
+	param := paramNode.Name()
+	return state.withCallback(cb, callNode, "then", -1, func() bool {
+		if paramNode.AsParameterDeclaration().DotDotDotToken != nil {
+			if param.Kind == ast.KindIdentifier {
+				return a.isTupleVariableElementHandled(param, 0, state)
+			}
+			if param.Kind == ast.KindArrayBindingPattern {
+				return a.isArrayBindingElementHandled(param, 0, false, state.sourceSymbol, state)
+			}
+			return false
+		}
+		if param.Kind == ast.KindIdentifier {
+			return a.isIdentifierVariableHandled(param, state)
+		}
+		return false
+	})
+}
+
+func (a *Analyzer) isArrayBindingElementHandled(patternNode *ast.Node, elemIndex int, allowMustUseBinding bool, sourceSymbol *ast.Symbol, state *handleSearchState) bool {
+	if state == nil || patternNode == nil || patternNode.Kind != ast.KindArrayBindingPattern {
+		return false
+	}
+	for i, elem := range patternNode.Elements() {
+		if elem == nil || elem.Kind != ast.KindBindingElement {
+			continue
+		}
+		binding := elem.AsBindingElement()
+		if binding.DotDotDotToken != nil && i <= elemIndex {
+			restName := elem.Name()
+			restIndex := elemIndex - i
+			if restName == nil {
+				return false
+			}
+			if restName.Kind == ast.KindIdentifier {
+				return a.isTupleVariableElementHandled(restName, restIndex, state)
+			}
+			if restName.Kind == ast.KindArrayBindingPattern {
+				return a.isArrayBindingElementHandled(restName, restIndex, allowMustUseBinding, sourceSymbol, state)
+			}
+			return false
+		}
+		if i == elemIndex {
+			bindingName := elem.Name()
+			if bindingName == nil || bindingName.Kind != ast.KindIdentifier {
+				return false
+			}
+			targetSymbol := a.checker.GetSymbolAtLocation(bindingName)
+			if (sourceSymbol != nil && targetSymbol == sourceSymbol) ||
+				(state.sourceSymbol != nil && targetSymbol == state.sourceSymbol) {
+				return false
+			}
+			if allowMustUseBinding && isMustUseResultarType(a.checker.GetTypeAtLocation(bindingName)) {
+				return true
+			}
+			return a.isIdentifierVariableHandled(bindingName, state)
+		}
+	}
+	return false
+}
+
+func (a *Analyzer) isConsumedByPromiseAll(identifier *ast.Node, state *handleSearchState) bool {
+	elemRoot, elemParent := a.referenceChainRoot(identifier)
+	if elemParent == nil || elemParent.Kind != ast.KindArrayLiteralExpression {
+		return false
+	}
+	elemIndex := -1
+	for i, elem := range elemParent.Elements() {
+		if elem == elemRoot {
+			elemIndex = i
+			break
+		}
+	}
+	if elemIndex < 0 {
+		return false
+	}
+	arr := elemParent
+	for arr.Parent != nil && isWrapperParent(arr.Parent, arr) {
+		arr = arr.Parent
+	}
+	arrParent := arr.Parent
+	if arrParent == nil {
+		return false
+	}
+	if a.isPromiseResolveCall(arrParent, arr) || a.isPromiseAllCall(arrParent, arr) {
+		return a.isPromiseAllCallElementHandled(arrParent, elemIndex, state)
+	}
+	if arrParent.Kind == ast.KindVariableDeclaration {
+		decl := arrParent.AsVariableDeclaration()
+		name := arrParent.Name()
+		if decl.Initializer == arr && name != nil && !isExplicitDiscard(arr) {
+			if name.Kind == ast.KindArrayBindingPattern {
+				return a.isArrayBindingElementHandled(name, elemIndex, false, state.sourceSymbol, state)
+			}
+			if name.Kind == ast.KindIdentifier &&
+				a.checker.GetSymbolAtLocation(name) != a.checker.GetSymbolAtLocation(identifier) &&
+				(state.sourceSymbol == nil || a.checker.GetSymbolAtLocation(name) != state.sourceSymbol) {
+				return a.isTupleVariableElementHandled(name, elemIndex, state)
+			}
+		}
+	}
+	return false
+}
+
+func (a *Analyzer) isPromiseAllCallElementHandled(allExpr *ast.Node, elemIndex int, state *handleSearchState) bool {
+	if allExpr == nil || state == nil {
+		return false
+	}
+	key := nodeVisitKey{node: allExpr, elemIndex: elemIndex, kind: nodeVisitPromiseAll, callContext: state.activeCallContext()}
+	if state.visitedNodes[key] {
+		return false
+	}
+	state.visitedNodes[key] = true
+	allRoot := allExpr
+	awaited := false
+	for allRoot.Parent != nil {
+		parent := allRoot.Parent
+		if isWrapperParent(parent, allRoot) {
+			allRoot = parent
+			continue
+		}
+		if parent.Kind == ast.KindAwaitExpression && parent.Expression() == allRoot {
+			awaited = true
+			allRoot = parent
+			continue
+		}
+		if a.isPromiseResolveCall(parent, allRoot) || (awaited && a.isPromiseAllCall(parent, allRoot)) {
+			awaited = false
+			allRoot = parent
+			continue
+		}
+		if !awaited && parent.Kind == ast.KindPropertyAccessExpression &&
+			parent.AsPropertyAccessExpression().Expression == allRoot &&
+			parent.Name() != nil && parent.Name().Text() == "then" &&
+			parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression &&
+			parent.Parent.AsCallExpression().Expression == parent &&
+			a.isPassthroughThenCall(parent.Parent) {
+			allRoot = parent.Parent
+			continue
+		}
+		break
+	}
+	allParent := allRoot.Parent
+	if allParent == nil {
+		return false
+	}
+	if allParent.Kind == ast.KindPropertyAccessExpression && allParent.AsPropertyAccessExpression().Expression == allRoot {
+		propName := allParent.Name().Text()
+		if !awaited && propName == "then" && allParent.Parent != nil && allParent.Parent.Kind == ast.KindCallExpression && allParent.Parent.AsCallExpression().Expression == allParent {
+			thenArgs := allParent.Parent.AsCallExpression().Arguments.Nodes
+			return len(thenArgs) > 0 && a.isPromiseAllThenCallbackHandled(thenArgs[0], allParent.Parent, elemIndex, state)
+		}
+		if awaited && isTupleElementCallbackMethod(propName) && allParent.Parent != nil && allParent.Parent.Kind == ast.KindCallExpression && allParent.Parent.AsCallExpression().Expression == allParent {
+			callArgs := allParent.Parent.AsCallExpression().Arguments.Nodes
+			return len(callArgs) > 0 && a.isTupleElementCallbackHandled(callArgs[0], allParent.Parent, propName, state)
+		}
+		return false
+	}
+	if allParent.Kind == ast.KindYieldExpression && allParent.AsYieldExpression().AsteriskToken != nil && allParent.Expression() == allRoot {
+		return true
+	}
+	if (allParent.Kind == ast.KindReturnStatement && allParent.AsReturnStatement().Expression == allRoot) ||
+		(allParent.Kind == ast.KindArrowFunction && allParent.Body() == allRoot) {
+		return a.isReturnedTupleHandled(allParent, elemIndex, state)
+	}
+	if allParent.Kind == ast.KindVoidExpression && allParent.Expression() == allRoot {
+		return true
+	}
+	if awaited && allParent.Kind == ast.KindElementAccessExpression && allParent.AsElementAccessExpression().Expression == allRoot && a.elementAccessMatchesIndex(allParent, elemIndex) {
+		return a.isHandledReferenceWithState(allParent, state)
+	}
+	if awaited && allParent.Kind == ast.KindCallExpression && !a.isInsideDiscardedResultExpression(allParent) {
+		if isMustUseResultarType(a.checker.GetTypeAtLocation(allParent)) {
+			return true
+		}
+		call := allParent.AsCallExpression()
+		if len(call.Arguments.Nodes) > 0 && call.Arguments.Nodes[0] == allRoot &&
+			a.isResultTaskStaticConsumerCall(call.Expression) {
+			return true
+		}
+	}
+	if awaited && allParent.Kind == ast.KindForOfStatement && allParent.AsForInOrOfStatement().Expression == allRoot {
+		initializer := allParent.AsForInOrOfStatement().Initializer
+		if initializer != nil && initializer.Kind == ast.KindVariableDeclarationList && len(initializer.AsVariableDeclarationList().Declarations.Nodes) == 1 {
+			loopDecl := initializer.AsVariableDeclarationList().Declarations.Nodes[0]
+			if loopDecl.Name() != nil && loopDecl.Name().Kind == ast.KindIdentifier {
+				return a.isIdentifierVariableHandled(loopDecl.Name(), state)
+			}
+		}
+	}
+	if allParent.Kind == ast.KindVariableDeclaration {
+		declaration := allParent.AsVariableDeclaration()
+		name := allParent.Name()
+		if declaration.Initializer == allRoot && name != nil && !isExplicitDiscard(allRoot) {
+			if awaited && name.Kind == ast.KindArrayBindingPattern {
+				return a.isArrayBindingElementHandled(name, elemIndex, isCallLikeDiscard(allRoot), state.sourceSymbol, state)
+			}
+			exprSymbol := a.unwrappedExpressionSymbol(allExpr)
+			if awaited && name.Kind == ast.KindIdentifier &&
+				a.checker.GetSymbolAtLocation(name) != exprSymbol {
+				return a.isTupleVariableElementHandled(name, elemIndex, state)
+			}
+			if !awaited && name.Kind == ast.KindIdentifier &&
+				a.checker.GetSymbolAtLocation(name) != exprSymbol {
+				return a.isPromiseAllVariableElementHandled(name, elemIndex, state)
+			}
+		}
+	}
+	return false
+}
+
+func (a *Analyzer) isPromiseAllThenCallbackHandled(callback *ast.Node, callNode *ast.Node, elemIndex int, state *handleSearchState) bool {
+	cb := a.resolveCallbackNode(callback)
+	if cb == nil {
+		return false
+	}
+	params := cb.Parameters()
+	if len(params) == 0 || params[0].Name() == nil {
+		return false
+	}
+	paramName := params[0].Name()
+	return state.withCallback(cb, callNode, "then", elemIndex, func() bool {
+		if paramName.Kind == ast.KindArrayBindingPattern {
+			return a.isArrayBindingElementHandled(paramName, elemIndex, false, state.sourceSymbol, state)
+		}
+		if paramName.Kind == ast.KindIdentifier {
+			return a.isTupleVariableElementHandled(paramName, elemIndex, state)
+		}
+		return false
+	})
+}
+
+func (a *Analyzer) isPromiseAllVariableElementHandled(nameNode *ast.Node, elemIndex int, state *handleSearchState) bool {
+	if nameNode == nil || nameNode.Kind != ast.KindIdentifier || state == nil {
+		return false
+	}
+	symbol := a.checker.GetSymbolAtLocation(nameNode)
+	file := ast.GetSourceFileOfNode(nameNode)
+	if symbol == nil || file == nil {
+		return false
+	}
+	key := symbolVisitKey{symbol: symbol, elemIndex: elemIndex, kind: symVisitPromiseAll, callContext: state.activeCallContext()}
+	if state.visitedSymbols[key] {
+		return false
+	}
+	state.visitedSymbols[key] = true
+	handled := false
+	visit(file.AsNode(), func(node *ast.Node) {
+		if handled || node == nameNode || node.Kind != ast.KindIdentifier || isDeclarationIdentifier(node) {
+			return
+		}
+		if a.checker.GetSymbolAtLocation(node) == symbol && a.isPromiseAllCallElementHandled(node, elemIndex, state) {
+			handled = true
+		}
+	})
+	return handled
+}
+
+func (a *Analyzer) isDirectWholeTupleHandled(node *ast.Node, elemIndex int, state *handleSearchState) bool {
+	current := node
+	for current.Parent != nil {
+		parent := current.Parent
+		if isWrapperParent(parent, current) ||
+			(parent.Kind == ast.KindAwaitExpression && parent.Expression() == current) {
+			current = parent
+			continue
+		}
+		if a.isPromiseResolveCall(parent, current) || a.isPromiseAllCall(parent, current) {
+			return a.isPromiseAllCallElementHandled(parent, elemIndex, state)
+		}
+		break
+	}
+	parent := current.Parent
+	if parent == nil {
+		return false
+	}
+	if (parent.Kind == ast.KindReturnStatement && parent.AsReturnStatement().Expression == current) ||
+		(parent.Kind == ast.KindArrowFunction && parent.Body() == current) {
+		return a.isReturnedTupleHandled(parent, elemIndex, state)
+	}
+	if parent.Kind == ast.KindVoidExpression && parent.Expression() == current {
+		return true
+	}
+	if parent.Kind == ast.KindYieldExpression && parent.AsYieldExpression().AsteriskToken != nil && parent.Expression() == current {
+		return true
+	}
+	if parent.Kind == ast.KindCallExpression {
+		call := parent.AsCallExpression()
+		if len(call.Arguments.Nodes) > 0 && call.Arguments.Nodes[0] == current &&
+			a.isResultTaskStaticConsumerCall(call.Expression) &&
+			!a.isInsideDiscardedResultExpression(parent) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *Analyzer) isTupleVariableElementHandled(nameNode *ast.Node, elemIndex int, state *handleSearchState) bool {
+	if nameNode == nil || nameNode.Kind != ast.KindIdentifier || state == nil {
+		return false
+	}
+	symbol := a.checker.GetSymbolAtLocation(nameNode)
+	file := ast.GetSourceFileOfNode(nameNode)
+	if symbol == nil || file == nil {
+		return false
+	}
+	key := symbolVisitKey{symbol: symbol, elemIndex: elemIndex, kind: symVisitTuple, callContext: state.activeCallContext()}
+	if state.visitedSymbols[key] {
+		return false
+	}
+	state.visitedSymbols[key] = true
+	handled := false
+	visit(file.AsNode(), func(node *ast.Node) {
+		if handled || node == nameNode || node.Kind != ast.KindIdentifier || isDeclarationIdentifier(node) {
+			return
+		}
+		if a.checker.GetSymbolAtLocation(node) != symbol {
+			return
+		}
+		if a.isDirectWholeTupleHandled(node, elemIndex, state) {
+			handled = true
+			return
+		}
+		current := node
+		for current.Parent != nil {
+			p := current.Parent
+			if isWrapperParent(p, current) ||
+				(p.Kind == ast.KindAwaitExpression && p.Expression() == current) {
+				current = p
+				continue
+			}
+			break
+		}
+		parent := current.Parent
+		if parent == nil {
+			return
+		}
+		if parent.Kind == ast.KindElementAccessExpression && parent.AsElementAccessExpression().Expression == current && a.elementAccessMatchesIndex(parent, elemIndex) {
+			if a.isHandledReferenceWithState(parent, state) {
+				handled = true
+				return
+			}
+			elemRoot, elemParent := a.referenceChainRoot(parent)
+			if elemParent != nil && elemParent.Kind == ast.KindVariableDeclaration && elemParent.AsVariableDeclaration().Initializer == elemRoot &&
+				elemParent.Name() != nil && elemParent.Name().Kind == ast.KindIdentifier &&
+				(state.sourceSymbol == nil || a.checker.GetSymbolAtLocation(elemParent.Name()) != state.sourceSymbol) &&
+				a.isIdentifierVariableHandled(elemParent.Name(), state) {
+				handled = true
+				return
+			}
+		}
+		if parent.Kind == ast.KindVariableDeclaration && parent.AsVariableDeclaration().Initializer == current &&
+			parent.Name() != nil && !isExplicitDiscard(current) {
+			if parent.Name().Kind == ast.KindArrayBindingPattern &&
+				a.isArrayBindingElementHandled(parent.Name(), elemIndex, isCallLikeDiscard(current), symbol, state) {
+				handled = true
+				return
+			}
+			if parent.Name().Kind == ast.KindIdentifier &&
+				a.checker.GetSymbolAtLocation(parent.Name()) != symbol &&
+				a.isTupleVariableElementHandled(parent.Name(), elemIndex, state) {
+				handled = true
+				return
+			}
+		}
+		if parent.Kind == ast.KindForOfStatement && parent.AsForInOrOfStatement().Expression == current {
+			initializer := parent.AsForInOrOfStatement().Initializer
+			if initializer != nil && initializer.Kind == ast.KindVariableDeclarationList && len(initializer.AsVariableDeclarationList().Declarations.Nodes) == 1 {
+				loopDecl := initializer.AsVariableDeclarationList().Declarations.Nodes[0]
+				if loopDecl.Name() != nil && loopDecl.Name().Kind == ast.KindIdentifier && a.isIdentifierVariableHandled(loopDecl.Name(), state) {
+					handled = true
+					return
+				}
+			}
+		}
+		if parent.Kind == ast.KindPropertyAccessExpression && parent.AsPropertyAccessExpression().Expression == current &&
+			isTupleElementCallbackMethod(parent.Name().Text()) &&
+			parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression && parent.Parent.AsCallExpression().Expression == parent {
+			args := parent.Parent.AsCallExpression().Arguments.Nodes
+			if len(args) > 0 && a.isTupleElementCallbackHandled(args[0], parent.Parent, parent.Name().Text(), state) {
+				handled = true
+				return
+			}
+		}
+	})
+	return handled
 }
 
 func (a *Analyzer) isConsumedByResultTaskStaticCall(identifier *ast.Node) bool {
 	current := identifier
 	for parent := current.Parent; parent != nil; parent = current.Parent {
-		if isReturnValueContainer(parent, current) || (parent.Kind == ast.KindAwaitExpression && parent.Expression() == current) {
+		if isReturnValueContainer(parent, current) ||
+			(parent.Kind == ast.KindAwaitExpression && parent.Expression() == current) ||
+			a.isPromiseResolveCall(parent, current) {
 			current = parent
 			continue
 		}
 		if parent.Kind == ast.KindPropertyAccessExpression && parent.AsPropertyAccessExpression().Expression == current {
-			current = parent
-			continue
+			if parent.Name() != nil && parent.Name().Text() == "then" {
+				if parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression &&
+					parent.Parent.AsCallExpression().Expression == parent &&
+					a.isPassthroughThenCall(parent.Parent) {
+					current = parent.Parent
+					continue
+				}
+				return false
+			}
+			if parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression &&
+				parent.Parent.AsCallExpression().Expression == parent {
+				callType := a.checker.GetTypeAtLocation(parent.Parent)
+				if isMustUseResultarType(callType) || a.isPromiseOfResultLikeType(callType) {
+					current = parent.Parent
+					continue
+				}
+			}
+			return false
 		}
 		if parent.Kind == ast.KindCallExpression {
 			call := parent.AsCallExpression()
@@ -1673,8 +2870,11 @@ func (a *Analyzer) isConsumedByResultTaskStaticCall(identifier *ast.Node) bool {
 				return true
 			}
 			if call.Expression == current {
-				current = parent
-				continue
+				callType := a.checker.GetTypeAtLocation(parent)
+				if isMustUseResultarType(callType) || a.isPromiseOfResultLikeType(callType) {
+					current = parent
+					continue
+				}
 			}
 		}
 		return false
@@ -1719,9 +2919,18 @@ func (a *Analyzer) isResultTaskInstanceRunner(method string, receiver *ast.Node)
 }
 
 func (a *Analyzer) isConsumedByReceiverChain(identifier *ast.Node) bool {
+	if identifier == nil {
+		return false
+	}
+	return a.isConsumedByReceiverChainWithState(identifier, newHandleSearchState(a.checker.GetSymbolAtLocation(identifier)))
+}
+
+func (a *Analyzer) isConsumedByReceiverChainWithState(identifier *ast.Node, state *handleSearchState) bool {
 	current := identifier
 	for parent := current.Parent; parent != nil; parent = current.Parent {
-		if isWrapperParent(parent, current) || (parent.Kind == ast.KindAwaitExpression && parent.Expression() == current) {
+		if isWrapperParent(parent, current) ||
+			(parent.Kind == ast.KindAwaitExpression && parent.Expression() == current) ||
+			a.isPromiseResolveCall(parent, current) {
 			current = parent
 			continue
 		}
@@ -1731,19 +2940,28 @@ func (a *Analyzer) isConsumedByReceiverChain(identifier *ast.Node) bool {
 				return true
 			}
 			if parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression && parent.Parent.AsCallExpression().Expression == parent {
+				callNode := parent.Parent
 				if _, ok := consumerMethods[name]; ok || a.isResultTaskInstanceRunner(name, parent.AsPropertyAccessExpression().Expression) {
 					return true
 				}
+				if name == "then" {
+					if a.isPassthroughThenCall(callNode) {
+						current = callNode
+						continue
+					}
+					thenArgs := callNode.AsCallExpression().Arguments.Nodes
+					return len(thenArgs) > 0 && a.isSingleResultThenCallbackHandled(thenArgs[0], callNode, state)
+				}
+				if name == "pipe" && len(callNode.AsCallExpression().Arguments.Nodes) >= 1 {
+					return true
+				}
+				callType := a.checker.GetTypeAtLocation(callNode)
+				if isMustUseResultarType(callType) || a.isPromiseOfResultLikeType(callType) {
+					current = callNode
+					continue
+				}
 			}
-			if name == "pipe" && parent.Parent != nil && parent.Parent.Kind == ast.KindCallExpression && parent.Parent.AsCallExpression().Expression == parent && len(parent.Parent.AsCallExpression().Arguments.Nodes) >= 1 {
-				return true
-			}
-			current = parent
-			continue
-		}
-		if parent.Kind == ast.KindCallExpression && parent.AsCallExpression().Expression == current {
-			current = parent
-			continue
+			return false
 		}
 		return false
 	}

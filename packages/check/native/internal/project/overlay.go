@@ -69,8 +69,14 @@ func overlayFS(base vfs.FS, overlay map[string]string) vfs.FS {
 			}
 			return base.ReadFile(path)
 		},
-		FileExists:      func(path tspath.RootedFilePath) bool { _, ok := files[normalize(string(path))]; return ok || base.FileExists(path) },
-		DirectoryExists: func(path tspath.RootedDirectoryPath) bool { _, ok := directories[normalize(string(path))]; return ok || base.DirectoryExists(path) },
+		FileExists: func(path tspath.RootedFilePath) bool {
+			_, ok := files[normalize(string(path))]
+			return ok || base.FileExists(path)
+		},
+		DirectoryExists: func(path tspath.RootedDirectoryPath) bool {
+			_, ok := directories[normalize(string(path))]
+			return ok || base.DirectoryExists(path)
+		},
 		GetAccessibleEntries: func(path tspath.RootedDirectoryPath) vfs.Entries {
 			entry := base.GetAccessibleEntries(path)
 			virtual := directories[normalize(string(path))]

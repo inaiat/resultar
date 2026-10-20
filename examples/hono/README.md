@@ -7,7 +7,7 @@ An example application combining dependency injection with
 Prefer lazy `ResultTask` workflows and explicit runners for new async code. This runnable fixture
 retains eager `ResultAsync` / `StrictResultAsync` service methods from the `resultar/async`
 subpath for compatibility coverage.
-Both types are deprecated since v4 and preserve one shared execution.
+Both types represent one shared in-flight execution.
 
 The file layout matches the [Fastify example](../fastify/README.md):
 
@@ -72,7 +72,7 @@ import { Service, service, createModule } from "resultar-hono";
 ```
 
 `Users` declares `requires: { repository: UsersRepository }`; the repository declares
-`requires: { cache: Cache }`. Their existing methods return deprecated eager `StrictResultAsync`,
+`requires: { cache: Cache }`. Their existing methods return eager `StrictResultAsync`,
 and the user service composes lookup and removal through `genAsync` from `resultar/async`. `Health` uses the
 function-based `service` API and reads the same cache. For new methods, return `ResultTask`, use
 `ResultTask.tryPromise` for drivers and `ResultTask.gen` for composition.
@@ -178,4 +178,4 @@ health, repository override and application isolation checks alongside adapter t
 With `requires`, class service factories return their method objects directly. The DI module
 constructs them lazily within the registered lifetime. Return a `ResultTask` from the factory when
 initialization needs task composition. Separately, prefer Task-returning async service methods in
-new code; this fixture's deprecated `StrictResultAsync` methods retain their original contract.
+new code; this fixture's eager `StrictResultAsync` methods retain their original contract.

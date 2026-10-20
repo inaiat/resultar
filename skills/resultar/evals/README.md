@@ -7,7 +7,7 @@ outside those contracts still need human review. The runner is `scripts/eval-age
 workspace root.
 
 The scenarios include existing eager compatibility contracts. Their fixed support types and graders
-may intentionally require deprecated `ResultAsync` / `StrictResultAsync` from `resultar/async`;
+may intentionally require eager `ResultAsync` / `StrictResultAsync` contracts and helpers from `resultar/async`;
 preserve their execution contracts when evaluating a submission. They do not make Async the default
 for new v4 workflows. New code uses `ResultTask`, explicit runners, and structural Task factories
 for eager adapters. Core `Result.gen` / `Result.fn` support sync and async bodies with modern

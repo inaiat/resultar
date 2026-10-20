@@ -1,4 +1,4 @@
-/** Private implementation contracts shared with the deprecated Async entrypoint. */
+/** Private implementation contracts shared with the `resultar/async` entrypoint. */
 export { dual } from './core/dual.js'
 export { Pipeable } from './core/pipe.js'
 export {
@@ -19,13 +19,7 @@ export type {
 } from './result/result-types.js'
 export type { InferOkTypes, InferErrTypes } from './core/utils.js'
 export { createEmptyResultsCollectionError, getMatchErrorHandler } from './result/result-helpers.js'
-export {
-  callTaggedHandler,
-  hasTag,
-  isError,
-  isTaggedHandlerMatch,
-  matchTaggedOr,
-} from './tagged/tagged-match.js'
+export { isError } from './tagged/tagged-match.js'
 export type {
   CatchTagHandlerResult,
   CatchReasonHandlerResult,

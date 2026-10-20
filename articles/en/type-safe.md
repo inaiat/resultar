@@ -3,8 +3,8 @@
 ## Current v4 guidance
 
 Use `Result<T, E>` for synchronous domain operations and `ResultTask<T, E, R>` for
-new asynchronous workflows. `ResultAsync` and `StrictResultAsync` are deprecated
-since v4 and keep their eager behavior through the `resultar/async` subpath in the same package during migration.
+new asynchronous workflows. `ResultAsync` and `StrictResultAsync` represent in-flight
+`Result` values (returned by `task.runResult()`) and remain supported for existing eager contracts alongside the `resultar/async` compatibility subpath.
 
 ```typescript
 import { createTaggedError, ResultTask } from 'resultar';

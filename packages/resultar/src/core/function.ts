@@ -23,7 +23,9 @@ export const identity = <A>(value: A): A => value
  * import { constant, Result } from 'resultar'
  *
  * const fallback = constant({ status: 'guest' as const })
- * const session = Result.err< { readonly status: 'guest' }, string >('missing').unwrapOrElse(fallback)
+ * const session = Result.err<{ readonly status: 'guest' }, string>('missing')
+ *   .orElseSucceed(fallback)
+ *   .unwrapOrThrow()
  * ```
  */
 export const constant =

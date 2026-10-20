@@ -138,11 +138,13 @@ const combineResultList = <T, E>(resultList: readonly Result<T, E>[]): Result<re
   const values: T[] = []
 
   for (const result of resultList) {
-    if (result.isErr()) {
-      return err(result.error)
-    }
+    if (result !== undefined) {
+      if (result.isErr()) {
+        return err(result.error)
+      }
 
-    values.push(result.value)
+      values.push(result.value)
+    }
   }
 
   return ok(values)
@@ -168,12 +170,14 @@ const combineResultListWithAllErrors = <T, E>(
   let acc = ok([]) as Result<T[], E[]>
 
   for (const result of resultList) {
-    if (result.isErr() && acc.isErr()) {
-      acc.error.push(result.error)
-    } else if (result.isErr() && acc.isOk()) {
-      acc = err([result.error])
-    } else if (result.isOk() && acc.isOk()) {
-      acc.value.push(result.value)
+    if (result !== undefined) {
+      if (result.isErr() && acc.isErr()) {
+        acc.error.push(result.error)
+      } else if (result.isErr() && acc.isOk()) {
+        acc = err([result.error])
+      } else if (result.isOk() && acc.isOk()) {
+        acc.value.push(result.value)
+      }
     }
   }
 
@@ -435,9 +439,27 @@ interface ResultStatic {
    */
   fn: typeof resultFn
   /**
+   * Runs synchronous work and captures thrown values into `Result<T, E>`.
+   *
+   * Supports both `Result.try(fn, catchFn)` and `Result.try({ try, catch })`.
+   *
+   * @example
+   * ```ts
+   * import { Result } from 'resultar'
+   *
+   * const config = Result.try(
+   *   () => JSON.parse(input) as Config,
+   *   (cause) => new ParseConfigError({ cause }),
+   * )
+   * ```
+   */
+  try: typeof tryResult
+  /**
    * Runs synchronous work and captures thrown values into a Result.
    *
-   * Compatibility alias. Prefer the top-level `tryResult` helper in new code.
+   * Compatibility alias. Prefer `Result.try` or the top-level `tryResult` helper in new code.
+   *
+   * @deprecated Use Result.try or tryResult instead; this alias retains its existing behavior.
    */
   tryCatch: <T, E>(
     this: void,
@@ -902,12 +924,20 @@ class ResultNamespace {
   ) as ResultLiftPredicate
 
   /**
+   * Runs synchronous work and captures thrown values into `Result<T, E>`.
+   *
+   * Supports both `Result.try(fn, catchFn)` and `Result.try({ try, catch })`.
+   */
+  public static readonly try: typeof tryResult = tryResult
+
+  /**
    * Creates a `Result` by running a function that might throw.
    * If the function throws, the error will be caught and returned as an `Err`.
    * If the function succeeds, the value will be wrapped in an `Ok`.
    *
-   * Compatibility alias. Prefer the top-level `tryResult` helper in new code.
+   * Compatibility alias. Prefer `Result.try` or the top-level `tryResult` helper in new code.
    *
+   * @deprecated Use Result.try or tryResult instead; this alias retains its existing behavior.
    * @param fn - The function to execute, which might throw an error
    * @param errorFn - Optional function to transform the thrown error before wrapping in `Err`
    * @returns A `Result` containing either the function's return value or the caught error

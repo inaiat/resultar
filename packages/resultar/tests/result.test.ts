@@ -1943,6 +1943,16 @@ describe('Utils', async () => {
         isTrue(result.isOk())
         deepEqual(result._unsafeUnwrap(), [123, 456, 789])
       })
+
+      it('Skips empty slots in sparse arrays', () => {
+        const sparseList: Result<number, string>[] = []
+        sparseList[1] = ok(42)
+
+        const result = Result.combine(sparseList)
+
+        isTrue(result.isOk())
+        deepEqual(result._unsafeUnwrap(), [42])
+      })
     })
 
     it('Combines a list of results into an Err value', async () => {
@@ -2053,6 +2063,16 @@ describe('Utils', async () => {
 
       isTrue(result.isErr())
       deepEqual(result._unsafeUnwrapErr(), ['boooom!', 'ahhhhh!'])
+    })
+
+    it('skips empty slots in sparse arrays when combining with all errors', () => {
+      const sparseList: Result<number, string>[] = []
+      sparseList[1] = ok(42)
+
+      const result = Result.combineWithAllErrors(sparseList)
+
+      isTrue(result.isOk())
+      deepEqual(result._unsafeUnwrap(), [42])
     })
 
     it('maps all sync items before collecting validation errors', () => {

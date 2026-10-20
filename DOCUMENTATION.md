@@ -24,10 +24,10 @@ Use `Result` for synchronous domain code and prefer `ResultTask` for new asynchr
 workflows. Tasks are lazy and repeatable, with explicit runners; add service requirements
 (`R`), time, retry, concurrency and resources as needed. Executing a task with `task.runResult()`
 returns `ResultAsync<T, E>` — an in-flight `Result` (`PromiseLike<Result<T, E>>`) that can be
-awaited directly or transformed and folded with the same methods as `Result`. Eager constructors
-(`okAsync`, `errAsync`, `tryResultAsync`, `fromPromise`, etc.) and orchestration helpers on
-`ResultAsync` remain deprecated in `resultar/async` (and re-exported from `resultar`) for
-gradual migration.
+awaited directly or transformed and folded with the same methods as `Result`. In-flight constructors
+(`okAsync`, `errAsync`, `unitAsync`, `tryResultAsync`, `fromPromise`, `fromSafePromise`) are active in
+`resultar` and `resultar/async`; deprecated eager orchestration helpers on `ResultAsync` remain in
+`resultar/async` (and re-exported from `resultar`) for gradual migration.
 Adoption can happen one function or workflow at a time.
 
 ## Install
@@ -103,7 +103,7 @@ If you are new to Resultar, read these sections in order:
 6. [Handling results at boundaries](#handling-results-at-boundaries)
 7. [Task concurrency](#structured-task-concurrency-fibers-and-semaphores) and [retry](#retrying-async-work)
 
-Existing eager code has a separate [deprecated Async reference](#deprecated-resultasync-compatibility).
+Existing eager code has a separate [in-flight `ResultAsync` and eager compatibility reference](#in-flight-resultasync--deprecated-eager-compatibility).
 Its constructors, policies, terminal Promises and callback contracts remain supported during v4.
 
 Start with `Result<T, E>` and stop wherever the current workflow's needs are met.
@@ -150,7 +150,7 @@ If you already know Result-style error handling, jump to:
 | Branch without throwing                     | [Conditional Helpers](#conditional-helpers)                                                               | `Result.if`, `Result.when`, `Result.unless`, `ResultTask.if`, `ResultTask.when`, `ResultTask.unless` |
 | Combine many independent results            | [Combining And Iterating](#combining-and-iterating)                                                       | `all`, `combine`, `ResultTask.all`, `ResultTask.validateAll`                                         |
 | Control async traversal concurrency         | [Async Concurrency Mapping](#async-concurrency-mapping)                                                   | `ResultTask.forEach`, `ResultTask.validateAll`, `{ concurrency }`                                    |
-| Coordinate fibers, semaphores, and yields   | [Structured Task Concurrency, Fibers, And Semaphores](#structured-task-concurrency-fibers-and-semaphores) | `ResultTask.forkChild`, `task.runFork`, `Fiber`, `Semaphore`, `yieldNow`, `yieldEvery`               |
+| Coordinate fibers, semaphores, and yields   | [Structured Task Concurrency, Fibers, And Semaphores](#structured-task-concurrency-fibers-and-semaphores) | `ResultTask.forkChild`, `task.runFork`, `Fiber`, `Semaphore`, `Scheduler`, `yieldEvery`               |
 | Race concurrent async work                  | [Concurrent Racing And Timeouts](#concurrent-racing-and-timeouts)                                         | `ResultTask.race`, `raceFirst`, `timeout`, `Clock.virtual`                                           |
 | Retry transient async work                  | [Retrying Async Work](#retrying-async-work)                                                               | `Retry.policy`, `ResultTask.retry`; eager compatibility: `ResultAsync.retry`                         |
 | Pair async acquisition with cleanup         | [Resourceful Async Iterables](#resourceful-async-iterables)                                               | `ResultTask.acquireRelease`, `acquireDisposable`, `scoped`                                           |
@@ -179,8 +179,9 @@ or closing a required scope leaves a Task. Prefer `task.runResult()`, `task.runP
 `ResultAsync<T, E>` (exported from `resultar` and `resultar/async`) is the in-flight `Result`
 (`PromiseLike<Result<T, E>>`), returned by `task.runResult()` / `ResultTask.runResult(task)` and
 async `Result` chains. Repeated awaits on the same `ResultAsync` observe the same execution, and
-it shares the transformation and consumption surface of `Result`. Eager constructors and
-orchestration static methods on `ResultAsync` remain deprecated for existing eager contracts.
+it shares the transformation and consumption surface of `Result`. Active in-flight constructors
+(`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) are exported
+from `resultar` and `resultar/async`; static orchestration methods on `ResultAsync` remain deprecated for existing eager contracts.
 
 Across these APIs:
 
@@ -261,7 +262,7 @@ the first function's optional/rest parameters and explicit `this`; subsequent fu
 only the previous result. Composition is synchronous: exceptions propagate, Promises remain values,
 and tasks still wait for a run boundary.
 
-`Result` and the deprecated `ResultAsync` facade expose direct and curried `map`, `mapErr`, `andThen`, `orElse`,
+`Result` and `ResultAsync` expose direct and curried `map`, `mapErr`, `andThen`, `orElse`,
 `catchTag`, `catchTags`, `inspect`, `inspectError`, `as`, `filterOrElse`, `match`, `matchTags`,
 and `matchTagsPartial`. For example, `Result.map(result, f)` and `pipe(result, Result.map(f))`
 delegate the same fluent semantics. The compatibility subpath exports free `asyncMap(result, f)` /
@@ -572,12 +573,12 @@ const result = await successTask.runResult();
 `Result.ok` / `Result.err` expose the synchronous namespace constructors. Creating or
 composing a Task starts no work; each explicit run executes it again.
 
-### Existing eager constructors
+### In-flight `ResultAsync` constructors
 
-The following helpers return the deprecated Async facade and preserve one eager execution:
+The following active helpers construct an in-flight `ResultAsync` (`PromiseLike<Result<T, E>>`) and preserve one execution across awaits:
 
 ```ts
-import { errAsync, okAsync, ResultAsync, unitAsync } from "resultar/async";
+import { errAsync, okAsync, ResultAsync, unitAsync } from "resultar";
 
 const asyncValue = okAsync<number, Error>(1);
 const asyncError = errAsync<number, Error>(new Error("failed"));
@@ -785,13 +786,14 @@ it on every Task run. `task.runResult()` starts a requirement-free Task executio
 `ResultAsync` (`ResultAsync.fromTask(task)` and `task.toResultAsync()` remain deprecated aliases).
 
 <a id="resultasync"></a>
+<a id="deprecated-resultasync-compatibility"></a>
+<a id="in-flight-resultasync--deprecated-eager-compatibility"></a>
 
 ## In-Flight `ResultAsync` & Deprecated Eager Compatibility
 
 `ResultAsync<T, E>` (and `StrictResultAsync<T, E>`) is the official in-flight `Result`
 (`PromiseLike<Result<T, E>>`), returned by `task.runResult()` / `ResultTask.runResult(task)` and
-async `Result` chains. Eager constructors and static orchestration methods on `ResultAsync`
-remain deprecated for existing eager contracts. Prefer `ResultTask<T, E, R>` for new asynchronous
+async `Result` chains. Active in-flight constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) are exported from `resultar` and `resultar/async`, while static orchestration methods on `ResultAsync` remain deprecated for existing eager contracts. Prefer `ResultTask<T, E, R>` for new asynchronous
 workflows and execute it explicitly. Install `resultar` once:
 
 ```sh
@@ -882,8 +884,7 @@ synchronously.
 Use Resultar wrappers at the edge of uncontrolled code: JSON parsing, platform APIs, third-party
 libraries, I/O, and network calls. Convert the thrown or rejected value once, then keep your own
 domain code returning Result values or Tasks. Prefer `tryResult` for synchronous work
-and `ResultTask.tryPromise` for new asynchronous work. The eager wrappers below remain
-available for deprecated Async compatibility.
+and `ResultTask.tryPromise` for new asynchronous work. In-flight `tryResultAsync` and `fromPromise` are active for `ResultAsync` boundaries; `fromThrowableAsync` remains available for deprecated eager compatibility.
 
 ### `ResultTask.tryPromise`
 
@@ -942,14 +943,14 @@ tryAlias === tryResult;
 tryCatch === tryResult;
 ```
 
-### Eager compatibility: `tryResultAsync`
+### In-flight `ResultAsync`: `tryResultAsync`
 
 <a id="tryresultasync"></a>
 
-For a retained eager Async contract, `tryResultAsync` accepts a promise, an async factory, or the object form:
+For an in-flight `ResultAsync` boundary, `tryResultAsync` accepts a promise, an async factory, or the object form:
 
 ```ts
-import { tryResultAsync } from "resultar/async";
+import { tryResultAsync } from "resultar";
 
 const fromExistingPromise = tryResultAsync(fetch("/users"));
 
@@ -967,8 +968,7 @@ const fromObject = tryResultAsync({
 Use the factory form when creating the promise can throw synchronously. If `catch` is omitted, the
 original rejection or thrown value becomes the error channel.
 
-`tryAsync` and `tryCatchAsync` remain deprecated aliases. When retaining this eager
-contract, prefer the spelling `tryResultAsync`; new async workflows use Task instead:
+`tryAsync` and `tryCatchAsync` remain deprecated aliases of `tryResultAsync`. Prefer `tryResultAsync` for in-flight `ResultAsync` boundaries and `ResultTask.tryPromise` for new lazy async workflows:
 
 ```ts
 import { tryAsync, tryCatchAsync, tryResultAsync } from "resultar/async";
@@ -1005,11 +1005,11 @@ const readUserResponse = fromThrowableAsync(
 );
 ```
 
-### Eager compatibility: `fromPromise` and `fromSafePromise`
+### In-flight `ResultAsync`: `fromPromise` and `fromSafePromise`
 
 <a id="frompromise-and-fromsafepromise"></a>
 
-These wrappers return deprecated Async. Use `fromPromise(promise, toError)` to preserve
+These active helpers return an in-flight `ResultAsync`. Use `fromPromise(promise, toError)` to wrap
 an already-created execution that may reject:
 
 ```ts
@@ -1252,7 +1252,7 @@ machines, and small domain variants.
 Use `redact(value, label?)` when a tagged error prop must not leak through messages or JSON.
 
 ```ts
-import { createTaggedError, redact, revealRedacted } from "resultar";
+import { createTaggedError, isRedacted, redact, revealRedacted } from "resultar";
 
 class TokenRejectedError extends createTaggedError({
   name: "TokenRejectedError",
@@ -1268,8 +1268,10 @@ error.message;
 error.toJSON();
 // { ..., token: '<redacted:api-token>' }
 
-revealRedacted(error.token);
-// 'secret-token-value'
+if (isRedacted(error.token)) {
+  revealRedacted(error.token);
+  // 'secret-token-value'
+}
 ```
 
 Use `revealRedacted` only in the exact code path that is allowed to see the original value. Normal
@@ -1507,7 +1509,7 @@ const response = createUser("person@example.com").match({
 });
 ```
 
-On deprecated `ResultAsync` instances, `match`, `matchTags`, and `matchTagsPartial` return native
+On `ResultAsync` instances, `match`, `matchTags`, and `matchTagsPartial` return native
 `Promise<Out>` terminals and await handler results. Their static/direct/curried forms return
 composable `ResultAsync<Out, never>` values. On Task, they remain lazy operators
 returning `ResultTask<Out, never, R>`; use `folded.runPromise()` for `Out`, or
@@ -1733,7 +1735,7 @@ const task = ResultTask.fromResult(completePrompt())
 
 Fallbacks are useful when an `Err` has a meaningful recovery path. Resultar keeps fallback behavior
 explicit through Result and Task operations. Existing Async fallback APIs remain
-available in the deprecated facade with their eager execution contract.
+available on `ResultAsync` with their eager execution contract.
 
 | Fallback idea       | Resultar API                                          | Use when                                                           |
 | ------------------- | ----------------------------------------------------- | ------------------------------------------------------------------ |
@@ -1902,7 +1904,7 @@ const response = await fetchResponse(url).runResult();
 
 #### Retained eager rejection wrappers
 
-The following examples return deprecated Async and keep their original eager behavior.
+The following examples return eager `ResultAsync` and keep their original eager behavior.
 Use `fromPromise` when the promise already exists:
 
 ```ts
@@ -2383,8 +2385,7 @@ They are lazy, default to sequential execution and accept explicit concurrency l
 ```ts
 const saveBatch = ResultTask.forEach(users, (user) => saveUserTask(user), {
   concurrency: 4,
-  discard: true,
-});
+}).asVoid();
 const saved = await saveBatch.runResult();
 ```
 
@@ -3305,8 +3306,8 @@ Use this as the first stop when choosing an operation:
 | Create lightweight tagged unions                     | `taggedEnum<Members>()`                                             |
 | Redact secrets from error output                     | `redact(value, label?)`                                             |
 | Loop without throwing                                | `loop`, `iterate`, `forEach`                                        |
-| Throw intentionally at an edge                       | Result: `unwrapOrThrow()`; Task: `runPromise`                       |
-| Default intentionally at an edge                     | Result: `unwrapOr(value)`; Task: `runPromise(task.unwrapOr(value))` |
+| Throw intentionally at an edge                       | Result: `unwrapOrThrow()`; Task: `task.runPromise()`                |
+| Default intentionally at an edge                     | Result: `unwrapOr(value)`; Task: `task.unwrapOr(value).runPromise()` |
 | Add observation without changing the result          | `inspect`, `inspectError`, `inspectBoth`, `log`                     |
 
 ## Combining And Iterating
@@ -3338,8 +3339,7 @@ const pair = loadProfile(userId).zip(loadQuotas(userId), { concurrent: true });
 // Lazy bounded traversal (fail-fast: interrupts active siblings and awaits finalizers on first Err)
 const synced = ResultTask.forEach(accounts, (account, index) => syncAccount(account, index), {
   concurrency: 4,
-  discard: true,
-});
+}).asVoid();
 
 // Accumulated validation (runs every item and collects all Err values in input order)
 const validated = ResultTask.validateAll(rows, (row, index) => validateRowTask(row, index), {
@@ -3617,7 +3617,7 @@ For loops and collections, use:
 - `ResultTask.loop(initial, options)`
 - `ResultTask.iterate(initial, options)`
 - `ResultTask.forEach(iterable, fn, options?)`
-- `ResultTask.all(tasks, options?)` / `ResultTask.combine(tasks, options?)`
+- `ResultTask.all(tasks, options?)`
 - `ResultTask.validateAll(tasksOrItems, fnOrOptions?, options?)`
 
 `ResultAsync.loop` and `ResultAsync.iterate` run sequentially. `ResultAsync.forEach` runs
@@ -3669,8 +3669,8 @@ recovery. Choose it when you want those pieces without adopting a full applicati
 
 ## What Stays Out Of Core
 
-Resultar keeps explicit error values and a small lazy task runtime. Result APIs remain in
-the main entry, while deprecated eager Async APIs are available in `resultar/async`,
+Resultar keeps explicit error values and a small lazy task runtime. `Result`, `ResultTask`, and in-flight `ResultAsync` APIs remain in
+the main entry, while deprecated eager Async orchestration APIs are available in `resultar/async`,
 independently of task services, scopes, fibers and clocks. Both ship in the same package.
 
 - No application framework, platform layer, `Stream`, STM, clustering, or RPC runtime.
@@ -3785,7 +3785,7 @@ behavior. Free `gen` / `fn` use modern plain success returns, while compatibilit
 retains final-Result returns. `ResultAsync.fromTask(task)` eagerly starts one Task run;
 static/instance `ResultTask.toResultAsync` and tagged `.errAsync` methods also remain supported.
 Prefer `errAsync(new DomainError(props))` in new eager recipes. Existing main-entry Async imports
-remain supported, including deprecated class/type exports and helper aliases.
+remain supported, including deprecated helper and type exports.
 
 `Result#finally`, `ResultAsync#finally`, `ResultAsync#safeUnwrap` and `safeTryAsync`
 remain absent. Use observers, disposables and compatibility `safeTry(async function* () {})`
@@ -3941,7 +3941,8 @@ These helpers do not execute tasks or change `runExit`, `runResult`, or `runProm
 - `Result.err(error)`
 - `Result.unit()`
 - `Result.asVoid(result)` / `Result.asVoid()`
-- `Result.tryCatch(fn, toError?)`
+- `Result.try(fn, toError?)` / `Result.try({ try, catch? })`
+- `Result.tryCatch(fn, toError?)` (deprecated alias)
 - `Result.fromThrowable(fn, toError?)`
 - `Result.fromNullishOr(value, onNullish)` / `Result.fromNullishOr(onNullish)(value)`
 - `Result.liftPredicate(value, predicateOrRefinement, onFalse)`
@@ -3973,17 +3974,16 @@ These helpers do not execute tasks or change `runExit`, `runResult`, or `runProm
 
 <a id="resultasync-helpers"></a>
 
-### Deprecated ResultAsync helpers
+### ResultAsync helpers
 
-These deprecated entries belong to `src/result-async`. Prefer importing them from `resultar/async`;
-existing main-entry exports retain the same identities. The facade preserves eager, single-execution
-compatibility; prefer Task for new async workflows.
+In-flight `ResultAsync` constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) are active in both `resultar` and `resultar/async`. Deprecated eager compatibility helpers (`fromCallback`, `fromThrowableAsync`, `tryAsync`, `tryCatchAsync`, `safeTry`, `runPromise`) remain in `resultar/async` and are re-exported from `resultar`, while free `asyncMap`, `asyncAndThen`, `gen`, and `fn` are exported from `resultar/async` only; prefer `ResultTask` for new async workflows.
 
-- `asyncMap(result, fn)` / `asyncMap(fn)(result)`
-- `asyncAndThen(result, fn)` / `asyncAndThen(fn)(result)`
-- `gen(body)` / `gen({ try, catch })` (sync and async plain success bodies)
-- `fn(body, ...operators)` (sync and async, preserving parameters and receiver)
-- `safeTry(body)` / object form (legacy sync and async final-Result bodies)
+- `asyncMap(result, fn)` / `asyncMap(fn)(result)` (deprecated; `resultar/async` only)
+- `asyncAndThen(result, fn)` / `asyncAndThen(fn)(result)` (deprecated; `resultar/async` only)
+- `gen(body)` / `gen({ try, catch })` (deprecated; `resultar/async` only; sync and async plain success bodies)
+- `fn(body, ...operators)` (deprecated; `resultar/async` only; sync and async, preserving parameters and receiver)
+- `safeTry(body)` / object form (deprecated; legacy sync and async final-Result bodies)
+- `runPromise(resultAsync)` (deprecated)
 - `AsyncResultGenOptions`, `ResultAsyncGenerator`, `SafeTryAsyncOptions`
 
 - `okAsync(value)`
@@ -3991,7 +3991,8 @@ compatibility; prefer Task for new async workflows.
 - `unitAsync()`
 - `fromPromise(promise, toError)`
 - `fromSafePromise(promise)`
-- `fromThrowableAsync(fn, toError?)`
+- `fromCallback(options)` (deprecated)
+- `fromThrowableAsync(fn, toError?)` (deprecated)
 - `tryResultAsync(promiseOrFactory, toError?)`
 - `tryResultAsync({ try, catch? })`
 - `tryAsync(promiseOrFactory, toError?)` (deprecated alias)
@@ -4011,9 +4012,9 @@ compatibility; prefer Task for new async workflows.
 
 <a id="resultasync-methods"></a>
 
-### Deprecated ResultAsync methods
+### ResultAsync methods
 
-`map` / `mapErr` await Promise-returning callbacks; `filterOrElse` supports async
+`ResultAsync` is the active in-flight `Result` (`PromiseLike<Result<T, E>>`). `map` / `mapErr` await Promise-returning callbacks; `filterOrElse` supports async
 callbacks. `match`, `matchTags`, `matchTagsPartial`, and `unwrapOr` return native
 Promises containing the unwrapped output.
 
@@ -4046,19 +4047,24 @@ Promises containing the unwrapped output.
 
 <a id="resultasync-static-methods"></a>
 
-### Deprecated ResultAsync static methods
+### ResultAsync static methods
+
+`ResultAsync.ok`, `ResultAsync.err`, `ResultAsync.unit`, `ResultAsync.okAsync`, `ResultAsync.errAsync`, `ResultAsync.unitAsync`, `ResultAsync.fromPromise`, `ResultAsync.fromSafePromise`, and `ResultAsync.try` are active in-flight constructors; `ResultAsync.tryCatch`, `ResultAsync.fromTask`, `ResultAsync.fromThrowable`, `ResultAsync.fromCallback`, and the static orchestration methods below remain deprecated for existing eager contracts (prefer `ResultTask` for new workflows):
 
 - `ResultAsync.ok(value)`
 - `ResultAsync.err(error)`
+- `ResultAsync.unit()`
 - `ResultAsync.okAsync(value)`
 - `ResultAsync.errAsync(error)`
 - `ResultAsync.unitAsync()`
 - `ResultAsync.asVoid(result)` / `ResultAsync.asVoid()`
-- `ResultAsync.tryCatch(promiseOrFactory, toError?)`
+- `ResultAsync.try(promiseOrFactory, toError?)` / `ResultAsync.try({ try, catch? })`
+- `ResultAsync.tryCatch(promiseOrFactory, toError?)` (deprecated alias)
 - `ResultAsync.fromSafePromise(promise)`
 - `ResultAsync.fromPromise(promise, toError)`
-- `ResultAsync.fromTask(task)` (compatibility bridge; eagerly executes once)
-- `ResultAsync.fromThrowable(fn, toError?)`
+- `ResultAsync.fromTask(task)` (deprecated compatibility bridge; eagerly executes once)
+- `ResultAsync.fromThrowable(fn, toError?)` (deprecated)
+- `ResultAsync.fromCallback(options)` (deprecated)
 - `ResultAsync.zip(left, right)`
 - `ResultAsync.all(results)` / `ResultAsync.all(record)` / `ResultAsync.all(iterable)`
 - `ResultAsync.combine(results)`

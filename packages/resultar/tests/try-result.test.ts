@@ -76,8 +76,30 @@ describe('tryResult', async () => {
   it('exposes sync aliases and the default export as the same function', () => {
     strictEqual(tryCatch, tryResult)
     strictEqual(result.try, tryResult)
+    strictEqual(result.Result.try, tryResult)
     strictEqual(tryResultDefault, tryResult)
     strictEqual(result.default, tryResult)
+  })
+
+  it('supports Result.try with positional and object signatures', () => {
+    const original = new Error('boom')
+    const okValue = result.Result.try(() => 42)
+    const errMapped = result.Result.try(
+      (): number => {
+        throw original
+      },
+      (error) => new WrappedError(error),
+    )
+    const objMapped = result.Result.try({
+      try: (): number => {
+        throw original
+      },
+      catch: (error) => new WrappedError(error),
+    })
+
+    equal(okValue._unsafeUnwrap(), 42)
+    strictEqual(errMapped._unsafeUnwrapErr().wrappedCause, original)
+    strictEqual(objMapped._unsafeUnwrapErr().wrappedCause, original)
   })
 })
 
@@ -155,8 +177,50 @@ describe('tryResultAsync', async () => {
     strictEqual(actual._unsafeUnwrapErr(), original)
   })
 
-  it('exposes async aliases as the same function', () => {
+  it('exposes async aliases as the same function and supports ResultAsync.try and ResultAsync.unit', async () => {
     strictEqual(tryCatchAsync, tryResultAsync)
     strictEqual(result.tryAsync, tryResultAsync)
+    strictEqual(result.ResultAsync.try, tryResultAsync)
+
+    const original = new Error('boom')
+    const okPending = await result.ResultAsync.try(async () => 7)
+    const errPending = await result.ResultAsync.try(
+      async (): Promise<number> => {
+        throw original
+      },
+      (error) => new WrappedError(error),
+    )
+    const unitPending = await result.ResultAsync.unit()
+
+    equal(okPending._unsafeUnwrap(), 7)
+    strictEqual(errPending._unsafeUnwrapErr().wrappedCause, original)
+    strictEqual(unitPending._unsafeUnwrap(), undefined)
+  })
+})
+
+describe('ResultTask.try and ResultTask.tryPromise unified signatures', () => {
+  it('supports positional and object signatures for ResultTask.try and ResultTask.tryPromise', async () => {
+    const original = new Error('boom')
+    const syncOk = await result.ResultTask.try(() => 10).runResult()
+    const syncUnmappedErr = await result.ResultTask.try<number>(() => {
+      throw original
+    }).runResult()
+    const syncMappedErr = await result.ResultTask.try(
+      (): number => {
+        throw original
+      },
+      (error) => new WrappedError(error),
+    ).runResult()
+    const asyncMappedErr = await result.ResultTask.tryPromise(
+      async (): Promise<number> => {
+        throw original
+      },
+      (error) => new WrappedError(error),
+    ).runResult()
+
+    equal(syncOk._unsafeUnwrap(), 10)
+    strictEqual(syncUnmappedErr._unsafeUnwrapErr(), original)
+    strictEqual(syncMappedErr._unsafeUnwrapErr().wrappedCause, original)
+    strictEqual(asyncMappedErr._unsafeUnwrapErr().wrappedCause, original)
   })
 })

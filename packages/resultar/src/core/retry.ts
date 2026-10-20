@@ -79,7 +79,10 @@ export const validateRetryPolicy = <E>(options: RetryPolicyOptions<E>): void => 
  *   while: (err) => err.retryable,
  * })
  *
- * const task = ResultTask.of(() => ({ status: 200 })).retry(transientPolicy)
+ * const task = ResultTask.try({
+ *   try: () => ({ status: 200 }),
+ *   catch: () => ({ retryable: true }),
+ * }).retry(transientPolicy)
  * ```
  */
 export const Retry: {

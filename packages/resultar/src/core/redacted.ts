@@ -1,7 +1,7 @@
 /**
- * String-like wrapper that hides a sensitive value in messages and JSON output.
+ * Object wrapper that hides a sensitive value in messages and JSON output.
  */
-export type Redacted<T> = string & {
+export interface Redacted<T> {
   /**
    * Internal marker used by `isRedacted`.
    */

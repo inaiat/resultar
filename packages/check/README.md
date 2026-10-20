@@ -336,8 +336,8 @@ Generator rules also cover `Result.gen`, `Result.fn`, and `ResultTask.fn`. Stati
 generator recognition resolve imported symbols, including renamed imports, namespace imports,
 and barrel reexports. Rule IDs retain the `safe-try` spelling for `safeTry`, `Result.gen`, and `Result.fn`.
 
-For v4 application code, prefer lazy `ResultTask` workflows and explicit runners. `ResultAsync`
-and `StrictResultAsync` are exported from the `resultar/async` subpath and are deprecated since v4 and preserve eager, single-execution contracts.
+For v4 application code, prefer lazy `ResultTask` workflows and explicit runners (`task.runResult()` returns an in-flight `ResultAsync`). `ResultAsync`
+and `StrictResultAsync` are also re-exported from the `resultar/async` subpath and preserve eager, single-execution contracts.
 The legacy rule name `prefer-result-async` is retained for teams enforcing an existing eager
 boundary policy; it is not a general recommendation to introduce Async into new Task workflows.
 Set `"preferResultAsync": "off"` if that policy does not apply to your project.

@@ -2,7 +2,7 @@
 
 For new async code, return lazy `ResultTask` workflows and run them explicitly in native route
 handlers. This runnable fixture retains eager `ResultAsync` / `StrictResultAsync` service methods
-from the `resultar/async` subpath for compatibility coverage. Both types are deprecated since v4 and preserve one shared execution.
+from the `resultar/async` subpath for compatibility coverage. Both types represent one shared in-flight execution.
 
 ```sh
 cd examples/fastify
@@ -32,7 +32,7 @@ application factory.
 
 The file layout matches the [Hono example](../hono/README.md):
 
-- [Services](src/services.ts): `Cache`, `UsersRepository`, `Users`, function-based `Health` and DI registration. Repository and service methods retain deprecated eager `StrictResultAsync` contracts.
+- [Services](src/services.ts): `Cache`, `UsersRepository`, `Users`, function-based `Health` and DI registration. Repository and service methods retain eager `StrictResultAsync` contracts.
 - [Routes](src/routes.ts): native Fastify TypeBox schemas and exhaustive result-to-response mapping.
 - [Application](src/main.ts): `createApplication()`, optional `bindings`, inferred `request.services`, route registration and server startup with `PORT`.
 
@@ -200,7 +200,7 @@ This compatibility fixture enables the optional legacy checker policy
 Fastify plugin and HTTP handler functions retain their framework contracts with local,
 documented rule suppressions. Driver callbacks passed to Resultar conversion helpers can likewise
 use a local suppression when their Promise return is required for interoperability.
-That policy is not a recommendation to introduce deprecated Async types in v4; set
+That policy is not a recommendation to introduce eager Async service contracts in v4; set
 `preferResultAsync: "off"` when your project does not enforce an eager compatibility contract.
 
 The package test suite also imports this application directly as a use case.
@@ -210,4 +210,4 @@ repository override and application isolation checks alongside adapter tests.
 With `requires`, class service factories return their method objects directly. The DI module
 constructs them lazily within the registered lifetime. Return a `ResultTask` from the factory when
 initialization needs task composition. Separately, prefer Task-returning async service methods in
-new code; this fixture's deprecated `StrictResultAsync` methods retain their original contract.
+new code; this fixture's eager `StrictResultAsync` methods retain their original contract.

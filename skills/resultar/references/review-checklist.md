@@ -16,8 +16,8 @@ validation. Report only issues supported by the installed Resultar version and r
 
 - New sync failures return `Result` / `StrictResult`; new async workflows return lazy `ResultTask`
   with concrete error and requirement types. Programmer defects may still throw.
-- Deprecated `ResultAsync` / `StrictResultAsync` from `resultar/async` remain at existing eager boundaries; migration
-  preserves their start-once and repeat-await behavior until callers move to explicit Task runners.
+- `ResultAsync` / `StrictResultAsync` are the official in-flight `Result` types returned by `task.runResult()`. Legacy adapters and static orchestration helpers on `ResultAsync` in `resultar/async` remain deprecated for existing eager boundaries; migration
+  preserves their start-once and repeat-await behavior until callers move to explicit Task workflows and runners.
 - Tagged errors have stable names, useful metadata, inferred template props, and preserved causes.
 - Error unions remain concrete instead of widening early to `Error`, `unknown`, or a string.
 - `TaggedEnum` is limited to lightweight non-Error domain variants.
@@ -31,8 +31,8 @@ validation. Report only issues supported by the installed Resultar version and r
 - Task `andThen` composes Task or synchronous Result steps. `fromResult` lifts a Result, and
   structural `fromResultAsync(factory)` defers a `PromiseLike<Result>` producer. Free `asyncAndThen`
   / `asyncMap` from `resultar/async` provide alternatives to the retained Result methods and statics.
-- Prefer outbound `ResultAsync.fromTask` and `errAsync(new DomainError(props))` in new eager code;
-  Task `toResultAsync` and tagged `.errAsync()` remain supported.
+- Prefer `task.runResult()` (or `ResultTask.runResult(task)`) when bridging a requirement-free Task into an in-flight `ResultAsync`, and `errAsync(new DomainError(props))` in eager compatibility code;
+  `ResultAsync.fromTask`, Task `toResultAsync`, and tagged `.errAsync()` remain supported.
 - `orElse` recovers the whole error channel; `catchTag` / `catchTags` recover selected domain cases.
 - Core `Result.gen` / `Result.fn` and legacy core `safeTry` support sync and async bodies. Modern
   `gen` returns plain success values; `safeTry` returns a final Result. Explicit eager imports

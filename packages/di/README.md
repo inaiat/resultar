@@ -7,8 +7,8 @@ through a `use` callback. The package handles dependency selection, lifetimes, a
 Resultar handles execution, interruption, failure causes, and cleanup.
 
 Use `ResultTask` for new async service methods as well as initialization. Tasks are lazy and
-repeatable, have no `.then`, and execute through explicit runners. `ResultAsync` and
-`StrictResultAsync` are exported from the `resultar/async` subpath and are deprecated since v4 and retain eager, single-execution compatibility.
+repeatable, have no `.then`, and execute through explicit runners (`task.runResult()` returns an in-flight `ResultAsync`). `ResultAsync` and
+`StrictResultAsync` (also re-exported from `resultar/async`) retain eager, single-execution compatibility for existing methods.
 
 ## Contents
 
@@ -106,7 +106,7 @@ directly for ordinary service construction; keep `ResultTask.gen` for initializa
 failures, additional requirements or owned resources. Existing `ResultTask.sync` factories remain
 supported. Promises and thenables are rejected: wrap asynchronous initialization in
 `ResultTask.tryPromise` or another task. Prefer `ResultTask` for new async methods on the returned
-service. Existing methods can preserve deprecated `ResultAsync` or `StrictResultAsync` contracts;
+service. Existing methods can preserve eager `ResultAsync` or `StrictResultAsync` contracts;
 adapt each call with `ResultTask.fromResultAsync(() => legacyMethod())` inside a new Task workflow.
 Without `requires`, `make` accepts a task or a zero-argument factory returning a synchronous value or ResultTask. The generator form
 also supports inline requirements:

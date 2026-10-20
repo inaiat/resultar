@@ -1,8 +1,8 @@
 # Resultar Implementation Patterns
 
 Use these v4 patterns as starting points, then align names and types with the consuming domain.
-New async recipes use lazy, nonthenable `ResultTask` from `resultar`. Preserve deprecated
-`ResultAsync` from the `resultar/async` subpath where a boundary requires eager execution;
+New async recipes use lazy, nonthenable `ResultTask` from `resultar`. Use `ResultAsync` for
+in-flight Results and preserve eager `ResultAsync` boundaries (and `resultar/async` compatibility helpers) where callers require eager execution;
 both entry points ship in one npm package, and existing main-entry Async exports remain available.
 
 ## Contents
@@ -110,7 +110,7 @@ The Promise factory runs on each Task execution, catching both synchronous throw
 Pass its signal into the client. Building a Task around an already-created Promise cannot defer or
 repeat that Promise's work.
 
-Existing `fromCallback` returns eager, deprecated Async. Invoke it inside a Task factory and return
+Deprecated `fromCallback` returns eager `ResultAsync`. Invoke it inside a Task factory and return
 cleanup from `subscribe`:
 
 ```ts
@@ -166,7 +166,7 @@ const retryPolicy = Retry.policy({
 });
 
 const lazy = loadProfile(userId).retry(retryPolicy);
-// Existing eager adapter; loadProfileAsync still returns deprecated ResultAsync.
+// Existing eager adapter; loadProfileAsync still returns an eager ResultAsync.
 const eager = ResultAsync.retry(
   (attempt, signal) => loadProfileAsync(userId, { attempt, signal }),
   { ...retryPolicy, signal: requestSignal },
@@ -315,8 +315,10 @@ typed error channel spread in reviewable steps.
 
 ## Preserve An Eager Compatibility Contract
 
-Import from `resultar/async` when compatibility is needed; the subpath ships with `resultar`.
-`ResultAsync<T, E>` and `StrictResultAsync<T, E>` remain deprecated and retain eager behavior. Keep them when callers depend
+`ResultAsync<T, E>` and `StrictResultAsync<T, E>` are the official in-flight `Result` types
+(`PromiseLike<Result<T, E>>`), returned by `task.runResult()` / `ResultTask.runResult(task)`.
+Import from `resultar/async` when eager compatibility constructors or static orchestration helpers
+are needed; the subpath ships with `resultar`. Keep them when existing callers depend
 on starting once at construction or awaiting the same execution:
 
 ```ts
@@ -332,8 +334,8 @@ const loadProfileAsync = (userId: string): StrictResultAsync<Profile, ProfileApi
 const loadProfileTask = (userId: string): ResultTask<Profile, ProfileApiError> =>
   ResultTask.fromResultAsync(() => loadProfileAsync(userId));
 
-// A legacy caller receives one eagerly started execution.
-const existingCaller = ResultAsync.fromTask(loadProfileTask(userId));
+// A caller receives one eagerly started ResultAsync execution via runResult().
+const existingCaller = loadProfileTask(userId).runResult();
 ```
 
 Use `fromPromise` for an already-created Promise and `fromSafePromise` only when rejection is
@@ -350,12 +352,13 @@ const eagerChained = asyncAndThen(ok(20), (value) => okAsync(value + 1));
 
 Both helpers also accept curried calls for `pipe`. All eager constructors and helpers, including
 `errAsync`, are available from `resultar/async`; main-entry exports remain supported. Prefer
-`errAsync(new DomainError(props))` and `ResultAsync.fromTask(task)` in new eager recipes;
-`DomainError.errAsync(props)` and static/instance `ResultTask.toResultAsync` remain callable.
+`task.runResult()` (or `ResultTask.runResult(task)`) when bridging a requirement-free Task into an
+in-flight `ResultAsync`, and `errAsync(new DomainError(props))` in eager recipes;
+`DomainError.errAsync(props)`, `ResultAsync.fromTask(task)`, and static/instance `ResultTask.toResultAsync` remain callable as compatibility aliases.
 Async instance `match` / `matchTags` / `matchTagsPartial` return native Promises; static/curried
 forms return composable Async values. Task matching returns a Task.
 
-The eager facade keeps `retry` / `retryOrElse`, `timeout`, races, collections, and control flow.
+The eager compatibility surface keeps deprecated `retry` / `retryOrElse`, `timeout`, races, collections, and control flow.
 Use Async factories for retries, and retain `withResource({ acquire, use, release })` where its
 best-effort release is the existing contract. A cleanup failure that must affect that eager result
 needs an explicit fallible step. These policies and deprecated observer methods are documented in

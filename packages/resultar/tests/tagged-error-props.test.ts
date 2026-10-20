@@ -61,7 +61,7 @@ describe('explicit tagged error props', () => {
     const error = new MissingError({ id: 'user-1', source: 'users' })
 
     expectTypeOf(error.id).toEqualTypeOf<string>()
-    expectTypeOf(error.source).toEqualTypeOf<string | number>()
+    expectTypeOf(error.source).toEqualTypeOf<string | number | Redacted<unknown>>()
     expectTypeOf(error.requestId).toEqualTypeOf<string | undefined>()
     equal(error.message, 'Missing user-1 in users')
     equal(error.requestId, undefined)
@@ -354,13 +354,31 @@ describe('explicit tagged error props', () => {
       message: 'Missing $id',
     })
     const error: Original = new Constructor({ id: 1 })
-    expectTypeOf(error.id).toEqualTypeOf<string | number>()
+    expectTypeOf(error.id).toEqualTypeOf<string | number | Redacted<unknown>>()
     equal(error.id, 1)
+
+    const secret = redact('secret-token', 'token')
+    const redactedError = new Constructor({ id: secret })
+    expectTypeOf(redactedError.id).toEqualTypeOf<string | number | Redacted<unknown>>()
+    equal(redactedError.id, secret)
+    equal(redactedError.message, 'Missing <redacted:token>')
   })
 })
 
 const symbolKey = Symbol('metadata')
 const typeAssertions = (): void => {
+  const secret = redact('secret-token')
+  // @ts-expect-error Redacted is an object wrapper and is not assignable to string.
+  const rawSecret: string = secret
+  void rawSecret
+  // @ts-expect-error Redacted is an object wrapper and does not expose String.prototype methods.
+  void secret.toUpperCase
+  const Missing = createTaggedError({ name: 'Missing', message: 'Missing $id' })
+  const missingRedacted = new Missing({ id: redact('secret') })
+  if (typeof missingRedacted.id !== 'number') {
+    // @ts-expect-error Unspecialized template fields include Redacted<unknown> and do not expose String.prototype methods.
+    void missingRedacted.id.toUpperCase
+  }
   // @ts-expect-error Typed template field id rejects a number.
   new MissingError({ id: 1, source: 'users' })
   // @ts-expect-error Undeclared required template fields remain required.

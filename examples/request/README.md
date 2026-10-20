@@ -4,7 +4,7 @@ Runnable examples for `resultar-request`, `resultar-request-typebox`, and
 `resultar-request-zod`.
 
 For new async code, prefer lazy `ResultTask` workflows with explicit runners. The request adapters
-and this server fixture retain eager `ResultAsync` compatibility contracts from the `resultar/async` subpath, deprecated since v4.
+and this server fixture retain eager `ResultAsync` compatibility contracts.
 Calling an adapter starts one shared execution; wrap the call in a Task factory to defer it.
 
 Run it from the repository root:

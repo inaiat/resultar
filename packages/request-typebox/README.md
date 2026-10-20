@@ -5,8 +5,8 @@ TypeBox adapter for `resultar-request`.
 Use this package when a request response should be validated with TypeBox while the transport and
 Resultar error flow stay in `resultar-request`.
 
-Prefer `ResultTask` for new async workflows. This adapter still returns the eager `ResultAsync`
-compatibility API from the `resultar/async` subpath, deprecated since v4; defer the adapter call with `fromResultAsync(factory)`.
+Prefer `ResultTask` for new async workflows. This adapter returns eager `ResultAsync`
+(also re-exported from the `resultar/async` subpath); defer the adapter call with `fromResultAsync(factory)`.
 
 For a schema-library-agnostic request, use
 [`resultar-request`](https://www.npmjs.com/package/resultar-request) directly with its `validator`

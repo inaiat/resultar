@@ -10,7 +10,7 @@
  *   `Fiber.join`, `Fiber.interrupt`, `Fiber.poll`, `Fiber.addObserver`)
  * - Concurrency limiting (`Semaphore.make`, `withPermit`, `withPermits`)
  * - Lossless failure trees (`Cause`, `sandbox`, `unsandbox`, `catchCause`, `inspectCause`, `onExit`)
- * - Cooperative scheduling (`Scheduler`, `ResultTask.yieldNow`, `yieldEvery`)
+ * - Cooperative scheduling (`Scheduler`, `yieldEvery`)
  */
 import {
   Cause,
@@ -240,7 +240,7 @@ export const runTaskResilience = async () => {
  * - `Semaphore.withPermits(n)` for multi-permit acquisition
  * - `.onExit()`, `.inspectCause()`, and `.catchCause()`
  * - `Cause` inspection helpers (`isCause`, `hasFails`, `hasDies`, `hasInterrupts`, `failures`, `defects`, `pretty`)
- * - Cooperative yielding (`ResultTask.yieldNow`, custom `TaskScheduler`, `Scheduler.live`)
+ * - Cooperative yielding (`yieldEvery`, custom `TaskScheduler`, `Scheduler.live`)
  * - Explicit task runners and native Promise interoperability with `runPromise`
  */
 export const runAdvancedTaskResilience = async () => {

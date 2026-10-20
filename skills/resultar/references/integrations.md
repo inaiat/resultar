@@ -28,9 +28,9 @@ versions and local README files before copying an example.
 All three share the same transport implementation. The adapters add schema validation and re-export
 the public `resultar-request` types. Install only the core and schema adapter the service needs.
 
-Their `requestJson` helpers still return eager `ResultAsync` from the deprecated `resultar/async`
-compatibility subpath, included in the `resultar` installation. Use that subpath when importing its
-constructors, helpers, or types in application code.
+Their `requestJson` helpers return eager `ResultAsync` (also re-exported from the `resultar/async`
+compatibility subpath, included in the `resultar` installation). Use `resultar` or `resultar/async` when importing
+in-flight constructors, helpers, or types in application code.
 Calling a helper starts its request; the examples below document that real API. New workflows can
 compose these adapters lazily through the Task factory bridge without changing the request contract.
 
@@ -283,8 +283,8 @@ When an agent encounters a diagnostic, fix the architecture first:
   run a lazy task and must not be applied just to silence diagnostics;
 - replace nested `Result` from `map` with `andThen`;
 - for existing eager contracts, replace `Promise<Result>` / `Promise<StrictResult>` with
-  deprecated `ResultAsync` / `StrictResultAsync` imported from `resultar/async` and return composed operations directly
-  (`prefer-result-async`); the rule name remains stable for that legacy contract;
+  `ResultAsync` / `StrictResultAsync` and return composed operations directly
+  (`prefer-result-async`); the rule name remains stable for that contract;
 - scope `preferResultAsync` to an intentional eager-boundary migration. Its `"all"` mode also
   catches raw `Promise<T>` contracts and inferred returns. It does not make Task and Async
   interchangeable or prescribe Async for new services. A new Task contract needs a factory,

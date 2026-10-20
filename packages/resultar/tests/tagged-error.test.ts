@@ -1,7 +1,7 @@
 import { deepEqual, equal, ok as isTrue, throws } from 'node:assert'
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import type { ErrResult, ResultAsync, ResultTask, TaggedEnum } from '../src/index.js'
+import type { ErrResult, Redacted, ResultAsync, ResultTask, TaggedEnum } from '../src/index.js'
 
 import {
   Result,
@@ -368,8 +368,8 @@ describe('tagged error types', async () => {
       source: 'users',
     })
 
-    expectTypeOf(error.id).toEqualTypeOf<string | number>()
-    expectTypeOf(error.source).toEqualTypeOf<string | number>()
+    expectTypeOf(error.id).toEqualTypeOf<string | number | Redacted<unknown>>()
+    expectTypeOf(error.source).toEqualTypeOf<string | number | Redacted<unknown>>()
     expectTypeOf(defaultResult).toEqualTypeOf<ErrResult<never, UserNotFoundError>>()
     expectTypeOf(defaultResult.error).toEqualTypeOf<UserNotFoundError>()
     expectTypeOf(defaultAsyncResult).toEqualTypeOf<ResultAsync<never, UserNotFoundError>>()
@@ -381,11 +381,11 @@ describe('tagged error types', async () => {
     const union = error as UserNotFoundError | DatabaseError
     matchError(union, {
       DatabaseError: (err) => {
-        expectTypeOf(err.operation).toEqualTypeOf<string | number>()
+        expectTypeOf(err.operation).toEqualTypeOf<string | number | Redacted<unknown>>()
         return err.message
       },
       UserNotFoundError: (err) => {
-        expectTypeOf(err.id).toEqualTypeOf<string | number>()
+        expectTypeOf(err.id).toEqualTypeOf<string | number | Redacted<unknown>>()
         return err.message
       },
     })

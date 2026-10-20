@@ -6,8 +6,7 @@ Use this package when a service calls another HTTP service and needs consistent 
 payload validation, retry, and error mapping without coupling the request layer to a schema library.
 
 For new async workflows, compose these helpers inside `ResultTask.fromResultAsync(() => ...)`
-and use an explicit Task runner. The request API itself still returns `ResultAsync`, the eager
-compatibility API from the `resultar/async` subpath, deprecated since v4; calling a request helper starts one shared execution.
+and use an explicit Task runner. The request API itself returns eager `ResultAsync` (also re-exported from the `resultar/async` subpath); calling a request helper starts one shared execution.
 
 The `resultar/async` subpath is included in the `resultar` installation.
 

@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vite-plus/test'
-import { createTaggedError, Match, pipe } from '../src/index.js'
+import { createTaggedError, Match, pipe, type Redacted } from '../src/index.js'
 
 type Event =
   | { readonly _tag: 'Created'; readonly id: string }
@@ -144,7 +144,7 @@ describe('Match fluent API', () => {
         expectTypeOf(error).toEqualTypeOf<OfflineError>()
         return 503 as const
       })
-    expectTypeOf(run).returns.toEqualTypeOf<string | number>()
+    expectTypeOf(run).returns.toEqualTypeOf<string | number | Redacted<unknown>>()
     expect(run(new MissingError({ id: '1' }))).toBe('1')
     expect(run(new OfflineError())).toBe(503)
   })

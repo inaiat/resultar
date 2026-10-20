@@ -7,9 +7,9 @@ The former `/advanced` subpath has been removed; migrate existing imports to `re
 
 Use `ResultTask` for new asynchronous service methods and initialization. Tasks are lazy and
 nonthenable: return them directly from methods, compose them with `andThen` or `ResultTask.gen`,
-and execute them through an explicit runner at the owning application or request boundary.
-Existing methods returning deprecated `ResultAsync` remain eager compatibility contracts; import
-that class, `StrictResultAsync`, and eager helpers from `resultar/async`. This subpath is included
+and execute them through an explicit runner (`task.runResult()`, `task.runPromise()`, `task.runExit()`, or `task.runFork()`) at the owning application or request boundary.
+`task.runResult()` returns an in-flight `ResultAsync<T, E>`. Existing methods returning eager `ResultAsync` or `StrictResultAsync` directly remain eager compatibility contracts; import
+eager compatibility helpers and deprecated orchestration methods from `resultar/async`. This subpath is included
 in `resultar`; existing main-entry Async exports remain supported with the same identities.
 
 - Use `ResultTask.service<Contract>()('name')` in core or `Service.require<Contract>()('name')`
@@ -32,7 +32,7 @@ in `resultar`; existing main-entry Async exports remain supported with the same 
   live resource from a completed scope returns a resource whose finalizer has already run.
 - Use `createHonoApp` for Hono routes. Ordinary `await` and `result.match` inside a route are valid;
   generator-specific restrictions do not apply to a route body.
-  For a Task-returning method, compose `task.matchTags(...)` and return
+  For a Task-returning method, either run `await task.runResult().matchTags(...)` or compose `task.matchTags(...)` and return
   `responseTask.runPromise()` from the route. For an existing Async method, awaiting it
   still observes its eager execution; `await task` never executes a Task.
   Export `type AppHono = Hono<{ Bindings: InferRequestServices<typeof createApplication> }>`
@@ -54,8 +54,8 @@ in `resultar`; existing main-entry Async exports remain supported with the same 
   The low-level lifecycle sessions retain eager Async `ready` / `close` or `finish` values where
   exposed by their installed types; these bridge an explicitly running Task and are compatibility
   boundaries, not a recommendation to make new service methods eager.
-  Prefer the outbound adapter `ResultAsync.fromTask(task)` from `resultar/async`; static and
-  instance `ResultTask.toResultAsync` remain supported. The inbound `ResultTask.fromResultAsync` bridge accepts structural
+  Prefer `task.runResult()` (or `ResultTask.runResult(task)`) when bridging a requirement-free Task into an in-flight `ResultAsync`;
+  `ResultAsync.fromTask(task)` and static/instance `ResultTask.toResultAsync` remain supported as deprecated aliases. The inbound `ResultTask.fromResultAsync` bridge accepts structural
   `PromiseLike<Result>` values or factories and needs no class registration.
 - Use `createHonoServices(module).middleware(keys, { locals })` to add services to an existing Hono
   router. Inline route middleware infers `c.var.services` while preserving `c.env` and native RPC

@@ -1,6 +1,6 @@
 import type { ErrResult } from '../result/result.js'
 
-import { isRedacted, stringifyRedacted } from '../core/redacted.js'
+import { isRedacted, stringifyRedacted, type Redacted } from '../core/redacted.js'
 import type { ResultAsync } from '../result-async/result-async.js'
 import { createResultAsync } from '../result-async/result-async-adapter.js'
 import { ResultTask } from '../task/result-task.js'
@@ -99,7 +99,7 @@ type ExtractTemplateVariables<Template extends string> =
 /* eslint-disable typescript/no-generated-empty-object-type */
 type TemplateProps<Template extends string> = [ExtractTemplateVariables<Template>] extends [never]
   ? Record<never, never>
-  : Readonly<Record<ExtractTemplateVariables<Template>, string | number>>
+  : Readonly<Record<ExtractTemplateVariables<Template>, string | number | Redacted<unknown>>>
 /* eslint-enable typescript/no-generated-empty-object-type */
 type ReservedVariablesIn<Template extends string> = Extract<
   ExtractTemplateVariables<Template>,

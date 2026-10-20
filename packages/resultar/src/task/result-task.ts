@@ -1159,11 +1159,47 @@ export class ResultTask<out A, out E = never, out R = never> {
     return new ResultTask<A>(SYNC_INSTRUCTION, evaluate)
   }
 
+  /**
+   * Creates a task that maps synchronous throws into the typed error channel.
+   *
+   * Supports both `ResultTask.try(fn, catchFn)` and `ResultTask.try({ try, catch })`.
+   */
+  public static try<A, E>(
+    fn: () => Exclude<A, Promise<unknown>>,
+    errorFn: (cause: unknown) => E,
+  ): ResultTask<A, E>
   /** Creates a task that maps synchronous throws into the typed error channel. */
-  public static try<A, E>(options: ResultTaskTryOptions<A, E>): ResultTask<A, E> {
+  public static try<A, E>(options: ResultTaskTryOptions<A, E>): ResultTask<A, E>
+  /** Creates a task that preserves synchronous throws in the error channel as `unknown`. */
+  public static try<A>(fn: () => Exclude<A, Promise<unknown>>): ResultTask<A, unknown>
+  public static try<A, E = unknown>(
+    input: (() => Exclude<A, Promise<unknown>>) | ResultTaskTryOptions<A, E>,
+    errorFn?: (cause: unknown) => E,
+  ): ResultTask<A, E> {
+    const options: ResultTaskTryOptions<A, E> =
+      typeof input === 'function'
+        ? { try: input, catch: errorFn ?? ((cause: unknown) => cause as E) }
+        : input
     return new ResultTask<A, E>(SYNC_INSTRUCTION, undefined, options)
   }
 
+  /**
+   * Creates a lazy task that maps synchronous throws and promise rejections into `E`.
+   *
+   * @example
+   * ```ts
+   * import { ResultTask } from 'resultar'
+   *
+   * const loadUser = ResultTask.tryPromise(
+   *   (signal) => fetch('https://example.com/user', { signal }).then((r) => r.json()),
+   *   (cause) => new Error('Request failed', { cause }),
+   * )
+   * ```
+   */
+  public static tryPromise<A, E>(
+    run: (signal: AbortSignal) => PromiseLike<A>,
+    errorFn: (cause: unknown) => E,
+  ): ResultTask<A, E>
   /**
    * Creates a lazy task that preserves synchronous throws and promise rejections as `unknown`.
    *
@@ -1196,9 +1232,10 @@ export class ResultTask<out A, out E = never, out R = never> {
   public static tryPromise<A, E>(options: ResultTaskTryPromiseOptions<A, E>): ResultTask<A, E>
   public static tryPromise<A, E>(
     options: ResultTaskTryPromiseOptions<A, E> | ((signal: AbortSignal) => PromiseLike<A>),
+    errorFn?: (cause: unknown) => E,
   ): ResultTask<A, unknown> {
     if (typeof options === 'function') {
-      return new ResultTask<A, unknown>(TRY_PROMISE_INSTRUCTION, options)
+      return new ResultTask<A, unknown>(TRY_PROMISE_INSTRUCTION, options, errorFn)
     }
     const interruption = options.interruption
     if (interruption === undefined || interruption === 'wait') {
@@ -5444,14 +5481,10 @@ export class ResultTask<out A, out E = never, out R = never> {
    * const result = await ResultTask.ok(42).runResult()
    * ```
    */
-  public runResult<Task>(
-    this: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
-    ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
-  ): ResultAsync<TaskSuccess<Task>, TaskError<Task> | ScopeError<TaskRequirements<Task>>>
-  public runResult<A0, E0, R0>(
-    this: ResultTask<A0, E0, R0>,
-    ...args: readonly [options?: ResultTaskRunOptions<R0>]
-  ): ResultAsync<A0, E0 | ScopeError<R0>> {
+  public runResult(
+    this: ResultTask<A, E, R>,
+    ...args: ResultTaskRunArguments<R>
+  ): ResultAsync<A, E | ScopeError<R>> {
     return ResultTask.runResultInternal(this, args[0])
   }
 
@@ -5464,14 +5497,7 @@ export class ResultTask<out A, out E = never, out R = never> {
    * const value = await ResultTask.ok(42).runPromise()
    * ```
    */
-  public runPromise<Task>(
-    this: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
-    ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
-  ): Promise<TaskSuccess<Task>>
-  public runPromise<A0, E0, R0>(
-    this: ResultTask<A0, E0, R0>,
-    ...args: readonly [options?: ResultTaskRunOptions<R0>]
-  ): Promise<A0> {
+  public runPromise(this: ResultTask<A, E, R>, ...args: ResultTaskRunArguments<R>): Promise<A> {
     return ResultTask.runPromiseInternal(this, args[0])
   }
 
@@ -5484,14 +5510,10 @@ export class ResultTask<out A, out E = never, out R = never> {
    * const exit = await ResultTask.ok(42).runExit()
    * ```
    */
-  public runExit<Task>(
-    this: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
-    ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
-  ): Promise<Exit<TaskSuccess<Task>, TaskError<Task> | ScopeError<TaskRequirements<Task>>>>
-  public runExit<A0, E0, R0>(
-    this: ResultTask<A0, E0, R0>,
-    ...args: readonly [options?: ResultTaskRunOptions<R0>]
-  ): Promise<Exit<A0, E0 | ScopeError<R0>>> {
+  public runExit(
+    this: ResultTask<A, E, R>,
+    ...args: ResultTaskRunArguments<R>
+  ): Promise<Exit<A, E | ScopeError<R>>> {
     return ResultTask.runExitInternal(this, args[0])
   }
 
@@ -5504,14 +5526,10 @@ export class ResultTask<out A, out E = never, out R = never> {
    * const fiber = ResultTask.sleep(10).as('done').runFork()
    * ```
    */
-  public runFork<Task>(
-    this: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
-    ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
-  ): FiberHandle<TaskSuccess<Task>, TaskError<Task> | ScopeError<TaskRequirements<Task>>>
-  public runFork<A0, E0, R0>(
-    this: ResultTask<A0, E0, R0>,
-    ...args: readonly [options?: ResultTaskRunOptions<R0>]
-  ): FiberHandle<A0, E0 | ScopeError<R0>> {
+  public runFork(
+    this: ResultTask<A, E, R>,
+    ...args: ResultTaskRunArguments<R>
+  ): FiberHandle<A, E | ScopeError<R>> {
     return ResultTask.runForkInternal(this, args[0])
   }
 

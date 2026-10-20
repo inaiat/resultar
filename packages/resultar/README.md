@@ -169,7 +169,7 @@ Prefer `ResultTask` for new asynchronous workflows and run it explicitly, includ
 `R = never`. Providing services or closing a scope leaves a Task. Calling `task.runResult()`
 (or `ResultTask.runResult(task)`) starts the task and returns `ResultAsync<T, E>` — an in-flight
 `Result` (`PromiseLike<Result<T, E>>`) that can be awaited directly or transformed and folded
-with the same methods as `Result`. Eager constructors and orchestration static methods on
+with the same methods as `Result`. In-flight constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) are active in `resultar` and `resultar/async`, while static orchestration methods on
 `ResultAsync` remain deprecated in `resultar/async` for existing eager contracts.
 Its inbound `fromResultAsync` bridge accepts structural `PromiseLike<Result<T, E>>` values.
 
@@ -204,7 +204,7 @@ See the [Gradual Adoption Guide](https://github.com/inaiat/resultar/blob/main/do
   - [Task concurrency and resilience](#task-concurrency-and-resilience)
   - [Portable retry policies](#portable-retry-policies)
   - [Inspect failure causes](#inspect-failure-causes)
-- [In-Flight `ResultAsync` & Deprecated Eager Compatibility](#deprecated-resultasync-compatibility)
+- [In-Flight `ResultAsync` & Deprecated Eager Compatibility](#in-flight-resultasync--deprecated-eager-compatibility)
 - [Pattern Matching (`Match`)](#pattern-matching-with-match)
 - [Prevent Ignored Results (`resultar-check`)](#prevent-ignored-results)
 - [Ecosystem Packages (HTTP, Validation, DI)](#ecosystem-packages)
@@ -247,7 +247,7 @@ AccountAlreadyExistsError.is(unknownValue); // nominal type guard
 
 ### Refining metadata types with `.withProps()`
 
-Template variables default to `string | number`. Chain `.withProps<...>()` to refine template property types or require additional structured metadata:
+Template variables default to `string | number | Redacted<unknown>`. Chain `.withProps<...>()` to refine template property types or require additional structured metadata:
 
 ```ts
 class UserNotFoundError extends createTaggedError({
@@ -333,7 +333,7 @@ const accountEmail = normalizeEmail(input)
 ### Functional pipelines (`pipe`, `flow`, `identity`, `constant`)
 
 Result and Task transformations support fluent methods and curried functions inside `pipe`
-and `flow`. The deprecated Async facade also retains its existing functional forms:
+and `flow`. `ResultAsync` also retains its existing functional forms:
 
 ```ts
 import { constant, flow, identity, pipe, Result } from "resultar";
@@ -389,7 +389,7 @@ const result = await getOrCreateAccount(input).runResult();
 
 - Return `value` for success; use `return yield* step()` or `return yield* MyError.err(...)` for a final fallible step.
 - Task generators are synchronous `function*` bodies describing asynchronous steps. Compose those steps with `yield*`; execute the completed Task with an explicit runner.
-- Core `Result.gen` / `Result.fn` and legacy `safeTry` support sync and eager async bodies. Free `gen` / `fn` / `safeTry` are also available from `resultar/async`; see [compatibility](#deprecated-resultasync-compatibility).
+- Core `Result.gen` / `Result.fn` and legacy `safeTry` support sync and eager async bodies. Free `gen` / `fn` / `safeTry` are also available from `resultar/async`; see [compatibility](#in-flight-resultasync--deprecated-eager-compatibility).
 - Deprecated `safeTry` remains a separate helper returning the final Result. It is not an identity alias of modern `Result.gen`.
 - Its implementation belongs to the Async compatibility layer; root imports re-export the same deprecated helper. Use `ResultTask.gen` for Task workflows; Task has no `safeTry` alias.
 
@@ -613,6 +613,8 @@ if (exit._tag === "Failure") {
 ---
 
 <a id="async-work-and-resilience"></a>
+<a id="deprecated-resultasync-compatibility"></a>
+<a id="in-flight-resultasync--deprecated-eager-compatibility"></a>
 
 ## In-Flight `ResultAsync` & Deprecated Eager Compatibility
 
@@ -630,13 +632,18 @@ and consumed with the same methods as `Result` (`map`, `mapErr`, `andThen`, `orE
 pnpm add resultar
 ```
 
-Eager constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`,
-`fromCallback`, `fromThrowableAsync`, `tryResultAsync`) and static orchestration helpers on
-`ResultAsync` (`retry`, `retryOrElse`, `race`, `raceAll`, `raceFirst`, `raceWith`, `timeout`,
-`withResource`, `forEach`, `validateAll`, `loop`, `iterate`, `firstSuccessOf`, `all`, `combine`,
-`combineWithAllErrors`, `zip`) remain available in `resultar/async` (and re-exported from `resultar`)
-as deprecated compatibility APIs for existing eager contracts. Prefer `ResultTask` for new
-asynchronous workflows and orchestration.
+In-flight value and Promise constructors (`ResultAsync.ok`, `ResultAsync.err`, `ResultAsync.unit`,
+`ResultAsync.fromPromise`, `ResultAsync.fromSafePromise`, `ResultAsync.try`, and top-level `okAsync`,
+`errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) remain active for
+in-flight values, mocks, and Promise boundary adaptation. Legacy eager adapters (`fromCallback`,
+`fromThrowableAsync`, `tryAsync`, `tryCatchAsync`, `safeTry`, `runPromise`, `ResultAsync.tryCatch`,
+`ResultAsync.fromThrowable`, `ResultAsync.fromTask`, `ResultAsync.fromCallback`) and static
+orchestration helpers on `ResultAsync` (`retry`, `retryOrElse`, `race`, `raceAll`, `raceFirst`,
+`raceWith`, `timeout`, `withResource`, `forEach`, `validateAll`, `loop`, `iterate`, `firstSuccessOf`,
+`all`, `combine`, `combineWithAllErrors`, `zip`) remain available in `resultar/async` (and re-exported
+from `resultar`) as deprecated compatibility APIs for existing eager contracts, while free `gen`,
+`fn`, `asyncMap`, and `asyncAndThen` are exported from `resultar/async` only. Prefer `ResultTask` for
+new asynchronous workflows and orchestration.
 
 ### Wrapping external async boundaries (eager compatibility)
 
@@ -838,7 +845,7 @@ Resultar's companion packages integrate directly with the core primitives:
 | [`resultar-fastify`](https://www.npmjs.com/package/resultar-fastify)                 | Fastify plugin with application/request DI scopes and lifecycle cleanup           | [README](https://github.com/inaiat/resultar/blob/main/packages/fastify/README.md)         |
 
 Deprecated eager compatibility is included in `resultar` through the
-[`resultar/async` subpath](#deprecated-resultasync-compatibility); no additional package is needed.
+[`resultar/async` subpath](#in-flight-resultasync--deprecated-eager-compatibility); no additional package is needed.
 
 Request helpers still return eager `ResultAsync` from `resultar/async`. Their public
 execution contract is unchanged. Wrap the call in a factory to create a new request per Task run:

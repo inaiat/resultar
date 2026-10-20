@@ -1,6 +1,6 @@
 ---
 name: resultar
-description: Build, review, migrate, test, and document TypeScript code using Resultar v4, with Result for synchronous values, ResultTask for new lazy workflows, and the resultar/async subpath for deprecated eager compatibility. Covers typed errors, generators, services, scopes, request adapters, and resultar-check. Use when expected failures should become typed values, thrown or rejected work must be wrapped, async policies need design, HTTP JSON needs TypeBox or Zod validation, or an existing Resultar codebase needs review or migration.
+description: Build, review, migrate, test, and document TypeScript code using Resultar v4, with Result for synchronous values, ResultTask for new lazy workflows, ResultAsync for in-flight Results, and the resultar/async subpath for eager compatibility. Covers typed errors, generators, services, scopes, request adapters, and resultar-check. Use when expected failures should become typed values, thrown or rejected work must be wrapped, async policies need design, HTTP JSON needs TypeBox or Zod validation, or an existing Resultar codebase needs review or migration.
 metadata:
   tags: [typescript, error-handling]
   domains: [foundation]
@@ -52,9 +52,13 @@ Keep existing Result helpers and eager adapters in use as tasks are adopted. One
 installation provides both entry points. Import eager compatibility helpers and types from
 `resultar/async` in new eager code. Existing Async exports from `resultar` remain available for
 compatibility and refer to the same classes and helpers.
-All Async-specific eager factories and orchestration helpers, including `okAsync`, `errAsync`, and `tryResultAsync`,
-are deprecated and implemented in `packages/resultar/src/result-async`. Async-only types belong
-there as well; core modules that previously declared them retain type-only re-exports.
+In-flight value and Promise constructors (`ResultAsync.ok`, `ResultAsync.err`, `ResultAsync.unit`,
+`ResultAsync.fromPromise`, `ResultAsync.fromSafePromise`, `ResultAsync.try`, and top-level `okAsync`,
+`errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) remain active for
+boundary adaptation and mocks, while static orchestration helpers on `ResultAsync`, `fromCallback`,
+`fromThrowableAsync`, `fromTask`, and `resultar/async` generator helpers (`gen`, `fn`, `safeTry`) are
+deprecated compatibility APIs implemented in `packages/resultar/src/result-async`. Async-only types
+belong there as well; core modules that previously declared them retain type-only re-exports.
 `ResultAsync` is a `PromiseLike<Result<T, E>>` class representing an in-flight `Result`: work starts eagerly (or when `task.runResult()` is called) and repeated awaits
 observe the same execution. `ResultTask` has no `.then` method; use explicit runners for every
 Task, including when `R = never`. Prefer `task.runResult()`, `task.runPromise()`, `task.runExit()`,
@@ -73,7 +77,7 @@ pnpm add resultar
 
 | Contract                   | `Result` / `Result.gen`                                             | `ResultAsync<T, E>` (in-flight `Result`)                              | `ResultTask<T, E, R>`                                                         |
 | -------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Execution                  | Sync values; async `Result.gen` / `fn` return eager Async             | Starts eagerly (via `task.runResult()` or legacy factories); repeated awaits observe one execution | Lazy blueprint; each explicit `run*` executes again                           |
+| Execution                  | Sync values; async `Result.gen` / `fn` return eager Async             | Starts eagerly (via `task.runResult()` or in-flight constructors); repeated awaits observe one execution | Lazy blueprint; each explicit `run*` executes again                           |
 | Generator return           | `return value`; `yield*` short-circuits failures                    | `gen` / `fn` from `resultar/async`; bridge into Task generators       | `return value`; compose tasks, services and Results with `yield*`             |
 | Error transform / recovery | `mapErr` / `orElse` / `orElseSucceed`; `unwrapOr` returns a value   | `mapErr` / `orElse` / `orElseSucceed`; `unwrapOr` returns a Promise   | `mapErr` / `orElse` / `orElseSucceed`; `unwrapOr` returns a Task              |
 | Boundary fold              | `match` / `matchTags` / `matchTagsPartial` return `Out`             | Instance: `Promise<Out>`; static: `ResultAsync<Out, never>`               | Return `ResultTask<Out, never, R>`; execute with `runPromise` for `Out`       |
@@ -235,7 +239,7 @@ to compose another Task or a synchronous Result.
 - Fold a Task with `match` / `matchTags`, then execute that fold with `folded.runPromise()`.
   Use `runResult` for a Result boundary or `runExit` to inspect every cause without rejection.
 
-Request helpers and existing callback adapters still return eager, deprecated `ResultAsync`.
+Request helpers and existing callback adapters return eager `ResultAsync`.
 Create them inside `ResultTask.fromResultAsync((signal) => adapter(...))` when new Task work must
 be lazy and repeatable. Capturing an already-created Async shares its existing execution.
 

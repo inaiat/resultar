@@ -130,7 +130,7 @@ flowchart LR
 - **Stage 1 — `Result<T, E>`**: Use in pure parsing, validation, and domain functions.
 - **Stage 2 — `ResultTask<T, E>`**: Use for new async operations, retries, and timeouts. Build work lazily and execute it with `runResult`, `runExit`, `runPromise`, or `runFork`.
 - **Stage 3 — `ResultTask<T, E, R>`**: Add typed service dependencies or owned resources when needed. Providing requirements leaves a Task that still needs an explicit runner.
-- **In-flight Result — `ResultAsync<T, E>`**: Returned by `task.runResult()` / `ResultTask.runResult(task)` (and async `Result` helpers). Await it directly for `Result<T, E>` or chain `.map()`, `.andThen()`, `.catchTag()`, `.match()`, `.unwrapOr()`, and `.unwrapOrThrow()`. Eager `ResultAsync` constructors and orchestration helpers in `resultar/async` remain deprecated for existing API compatibility; see the [migration table](docs/migrations/v4.md).
+- **In-flight Result — `ResultAsync<T, E>`**: Returned by `task.runResult()` / `ResultTask.runResult(task)` (and in-flight constructors `okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`). Await it directly for `Result<T, E>` or chain `.map()`, `.andThen()`, `.catchTag()`, `.match()`, `.unwrapOr()`, and `.unwrapOrThrow()`. Eager `ResultAsync` orchestration helpers in `resultar/async` remain deprecated for existing API compatibility; see the [migration table](docs/migrations/v4.md).
 
 Prefer `task.runResult()`, `task.runPromise()`, `task.runExit()`, and `task.runFork()` in new code.
 The static forms, such as `ResultTask.runResult(task, options)`, remain equivalent and supported.

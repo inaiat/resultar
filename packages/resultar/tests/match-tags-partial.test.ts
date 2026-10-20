@@ -1,7 +1,7 @@
 import { deepEqual, equal } from 'node:assert'
 import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
 
-import type { Result } from '../src/index.js'
+import type { Redacted, Result } from '../src/index.js'
 
 import { ResultAsync, createTaggedError, err, errAsync, ok, okAsync } from '../src/index.js'
 
@@ -95,7 +95,7 @@ describe('Result.matchTagsPartial', () => {
       },
     )
 
-    expectTypeOf(value).toEqualTypeOf<string | number | boolean>()
+    expectTypeOf(value).toEqualTypeOf<string | number | Redacted<unknown> | boolean>()
   })
 
   it('rejects handlers for tags outside the error union', () => {
@@ -198,7 +198,7 @@ describe('ResultAsync.matchTagsPartial', () => {
       },
     )
 
-    expectTypeOf(value).toEqualTypeOf<string | number | boolean>()
+    expectTypeOf(value).toEqualTypeOf<string | number | Redacted<unknown> | boolean>()
   })
 
   it('rejects handlers for tags outside the async error union', async () => {
@@ -306,7 +306,7 @@ describe('asynchronous match return contracts', () => {
 
     expectTypeOf(positional).toEqualTypeOf<Promise<{ status: 200; id: number } | { status: 400 }>>()
     expectTypeOf(object).toEqualTypeOf<
-      Promise<{ status: 200 } | { status: 400; field: string | number }>
+      Promise<{ status: 200 } | { status: 400; field: string | number | Redacted<unknown> }>
     >()
     deepEqual(await positional, { status: 200, id: 1 })
     deepEqual(await object, { status: 400, field: 'email' })
@@ -320,7 +320,9 @@ describe('asynchronous match return contracts', () => {
     })
 
     expectTypeOf(pending).toEqualTypeOf<
-      Promise<{ status: 200; id: number } | { status: 400; field: string | number }>
+      Promise<
+        { status: 200; id: number } | { status: 400; field: string | number | Redacted<unknown> }
+      >
     >()
     deepEqual(await pending, { status: 400, field: 'email' })
   })
@@ -342,7 +344,9 @@ describe('asynchronous match return contracts', () => {
 
     expectTypeOf(pending).toEqualTypeOf<
       Promise<
-        { status: 200; id: number } | { status: 400 } | { status: 403; permission: string | number }
+        | { status: 200; id: number }
+        | { status: 400 }
+        | { status: 403; permission: string | number | Redacted<unknown> }
       >
     >()
     deepEqual(await pending, { status: 403, permission: 'read' })

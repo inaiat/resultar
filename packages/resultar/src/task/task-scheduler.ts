@@ -4,7 +4,7 @@ import type { TaskClock } from './task-clock.js'
 
 /**
  * Cooperative scheduler used by `ResultTask` fibers to yield control back to the host event loop
- * when `ResultTask.yieldNow()` is called or the `yieldEvery` instruction budget is exhausted.
+ * when the `yieldEvery` instruction budget is exhausted.
  */
 export interface TaskScheduler {
   /** Yields execution until the scheduler resumes the fiber or `signal` aborts. */

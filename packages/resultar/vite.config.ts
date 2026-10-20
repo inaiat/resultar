@@ -121,6 +121,7 @@ export default defineConfig({
           'prefer-readonly-parameter-types': 'allow',
           'prefer-template': 'allow',
           'no-shadow': 'allow',
+          '@typescript-eslint/restrict-template-expressions': 'allow',
           '@typescript-eslint/strict-boolean-expressions': 'allow',
           '@typescript-eslint/return-await': 'allow',
           '@typescript-eslint/await-thenable': 'allow',
