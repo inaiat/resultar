@@ -1,5 +1,69 @@
 # resultar-di
 
+## 1.0.0
+
+### Major Changes
+
+- 37e8a0f: Prepare the next core major with plain-value Result generators and unified `ResultTask` / `ResultAsync`
+  execution boundaries in `resultar`. Preserve legacy synchronous and asynchronous safeTry
+  Result-returning generators, tap observation behavior and checker configuration.
+  Add best-effort task observation with inspect/inspectError. Retain unrelated
+  deprecated synchronous method names with equivalent replacements. Result/ResultAsync tap remains
+  best-effort observation; inspect provides the same behavior under the new name.
+  
+  Add scope-owned child fibers, structured races and timeouts, bounded task
+  collections, per-attempt scoped retries, live/virtual clocks, and parallel causes.
+  Preserve eager ResultAsync and lazy, repeatable ResultTask execution.
+  
+  Keep new static asynchronous matching compositional while preserving legacy instance terminals,
+  retain errors for optional tagged recovery handlers and preserve union-table outputs,
+  add typed Match contexts, and improve finite object-pattern exhaustiveness.
+  Preserve native Hono response unions and Fastify response contracts.
+  
+  Recognize yielded Results and task collection/fiber consumers in the checker,
+  and expose Match coverage in hover. Update companion cause inspection for
+  parallel failures. Preserve existing `resultar` exports and Async-producing methods; exhaustive Cause consumers
+  must handle the new Parallel branch, and corrected tagged recovery types retain
+  errors that optional handlers do not guarantee to recover.
+
+### Patch Changes
+
+- f8458ae: Make `ResultTask` the preferred asynchronous workflow API and unify `ResultAsync` as the in-flight `Result` returned by `task.runResult()` in `resultar`.
+  
+  - Keep tasks lazy and repeatable, with explicit `runResult`, `runExit`, `runPromise`, and `runFork` boundaries. Tasks are not thenable; `map` remains synchronous.
+  - Export `ResultAsync`, `StrictResultAsync`, and eager helpers from `resultar`. Preserve shared single execution, awaited callbacks, native Promise terminals and best-effort observation.
+  - Preserve Async-producing compatibility methods on Result and tagged errors, plus explicit Task bridges.
+  - `Result.gen` and `Result.fn` support synchronous and eager asynchronous generators with plain returns. The retained legacy `safeTry` preserves final-Result returns in both execution modes.
+  - Keep `ResultTask.fromResultAsync` as a structural bridge accepting a Result-producing thenable or signal-aware factory.
+  - HTTP request and lifecycle adapters preserve their eager public behavior using `resultar`.
+- Updated dependencies [37e8a0f]
+- Updated dependencies [b15966d]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [40b76f2]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [f8458ae]
+- Updated dependencies [c6aed8b]
+- Updated dependencies [37e8a0f]
+  - resultar@4.0.0
+
 ## 0.4.1
 
 ### Patch Changes

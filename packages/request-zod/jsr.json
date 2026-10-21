@@ -1,6 +1,6 @@
 {
   "name": "@inaiat/resultar-request-zod",
-  "version": "0.1.2",
+  "version": "1.0.0",
   "license": "MIT",
   "exports": "./src/index.ts",
   "imports": {

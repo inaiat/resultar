@@ -1,5 +1,81 @@
 # resultar-hono
 
+## 1.0.0
+
+### Major Changes
+
+- 37e8a0f: Prepare the next core major with plain-value Result generators and unified `ResultTask` / `ResultAsync`
+  execution boundaries in `resultar`. Preserve legacy synchronous and asynchronous safeTry
+  Result-returning generators, tap observation behavior and checker configuration.
+  Add best-effort task observation with inspect/inspectError. Retain unrelated
+  deprecated synchronous method names with equivalent replacements. Result/ResultAsync tap remains
+  best-effort observation; inspect provides the same behavior under the new name.
+  
+  Add scope-owned child fibers, structured races and timeouts, bounded task
+  collections, per-attempt scoped retries, live/virtual clocks, and parallel causes.
+  Preserve eager ResultAsync and lazy, repeatable ResultTask execution.
+  
+  Keep new static asynchronous matching compositional while preserving legacy instance terminals,
+  retain errors for optional tagged recovery handlers and preserve union-table outputs,
+  add typed Match contexts, and improve finite object-pattern exhaustiveness.
+  Preserve native Hono response unions and Fastify response contracts.
+  
+  Recognize yielded Results and task collection/fiber consumers in the checker,
+  and expose Match coverage in hover. Update companion cause inspection for
+  parallel failures. Preserve existing `resultar` exports and Async-producing methods; exhaustive Cause consumers
+  must handle the new Parallel branch, and corrected tagged recovery types retain
+  errors that optional handlers do not guarantee to recover.
+
+### Patch Changes
+
+- 557eb58: Accept and forward native server/router options in `createFastifyApp` (`FastifyAppOptions`, such as `logger`, `loggerInstance`, and `requestIdHeader`) and `createHonoApp` (`HonoOptions`, such as `strict`, `router`, and `getPath`) while stripping Resultar service options before underlying framework initialization.
+- f8458ae: Make `ResultTask` the preferred asynchronous workflow API and unify `ResultAsync` as the in-flight `Result` returned by `task.runResult()` in `resultar`.
+  
+  - Keep tasks lazy and repeatable, with explicit `runResult`, `runExit`, `runPromise`, and `runFork` boundaries. Tasks are not thenable; `map` remains synchronous.
+  - Export `ResultAsync`, `StrictResultAsync`, and eager helpers from `resultar`. Preserve shared single execution, awaited callbacks, native Promise terminals and best-effort observation.
+  - Preserve Async-producing compatibility methods on Result and tagged errors, plus explicit Task bridges.
+  - `Result.gen` and `Result.fn` support synchronous and eager asynchronous generators with plain returns. The retained legacy `safeTry` preserves final-Result returns in both execution modes.
+  - Keep `ResultTask.fromResultAsync` as a structural bridge accepting a Result-producing thenable or signal-aware factory.
+  - HTTP request and lifecycle adapters preserve their eager public behavior using `resultar`.
+- c6aed8b: Return `ResultAsync<A, E | ScopeError<R>>` from `ResultTask.runResult` and `task.runResult` as the official in-flight `Result` representation (`PromiseLike<Result<T, E>>`).
+  
+  - Un-deprecate `ResultAsync` and `StrictResultAsync` for consuming and transforming in-flight `Result` values before `await`, as well as in-flight value/Promise constructors (`ResultAsync.ok`, `ResultAsync.err`, `ResultAsync.unit`, `ResultAsync.fromPromise`, `ResultAsync.fromSafePromise`, `ResultAsync.try`, `okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, and `tryResultAsync`).
+  - Unify `.try` across namespaces (`Result.try`, `ResultAsync.try`, `ResultTask.try`, `ResultTask.tryPromise`) supporting both positional `(fn, catchFn)` and object `{ try, catch }` signatures, while marking `*tryCatch*` (`Result.tryCatch`, `ResultAsync.tryCatch`, `tryCatch`, `tryCatchAsync`, `tryAsync`) as `@deprecated`.
+  - Make `task.toResultAsync()`, `ResultTask.toResultAsync(task)`, and `ResultAsync.fromTask(task)` deprecated aliases of `runResult()`.
+  - Mark static workflow/orchestration methods on `ResultAsync` (`retry`, `retryOrElse`, `race`, `raceAll`, `raceFirst`, `raceWith`, `timeout`, `withResource`, `forEach`, `validateAll`, `loop`, `iterate`, `firstSuccessOf`, `all`, `combine`, `combineWithAllErrors`, `zip`) as `@deprecated` in favor of `ResultTask`.
+  - Delegate `ResultAsync` resolution transformation and consumption methods (`andThen`, `orElse`, `catchTag`, `catchTags`, `catchReason`, `catchReasons`, `as`, `unwrapReason`, `match`, `matchTags`, `matchTagsPartial`, `unwrapOr`, `unwrapOrThrow`) to `Result` and eliminate redundant wrapper allocations in `map`, `mapErr`, `filterOrElse`, `if`, `orElseSucceed`, `log`, `inspect`, `inspectError`, and `inspectBoth`.
+  - Transfer `resultar-check` `no-discard` tracking when awaiting a `ResultAsync` variable into a `Result` binding (`const res = await pending`) or passing it through `Promise.resolve(pending)` / `Promise.all([pending])`, flag bare `await pending;` statements, prevent recursion cycles on self-referential variables, and tighten `.then` / tuple index / destructuring handling.
+  - Fix `ResultAsync.then` single-callback return type inference, allow `.bind(task)` on `ResultTask` instance runners (`runResult`, `runPromise`, `runExit`, `runFork`, `toResultAsync`), and make `Redacted<T>` an opaque object type instead of intersecting with `string`.
+  - Return `ResultAsync<void, CloseError>` from `HonoApplication.close()` and `HonoServices.close()` in `resultar-hono`.
+- Updated dependencies [37e8a0f]
+- Updated dependencies [b15966d]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [40b76f2]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [bfe38b4]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [37e8a0f]
+- Updated dependencies [f8458ae]
+- Updated dependencies [c6aed8b]
+- Updated dependencies [37e8a0f]
+  - resultar@4.0.0
+  - resultar-di@1.0.0
+
 ## 0.4.1
 
 ### Patch Changes
