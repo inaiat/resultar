@@ -1,7 +1,10 @@
 # Resultar
 
-> Typed, composable error handling for TypeScript: explicit `Result` values, lazy `ResultTask`
-> workflows with typed services and scopes, awaitable `ResultAsync`, tagged errors, and
+> Typed, composable error handling for TypeScript: start with explicit `Result` values,
+> use lazy `ResultTask` for new asynchronous workflows, use `ResultAsync` for in-flight
+> `Result` values, and retain eager compatibility helpers from `resultar` at existing
+> boundaries during migration. Add typed services, scopes, clocks, retry,
+> and fibers as needed. Tagged errors and
 > compiler-backed diagnostics. Node.js 24+, ESM-only.
 
 ## Installed version first
@@ -13,12 +16,31 @@ The links below follow development on `main`; they are not a substitute for vers
 
 ## Start here
 
+- [Gradual adoption](https://raw.githubusercontent.com/inaiat/resultar/main/docs/gradual-adoption.md): start with Result, use ResultTask for new async work, bridge existing eager APIs explicitly, and add Clock, retry, and fibers when needed.
 - [Agent skill](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/SKILL.md): opinionated defaults and pointers for coding agents.
 - [Core package README](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): model, ResultTask, services, scopes, decision guide.
 - [Full guide](https://raw.githubusercontent.com/inaiat/resultar/main/DOCUMENTATION.md): complete API map and recipes.
 
+`Result<T, E>` models a success value and expected errors. `ResultTask<T, E, R>` additionally
+tracks unresolved requirements in `R`. These models coexist: adopting tasks does not require
+rewriting existing Result helpers, eager adapters, or the whole application. Preserve existing
+execution contracts when bridging between them.
+
+`ResultAsync` and `StrictResultAsync` are the official in-flight `Result` types (returned by
+`task.runResult()`) and are exported from `resultar`,
+together with their eager factories and compatibility helpers.
+No additional package installation is needed. Task is non-thenable: use explicit
+`runResult`, `runExit`, `runPromise`, or `runFork` boundaries even when `R = never`.
+Task `map` is synchronous; compose Promise steps with `andThen` and `tryPromise`.
+`ResultTask.fromResultAsync(factory)` defers an eager adapter until each run;
+`ResultAsync.fromTask(task)` is a deprecated alias of `task.runResult()`.
+Core `Result.gen` and `Result.fn` accept sync and async generators with plain return
+values; legacy `safeTry` preserves the final Result. Existing Async imports
+remain supported in `resultar` when migrating eager consumers.
+
 ## Packages
 
+- [resultar](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): core `Result`, lazy `ResultTask`, in-flight `ResultAsync`, eager factories, generators, and deprecated orchestration APIs.
 - [resultar-di](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/README.md): services, typed composition, lifetimes, overrides, named registration and framework adapter APIs.
 - [resultar-hono](https://raw.githubusercontent.com/inaiat/resultar/main/packages/hono/README.md): Hono bindings, one scope per response, CloseError.
 - [resultar-fastify](https://raw.githubusercontent.com/inaiat/resultar/main/packages/fastify/README.md): native plugins, application/request services, cancellation and cleanup.
@@ -27,14 +49,14 @@ The links below follow development on `main`; they are not a substitute for vers
 
 ## Examples
 
-- [Core cookbook](https://raw.githubusercontent.com/inaiat/resultar/main/examples/resultar/README.md) including the [application lifecycle](https://raw.githubusercontent.com/inaiat/resultar/main/examples/resultar/src/application-lifecycle.ts) (database, session, HTTP scope ordering).
+- [Core cookbook](https://raw.githubusercontent.com/inaiat/resultar/main/examples/cookbook/README.md) including the [application lifecycle](https://raw.githubusercontent.com/inaiat/resultar/main/examples/cookbook/src/application-lifecycle.ts) (database, session, HTTP scope ordering).
 - [Hono app](https://raw.githubusercontent.com/inaiat/resultar/main/examples/hono/README.md): matching service classes, AppHono inferred in main.ts and native routes.
 - [request](https://raw.githubusercontent.com/inaiat/resultar/main/examples/request/README.md), [check](https://raw.githubusercontent.com/inaiat/resultar/main/examples/check/README.md).
 - [Fastify app](https://raw.githubusercontent.com/inaiat/resultar/main/examples/fastify/README.md): class services with requires, function-based health, TypeBox routes and request.services inferred in main.ts.
 
 ## Design records (history, not usage truth)
 
-- [RFC 0001](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0001-result-task-core.md): ResultTask architecture. Phases 0-2 done; Phase 3 partial (no fibers, race, timeout, or scheduler on ResultTask).
+- [RFC 0001](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0001-result-task-core.md): ResultTask architecture. Design history; see current package README and the next-major adoption guide for implemented APIs.
 - [RFC 0002](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0002-di-lifetimes-scopes.md): DI lifetimes and request scopes (implemented).
 - [RFC 0003](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0003-phase-3-remainder-and-validation.md): remaining work tracker.
 
@@ -42,3 +64,5 @@ The links below follow development on `main`; they are not a substitute for vers
 
 Package READMEs override `DOCUMENTATION.md`; both override the
 skill; RFCs are design history. The installed `node_modules` types always win over any document.
+
+- [v4 migration](https://raw.githubusercontent.com/inaiat/resultar/main/docs/migrations/v4.md): Task-first workflows, deprecated eager Async compatibility, Match contexts, structured concurrency and policy clocks.

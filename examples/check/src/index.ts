@@ -1,13 +1,16 @@
 import {
   createTaggedError,
   err,
+  Match,
   ok,
   okAsync,
+  pipe,
   Result,
+  ResultAsync,
   ResultTask,
+  runSync,
   safeTry,
   tryResult,
-  type ResultAsync,
   type ResultTaskScope,
   type StrictResult,
 } from "resultar";
@@ -300,7 +303,7 @@ export const noUselessRecoveryExample = (): Result<User, never> =>
 loadUserTask("ignored-task");
 
 // resultar/no-promise-in-result-success: ResultTask.map stores the callback
-// result as its success value. Use flatMap/andThen with tryPromise instead of
+// result as its success value. Use andThen with tryPromise instead of
 // creating a ResultTask<Promise<...>>.
 export const noPromiseInResultTaskSuccessExample = (): ResultTask<Promise<User>, FetchUserError> =>
   loadUserTask("promise-in-task").map(async (user) => user);
@@ -310,18 +313,18 @@ export const noPromiseInResultTaskSuccessExample = (): ResultTask<Promise<User>,
 export declare const unknownResultTask: ResultTask<User, unknown>;
 
 // resultar/prefer-and-then: map should return plain values, not another
-// ResultTask. Use andThen/flatMap for lazy fallible composition.
+// ResultTask. Use andThen for lazy fallible composition.
 export const preferResultTaskAndThenExample = () =>
-  loadUserTask("prefer-task-and-then").map(() => ResultTask.succeed("nested"));
+  loadUserTask("prefer-task-and-then").map(() => ResultTask.ok("nested"));
 
 // resultar/prefer-map: andThen is unnecessary when the callback only creates a
 // successful ResultTask. A direct map keeps the transformation non-fallible.
 export const preferResultTaskMapExample = () =>
-  loadUserTask("prefer-task-map").andThen((user) => ResultTask.succeed(user.email));
+  loadUserTask("prefer-task-map").andThen((user) => ResultTask.ok(user.email));
 
-// resultar/no-useless-recovery: catchAll cannot recover an infallible task.
+// resultar/no-useless-recovery: orElse cannot recover an infallible task.
 export const noUselessResultTaskRecoveryExample = () =>
-  ResultTask.succeed("infallible-task").catchAll(() => ResultTask.succeed("unreachable"));
+  ResultTask.ok("infallible-task").orElse(() => ResultTask.ok("unreachable"));
 
 // resultar/unsafe-result-type-assertion: narrowing a ResultTask error channel
 // discards possible failures from the type system.
@@ -330,9 +333,9 @@ export const unsafeResultTaskTypeAssertionExample = (
 ): ResultTask<User, SaveUserError> => task as ResultTask<User, SaveUserError>;
 
 // resultar/yield-star-in-result-task-gen: ResultTask.gen only composes tasks
-// and services through yield*. A plain yield is rejected as an unsupported
-// runtime value.
+// and services through yield*. A plain yield is rejected at compile time and runtime.
 export const yieldStarInResultTaskGenExample = () =>
+  // @ts-expect-error plain yield is rejected by ResultTaskYieldable; use yield* instead.
   ResultTask.gen(function* () {
     yield loadUserTask("plain-yield");
 
@@ -354,7 +357,7 @@ export const unscopedAcquireReleaseExample = () =>
   ResultTask.gen(function* () {
     yield* ResultTask.acquireRelease({
       acquire: loadUserTask("unscoped"),
-      release: () => ResultTask.succeed(undefined),
+      release: () => ResultTask.ok(undefined),
     });
 
     return { email: "unreachable@example.com", id: "unreachable" };
@@ -436,6 +439,7 @@ export const obsoleteWildcardSuppression = 42;
 export const unknownRuleSuppression = "unknown-rule";
 
 // resultar/yield-star-in-result-task-gen also recognizes parameterized fn bodies.
+// @ts-expect-error plain yield is rejected by ResultTaskYieldable; use yield* instead.
 export const yieldStarInResultTaskFnExample = ResultTask.fn(function* (id: string) {
   yield loadUserTask(id);
 
@@ -465,3 +469,179 @@ export const unscopedDisposableFnExample = ResultTask.fn(function* () {
 
   return session.id;
 });
+
+// resultar/prefer-or-else-succeed: orElse that ignores the error and
+// returns an infallible Ok fallback is clearer as orElseSucceed.
+export const preferOrElseSucceedExample = (): Result<User, never> =>
+  saveUser("or-else-succeed").orElse(() => ok({ email: "fallback@example.com", id: "fallback" }));
+
+// resultar/prefer-tap: map/andThen that performs side effects and
+// returns the input unchanged should use inspect (on sync Result) or tap (on ResultTask).
+export const preferTapExample = (): ResultTask<User, FetchUserError> =>
+  loadUserTask("prefer-tap").map((user) => {
+    inspect(user);
+    return user;
+  });
+
+// resultar/prefer-tap-error: mapErr/orElse that performs side effects
+// and forwards the error unchanged should use inspectError or tapError.
+export const preferTapErrorExample = (): ResultTask<User, FetchUserError> =>
+  loadUserTask("prefer-tap-error").mapErr((error) => {
+    inspect(error);
+    return error;
+  });
+
+// resultar/prefer-as-void: map(() => undefined) or map(() => void ...) is
+// clearer as asVoid().
+export const preferAsVoidExample = (): Result<void, SaveUserError> =>
+  saveUser("prefer-as-void").map(() => undefined);
+
+// resultar/prefer-filter-or-else: andThen that only validates a
+// predicate on the input and returns it unchanged or fails should use filterOrElse.
+export const preferFilterOrElseExample = (): Result<User, SaveUserError | ParseUserError> =>
+  saveUser("prefer-filter-or-else").andThen((user) =>
+    user.id.length > 0 ? ok(user) : err(new ParseUserError()),
+  );
+
+// resultar/prefer-acquire-disposable: acquireRelease whose release callback
+// only calls [Symbol.dispose]() or [Symbol.asyncDispose]() should use acquireDisposable.
+export const preferAcquireDisposableExample = () =>
+  ResultTask.scoped(
+    ResultTask.acquireRelease({
+      acquire: ResultTask.sync(() => ({ id: "disposable", [Symbol.dispose]: (): void => {} })),
+      release: (resource) =>
+        ResultTask.sync(() => {
+          resource[Symbol.dispose]();
+        }),
+    }),
+  );
+
+// resultar/no-fn-iife: immediately invoking Result.fn(...)() or ResultTask.fn(...)()
+// as an IIFE should use Result.gen or ResultTask.gen directly.
+export const noFnIifeExample = () =>
+  ResultTask.fn(function* () {
+    return yield* loadUserTask("fn-iife");
+  })();
+
+// resultar/require-return-yield-star: terminal error/defect yields inside
+// generators should use `return yield*` so TypeScript narrows control flow.
+export const requireReturnYieldStarExample = () =>
+  ResultTask.gen(function* () {
+    const user = yield* loadUserTask("terminal-yield");
+    if (user.id === "") {
+      yield* FetchUserError.taskErr({ id: "empty" });
+    }
+    return user;
+  });
+
+// resultar/no-unnecessary-err-wrap-in-gen: synchronous Result and TaggedError
+// instances are directly yieldable inside generators without ResultTask.fromResult or err(...).
+export const noUnnecessaryErrWrapInGenExample = () =>
+  ResultTask.gen(function* () {
+    return yield* ResultTask.fromResult(saveUser("unnecessary-from-result"));
+  });
+
+// resultar/unnecessary-pipe: single-argument pipe(x) and zero-argument x.pipe()
+// are no-ops and can be replaced with the receiver directly.
+export const unnecessaryPipeExample = (): Result<User, SaveUserError> =>
+  pipe(saveUser("unnecessary-pipe"));
+
+// resultar/no-run-inside-gen: do not execute task runners or unsafe unwraps
+// inside generators; compose values with yield* instead.
+export const noRunInsideGenExample = () =>
+  ResultTask.gen(function* () {
+    const user = runSync(saveUser("run-inside-gen"));
+    const bridged = ResultAsync.fromTask(loadUserTask("bridge-inside-gen"));
+    return user.id + (yield* ResultTask.fromResultAsync(bridged)).id;
+  });
+
+// resultar/no-discard: MatchMatcher builders must be finalized with exhaustive/orElse/option/result.
+export const discardedMatchMatcherExample = (role: string): void => {
+  Match.value(role).when("admin", () => "allowed");
+};
+
+// resultar/typed-catch-mapper: ResultTask.tryPromise without catch leaves E as unknown.
+export const untypedResultTaskTryPromiseExample = () =>
+  ResultTask.tryPromise(() => fetchUser("untyped-try-promise"));
+
+// resultar/prefer-map: curried ResultTask.andThen in pipe that only wraps a plain value in ResultTask.ok.
+export const curriedPreferMapExample = (): ResultTask<string, FetchUserError> =>
+  pipe(
+    loadUserTask("curried-prefer-map"),
+    ResultTask.andThen((user) => ResultTask.ok(user.email)),
+  );
+
+// resultar/no-promise-in-result-success: ResultTask.ok with a Promise wraps Promise<T> in the success channel.
+export const promiseInResultTaskSucceedExample = (): ResultTask<Promise<User>, never> =>
+  ResultTask.ok(fetchUser("promise-in-succeed"));
+
+// resultar/prefer-and-then: curried ResultTask.map in pipe that returns a nested ResultTask.
+export const curriedPreferAndThenExample = () =>
+  pipe(
+    loadUserTask("curried-prefer-and-then"),
+    ResultTask.map(() => ResultTask.ok("nested")),
+  );
+
+// resultar/prefer-map-err: curried ResultTask.orElse in pipe that only replaces the error with ResultTask.err.
+export const curriedPreferMapErrExample = (): ResultTask<User, ParseUserError> =>
+  pipe(
+    loadUserTask("curried-prefer-map-err"),
+    ResultTask.orElse(() => ResultTask.err(new ParseUserError())),
+  );
+
+// resultar/prefer-catch-reason: curried Result.catchTag in pipe that branches on error.reason._tag.
+export const curriedPreferCatchReasonExample = () =>
+  pipe(
+    providerFailure,
+    Result.catchTag("ProviderFailure", (error) =>
+      error.reason._tag === "Unavailable" ? saveUser("fallback") : providerFailure,
+    ),
+  );
+
+// resultar/prefer-or-else-succeed: curried Result.orElse in pipe that ignores the error and returns ok(...).
+export const curriedPreferOrElseSucceedExample = (): Result<User, never> =>
+  pipe(
+    saveUser("curried-or-else-succeed"),
+    Result.orElse(() => ok({ email: "fallback@example.com", id: "fallback" })),
+  );
+
+// resultar/prefer-tap: curried ResultTask.map in pipe that performs side effects and returns the input unchanged.
+export const curriedPreferTapExample = (): ResultTask<User, FetchUserError> =>
+  pipe(
+    loadUserTask("curried-prefer-tap"),
+    ResultTask.map((user) => {
+      inspect(user);
+      return user;
+    }),
+  );
+
+// resultar/prefer-tap-error: curried ResultTask.mapErr in pipe that performs side effects and returns the error unchanged.
+export const curriedPreferTapErrorExample = (): ResultTask<User, FetchUserError> =>
+  pipe(
+    loadUserTask("curried-prefer-tap-error"),
+    ResultTask.mapErr((error) => {
+      inspect(error);
+      return error;
+    }),
+  );
+
+// resultar/prefer-as-void: curried Result.map(() => undefined) in pipe.
+export const curriedPreferAsVoidExample = (): Result<void, SaveUserError> =>
+  pipe(
+    saveUser("curried-prefer-as-void"),
+    Result.map(() => undefined),
+  );
+
+// resultar/prefer-filter-or-else: curried Result.andThen in pipe that only validates a predicate on the input.
+export const curriedPreferFilterOrElseExample = (): Result<User, SaveUserError | ParseUserError> =>
+  pipe(
+    saveUser("curried-prefer-filter-or-else"),
+    Result.andThen((user) => (user.id.length > 0 ? ok(user) : err(new ParseUserError()))),
+  );
+
+// resultar/no-useless-recovery: curried ResultTask.orElse in pipe on an infallible task.
+export const curriedNoUselessRecoveryExample = () =>
+  pipe(
+    ResultTask.ok("curried-infallible"),
+    ResultTask.orElse(() => ResultTask.ok("unreachable")),
+  );

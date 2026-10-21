@@ -88,6 +88,15 @@ try {
  const response = await native.request("/", undefined, {suffix: "!"});
  if (await response.text() !== "42!") throw new Error("Native Hono bindings were replaced");
 } finally { const closed = await di.close(); if (closed.isErr()) throw closed.error; }
+
+const optionsApp = createHonoApp({ services, startup, strict: false }, (router) => {
+ router.get("/items", (c) => c.text(String(c.env.answer)));
+});
+try {
+ const response = await optionsApp.request("/items/");
+ if (response.status !== 200 || await response.text() !== "42") throw new Error("Packed Hono options were not forwarded");
+} finally { const closed = await optionsApp.close(); if (closed.isErr()) throw closed.error; }
+
 `,
   );
   execFileSync(

@@ -101,6 +101,17 @@ void test("completes Resultar options alongside standard plugin properties", asy
     "noUnknownTaskRequirements",
     "unusedSuppression",
     "ignoreFilePatterns",
+    "preferOrElseSucceed",
+    "preferTap",
+    "preferTapError",
+    "preferAsVoid",
+    "preferFilterOrElse",
+    "preferAcquireDisposable",
+    "noFnIife",
+    "requireReturnYieldStar",
+    "noUnnecessaryErrWrapInGen",
+    "unnecessaryPipe",
+    "noRunInsideGen",
   ]) {
     assert.ok(items.includes(option), `Missing Resultar completion: ${option}`);
   }
@@ -137,6 +148,28 @@ void test("accepts combined TypeScript and Resultar configuration with JSONC syn
   );
 });
 
+void test("accepts diagnostic severity shorthand and wildcard overrides", async () => {
+  assert.deepEqual(
+    await validate(`{
+      "compilerOptions": {
+        "plugins": [{
+          "name": "resultar-check",
+          "diagnosticSeverity": "error",
+          "noUnknownTaskRequirements": "error",
+          "unusedSuppression": "off",
+          "overrides": [{
+            "include": ["src/**/*.test.ts"],
+            "options": {
+              "diagnosticSeverity": { "*": "off", "no-discard": "error" }
+            }
+          }]
+        }]
+      }
+    }`),
+    [],
+  );
+});
+
 void test("rejects invalid standard compiler and project options", async () => {
   await Promise.all(
     [
@@ -160,6 +193,7 @@ void test("rejects invalid Resultar severities and file patterns", async () => {
     [
       '"noUnknownTaskRequirements": "fatal"',
       '"unusedSuppression": "fatal"',
+      '"diagnosticSeverity": "fatal"',
       '"ignoreFilePatterns": 42',
     ].map(async (option) => {
       const diagnostics = await validate(

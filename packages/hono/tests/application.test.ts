@@ -1,6 +1,6 @@
 /* eslint-disable unicorn/no-await-expression-member, unicorn/no-null */
 import { expect, expectTypeOf, test } from "vite-plus/test";
-import { ResultTask, unit, type Result } from "resultar";
+import { ResultTask, type ResultAsync } from "resultar";
 import { createModule, resource, Service, service } from "resultar-di";
 import type { Hono } from "hono";
 import { createHonoApp, type HonoApplication, type InferRequestServices } from "../src/index.js";
@@ -22,7 +22,7 @@ test("infers selected readonly services from applications and factories for sepa
     InferRequestServices<ReturnType<typeof createApplication>>
   >().toEqualTypeOf<Bindings>();
   expectTypeOf(app).toExtend<HonoApplication>();
-  expectTypeOf<ReturnType<typeof app.close>>().toEqualTypeOf<Promise<Result<void, never>>>();
+  expectTypeOf<ReturnType<typeof app.close>>().toEqualTypeOf<ResultAsync<void, never>>();
   expect(app).not.toHaveProperty("serviceTypes");
   expect(await (await app.request("/")).json()).toEqual({ answer: 42 });
   await app.close();
@@ -80,7 +80,10 @@ const checkInferredTypes = () => {
   const legacy: HonoApplication = {
     fetch: async () => new Response(),
     request: async () => new Response(),
-    close: async () => unit(),
+    close: () =>
+      ResultTask.sync(() => {
+        /* Type-only configuration. */
+      }).runResult(),
   };
   expectTypeOf(legacy).toExtend<HonoApplication>();
   const createApplication = (answer: number) =>
@@ -271,7 +274,7 @@ test("provider errors reject fetch and cleanup errors remain typed at close", as
     (r) => r.get("/", (c) => c.body(null, 204)),
   );
   await app.request("/");
-  expectTypeOf(app.close()).toEqualTypeOf<Promise<Result<void, "cleanup">>>();
+  expectTypeOf(app.close()).toEqualTypeOf<ResultAsync<void, "cleanup">>();
   const closed = await app.close();
   expect(closed.isErr()).toBe(true);
   if (closed.isErr()) expect(closed.error).toBe("cleanup");
@@ -348,3 +351,37 @@ const checkTypes = () => {
   );
 };
 expectTypeOf(checkTypes).toBeFunction();
+
+const checkHonoPathOptions = () => {
+  const services = createModule().value("answer", 42);
+  createHonoApp(
+    {
+      services,
+      bindings: ["answer"],
+      getPath: (_request, options) => {
+        expectTypeOf(options?.env).toEqualTypeOf<{ readonly answer: number } | undefined>();
+        return "/";
+      },
+    },
+    () => {
+      /* Type-only configuration. */
+    },
+  );
+};
+expectTypeOf(checkHonoPathOptions).toBeFunction();
+
+test("forwards HonoOptions to the underlying Hono router without leaking DI options", async () => {
+  const services = createModule().value("answer", 42);
+  const app = createHonoApp({ services, bindings: ["answer"], strict: false }, (router) => {
+    expect(router).not.toHaveProperty("services");
+    expect(router).not.toHaveProperty("bindings");
+    router.get("/items", (c) => c.json({ answer: c.env.answer }));
+  });
+  const withoutSlash = await app.request("/items");
+  const withSlash = await app.request("/items/");
+  expect(withoutSlash.status).toBe(200);
+  expect(withSlash.status).toBe(200);
+  expect(await withoutSlash.json()).toEqual({ answer: 42 });
+  expect(await withSlash.json()).toEqual({ answer: 42 });
+  await app.close();
+});

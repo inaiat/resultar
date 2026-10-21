@@ -1,5 +1,5 @@
 /* eslint-disable unicorn/no-await-expression-member */
-import { ResultTask, type Result } from "resultar";
+import { ResultTask, type ResultAsync } from "resultar";
 import { expect, expectTypeOf, test } from "vite-plus/test";
 import {
   createHonoApp,
@@ -191,6 +191,6 @@ const checkTypes = () => {
   const app = createHonoApp({ services: createModule().singleton(cleanup) }, () => {
     /* Types only. */
   });
-  expectTypeOf<ReturnType<typeof app.close>>().toEqualTypeOf<Promise<Result<void, "cleanup">>>();
+  expectTypeOf<ReturnType<typeof app.close>>().toEqualTypeOf<ResultAsync<void, "cleanup">>();
 };
 expectTypeOf(checkTypes).toBeFunction();

@@ -1,5 +1,12 @@
 # Awilix vs Resultar composition root
 
+> Historical consumer review from v3. The eager `ResultAsync` / `StrictResultAsync`
+> examples and original roadmap below describe that migration. In v4, prefer
+> `ResultTask` for new asynchronous workflows (including those without service
+> requirements), while `ResultAsync` / `StrictResultAsync` remain supported for
+> in-flight results and existing eager contracts. See [current adoption guidance](gradual-adoption.md)
+> and [v4 compatibility notes](migrations/v4.md).
+
 - Status: Note
 - Date: 2026-09-05
 - Scope: DX of replacing Awilix in Resultar consumers
@@ -7,7 +14,7 @@
 
 Review after RFC 0001: replacing the container still requires no DI API. Lifecycle,
 however, is a concrete case for `ResultTask.acquireRelease` + `scoped`, now implemented as
-a slice of Phase 3. The lifecycle example lives in `examples/resultar/src/application-lifecycle.ts`;
+a slice of Phase 3. The lifecycle example lives in `examples/cookbook/src/application-lifecycle.ts`;
 adoption by the real private adapters is still pending.
 
 ## Summary

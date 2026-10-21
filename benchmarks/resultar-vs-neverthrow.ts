@@ -6,6 +6,8 @@ import { deepStrictEqual, fail, strictEqual } from 'node:assert'
 
 import * as resultar from 'resultar'
 
+const { ResultTask } = resultar
+
 type InspectableResult = {
   readonly error?: unknown
   readonly value?: unknown
@@ -59,6 +61,7 @@ const resultarErr = resultar.err<number, number>(errValue)
 
 const neverthrowRecoveredOk = neverthrow.ok<number, number>(errValue)
 const resultarRecoveredOk = resultar.ok<number, number>(errValue)
+const resultarRecoveredTask = ResultTask.ok<number, number>(errValue)
 
 const neverthrowJsonParse = neverthrow.fromThrowable(JSON.parse, () => 'JSON parse error')
 const resultarJsonParse = resultar.fromThrowable(JSON.parse, () => 'JSON parse error')
@@ -74,12 +77,15 @@ const asyncCanBeThrown = async (value: number): Promise<number> => {
 }
 
 const asyncNeverthrowOddNumber = neverthrow.fromAsyncThrowable(asyncCanBeThrown, String)
-const asyncResultarOddNumber = resultar.fromThrowableAsync(asyncCanBeThrown, String)
+const asyncResultarOddNumber = (value: number): resultar.ResultTask<number, string> =>
+  ResultTask.tryPromise({ try: () => asyncCanBeThrown(value), catch: String })
 
 const doubleAsyncNeverthrow = (value: number): neverthrow.ResultAsync<number, number> =>
   neverthrow.okAsync(value * 2)
-const doubleAsyncResultar = (value: number): resultar.ResultAsync<number, number> =>
-  resultar.okAsync(value * 2)
+const doubleAsyncResultar = (value: number): resultar.ResultTask<number, number> =>
+  ResultTask.ok(value * 2)
+const doublePromiseResultar = (value: number): resultar.ResultTask<number, string> =>
+  ResultTask.tryPromise({ try: () => doublePromise(value), catch: String })
 
 const neverthrowAllOkList = [neverthrow.ok(1), neverthrow.ok(2), neverthrow.ok(3)]
 const resultarAllOkList = [resultar.ok(1), resultar.ok(2), resultar.ok(3)]
@@ -106,14 +112,38 @@ const assertBenchmarkBehavior = async (): Promise<void> => {
   assertErrValue(neverthrowErr.map(double), errValue)
   assertErrValue(resultarErr.map(double), errValue)
 
-  assertOkValue(neverthrowErr.orElse(() => neverthrowRecoveredOk), errValue)
-  assertOkValue(resultarErr.orElse(() => resultarRecoveredOk), errValue)
-  assertOkValue(neverthrowOk.andThen((value) => neverthrow.ok(value * 2)), 20)
-  assertOkValue(resultarOk.andThen((value) => resultar.ok(value * 2)), 20)
-  strictEqual(neverthrowOk.match(double, (error) => error), 20)
-  strictEqual(resultarOk.match(double, (error) => error), 20)
-  strictEqual(neverthrowErr.match(double, (error) => error), errValue)
-  strictEqual(resultarErr.match(double, (error) => error), errValue)
+  assertOkValue(
+    neverthrowErr.orElse(() => neverthrowRecoveredOk),
+    errValue,
+  )
+  assertOkValue(
+    resultarErr.orElse(() => resultarRecoveredOk),
+    errValue,
+  )
+  assertOkValue(
+    neverthrowOk.andThen((value) => neverthrow.ok(value * 2)),
+    20,
+  )
+  assertOkValue(
+    resultarOk.andThen((value) => resultar.ok(value * 2)),
+    20,
+  )
+  strictEqual(
+    neverthrowOk.match(double, (error) => error),
+    20,
+  )
+  strictEqual(
+    resultarOk.match(double, (error) => error),
+    20,
+  )
+  strictEqual(
+    neverthrowErr.match(double, (error) => error),
+    errValue,
+  )
+  strictEqual(
+    resultarErr.match(double, (error) => error),
+    errValue,
+  )
 
   assertOkValue(neverthrow.Result.combine(neverthrowAllOkList), [1, 2, 3])
   assertOkValue(resultar.Result.combine(resultarAllOkList), [1, 2, 3])
@@ -126,39 +156,85 @@ const assertBenchmarkBehavior = async (): Promise<void> => {
   assertErrValue(resultarJsonParse('boom'), 'JSON parse error')
 
   assertOkValue(await neverthrow.okAsync(okValue), okValue)
-  assertOkValue(await resultar.okAsync(okValue), okValue)
+  assertOkValue(await ResultTask.runResult(ResultTask.ok(okValue)), okValue)
   assertErrValue(await neverthrow.errAsync(errValue), errValue)
-  assertErrValue(await resultar.errAsync(errValue), errValue)
+  assertErrValue(await ResultTask.runResult(ResultTask.err(errValue)), errValue)
 
   assertOkValue(await neverthrow.okAsync(okValue).map(double), 20)
-  assertOkValue(await resultar.okAsync(okValue).map(double), 20)
+  assertOkValue(await ResultTask.runResult(ResultTask.ok(okValue).map(double)), 20)
   assertErrValue(await neverthrow.errAsync<number, number>(errValue).map(double), errValue)
-  assertErrValue(await resultar.errAsync<number, number>(errValue).map(double), errValue)
+  assertErrValue(
+    await ResultTask.runResult(ResultTask.err<number, number>(errValue).map(double)),
+    errValue,
+  )
 
   assertOkValue(await neverthrow.okAsync(okValue).andThen(doubleAsyncNeverthrow), 20)
-  assertOkValue(await resultar.okAsync(okValue).andThen(doubleAsyncResultar), 20)
+  assertOkValue(await ResultTask.runResult(ResultTask.ok(okValue).andThen(doubleAsyncResultar)), 20)
   assertErrValue(
     await neverthrow.errAsync<number, number>(errValue).andThen(doubleAsyncNeverthrow),
     errValue,
   )
-  assertErrValue(await resultar.errAsync<number, number>(errValue).andThen(doubleAsyncResultar), errValue)
+  assertErrValue(
+    await ResultTask.runResult(
+      ResultTask.err<number, number>(errValue).andThen(doubleAsyncResultar),
+    ),
+    errValue,
+  )
 
-  assertOkValue(await neverthrow.errAsync<number, number>(errValue).orElse(() => neverthrowRecoveredOk), errValue)
-  assertOkValue(await resultar.errAsync<number, number>(errValue).orElse(() => resultarRecoveredOk), errValue)
+  assertOkValue(
+    await neverthrow.errAsync<number, number>(errValue).orElse(() => neverthrowRecoveredOk),
+    errValue,
+  )
+  assertOkValue(
+    await ResultTask.runResult(
+      ResultTask.err<number, number>(errValue).orElse(() => resultarRecoveredTask),
+    ),
+    errValue,
+  )
 
   assertOkValue(await neverthrowOk.asyncMap(doublePromise), 20)
-  assertOkValue(await resultarOk.asyncMap(doublePromise), 20)
+  assertOkValue(
+    await ResultTask.runResult(ResultTask.fromResult(resultarOk).andThen(doublePromiseResultar)),
+    20,
+  )
   assertErrValue(await neverthrowErr.asyncMap(doublePromise), errValue)
-  assertErrValue(await resultarErr.asyncMap(doublePromise), errValue)
+  assertErrValue(
+    await ResultTask.runResult(ResultTask.fromResult(resultarErr).andThen(doublePromiseResultar)),
+    errValue,
+  )
   assertOkValue(await neverthrowOk.asyncAndThen(doubleAsyncNeverthrow), 20)
-  assertOkValue(await resultarOk.asyncAndThen(doubleAsyncResultar), 20)
+  assertOkValue(
+    await ResultTask.runResult(ResultTask.fromResult(resultarOk).andThen(doubleAsyncResultar)),
+    20,
+  )
   assertErrValue(await neverthrowErr.asyncAndThen(doubleAsyncNeverthrow), errValue)
-  assertErrValue(await resultarErr.asyncAndThen(doubleAsyncResultar), errValue)
+  assertErrValue(
+    await ResultTask.runResult(ResultTask.fromResult(resultarErr).andThen(doubleAsyncResultar)),
+    errValue,
+  )
 
   assertOkValue(await asyncNeverthrowOddNumber(42), 42)
-  assertOkValue(await asyncResultarOddNumber(42), 42)
+  assertOkValue(await ResultTask.runResult(asyncResultarOddNumber(42)), 42)
   assertErrValue(await asyncNeverthrowOddNumber(3), 'Error: odd')
-  assertErrValue(await asyncResultarOddNumber(3), 'Error: odd')
+  assertErrValue(await ResultTask.runResult(asyncResultarOddNumber(3)), 'Error: odd')
+
+  let executions = 0
+  const lazyPromiseTask = ResultTask.tryPromise({
+    try: async () => {
+      executions += 1
+      return okValue
+    },
+    catch: String,
+  })
+  strictEqual(executions, 0)
+  assertOkValue(await ResultTask.runResult(lazyPromiseTask), okValue)
+  assertOkValue(await ResultTask.runResult(lazyPromiseTask), okValue)
+  strictEqual(executions, 2)
+  assertErrValue(
+    await ResultTask.runResult(ResultTask.fromResult(resultarErr).andThen(() => lazyPromiseTask)),
+    errValue,
+  )
+  strictEqual(executions, 2)
 }
 
 const tests: Tests = {
@@ -290,108 +366,124 @@ const tests: Tests = {
     consume(resultarJsonParse('boom'))
   },
 
-  async 'result-async/okAsync await/neverthrow'() {
+  async 'result-task/ok execution/neverthrow'() {
     consume(await neverthrow.okAsync(okValue))
   },
 
-  async 'result-async/okAsync await/resultar'() {
-    consume(await resultar.okAsync(okValue))
+  async 'result-task/ok execution/resultar'() {
+    consume(await ResultTask.runResult(ResultTask.ok(okValue)))
   },
 
-  async 'result-async/errAsync await/neverthrow'() {
+  async 'result-task/err execution/neverthrow'() {
     consume(await neverthrow.errAsync(errValue))
   },
 
-  async 'result-async/errAsync await/resultar'() {
-    consume(await resultar.errAsync(errValue))
+  async 'result-task/err execution/resultar'() {
+    consume(await ResultTask.runResult(ResultTask.err(errValue)))
   },
 
-  async 'result-async/map on Ok/neverthrow'() {
+  async 'result-task/map on Ok/neverthrow'() {
     consume(await neverthrow.okAsync(okValue).map(double))
   },
 
-  async 'result-async/map on Ok/resultar'() {
-    consume(await resultar.okAsync(okValue).map(double))
+  async 'result-task/map on Ok/resultar'() {
+    consume(await ResultTask.runResult(ResultTask.ok(okValue).map(double)))
   },
 
-  async 'result-async/map on Err/neverthrow'() {
+  async 'result-task/map on Err/neverthrow'() {
     consume(await neverthrow.errAsync<number, number>(errValue).map(double))
   },
 
-  async 'result-async/map on Err/resultar'() {
-    consume(await resultar.errAsync<number, number>(errValue).map(double))
+  async 'result-task/map on Err/resultar'() {
+    consume(await ResultTask.runResult(ResultTask.err<number, number>(errValue).map(double)))
   },
 
-  async 'result-async/andThen on Ok/neverthrow'() {
+  async 'result-task/andThen on Ok/neverthrow'() {
     consume(await neverthrow.okAsync(okValue).andThen(doubleAsyncNeverthrow))
   },
 
-  async 'result-async/andThen on Ok/resultar'() {
-    consume(await resultar.okAsync(okValue).andThen(doubleAsyncResultar))
+  async 'result-task/andThen on Ok/resultar'() {
+    consume(await ResultTask.runResult(ResultTask.ok(okValue).andThen(doubleAsyncResultar)))
   },
 
-  async 'result-async/andThen on Err/neverthrow'() {
+  async 'result-task/andThen on Err/neverthrow'() {
     consume(await neverthrow.errAsync<number, number>(errValue).andThen(doubleAsyncNeverthrow))
   },
 
-  async 'result-async/andThen on Err/resultar'() {
-    consume(await resultar.errAsync<number, number>(errValue).andThen(doubleAsyncResultar))
+  async 'result-task/andThen on Err/resultar'() {
+    consume(
+      await ResultTask.runResult(
+        ResultTask.err<number, number>(errValue).andThen(doubleAsyncResultar),
+      ),
+    )
   },
 
-  async 'result-async/orElse on Err/neverthrow'() {
+  async 'result-task/orElse on Err/neverthrow'() {
     consume(await neverthrow.errAsync<number, number>(errValue).orElse(() => neverthrowRecoveredOk))
   },
 
-  async 'result-async/orElse on Err/resultar'() {
-    consume(await resultar.errAsync<number, number>(errValue).orElse(() => resultarRecoveredOk))
+  async 'result-task/orElse on Err/resultar'() {
+    consume(
+      await ResultTask.runResult(
+        ResultTask.err<number, number>(errValue).orElse(() => resultarRecoveredTask),
+      ),
+    )
   },
 
-  async 'result/asyncMap on Ok/neverthrow'() {
+  async 'result-to-task/async map on Ok/neverthrow'() {
     consume(await neverthrowOk.asyncMap(doublePromise))
   },
 
-  async 'result/asyncMap on Ok/resultar'() {
-    consume(await resultarOk.asyncMap(doublePromise))
+  async 'result-to-task/async map on Ok/resultar'() {
+    consume(
+      await ResultTask.runResult(ResultTask.fromResult(resultarOk).andThen(doublePromiseResultar)),
+    )
   },
 
-  async 'result/asyncMap on Err/neverthrow'() {
+  async 'result-to-task/async map on Err/neverthrow'() {
     consume(await neverthrowErr.asyncMap(doublePromise))
   },
 
-  async 'result/asyncMap on Err/resultar'() {
-    consume(await resultarErr.asyncMap(doublePromise))
+  async 'result-to-task/async map on Err/resultar'() {
+    consume(
+      await ResultTask.runResult(ResultTask.fromResult(resultarErr).andThen(doublePromiseResultar)),
+    )
   },
 
-  async 'result/asyncAndThen on Ok/neverthrow'() {
+  async 'result-to-task/andThen on Ok/neverthrow'() {
     consume(await neverthrowOk.asyncAndThen(doubleAsyncNeverthrow))
   },
 
-  async 'result/asyncAndThen on Ok/resultar'() {
-    consume(await resultarOk.asyncAndThen(doubleAsyncResultar))
+  async 'result-to-task/andThen on Ok/resultar'() {
+    consume(
+      await ResultTask.runResult(ResultTask.fromResult(resultarOk).andThen(doubleAsyncResultar)),
+    )
   },
 
-  async 'result/asyncAndThen on Err/neverthrow'() {
+  async 'result-to-task/andThen on Err/neverthrow'() {
     consume(await neverthrowErr.asyncAndThen(doubleAsyncNeverthrow))
   },
 
-  async 'result/asyncAndThen on Err/resultar'() {
-    consume(await resultarErr.asyncAndThen(doubleAsyncResultar))
+  async 'result-to-task/andThen on Err/resultar'() {
+    consume(
+      await ResultTask.runResult(ResultTask.fromResult(resultarErr).andThen(doubleAsyncResultar)),
+    )
   },
 
-  async 'result-async/fromThrowable on Ok/neverthrow'() {
+  async 'result-task/promise try on Ok/neverthrow'() {
     consume(await asyncNeverthrowOddNumber(42))
   },
 
-  async 'result-async/fromThrowable on Ok/resultar'() {
-    consume(await asyncResultarOddNumber(42))
+  async 'result-task/promise try on Ok/resultar'() {
+    consume(await ResultTask.runResult(asyncResultarOddNumber(42)))
   },
 
-  async 'result-async/fromThrowable on Err/neverthrow'() {
+  async 'result-task/promise try on Err/neverthrow'() {
     consume(await asyncNeverthrowOddNumber(3))
   },
 
-  async 'result-async/fromThrowable on Err/resultar'() {
-    consume(await asyncResultarOddNumber(3))
+  async 'result-task/promise try on Err/resultar'() {
+    consume(await ResultTask.runResult(asyncResultarOddNumber(3)))
   },
 }
 

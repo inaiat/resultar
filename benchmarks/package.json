@@ -9,13 +9,15 @@
     "bench:neverthrow": "pnpm run bench",
     "bench:stable": "pnpm --filter resultar build && node --import tsx resultar-vs-stable.ts",
     "bench:task": "pnpm --filter resultar build && node --import tsx resultar-task-chains.ts",
+    "bench:effect": "pnpm --filter resultar build && node --import tsx resultar-vs-effect.ts",
     "bench:function": "pnpm --filter resultar build && node --import tsx resultar-functional-ergonomics.ts"
   },
   "dependencies": {
     "resultar": "workspace:*"
   },
   "devDependencies": {
-    "cronometro": "^6.0.3",
+    "cronometro": "^7.0.1",
+    "effect": "^4.0.5",
     "neverthrow": "^8.2.0",
     "resultar-check": "workspace:*",
     "tsx": "catalog:",

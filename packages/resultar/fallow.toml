@@ -1,7 +1,8 @@
 entry = ["src/index.ts"]
 publicPackages = ["resultar"]
-# Loaded by package name through stryker.conf.json rather than a JavaScript import.
-ignoreDependencies = ["@stryker-mutator/vitest-runner"]
+# Stryker loads its runner by name; vitest is the alias target in
+# vitest-stryker.config.ts, which is excluded from entry analysis below.
+ignoreDependencies = ["@stryker-mutator/vitest-runner", "vitest"]
 ignorePatterns = [
   "*.config.cjs",
   "*.config.cts",

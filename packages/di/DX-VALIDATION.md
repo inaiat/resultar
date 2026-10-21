@@ -30,6 +30,9 @@ Record time, documentation lookups, misleading errors, incorrect lifecycle assum
 
 The main guide recommends token/class registration. Named registration and framework adapter
 helpers share the same package entry point.
+For new async service methods, the v4 guide recommends lazy `ResultTask` values and explicit
+runners (`task.runResult()` returns an in-flight `ResultAsync`). Existing methods returning `ResultAsync` and `StrictResultAsync` directly retain eager compatibility contracts;
+the historical integration results above do not imply a recommendation to introduce eager service methods.
 
 ## Unified API and compiler diagnostics
 

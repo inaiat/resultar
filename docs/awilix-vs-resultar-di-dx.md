@@ -2,6 +2,9 @@
 
 > **Superseded (2026-09-05):** the P1 findings below were resolved by [RFC 0002](./rfcs/rfc-0002-di-lifetimes-scopes.md)
 > (Implemented). Kept as a historical record of one private-consumer migration review.
+> Its eager `ResultAsync` examples reflect the v3 consumer. For v4, prefer `ResultTask`
+> for new asynchronous workflows and preserve deprecated Async contracts while migrating;
+> see [current adoption guidance](gradual-adoption.md).
 
 Date: 2026-09-05. Scope: local implementation after introducing Service and per-class registrations.
 

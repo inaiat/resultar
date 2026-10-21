@@ -3,7 +3,7 @@ import { healthRoutes, usersRoutes } from "./routes.ts";
 import { createServices } from "./services.ts";
 
 export const createApplication = (services = createServices()) =>
-  createFastifyApp({ services }, (app) => {
+  createFastifyApp({ services, logger: true }, (app) => {
     app.register(usersRoutes);
     app.register(healthRoutes);
   });

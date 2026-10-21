@@ -23,7 +23,9 @@ function run(command, args, options = {}) {
   });
 
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status ?? "unknown"}`);
+    throw new Error(
+      `${command} ${args.join(" ")} failed with exit code ${result.status ?? "unknown"}`,
+    );
   }
 }
 

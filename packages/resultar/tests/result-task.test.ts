@@ -2,8 +2,17 @@ import { deepEqual, equal, rejects, strictEqual, throws } from 'node:assert'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import type { Cause, Exit, Result, ResultTaskServices } from '../src/index.js'
-import { err, ok, ResultTask } from '../src/index.js'
+import type { Exit, Result, ResultTaskServices } from '../src/index.js'
+import {
+  Cause,
+  createTaggedError,
+  err,
+  ok,
+  pipe,
+  ResultTask,
+  Semaphore,
+  VirtualClock,
+} from '../src/index.js'
 
 describe('ResultTask', () => {
   it('accepts a lazy callback, infers unknown failures and passes the runtime signal', async () => {
@@ -178,7 +187,7 @@ describe('ResultTask', () => {
       equal(exit.cause._tag, 'Die')
     }
 
-    await rejects(() => ResultTask.runResult(task), defect)
+    await rejects(async () => await ResultTask.runResult(task), defect)
   })
 
   it('returns the success value from runPromise and rejects typed failures', async () => {
@@ -646,5 +655,835 @@ describe('ResultTask', () => {
         .catchAll(() => ResultTask.succeed(-1))
     }
     equal(await ResultTask.runPromise(recoveredTask), 5000)
+  })
+
+  it('accepts synchronous Result values directly in andThen, orElse, catchTag, and catchTags', async () => {
+    class ValidationError extends createTaggedError({
+      name: 'Validation',
+      message: 'Validation $reason',
+    }).withProps<{ readonly reason: string }>() {}
+    class FallbackError extends createTaggedError({
+      name: 'Fallback',
+      message: 'Fallback $code',
+    }).withProps<{ readonly code: number }>() {}
+
+    const validatePositive = (n: number): Result<number, ValidationError> =>
+      n > 0 ? ok(n * 2) : ValidationError.err({ reason: 'non-positive' })
+
+    const okFlow = ResultTask.ok(5).andThen(validatePositive)
+    deepEqual(await ResultTask.runResult(okFlow), { value: 10 })
+
+    const errFlow = ResultTask.ok(-1).andThen(validatePositive)
+    const errResult = await ResultTask.runResult(errFlow)
+    equal(errResult.isErr(), true)
+    if (errResult.isErr()) {
+      equal(errResult.error._tag, 'Validation')
+      equal(errResult.error.reason, 'non-positive')
+    }
+
+    const recoveredWithOk = errFlow.orElse((e) => ok(e.reason.length))
+    deepEqual(await ResultTask.runResult(recoveredWithOk), { value: 12 })
+
+    const recoveredWithErr = errFlow.orElse(() => FallbackError.err({ code: 500 }))
+    const fallbackResult = await ResultTask.runResult(recoveredWithErr)
+    equal(fallbackResult.isErr(), true)
+    if (fallbackResult.isErr()) {
+      equal(fallbackResult.error._tag, 'Fallback')
+      equal(fallbackResult.error.code, 500)
+    }
+
+    const caughtTagOk = errFlow.catchTag('Validation', (e) => ok(e.reason.length))
+    deepEqual(await ResultTask.runResult(caughtTagOk), { value: 12 })
+
+    const caughtTagErr = errFlow.catchTag('Validation', () => err('retagged' as const))
+    deepEqual(await ResultTask.runResult(caughtTagErr), { error: 'retagged' })
+
+    const caughtTagsMixed = (
+      errFlow as ResultTask<number, ValidationError | FallbackError>
+    ).catchTags({
+      Validation: (e) => ok(e.reason.length),
+      Fallback: (e) => err(`code:${e.code}` as const),
+    })
+    deepEqual(await ResultTask.runResult(caughtTagsMixed), { value: 12 })
+
+    const caughtTagsErrBranch = (
+      ResultTask.err(new FallbackError({ code: 503 })) as ResultTask<
+        number,
+        ValidationError | FallbackError
+      >
+    ).catchTags({
+      Validation: (e) => ok(e.reason.length),
+      Fallback: (e) => err(`code:${e.code}` as const),
+    })
+    deepEqual(await ResultTask.runResult(caughtTagsErrBranch), { error: 'code:503' })
+
+    const piped = pipe(
+      ResultTask.ok(0),
+      ResultTask.andThen(validatePositive),
+      ResultTask.catchTag('Validation', () => FallbackError.err({ code: 400 })),
+      ResultTask.orElse((e) => ok(e.code)),
+    )
+    deepEqual(await ResultTask.runResult(piped), { value: 400 })
+  })
+
+  it('pipes post-body operators and original arguments through ResultTask.fn', async () => {
+    class LookupError extends createTaggedError({
+      name: 'Lookup',
+      message: 'Missing $id',
+    }).withProps<{ readonly id: string }>() {}
+
+    const findScore = ResultTask.fn(
+      function* (id: string, multiplier: number) {
+        const base = yield* id === 'missing'
+          ? ResultTask.err(new LookupError({ id }))
+          : ResultTask.ok(id.length * 10)
+        return base * multiplier
+      },
+      ResultTask.map((score) => score + 1),
+      (task, id, multiplier) =>
+        task.catchTag('Lookup', (error) => ok(error.id.length + multiplier + id.length)),
+    )
+
+    deepEqual(await ResultTask.runResult(findScore('abcd', 2)), { value: 81 })
+    deepEqual(await ResultTask.runResult(findScore('missing', 3)), { value: 17 })
+
+    const eightStepTask = ResultTask.fn(
+      function* (seed: number) {
+        return yield* ResultTask.ok(seed)
+      },
+      ResultTask.map((n) => n + 1),
+      ResultTask.map((n) => n + 1),
+      ResultTask.map((n) => n + 1),
+      ResultTask.map((n) => n + 1),
+      ResultTask.map((n) => n + 1),
+      ResultTask.map((n) => n + 1),
+      ResultTask.map((n) => n + 1),
+      (task, seed) => task.map((n) => `${seed}:${n}`),
+    )
+
+    deepEqual(await ResultTask.runResult(eightStepTask(5)), { value: '5:12' })
+  })
+
+  it('supports filterOrElse across instance, static, and curried pipe forms', async () => {
+    class NotFoundError extends createTaggedError({
+      name: 'NotFound',
+      message: 'Missing $id',
+    }).withProps<{ readonly id: string }>() {}
+    class ValidationError extends createTaggedError({
+      name: 'Validation',
+      message: 'Invalid $value',
+    }).withProps<{ readonly value: number }>() {}
+
+    const filteredOk = ResultTask.ok<number, NotFoundError>(12).filterOrElse(
+      (n) => n >= 10,
+      (value) => new ValidationError({ value }),
+    )
+    const filteredErr = ResultTask.ok<number, NotFoundError>(4).filterOrElse(
+      (n) => n >= 10,
+      (value) => new ValidationError({ value }),
+    )
+    const staticFiltered = ResultTask.filterOrElse(
+      ResultTask.ok<string | number, never>('ready'),
+      (v): v is string => typeof v === 'string',
+      () => 'not-string' as const,
+    )
+    const pipedFiltered = pipe(
+      ResultTask.ok<number, never>(3),
+      ResultTask.filterOrElse(
+        (n) => n > 5,
+        (value) => `too-small:${value}` as const,
+      ),
+    )
+
+    deepEqual(await ResultTask.runResult(filteredOk), { value: 12 })
+    const failedFilter = await ResultTask.runResult(filteredErr)
+    equal(failedFilter.isErr() && failedFilter.error._tag === 'Validation', true)
+    deepEqual(await ResultTask.runResult(staticFiltered), { value: 'ready' })
+    deepEqual(await ResultTask.runResult(pipedFiltered), { error: 'too-small:3' })
+
+    throws(
+      () =>
+        ResultTask.filterOrElse(
+          'not-a-task' as never,
+          () => true,
+          () => 'err',
+        ),
+      { name: 'TypeError', message: 'ResultTask.filterOrElse requires a task' },
+    )
+  })
+
+  it('supports matchTags and matchTagsPartial across instance, static, and curried pipe forms', async () => {
+    class NotFoundError extends createTaggedError({
+      name: 'NotFound',
+      message: 'Missing $id',
+    }).withProps<{ readonly id: string }>() {}
+    class ForbiddenError extends createTaggedError({
+      name: 'Forbidden',
+      message: 'Denied $role',
+    }).withProps<{ readonly role: string }>() {}
+    class ValidationError extends createTaggedError({
+      name: 'Validation',
+      message: 'Invalid $value',
+    }).withProps<{ readonly value: number }>() {}
+
+    type AppError = NotFoundError | ForbiddenError | ValidationError
+
+    const tasksByMode: Record<
+      'ok' | 'not-found' | 'forbidden' | 'validation',
+      ResultTask<number, AppError>
+    > = {
+      ok: ResultTask.ok(42),
+      'not-found': ResultTask.err(new NotFoundError({ id: 'u1' })),
+      forbidden: ResultTask.err(new ForbiddenError({ role: 'guest' })),
+      validation: ResultTask.err(new ValidationError({ value: -1 })),
+    }
+    const makeTask = (
+      mode: 'ok' | 'not-found' | 'forbidden' | 'validation',
+    ): ResultTask<number, AppError> => tasksByMode[mode]
+
+    const foldAll = (mode: 'ok' | 'not-found' | 'forbidden' | 'validation') =>
+      makeTask(mode).matchTags((value) => `ok:${value}` as const, {
+        NotFound: (e) => `nf:${e.id}` as const,
+        Forbidden: (e) => `fb:${e.role}` as const,
+        Validation: (e) => `val:${e.value}` as const,
+      })
+
+    deepEqual(await ResultTask.runResult(foldAll('ok')), { value: 'ok:42' })
+    deepEqual(await ResultTask.runResult(foldAll('not-found')), { value: 'nf:u1' })
+    deepEqual(await ResultTask.runResult(foldAll('forbidden')), { value: 'fb:guest' })
+    deepEqual(await ResultTask.runResult(foldAll('validation')), { value: 'val:-1' })
+
+    const staticMatched = ResultTask.matchTags(
+      makeTask('forbidden'),
+      (value) => `ok:${value}` as const,
+      {
+        NotFound: (e) => `nf:${e.id}` as const,
+        Forbidden: (e) => `fb:${e.role}` as const,
+        Validation: (e) => `val:${e.value}` as const,
+      },
+    )
+    const pipedMatched = pipe(
+      makeTask('not-found'),
+      ResultTask.matchTags((value) => `ok:${value}` as const, {
+        NotFound: (e) => `nf:${e.id}` as const,
+        Forbidden: (e) => `fb:${e.role}` as const,
+        Validation: (e) => `val:${e.value}` as const,
+      }),
+    )
+
+    deepEqual(await ResultTask.runResult(staticMatched), { value: 'fb:guest' })
+    deepEqual(await ResultTask.runResult(pipedMatched), { value: 'nf:u1' })
+
+    const partialOk = makeTask('ok').matchTagsPartial(
+      (value) => `ok:${value}` as const,
+      { NotFound: (e) => `nf:${e.id}` as const },
+      (rest) => `rest:${rest._tag}` as const,
+    )
+    const partialHandled = makeTask('not-found').matchTagsPartial(
+      (value) => `ok:${value}` as const,
+      { NotFound: (e) => `nf:${e.id}` as const },
+      (rest) => `rest:${rest._tag}` as const,
+    )
+    const partialFallback = ResultTask.matchTagsPartial(
+      makeTask('validation'),
+      (value) => `ok:${value}` as const,
+      { NotFound: (e) => `nf:${e.id}` as const },
+      (rest) => `rest:${rest._tag}` as const,
+    )
+    const pipedPartial = pipe(
+      makeTask('forbidden'),
+      ResultTask.matchTagsPartial(
+        (value) => `ok:${value}` as const,
+        { NotFound: (e) => `nf:${e.id}` as const },
+        (rest) => `rest:${rest._tag}` as const,
+      ),
+    )
+
+    deepEqual(await ResultTask.runResult(partialOk), { value: 'ok:42' })
+    deepEqual(await ResultTask.runResult(partialHandled), { value: 'nf:u1' })
+    deepEqual(await ResultTask.runResult(partialFallback), { value: 'rest:Validation' })
+    deepEqual(await ResultTask.runResult(pipedPartial), { value: 'rest:Forbidden' })
+
+    const unhandledTagError = new ForbiddenError({ role: 'none' })
+    const brokenMatchTags = (
+      ResultTask.err(unhandledTagError) as unknown as ResultTask<number, NotFoundError>
+    ).matchTags((n) => n, { NotFound: () => 0 })
+    const brokenExit = await ResultTask.runExit(brokenMatchTags)
+    deepEqual(brokenExit, { _tag: 'Failure', cause: { _tag: 'Die', defect: unhandledTagError } })
+
+    throws(() => ResultTask.matchTags('not-a-task' as never, (v) => v, {} as never), {
+      name: 'TypeError',
+      message: 'ResultTask.matchTags requires a task',
+    })
+    throws(
+      () =>
+        ResultTask.matchTagsPartial(
+          'not-a-task' as never,
+          (v) => v,
+          {} as never,
+          () => 'fallback',
+        ),
+      { name: 'TypeError', message: 'ResultTask.matchTagsPartial requires a task' },
+    )
+  })
+
+  it('supports inspectBoth across instance, static, and curried pipe forms', async () => {
+    const okTask: ResultTask<number, 'boom'> = ResultTask.ok(10)
+    const errTask: ResultTask<number, 'boom'> = ResultTask.err('boom')
+    const events: string[] = []
+    const okErrHandlers = {
+      ok: async (value: number) => {
+        events.push(`ok:${value}`)
+        throw new Error('ignored')
+      },
+      error: (error: 'boom') => {
+        events.push(`err:${error}`)
+        throw new Error('ignored')
+      },
+    }
+    const onSuccessFailureHandlers = {
+      onSuccess: (value: number) => {
+        events.push(`succ:${value}`)
+      },
+      onFailure: (error: 'boom') => {
+        events.push(`fail:${error}`)
+      },
+    }
+
+    deepEqual(await ResultTask.runResult(okTask.inspectBoth(okErrHandlers)), { value: 10 })
+    deepEqual(await ResultTask.runResult(errTask.inspectBoth(onSuccessFailureHandlers)), {
+      error: 'boom',
+    })
+    deepEqual(
+      await ResultTask.runResult(okTask.inspectBoth(okErrHandlers.ok, okErrHandlers.error)),
+      { value: 10 },
+    )
+    deepEqual(
+      await ResultTask.runResult(
+        ResultTask.inspectBoth(errTask, okErrHandlers.ok, okErrHandlers.error),
+      ),
+      { error: 'boom' },
+    )
+    deepEqual(await ResultTask.runResult(ResultTask.inspectBoth(okTask, okErrHandlers)), {
+      value: 10,
+    })
+    deepEqual(await ResultTask.runResult(pipe(okTask, ResultTask.inspectBoth(okErrHandlers))), {
+      value: 10,
+    })
+    deepEqual(
+      await ResultTask.runResult(
+        pipe(errTask, ResultTask.inspectBoth(okErrHandlers.ok, okErrHandlers.error)),
+      ),
+      { error: 'boom' },
+    )
+    throws(
+      () =>
+        (okTask as unknown as { inspectBoth: (f: () => void) => void }).inspectBoth(
+          () => undefined,
+        ),
+      { name: 'TypeError', message: 'ResultTask.inspectBoth requires an error handler' },
+    )
+    deepEqual(events, ['ok:10', 'fail:boom', 'ok:10', 'err:boom', 'ok:10', 'ok:10', 'err:boom'])
+  })
+})
+
+describe('ResultTask Wave 3 combinators', () => {
+  it('runs ensuring finalizers on Success, Fail, Die, and Interrupt and combines finalizer failures', async () => {
+    const outcomes: string[] = []
+    const record = (label: string) => (exit: Exit<unknown, unknown>) =>
+      ResultTask.sync(() => {
+        outcomes.push(`${label}:${exit._tag === 'Success' ? 'Success' : exit.cause._tag}`)
+      })
+
+    deepEqual(await ResultTask.runResult(ResultTask.ok(10).ensuring(record('ok'))), { value: 10 })
+    deepEqual(
+      await ResultTask.runResult(ResultTask.ensuring(ResultTask.err('fail'), record('err'))),
+      { error: 'fail' },
+    )
+    const dieExit = await ResultTask.runExit(
+      pipe(
+        ResultTask.sync(() => {
+          throw new Error('boom')
+        }),
+        ResultTask.ensuring(record('die')),
+      ),
+    )
+    equal(dieExit._tag, 'Failure')
+    const controller = new AbortController()
+    const intExit = await ResultTask.runExit(
+      ResultTask.tryPromise(async () => {
+        controller.abort('cancelled')
+        return 1
+      }).ensuring(async (exit) => {
+        await Promise.resolve()
+        outcomes.push(`int:${exit._tag === 'Success' ? 'Success' : exit.cause._tag}`)
+      }),
+      { signal: controller.signal },
+    )
+    equal(intExit._tag, 'Failure')
+    deepEqual(outcomes, ['ok:Success', 'err:Fail', 'die:Die', 'int:Interrupt'])
+
+    const combinedFail = await ResultTask.runExit(
+      ResultTask.err<'primary'>('primary').ensuring(() => ResultTask.err<'cleanup'>('cleanup')),
+    )
+    deepEqual(combinedFail, {
+      _tag: 'Failure',
+      cause: {
+        _tag: 'Sequential',
+        left: { _tag: 'Fail', error: 'primary' },
+        right: { _tag: 'Fail', error: 'cleanup' },
+      },
+    })
+
+    throws(() => ResultTask.ensuring('not-a-task' as never, () => undefined), {
+      name: 'TypeError',
+      message: 'ResultTask.ensuring requires a task',
+    })
+  })
+
+  it('supports delay and timed with VirtualClock across instance, static, and curried forms', async () => {
+    const clock = new VirtualClock(1000)
+    const delayed = ResultTask.ok('ready').delay(250).timed()
+    const fiber = ResultTask.runFork(delayed, { clock })
+
+    await clock.advanceBy(250)
+    const exit = fiber.poll()
+    deepEqual(exit, { _tag: 'Success', value: [250, 'ready'] })
+
+    const clock2 = new VirtualClock(0)
+    const piped = pipe(ResultTask.ok(7), ResultTask.delay(100), ResultTask.timed())
+    const fiber2 = ResultTask.runFork(piped, { clock: clock2 })
+    await clock2.advanceBy(100)
+    deepEqual(fiber2.poll(), { _tag: 'Success', value: [100, 7] })
+
+    const directTimed = ResultTask.timed(ResultTask.delay(ResultTask.ok('x'), 50))
+    const clock3 = new VirtualClock(0)
+    const fiber3 = ResultTask.runFork(directTimed, { clock: clock3 })
+    await clock3.advanceBy(50)
+    deepEqual(fiber3.poll(), { _tag: 'Success', value: [50, 'x'] })
+
+    throws(() => ResultTask.ok(1).delay(-1), {
+      name: 'RangeError',
+      message: 'Task duration must be a finite non-negative number',
+    })
+  })
+
+  it('supports zip and firstSuccessOf on ResultTask', async () => {
+    const zipped1 = ResultTask.ok(1).zip(ResultTask.ok('a'))
+    const zipped2 = ResultTask.zip(ResultTask.ok(2), ok('b'))
+    const zipped3 = pipe(ResultTask.ok(3), ResultTask.zip(ResultTask.ok('c')))
+    const zippedErr = ResultTask.ok(1).zip(ResultTask.err<'bad'>('bad'))
+
+    deepEqual(await ResultTask.runResult(zipped1), { value: [1, 'a'] })
+    deepEqual(await ResultTask.runResult(zipped2), { value: [2, 'b'] })
+    deepEqual(await ResultTask.runResult(zipped3), { value: [3, 'c'] })
+    deepEqual(await ResultTask.runResult(zippedErr), { error: 'bad' })
+
+    const attempts: string[] = []
+    const winner = ResultTask.firstSuccessOf([
+      () => {
+        attempts.push('first')
+        return ResultTask.err<'e1'>('e1')
+      },
+      () => {
+        attempts.push('second')
+        return ResultTask.ok(42)
+      },
+      () => {
+        attempts.push('third')
+        return ResultTask.ok(99)
+      },
+    ])
+    deepEqual(await ResultTask.runResult(winner), { value: 42 })
+    deepEqual(attempts, ['first', 'second'])
+
+    const allFail = ResultTask.firstSuccessOf([ResultTask.err<'e1'>('e1'), err<number, 'e2'>('e2')])
+    deepEqual(await ResultTask.runResult(allFail), { error: 'e2' })
+
+    const emptyExit = await ResultTask.runExit(ResultTask.firstSuccessOf([]))
+    equal(emptyExit._tag, 'Failure')
+    if (emptyExit._tag === 'Failure') {
+      equal(emptyExit.cause._tag, 'Die')
+    }
+  })
+
+  it('supports if, when, and unless on ResultTask', async () => {
+    const ifTrue = ResultTask.if(ResultTask.ok(true), {
+      onTrue: () => ResultTask.ok('yes' as const),
+      onFalse: () => ResultTask.ok('no' as const),
+    })
+    const ifFalse = pipe(
+      () => ok(false),
+      ResultTask.if({ onTrue: ResultTask.ok('yes' as const), onFalse: ok('no' as const) }),
+    )
+    deepEqual(await ResultTask.runResult(ifTrue), { value: 'yes' })
+    deepEqual(await ResultTask.runResult(ifFalse), { value: 'no' })
+
+    const whenHit = ResultTask.ok(10).when(true)
+    const whenSkip = ResultTask.when(false, () => ResultTask.ok(10))
+    const whenResHit = pipe(
+      () => ResultTask.ok(20),
+      ResultTask.when(() => ResultTask.ok(true)),
+    )
+    const whenResErr = ResultTask.when(ResultTask.err<'cond-err'>('cond-err'), () =>
+      ResultTask.ok(20),
+    )
+
+    deepEqual(await ResultTask.runResult(whenHit), { value: 10 })
+    deepEqual(await ResultTask.runResult(whenSkip), { value: undefined })
+    deepEqual(await ResultTask.runResult(whenResHit), { value: 20 })
+    deepEqual(await ResultTask.runResult(whenResErr), { error: 'cond-err' })
+
+    const unlessSkip = ResultTask.ok(10).unless(true)
+    const unlessHit = ResultTask.unless(false, () => ResultTask.ok(10))
+    const unlessResHit = pipe(ResultTask.ok(30), ResultTask.unless(ResultTask.ok(false)))
+    deepEqual(await ResultTask.runResult(unlessSkip), { value: undefined })
+    deepEqual(await ResultTask.runResult(unlessHit), { value: 10 })
+    deepEqual(await ResultTask.runResult(unlessResHit), { value: 30 })
+  })
+
+  it('supports loop and iterate on ResultTask across direct and curried forms', async () => {
+    const looped = ResultTask.loop(0, {
+      while: (n) => n < 3,
+      step: (n) => n + 1,
+      body: (n) => ResultTask.ok(n * 10),
+    })
+    deepEqual(await ResultTask.runResult(looped), { value: [0, 10, 20] })
+
+    const discarded: number[] = []
+    const loopedDiscard = pipe(
+      0,
+      ResultTask.loop({
+        while: (n) => n < 3,
+        step: (n) => n + 1,
+        discard: true,
+        body: (n) =>
+          ResultTask.sync(() => {
+            discarded.push(n)
+          }),
+      }),
+    )
+    deepEqual(await ResultTask.runResult(loopedDiscard), { value: undefined })
+    deepEqual(discarded, [0, 1, 2])
+
+    const iterated = ResultTask.iterate(1, {
+      while: (n) => n < 16,
+      body: (n) => ResultTask.ok(n * 2),
+    })
+    const pipedIterated = pipe(
+      2,
+      ResultTask.iterate({ while: (n) => n < 10, body: (n) => ok(n + 3) }),
+    )
+    deepEqual(await ResultTask.runResult(iterated), { value: 16 })
+    deepEqual(await ResultTask.runResult(pipedIterated), { value: 11 })
+  })
+
+  it('supports catchCause, tapCause, inspectCause, sandbox, unsandbox, onExit, and Cause helpers', async () => {
+    const defect = new Error('boom-defect')
+    const dieTask = ResultTask.sync<number>(() => {
+      throw defect
+    })
+
+    const caughtDie = dieTask.catchCause((cause) => {
+      equal(Cause.isCause(cause), true)
+      deepEqual(Cause.defects(cause), [defect])
+      deepEqual(Cause.failures(cause), [])
+      return ok(-1)
+    })
+    deepEqual(await ResultTask.runResult(caughtDie), { value: -1 })
+
+    const caughtStatic = ResultTask.catchCause(ResultTask.err<'e1'>('e1'), (cause) =>
+      ResultTask.ok(`recovered:${Cause.failures(cause).join(',')}`),
+    )
+    deepEqual(await ResultTask.runResult(caughtStatic), { value: 'recovered:e1' })
+
+    const caughtPiped = pipe(
+      ResultTask.err<'e2'>('e2'),
+      ResultTask.catchCause((cause) => ok(`piped:${Cause.failures(cause).join(',')}`)),
+    )
+    deepEqual(await ResultTask.runResult(caughtPiped), { value: 'piped:e2' })
+
+    // External interruption is not swallowed by catchCause
+    const controller = new AbortController()
+    const interruptedExit = await ResultTask.runExit(
+      ResultTask.tryPromise(async () => {
+        controller.abort('external-stop')
+        return 1
+      }).catchCause(() => ok(999)),
+      { signal: controller.signal },
+    )
+    deepEqual(interruptedExit, {
+      _tag: 'Failure',
+      cause: { _tag: 'Interrupt', reason: 'external-stop' },
+    })
+
+    // Composite cleanup failures from inner closed scopes are passed to catchCause
+    const cleanupRecovered = ResultTask.err<'primary'>('primary')
+      .ensuring(() => ResultTask.err<'cleanup'>('cleanup'))
+      .catchCause((cause) => ok(`recovered:${Cause.failures(cause).join('+')}`))
+    deepEqual(await ResultTask.runExit(cleanupRecovered), {
+      _tag: 'Success',
+      value: 'recovered:primary+cleanup',
+    })
+
+    // External interruption combined with inner cleanup failure still interrupts after catchCause recovery
+    const cleanupAbortController = new AbortController()
+    const interruptedWithCleanupRecovered = await ResultTask.runExit(
+      ResultTask.tryPromise(async () => {
+        cleanupAbortController.abort('abort-with-cleanup')
+        return 1
+      })
+        .ensuring(() => ResultTask.err<'cleanup'>('cleanup'))
+        .catchCause(() => ResultTask.ok(123)),
+      { signal: cleanupAbortController.signal },
+    )
+    deepEqual(interruptedWithCleanupRecovered, {
+      _tag: 'Failure',
+      cause: { _tag: 'Interrupt', reason: 'abort-with-cleanup' },
+    })
+  })
+
+  it('sandboxes, unsandboxes (including shared DAG causes), taps Causes, and observes Exits', async () => {
+    const defect = new TypeError('fatal-defect')
+    const dieTask = ResultTask.sync<number>(() => {
+      throw defect
+    })
+
+    // sandbox and unsandbox round-trip Fail, Die, and shared-subtree DAG causes while rejecting cycles
+    const sandboxedDie = dieTask.sandbox()
+    const sandboxedResult = await ResultTask.runResult(sandboxedDie)
+    equal(sandboxedResult.isErr(), true)
+    if (sandboxedResult.isErr()) {
+      deepEqual(sandboxedResult.error, { _tag: 'Die', defect })
+    }
+    const unsandboxedExit = await ResultTask.runExit(
+      pipe(dieTask, ResultTask.sandbox(), ResultTask.unsandbox()),
+    )
+    deepEqual(unsandboxedExit, { _tag: 'Failure', cause: { _tag: 'Die', defect } })
+    deepEqual(
+      await ResultTask.runExit(ResultTask.unsandbox(ResultTask.sandbox(ResultTask.ok(7)))),
+      { _tag: 'Success', value: 7 },
+    )
+
+    const sharedLeaf: Cause<'shared'> = { _tag: 'Fail', error: 'shared' }
+    const sharedBranch: Cause<'shared'> = {
+      _tag: 'Sequential',
+      left: sharedLeaf,
+      right: sharedLeaf,
+    }
+    const sharedCause: Cause<'shared'> = {
+      _tag: 'Parallel',
+      left: sharedBranch,
+      right: sharedBranch,
+    }
+    equal(Cause.isCause(sharedCause), true)
+    deepEqual(await ResultTask.runExit(ResultTask.err(sharedCause).unsandbox()), {
+      _tag: 'Failure',
+      cause: sharedCause,
+    })
+
+    const cyclicCause: { _tag: 'Sequential'; left: Cause<'shared'>; right?: unknown } = {
+      _tag: 'Sequential',
+      left: sharedLeaf,
+    }
+    cyclicCause.right = cyclicCause
+    equal(Cause.isCause(cyclicCause), false)
+
+    // tapCause and inspectCause observe full Cause trees
+    const observed: string[] = []
+    const tapped = pipe(
+      dieTask,
+      ResultTask.inspectCause((cause) => {
+        observed.push(`inspect:${cause._tag}`)
+        throw new Error('ignored-sync-throw')
+      }),
+      ResultTask.tapCause((cause) =>
+        ResultTask.sync(() => {
+          observed.push(`tap:${cause._tag}`)
+        }),
+      ),
+    )
+    deepEqual(await ResultTask.runExit(tapped), { _tag: 'Failure', cause: { _tag: 'Die', defect } })
+    deepEqual(observed, ['inspect:Die', 'tap:Die'])
+
+    const tapFailureCombines = await ResultTask.runExit(
+      ResultTask.tapCause(ResultTask.err<'primary'>('primary'), () =>
+        ResultTask.err<'tap-err'>('tap-err'),
+      ),
+    )
+    deepEqual(tapFailureCombines, {
+      _tag: 'Failure',
+      cause: {
+        _tag: 'Sequential',
+        left: { _tag: 'Fail', error: 'primary' },
+        right: { _tag: 'Fail', error: 'tap-err' },
+      },
+    })
+
+    // onExit runs on all outcomes across instance, static, and curried forms
+    const exits: string[] = []
+    deepEqual(
+      await ResultTask.runResult(
+        ResultTask.ok(5).onExit((exit) => {
+          exits.push(`inst:${exit._tag}`)
+        }),
+      ),
+      { value: 5 },
+    )
+    deepEqual(
+      await ResultTask.runResult(
+        ResultTask.onExit(ResultTask.err<'bad'>('bad'), (exit) => {
+          exits.push(`stat:${exit._tag}`)
+        }),
+      ),
+      { error: 'bad' },
+    )
+    deepEqual(
+      await ResultTask.runResult(
+        pipe(
+          ResultTask.ok(9),
+          ResultTask.onExit((exit) => {
+            exits.push(`pipe:${exit._tag}`)
+          }),
+        ),
+      ),
+      { value: 9 },
+    )
+    deepEqual(exits, ['inst:Success', 'stat:Failure', 'pipe:Success'])
+  })
+
+  it('supports concurrent zip with structured sibling interruption', async () => {
+    const clock = new VirtualClock(0)
+    const concurrentZipped = ResultTask.ok('left')
+      .delay(100)
+      .zip(ResultTask.ok('right').delay(100), { concurrent: true })
+      .timed()
+
+    const fiber = ResultTask.runFork(concurrentZipped, { clock })
+    await clock.advanceBy(100)
+    deepEqual(fiber.poll(), { _tag: 'Success', value: [100, ['left', 'right']] })
+
+    const pipedConcurrent = pipe(
+      ResultTask.ok(1).delay(50),
+      ResultTask.zip(ResultTask.ok(2).delay(50), { concurrent: true }),
+    )
+    const clock2 = new VirtualClock(0)
+    const fiber2 = ResultTask.runFork(pipedConcurrent, { clock: clock2 })
+    await clock2.advanceBy(50)
+    deepEqual(fiber2.poll(), { _tag: 'Success', value: [1, 2] })
+
+    let rightAborted = false
+    const leftFailsFast = ResultTask.zip(
+      ResultTask.err<'fast-err'>('fast-err'),
+      ResultTask.tryPromise(
+        (signal) =>
+          new Promise<number>((_, reject) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                rightAborted = true
+                reject(new Error('aborted'))
+              },
+              { once: true },
+            )
+          }),
+      ),
+      { concurrent: true },
+    )
+    deepEqual(await ResultTask.runResult(leftFailsFast), { error: 'fast-err' })
+    equal(rightAborted, true)
+
+    const resourceWithFailingRelease = ResultTask.acquireRelease({
+      acquire: ResultTask.ok(1),
+      release: () => ResultTask.err<'cleanup'>('cleanup'),
+    })
+    const staticConcurrentZip = ResultTask.zip(resourceWithFailingRelease, ResultTask.ok(2), {
+      concurrent: true,
+    }).orElse((error) => ResultTask.ok([0, error.length] as const))
+    deepEqual(await ResultTask.runResult(staticConcurrentZip), { value: [0, 7] })
+
+    throws(() => ResultTask.ok(1).zip(ResultTask.ok(2), { concurrent: 'yes' as never }), {
+      name: 'TypeError',
+      message: 'ResultTask.zip concurrent must be a boolean when provided',
+    })
+  })
+
+  it('bounds concurrency across tasks and fibers with Semaphore', async () => {
+    const semaphore = ResultTask.makeSemaphore(2)
+    equal(semaphore.available(), 2)
+
+    let active = 0
+    let maxActive = 0
+    const order: number[] = []
+
+    const makeWorker = (id: number) =>
+      semaphore.withPermit(
+        ResultTask.gen(function* () {
+          active += 1
+          maxActive = Math.max(maxActive, active)
+          order.push(id)
+          yield* ResultTask.sleep(50)
+          active -= 1
+          return id * 10
+        }),
+      )
+
+    const clock = new VirtualClock(0)
+    const allTask = ResultTask.all([makeWorker(1), makeWorker(2), makeWorker(3), makeWorker(4)], {
+      concurrency: 'unbounded',
+    })
+    const fiber = ResultTask.runFork(allTask, { clock })
+
+    await clock.advanceBy(0)
+    equal(active, 2)
+    equal(semaphore.available(), 0)
+
+    await clock.advanceBy(50)
+    await clock.advanceBy(50)
+    deepEqual(fiber.poll(), { _tag: 'Success', value: [10, 20, 30, 40] })
+    equal(maxActive, 2)
+    equal(semaphore.available(), 2)
+    deepEqual(order, [1, 2, 3, 4])
+
+    const multi = Semaphore.make(3)
+    const multiTask = pipe(
+      ResultTask.sync(() => multi.available()),
+      Semaphore.withPermits(multi, 2),
+    )
+    deepEqual(await ResultTask.runResult(multiTask), { value: 1 })
+    equal(multi.available(), 3)
+  })
+
+  it('handles queued waiter interruption and validates Semaphore arguments', async () => {
+    const single = Semaphore.make(1)
+    const clock = new VirtualClock(0)
+    const holder = ResultTask.runFork(single.withPermit(ResultTask.sleep(100)), { clock })
+    await clock.advanceBy(0)
+    equal(single.available(), 0)
+
+    const waiterController = new AbortController()
+    const waiterPromise = ResultTask.runExit(Semaphore.withPermit(single, ResultTask.ok('never')), {
+      signal: waiterController.signal,
+      clock,
+    })
+    waiterController.abort('cancel-waiter')
+    const waiterExit = await waiterPromise
+    deepEqual(waiterExit, {
+      _tag: 'Failure',
+      cause: { _tag: 'Interrupt', reason: 'cancel-waiter' },
+    })
+
+    await clock.advanceBy(100)
+    deepEqual(holder.poll(), { _tag: 'Success', value: undefined })
+    equal(single.available(), 1)
+
+    throws(() => Semaphore.make(0), {
+      name: 'RangeError',
+      message: 'Semaphore.make permits must be a positive safe integer',
+    })
+    throws(() => single.withPermits(2, ResultTask.ok(1)), {
+      name: 'RangeError',
+      message: 'Semaphore.withPermits requested 2 permits, exceeding capacity 1',
+    })
   })
 })

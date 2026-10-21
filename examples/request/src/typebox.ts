@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 
-import { ResultAsync, createTaggedError, runPromise } from "resultar";
+import { createTaggedError, ResultAsync, runPromise } from "resultar";
 import { requestJson as requestJsonTypeBox } from "resultar-request-typebox";
 
 import { closeServer, startAccountExampleServer } from "./account-server.js";
@@ -60,11 +60,10 @@ export const loadAccountWithTypeBox = (baseUrl: string) =>
   });
 
 const runTypeBoxExample = (baseUrl: string) =>
-  loadAccountWithTypeBox(baseUrl).map((account) => {
+  loadAccountWithTypeBox(baseUrl).tap((account) => {
     process.stdout.write(
       `TypeBox account: ${account.id}, ${account.email}, ${account.seats} seats\n`,
     );
-    return account;
   });
 
 const runTypeBoxExampleCli = () =>

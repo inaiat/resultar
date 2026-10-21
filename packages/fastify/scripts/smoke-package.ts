@@ -118,6 +118,15 @@ if (false) {
  // @ts-expect-error The application factory validates published binding types too.
  createFastifyApp({ services: createModule().value("answer", 42), bindings: ["missing"] }, () => {});
 }
+
+const optionsApp = createFastifyApp({ services, startup, appBindings: ["answer"], requestIdHeader: "x-smoke-id" }, (router) => {
+ router.get("/", (request) => ({ id: request.id, answer: request.services.answer }));
+});
+try {
+ const response = await optionsApp.inject({ method: "GET", url: "/", headers: { "x-smoke-id": "smoke-1" } });
+ if (response.statusCode !== 200 || response.json().answer !== 42 || response.json().id !== "smoke-1") throw new Error("Packed Fastify options were not forwarded");
+} finally { await optionsApp.close(); }
+
 `,
   );
   execFileSync(

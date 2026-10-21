@@ -316,6 +316,7 @@ describe('ResultTask Phase 1 - Lazy Core & Essential Combinators', () => {
       deepEqual(res2, ok(2))
     })
 
+    /* eslint-disable @typescript-eslint/no-deprecated */
     it('converts ResultTask to ResultAsync using ResultTask.toResultAsync and instance method', async () => {
       const task = ResultTask.succeed('hello').map((s) => `${s} world`)
 
@@ -342,6 +343,7 @@ describe('ResultTask Phase 1 - Lazy Core & Essential Combinators', () => {
 
       deepEqual(await backToAsync, ok({ id: 'user-123', active: true }))
     })
+    /* eslint-enable @typescript-eslint/no-deprecated */
 
     it('respects AbortSignal cancellation in fromResultAsync', async () => {
       const controller = new AbortController()

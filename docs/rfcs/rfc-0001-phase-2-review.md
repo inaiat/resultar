@@ -40,7 +40,7 @@ data-first, and curried forms, unions with undefined, and genuinely omitted argu
 
 - [x] **Completed**
 - **Location:** curried overload and implementation of `ResultTask.provideServices`, in
-  [result-task.ts](../../packages/resultar/src/result-task.ts).
+  [result-task.ts](../../packages/resultar/src/task/result-task.ts).
 - **Problem:** preserving the requirement R was not enough when the incompatible provider kept being
   installed and overwrote the correct service received at the execution boundary.
 - **Solution:** Added the type helper `IncompatibleProvidedServices<R, Services>`. When a provider
@@ -64,7 +64,7 @@ data-first, and curried forms, unions with undefined, and genuinely omitted argu
 
 - [x] **Completed**
 - **Location:** curried overload of `ResultTask.provideServiceResolver`, in
-  [result-task.ts](../../packages/resultar/src/result-task.ts).
+  [result-task.ts](../../packages/resultar/src/task/result-task.ts).
 - **Problem:** the defaults `ResolverE = never` and `ResolverR = never` constrained providers before
   inferring the effectively returned channels.
 - **Solution:**

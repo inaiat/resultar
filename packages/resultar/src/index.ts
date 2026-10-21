@@ -1,12 +1,11 @@
 /**
- * Typed synchronous and asynchronous error workflows built around `Result<T, E>` and
- * `ResultAsync<T, E>`.
+ * Typed error workflows built around `Result<T, E>` and `ResultTask<T, E, R>`.
  *
  * @module
  */
 
+export { DisposableResultAsync } from './result-async/disposable-result-async.js'
 export {
-  DisposableResultAsync,
   errAsync,
   fromCallback,
   fromPromise,
@@ -15,14 +14,20 @@ export {
   okAsync,
   ResultAsync,
   runPromise,
+  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
+  tryCatchAsync as tryAsync,
+  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
   tryCatchAsync,
   tryResultAsync,
   unitAsync,
-} from './result-async.js'
+} from './result-async/result-async.js'
 
-/** Compatibility alias for `tryResultAsync`. */
-export { tryResultAsync as tryAsync } from './result-async.js'
-
+export type {
+  AsyncResultGenOptions,
+  ResultAsyncGenerator,
+  SafeTryAsyncOptions,
+  SafeTryOptions,
+} from './result-async/generator-types.js'
 export type {
   ResultAsyncAbortSignal,
   ResultAsyncCallbackCleanup,
@@ -31,20 +36,20 @@ export type {
   ResultAsyncFromCallbackOptions,
   ResultAsyncRaceHandle,
   ResultAsyncRaceTask,
-  ResultAsyncRetryContext,
-  ResultAsyncRetryOptions,
-  ResultAsyncRetryOrElseOptions,
-  ResultAsyncRetryTask,
   ResultAsyncResourceAcquire,
   ResultAsyncResourceEffect,
   ResultAsyncResourceRelease,
   ResultAsyncResourceReleaseContext,
   ResultAsyncResourceUse,
+  ResultAsyncRetryContext,
+  ResultAsyncRetryOptions,
+  ResultAsyncRetryOrElseOptions,
+  ResultAsyncRetryTask,
   ResultAsyncTimeoutOptions,
   ResultAsyncWithResourceOptions,
   StrictResultAsync,
   TryResultAsyncOptions,
-} from './result-async.js'
+} from './result-async/result-async.js'
 export {
   DisposableResult,
   err,
@@ -52,30 +57,39 @@ export {
   ok,
   Result,
   runSync,
+  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
   safeTry,
+  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
   tryCatch,
   tryResult,
   unit,
-} from './result.js'
+} from './result/result.js'
 
-/** Default compatibility export for `tryResult`. */
-export { tryResult as default } from './result.js'
-
-/** Compatibility alias for `tryResult`. */
-export { tryResult as try } from './result.js'
+/** @deprecated Import the named `tryResult` export instead. */
+// eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated exports.
+export { tryCatch as default, tryCatch as try } from './result/result.js'
 
 export type {
   ErrResult,
   OkResult,
+  ResultGenerator,
+  ResultGenOptions,
   ResultOperations,
-  SafeTryAsyncOptions,
-  SafeTryOptions,
   StrictResult,
   TryResultOptions,
-} from './result.js'
-export { AbortError, isAbortError } from './abort-error.js'
-export { isRedacted, redact, revealRedacted } from './redacted.js'
-export type { Redacted } from './redacted.js'
+} from './result/result.js'
+export { AbortError, isAbortError } from './core/abort-error.js'
+export { Cause } from './task/cause.js'
+export { Fiber } from './task/fiber.js'
+export type { FiberHandle, FiberJoinOptions, FiberObserver } from './task/fiber.js'
+export { Clock, VirtualClock } from './task/task-clock.js'
+export type { TaskClock } from './task/task-clock.js'
+export { Scheduler } from './task/task-scheduler.js'
+export type { TaskScheduler } from './task/task-scheduler.js'
+export { Retry } from './core/retry.js'
+export type { RetryContext, RetryPolicy, RetryPolicyOptions } from './core/retry.js'
+export { isRedacted, redact, revealRedacted } from './core/redacted.js'
+export type { Redacted } from './core/redacted.js'
 export {
   isResultTask,
   isServiceTag,
@@ -84,13 +98,22 @@ export {
   ResultTaskCauseError,
   ResultTaskTypeId,
   ResultTaskYieldTypeId,
+  Semaphore,
   serviceTag,
   ServiceTagTypeId,
-} from './result-task.js'
+} from './task/result-task.js'
 export type {
-  Cause,
   Exit,
   ResultTaskAcquireReleaseOptions,
+  ResultTaskConcurrencyOptions,
+  ResultTaskGenerator,
+  ResultTaskIfBranches,
+  ResultTaskIterateBooleanOptions,
+  ResultTaskIterateOptions,
+  ResultTaskLoopBooleanDiscardOptions,
+  ResultTaskLoopBooleanOptions,
+  ResultTaskLoopDiscardOptions,
+  ResultTaskLoopOptions,
   ResultTaskMatchOptions,
   ResultTaskRunOptions,
   ResultTaskScope,
@@ -99,8 +122,11 @@ export type {
   ResultTaskServices,
   ResultTaskTryOptions,
   ResultTaskTryPromiseOptions,
+  ResultTaskYieldable,
+  ResultTaskYieldOf,
+  ResultTaskZipOptions,
   ServiceTag,
-} from './result-task.js'
+} from './task/result-task.js'
 export {
   createTaggedError,
   findCause,
@@ -108,13 +134,21 @@ export {
   matchError,
   matchErrorPartial,
   taggedEnum,
-} from './tagged-error.js'
+} from './tagged/tagged-error.js'
 export type {
   TaggedEnum,
   TaggedEnumFactory,
   TaggedErrorClass,
   TaggedErrorInstance,
   TaggedErrorOptions,
-} from './tagged-error.js'
+} from './tagged/tagged-error.js'
 
-export { constant, flow, identity, pipe } from './function.js'
+export { constant, flow, identity, pipe } from './core/function.js'
+export { Match } from './match/match.js'
+export type {
+  MatchMatcher,
+  MatchMissingCases,
+  MatchOption,
+  MatchPattern,
+  MatchRefinement,
+} from './match/match.js'

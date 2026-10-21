@@ -1,4 +1,7 @@
+// Lifecycle sessions retain their eager ResultAsync compatibility boundary.
+/* eslint-disable typescript/no-deprecated */
 import { Hono } from "hono";
+import type { HonoOptions } from "hono/hono-base";
 import {
   AbortError,
   err,
@@ -6,8 +9,8 @@ import {
   fromSafePromise,
   ResultTask,
   ResultTaskCauseError,
-  unitAsync,
   unit,
+  unitAsync,
   ok,
   type Exit,
   type Result,
@@ -33,6 +36,7 @@ export type {
   ServiceScope,
   ServiceTaskRequirements,
 } from "resultar-di";
+export type { HonoOptions } from "hono/hono-base";
 
 export { createHonoServices } from "./middleware.js";
 export type { HonoServices } from "./middleware.js";
@@ -42,7 +46,7 @@ export interface HonoApplication<CloseError = never, RequestServices extends obj
   readonly serviceTypes?: { readonly request: RequestServices };
   readonly fetch: (request: Request) => Promise<Response>;
   readonly request: (input: string | Request, init?: RequestInit) => Promise<Response>;
-  readonly close: () => Promise<Result<void, CloseError>>;
+  readonly close: () => ResultAsync<void, CloseError>;
 }
 
 /** Infers selected bindings from an application or its factory. */
@@ -78,18 +82,20 @@ export function createHonoApp<
     readonly services: ServiceModule<S, E, R, G>;
     readonly startup?: Startup;
     readonly bindings?: Keys & HttpServiceSelection<S, R, G, Exclude<Keys, undefined>>;
-  } & (undefined extends Keys
-    ? HttpServiceSelection<S, R, G, undefined>
-    : { readonly bindings: Keys }) &
+  } & HonoOptions<{ Bindings: NoInfer<SelectedServices<S, Keys>> }> &
+    (undefined extends Keys
+      ? HttpServiceSelection<S, R, G, undefined>
+      : { readonly bindings: Keys }) &
     StartupRequirements<S, Startup, G, R>,
   configure: (app: Hono<{ Bindings: SelectedServices<S, Keys> }>) => void,
 ): HonoApplication<ServiceScopeError<R>, SelectedServices<S, Keys>> & {
   /** Runs the optional one-time application task and shares its result across requests. */
   readonly ready: () => ResultAsync<void, ResultTaskCauseError>;
 } {
-  const router = new Hono<{ Bindings: SelectedServices<S, Keys> }>();
+  const { services, startup, bindings, ...honoOptions } = options;
+  const router = new Hono<{ Bindings: SelectedServices<S, Keys> }>(honoOptions);
   configure(router);
-  const root = options.services.scope();
+  const root = services.scope();
   // The public selection already checks missing requirements. Erasure is confined to dispatch.
   const bind = root.fetch as unknown as (
     keys: readonly string[],
@@ -98,9 +104,11 @@ export function createHonoApp<
       request: Request,
     ) => Response | Promise<Response>,
   ) => (request: Request) => Promise<Response>;
-  const keys = options.bindings ?? inspectModule(options.services).map(({ name }) => name);
-  const dispatch = bind(keys, (bindings, request) => router.fetch(request, bindings));
-  let closing: Promise<Result<void, ServiceScopeError<R>>> | undefined = undefined;
+  const keys = bindings ?? inspectModule(services).map(({ name }) => name);
+  const dispatch = bind(keys, (resolvedBindings, request) =>
+    router.fetch(request, resolvedBindings),
+  );
+  let closing: ResultAsync<void, ServiceScopeError<R>> | undefined = undefined;
   let resourcesClosing: ResultAsync<Exit<void, ServiceScopeError<R>>, never> | undefined =
     undefined;
   let session: ServiceTaskSession | undefined = undefined;
@@ -133,7 +141,6 @@ export function createHonoApp<
         new ResultTaskCauseError({ _tag: "Die", defect: new Error("Hono application is closed") }),
       );
     if (startupResult !== undefined) return startupResult;
-    const startup = options.startup;
     if (startup === undefined) {
       startupResult = unitAsync();
       return startupResult;
@@ -162,7 +169,7 @@ export function createHonoApp<
   const fetch = (request: Request): Promise<Response> => {
     if (closing !== undefined && !startupFailed)
       return Promise.reject(new Error("Hono application is closed"));
-    if (options.startup === undefined) return dispatch(request);
+    if (startup === undefined) return dispatch(request);
     return Promise.resolve(ready()).then((result) =>
       result.match(
         () =>
@@ -181,21 +188,18 @@ export function createHonoApp<
       ),
     ready,
     close: () => {
-      if (options.startup === undefined) {
+      if (startup === undefined) {
         closing ??= ResultTask.runResult(root.close());
         return closing;
       }
-      closing ??= closeResources().match(
-        (exit): Result<void, ServiceScopeError<R>> => {
-          if (exit._tag === "Success") return unit();
-          if (exit.cause._tag === "Fail") return err(exit.cause.error);
-          if (exit.cause._tag === "Die") throw exit.cause.defect;
-          if (exit.cause._tag === "Interrupt")
-            throw new AbortError("ResultTask execution interrupted", { cause: exit.cause.reason });
-          throw new ResultTaskCauseError(exit.cause);
-        },
-        (error: never) => error,
-      );
+      closing ??= closeResources().andThen((exit): Result<void, ServiceScopeError<R>> => {
+        if (exit._tag === "Success") return unit();
+        if (exit.cause._tag === "Fail") return err(exit.cause.error);
+        if (exit.cause._tag === "Die") throw exit.cause.defect;
+        if (exit.cause._tag === "Interrupt")
+          throw new AbortError("ResultTask execution interrupted", { cause: exit.cause.reason });
+        throw new ResultTaskCauseError(exit.cause);
+      });
       return closing;
     },
   };

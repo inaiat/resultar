@@ -7,6 +7,7 @@ versions and local README files before copying an example.
 
 - [Choose A Request Package](#choose-a-request-package)
 - [Use The Schema-Agnostic Core](#use-the-schema-agnostic-core)
+- [Compose Requests In Tasks](#compose-requests-in-tasks)
 - [Use The TypeBox Adapter](#use-the-typebox-adapter)
 - [Use The Zod Adapter](#use-the-zod-adapter)
 - [Map Request Errors](#map-request-errors)
@@ -26,6 +27,10 @@ versions and local README files before copying an example.
 
 All three share the same transport implementation. The adapters add schema validation and re-export
 the public `resultar-request` types. Install only the core and schema adapter the service needs.
+
+Their `requestJson` helpers return eager `ResultAsync` from `resultar`. Import in-flight constructors, helpers, or types from `resultar` in application code.
+Calling a helper starts its request; the examples below document that real API. New workflows can
+compose these adapters lazily through the Task factory bridge without changing the request contract.
 
 Keep request payloads concrete. Do not widen a known response contract to `JsonRecord`,
 `Record<string, unknown>`, or `unknown` after validation.
@@ -55,6 +60,36 @@ const user = requestJson({
 
 Use `decode` when validation also normalizes or transforms the response. The decoder must make
 success and validation failure explicit; check the installed package types for the exact shape.
+
+## Compose Requests In Tasks
+
+Create the eager helper inside `fromResultAsync`, forwarding the Task signal to fetch:
+
+```ts
+import { ResultTask } from "resultar";
+import { requestJson } from "resultar-request";
+
+const loadUser = (userId: string) =>
+  ResultTask.fromResultAsync((signal) =>
+    requestJson({
+      request: () => fetch(`https://example.com/users/${userId}`, { signal }),
+      validator: isUser,
+    }),
+  );
+
+const userId = await loadUser("user-1")
+  .map((user) => user.id)
+  .runPromise();
+```
+
+This reuses the `isUser` guard above and infers `ResultTask<User, RequestError>`. Each run creates
+a fresh eager request. The same bridge works with the TypeBox and Zod helpers. Keep `map`
+synchronous, use `andThen` for another async Task, and compose `match` / `matchTags` before the
+runner when turning the response into a transport value. Use `runExit` when the boundary must
+inspect interruption, defects, and composite cleanup causes as well as typed errors.
+
+Passing `requestJson(...)` directly to `fromResultAsync` captures an already-started request;
+it cannot make that execution lazy or repeatable.
 
 ## Use The TypeBox Adapter
 
@@ -174,9 +209,9 @@ const user = requestJsonZod({
 The default policy retries request failures and HTTP `5xx`, but not `4xx`, invalid JSON, or
 validation failures. Retry requires a request factory; an already-created promise cannot be
 restarted. Ensure each attempt receives a fresh request. The current request retry configuration
-does not expose ResultAsync's internal retry signal, so do not claim that `requestJson`
+does not expose the eager Async policy's internal retry signal, so do not claim that `requestJson`
 automatically forwards policy cancellation. Supply an external fetch signal through the request
-closure when the caller owns separate cancellation.
+closure when the caller owns cancellation, including the signal supplied by a Task bridge.
 
 ## Validate In The Preferred Order
 
@@ -245,15 +280,20 @@ When an agent encounters a diagnostic, fix the architecture first:
 - handle, compose, return, or intentionally discard a returned Resultar value; a discard does not
   run a lazy task and must not be applied just to silence diagnostics;
 - replace nested `Result` from `map` with `andThen`;
-- replace `Promise<Result>` / `Promise<StrictResult>` contracts with `ResultAsync` /
-  `StrictResultAsync` and return composed operations directly (`prefer-result-async`);
-- enable `preferResultAsyncMode: "all"` with `preferResultAsync: "error"` to also catch raw
-  `Promise<T>` repository/service contracts and inferred returns; map driver errors in adapters
-  and document local suppressions for required native framework or conversion callbacks;
+- for existing eager contracts, replace `Promise<Result>` / `Promise<StrictResult>` with
+  `ResultAsync` / `StrictResultAsync` and return composed operations directly
+  (`prefer-result-async`); the rule name remains stable for that contract;
+- scope `preferResultAsync` to an intentional eager-boundary migration. Its `"all"` mode also
+  catches raw `Promise<T>` contracts and inferred returns. It does not make Task and Async
+  interchangeable or prescribe Async for new services. A new Task contract needs a factory,
+  Task composition, and explicit callers/runners; document native framework conversion boundaries;
 - replace error-only recovery with `mapErr`;
-- replace project-wide `try/catch` with `tryResult` or `tryResultAsync` when `noTryCatch` is enabled;
+- replace project-wide `try/catch` with a narrow adapter when `noTryCatch` is enabled: `tryResult`
+  for sync work, `ResultTask.tryPromise` for new lazy work, or `tryResultAsync` for eager compatibility;
 - wrap raw promise awaits in Resultar contexts;
-- use `yield*` and avoid `try/catch` inside `Result.gen` / `safeTry`;
+- use `yield*` in generators. Modern `Result.gen` / `Result.fn` return plain success values; deprecated
+  `safeTry` returns a final Result. Both support sync and async bodies (with async bodies returning eager `ResultAsync`). Use `ResultTask.gen`
+  for new lazy async work and bridge eager helpers inside it explicitly;
 - preserve inferred error and task requirements channels instead of asserting them away;
 - remove obsolete suppression entries without suppressing their diagnostic broadly.
 

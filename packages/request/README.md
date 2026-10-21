@@ -5,6 +5,9 @@ Fetch-first JSON request helpers for Resultar.
 Use this package when a service calls another HTTP service and needs consistent JSON parsing,
 payload validation, retry, and error mapping without coupling the request layer to a schema library.
 
+For new async workflows, compose these helpers inside `ResultTask.fromResultAsync(() => ...)`
+and use an explicit Task runner. The request API itself returns eager `ResultAsync` from `resultar`; calling a request helper starts one shared execution.
+
 ## Install
 
 ```sh
@@ -30,9 +33,10 @@ npm install resultar-request resultar
 ## `requestJson`
 
 `requestJson` executes a request, parses the response body as JSON, validates or decodes the payload,
-and returns a `ResultAsync`.
+and returns an eager `ResultAsync`. Wrap the call in a factory to defer it until each Task run:
 
 ```ts
+import { ResultTask } from 'resultar'
 import { requestJson } from 'resultar-request'
 
 type User = { id: string; email: string }
@@ -45,11 +49,23 @@ const isUser = (value: unknown): value is User =>
   typeof value.id === 'string' &&
   typeof value.email === 'string'
 
-const user = requestJson({
-  request: () => fetch('https://example.com/users/123'),
-  validator: isUser,
-})
+const userTask = ResultTask.fromResultAsync(() =>
+  requestJson({
+    request: () => fetch('https://example.com/users/123'),
+    validator: isUser,
+  }),
+)
+
+const result = await userTask.runResult()
+const label = result.match(user => user.email, error => error.message)
 ```
+
+Every run calls `requestJson` afresh. `fromResultAsync(existingResultAsync)` instead observes the
+same already-started execution on every run. Task is lazy and has no `.then`; use `.runResult()`,
+`.runPromise()`, or `.runExit()` (or their `ResultTask.run*(task)` static equivalents) at the application boundary. Its `map` callback is synchronous.
+
+The option examples below show the underlying eager request API for compatibility. Put the whole
+`requestJson(...)` call inside the factory above when composing a new Task workflow.
 
 The core package accepts Fetch `Response` objects and Undici-shaped response objects structurally.
 It does not import `undici`, `typebox`, `zod`, or `node:*` at runtime.

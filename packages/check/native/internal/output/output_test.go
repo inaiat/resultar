@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/microsoft/typescript-go/resultar-check/internal/analyzer"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/analyzer"
 )
 
 func TestWriteJSONLines(t *testing.T) {

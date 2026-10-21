@@ -370,7 +370,7 @@ export interface ServiceModule<
 type RuntimeServices = Readonly<Record<string, unknown>>;
 type RuntimeTask<A = unknown, E = unknown, R = never> = ResultTask<A, E, R>;
 
-const succeedVoid = (): RuntimeTask<void, never, never> => ResultTask.succeed(globalThis.undefined);
+const succeedVoid = (): RuntimeTask<void, never, never> => ResultTask.ok(globalThis.undefined);
 
 interface Definition {
   readonly dependencies: readonly string[];
@@ -439,7 +439,7 @@ class RuntimeScope {
         name,
         makeDefinition(
           [],
-          () => ResultTask.succeed(value),
+          () => ResultTask.ok(value),
           "scoped",
           () => value,
         ),
@@ -524,7 +524,7 @@ class RuntimeScope {
 
     const owner = this.ownerFor(definition.lifetime);
     if (owner !== undefined && owner.cache.has(key)) {
-      return ResultTask.succeed(owner.cache.get(key));
+      return ResultTask.ok(owner.cache.get(key));
     }
     if (this.disposing || this.root.disposing)
       return die(new TypeError("Cannot resolve from a closed service scope"));
@@ -656,7 +656,7 @@ class RuntimeScope {
         callback: (services: RuntimeServices) => ResultTask<A, E, R>,
       ) =>
         ResultTask.scoped(
-          this.resolveMany(keys, application ? "singleton" : requestedBy).flatMap((services) =>
+          this.resolveMany(keys, application ? "singleton" : requestedBy).andThen((services) =>
             this.bind(callback(services), application ? "singleton" : requestedBy),
           ),
         ) as ResultTask<A, unknown, R>,
@@ -689,11 +689,11 @@ class RuntimeScope {
           ResultTask.sync(() => {
             this.finished?.();
           }),
-      }).flatMap(() =>
+      }).andThen(() =>
         ResultTask.sync(() => {
           this.closed = true;
         })
-          .flatMap(() =>
+          .andThen(() =>
             ResultTask.tryPromise({
               try: async () => {
                 await Promise.all(this.children);
@@ -701,7 +701,7 @@ class RuntimeScope {
               catch: (error) => error,
             }),
           )
-          .flatMap(() => {
+          .andThen(() => {
             this.disposing = true;
             return this.resources.close(exit);
           }),
@@ -769,7 +769,7 @@ const scopedUse =
       const owned = ResultTask.acquireRelease({
         acquire: succeedVoid(),
         release: (_resource, exit) => child.close(exit),
-      }).flatMap(() =>
+      }).andThen(() =>
         ResultTask.gen(function* resolveAndUse() {
           const services = yield* child.resolveMany(dependencies, requestedBy);
           return yield* child.bind(use(services), requestedBy);
@@ -812,7 +812,7 @@ const makeScope = <Services extends object, E, R, G extends Graph>(
               return response;
             },
             catch: (error) => error,
-          }).flatMap((response) => respond(response)),
+          }).andThen((response) => respond(response)),
         );
       }),
     close: () =>
@@ -855,7 +855,7 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
         callback: (services: RuntimeServices) => RuntimeTask,
       ) => RuntimeTask;
       const selected = runScopedUse(dependencies, callback);
-      return yield* rootLifetime.flatMap(() => selected);
+      return yield* rootLifetime.andThen(() => selected);
     });
     return ResultTask.scoped(task) as never;
   }) as ServiceModule<Services, E, R, G>["use"];
@@ -942,7 +942,7 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
           name,
           makeDefinition(
             [],
-            () => ResultTask.succeed(value),
+            () => ResultTask.ok(value),
             "singleton",
             () => value,
           ),
@@ -997,7 +997,7 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
             name,
             makeDefinition(
               [],
-              () => ResultTask.succeed(value),
+              () => ResultTask.ok(value),
               previous?.lifetime ?? "singleton",
               () => value,
             ),
@@ -1052,7 +1052,7 @@ export function withProvider<
   if ("value" in provider) {
     definition = makeDefinition(
       [],
-      () => ResultTask.succeed(provider.value),
+      () => ResultTask.ok(provider.value),
       "singleton",
       () => provider.value,
     );

@@ -57,6 +57,17 @@ type Options struct {
 	NoResultInTaskGen                Severity
 	NoAwaitInResultTaskGen           Severity
 	NoThrowInTaskSync                Severity
+	PreferOrElseSucceed              Severity
+	PreferTap                        Severity
+	PreferTapError                   Severity
+	PreferAsVoid                     Severity
+	PreferFilterOrElse               Severity
+	PreferAcquireDisposable          Severity
+	NoFnIife                         Severity
+	RequireReturnYieldStar           Severity
+	NoUnnecessaryErrWrapInGen        Severity
+	UnnecessaryPipe                  Severity
+	NoRunInsideGen                   Severity
 }
 
 // FileOverride applies diagnostic severities to files matching one of its
@@ -110,6 +121,17 @@ func Defaults() Options {
 		NoResultInTaskGen:                SeverityWarning,
 		NoAwaitInResultTaskGen:           SeverityWarning,
 		NoThrowInTaskSync:                SeverityWarning,
+		PreferOrElseSucceed:              SeveritySuggestion,
+		PreferTap:                        SeveritySuggestion,
+		PreferTapError:                   SeveritySuggestion,
+		PreferAsVoid:                     SeveritySuggestion,
+		PreferFilterOrElse:               SeveritySuggestion,
+		PreferAcquireDisposable:          SeveritySuggestion,
+		NoFnIife:                         SeverityWarning,
+		RequireReturnYieldStar:           SeverityWarning,
+		NoUnnecessaryErrWrapInGen:        SeveritySuggestion,
+		UnnecessaryPipe:                  SeveritySuggestion,
+		NoRunInsideGen:                   SeverityWarning,
 		FailOn:                           SeverityMessage,
 	}
 }
@@ -237,12 +259,6 @@ func resolveExtendsPath(configPath, extension string) (string, error) {
 }
 
 func applyPlugin(options *Options, plugin map[string]any) error {
-	if err := setSeverity(plugin, "noUnknownTaskRequirements", &options.NoUnknownTaskRequirements); err != nil {
-		return err
-	}
-	if err := setSeverity(plugin, "unusedSuppression", &options.UnusedSuppression); err != nil {
-		return err
-	}
 	var err error
 	if value, ok := plugin["ignoreFilePatterns"]; ok {
 		if options.IgnoreFilePatterns, err = filePatterns(value); err != nil {
@@ -261,6 +277,12 @@ func applyPlugin(options *Options, plugin map[string]any) error {
 		if err := applyOverrides(options, value); err != nil {
 			return fmt.Errorf("overrides: %w", err)
 		}
+	}
+	if err := setSeverity(plugin, "noUnknownTaskRequirements", &options.NoUnknownTaskRequirements); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "unusedSuppression", &options.UnusedSuppression); err != nil {
+		return err
 	}
 	if err := setSeverity(plugin, "noAwaitInSafeTry", &options.NoAwaitInSafeTry); err != nil {
 		return err
@@ -365,6 +387,39 @@ func applyPlugin(options *Options, plugin map[string]any) error {
 	if err := setSeverity(plugin, "noThrowInTaskSync", &options.NoThrowInTaskSync); err != nil {
 		return err
 	}
+	if err := setSeverity(plugin, "preferOrElseSucceed", &options.PreferOrElseSucceed); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "preferTap", &options.PreferTap); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "preferTapError", &options.PreferTapError); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "preferAsVoid", &options.PreferAsVoid); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "preferFilterOrElse", &options.PreferFilterOrElse); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "preferAcquireDisposable", &options.PreferAcquireDisposable); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "noFnIife", &options.NoFnIife); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "requireReturnYieldStar", &options.RequireReturnYieldStar); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "noUnnecessaryErrWrapInGen", &options.NoUnnecessaryErrWrapInGen); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "unnecessaryPipe", &options.UnnecessaryPipe); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "noRunInsideGen", &options.NoRunInsideGen); err != nil {
+		return err
+	}
 	if value, ok := plugin["noDiscardMode"]; ok {
 		mode, ok := value.(string)
 		if !ok || (mode != "must-use" && mode != "direct") {
@@ -375,12 +430,36 @@ func applyPlugin(options *Options, plugin map[string]any) error {
 	return nil
 }
 
+func setAllRulesSeverity(options *Options, value Severity) {
+	for rule := range ruleNames {
+		_ = setRuleSeverity(options, rule, value)
+	}
+}
+
 func applyDiagnosticSeverity(options *Options, value any, name string) error {
+	if _, ok := value.(string); ok {
+		parsed, err := severity(value, SeverityOff, name)
+		if err != nil {
+			return err
+		}
+		setAllRulesSeverity(options, parsed)
+		return nil
+	}
 	values, ok := value.(map[string]any)
 	if !ok || value == nil {
-		return fmt.Errorf("%s must be an object mapping rule names to severities", name)
+		return fmt.Errorf("%s must be a severity string or an object mapping rule names to severities", name)
+	}
+	if rawWildcard, hasWildcard := values["*"]; hasWildcard {
+		parsed, err := severity(rawWildcard, SeverityOff, name+".*")
+		if err != nil {
+			return err
+		}
+		setAllRulesSeverity(options, parsed)
 	}
 	for rule, rawSeverity := range values {
+		if rule == "*" {
+			continue
+		}
 		parsed, err := severity(rawSeverity, SeverityOff, name+"."+rule)
 		if err != nil {
 			return err
@@ -422,12 +501,36 @@ func applyOverrides(options *Options, value any) error {
 		if !ok {
 			return fmt.Errorf("entry %d options must define diagnosticSeverity", index)
 		}
+		if _, isString := rawSeverity.(string); isString {
+			severityValue, err := severity(rawSeverity, SeverityOff, fmt.Sprintf("overrides[%d].options.diagnosticSeverity", index))
+			if err != nil {
+				return err
+			}
+			parsed := make(map[string]Severity, len(ruleNames))
+			for rule := range ruleNames {
+				parsed[rule] = severityValue
+			}
+			options.Overrides = append(options.Overrides, FileOverride{Include: patterns, DiagnosticSeverity: parsed})
+			continue
+		}
 		severityMap, ok := rawSeverity.(map[string]any)
 		if !ok || rawSeverity == nil {
-			return fmt.Errorf("entry %d options.diagnosticSeverity must be an object", index)
+			return fmt.Errorf("entry %d options.diagnosticSeverity must be a severity string or an object", index)
 		}
 		parsed := make(map[string]Severity, len(severityMap))
+		if rawWildcard, hasWildcard := severityMap["*"]; hasWildcard {
+			severityValue, err := severity(rawWildcard, SeverityOff, fmt.Sprintf("overrides[%d].options.diagnosticSeverity.*", index))
+			if err != nil {
+				return err
+			}
+			for rule := range ruleNames {
+				parsed[rule] = severityValue
+			}
+		}
 		for rule, raw := range severityMap {
+			if rule == "*" {
+				continue
+			}
 			severityValue, err := severity(raw, SeverityOff, fmt.Sprintf("overrides[%d].options.diagnosticSeverity.%s", index, rule))
 			if err != nil {
 				return err
@@ -474,6 +577,10 @@ var ruleNames = map[string]struct{}{
 	"preferresultasync": {}, "preferresultforeach": {}, "prefertaggederror": {}, "taggederrornamematch": {},
 	"typedcatchmapper": {}, "unsaferesulttypeassertion": {}, "yieldstarinsafetry": {},
 	"yieldstarinresulttaskgen": {},
+	"preferorelsesucceed":      {}, "prefertap": {}, "prefertaperror": {}, "preferasvoid": {},
+	"preferfilterorelse": {}, "preferacquiredisposable": {}, "nofniife": {},
+	"requirereturnyieldstar": {}, "nounnecessaryerrwrapingen": {}, "unnecessarypipe": {},
+	"noruninsidegen": {},
 }
 
 func setRuleSeverity(options *Options, name string, value Severity) error {
@@ -538,6 +645,28 @@ func setRuleSeverity(options *Options, name string, value Severity) error {
 		options.NoAwaitInResultTaskGen = value
 	case "nothrowintasksync":
 		options.NoThrowInTaskSync = value
+	case "preferorelsesucceed":
+		options.PreferOrElseSucceed = value
+	case "prefertap":
+		options.PreferTap = value
+	case "prefertaperror":
+		options.PreferTapError = value
+	case "preferasvoid":
+		options.PreferAsVoid = value
+	case "preferfilterorelse":
+		options.PreferFilterOrElse = value
+	case "preferacquiredisposable":
+		options.PreferAcquireDisposable = value
+	case "nofniife":
+		options.NoFnIife = value
+	case "requirereturnyieldstar":
+		options.RequireReturnYieldStar = value
+	case "nounnecessaryerrwrapingen":
+		options.NoUnnecessaryErrWrapInGen = value
+	case "unnecessarypipe":
+		options.UnnecessaryPipe = value
+	case "noruninsidegen":
+		options.NoRunInsideGen = value
 	default:
 		return fmt.Errorf("unknown diagnostic rule %q", name)
 	}
@@ -832,6 +961,28 @@ func RuleSeverity(options Options, name string) (Severity, bool) {
 		return options.NoAwaitInResultTaskGen, true
 	case "nothrowintasksync":
 		return options.NoThrowInTaskSync, true
+	case "preferorelsesucceed":
+		return options.PreferOrElseSucceed, true
+	case "prefertap":
+		return options.PreferTap, true
+	case "prefertaperror":
+		return options.PreferTapError, true
+	case "preferasvoid":
+		return options.PreferAsVoid, true
+	case "preferfilterorelse":
+		return options.PreferFilterOrElse, true
+	case "preferacquiredisposable":
+		return options.PreferAcquireDisposable, true
+	case "nofniife":
+		return options.NoFnIife, true
+	case "requirereturnyieldstar":
+		return options.RequireReturnYieldStar, true
+	case "nounnecessaryerrwrapingen":
+		return options.NoUnnecessaryErrWrapInGen, true
+	case "unnecessarypipe":
+		return options.UnnecessaryPipe, true
+	case "noruninsidegen":
+		return options.NoRunInsideGen, true
 	default:
 		return SeverityOff, false
 	}

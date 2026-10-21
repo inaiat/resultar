@@ -7,11 +7,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/microsoft/typescript-go/internal/ast"
-	"github.com/microsoft/typescript-go/internal/checker"
-	"github.com/microsoft/typescript-go/internal/compiler"
-	"github.com/microsoft/typescript-go/internal/scanner"
-	"github.com/microsoft/typescript-go/resultar-check/internal/config"
+	"github.com/microsoft/TypeScript/tsc/internal/ast"
+	"github.com/microsoft/TypeScript/tsc/internal/checker"
+	"github.com/microsoft/TypeScript/tsc/internal/compiler"
+	"github.com/microsoft/TypeScript/tsc/internal/scanner"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/config"
 )
 
 type Channels struct {
@@ -94,7 +94,7 @@ func serviceDetails(c *checker.Checker, t *checker.Type, node *ast.Node) (string
 	if t == nil {
 		return "", "", false
 	}
-	if typeSymbolName(t) != "ServiceTag" && (t.Symbol() == nil || t.Symbol().Name != "ServiceTag") {
+	if typeSymbolName(t) != "ServiceTag" && (t.Symbol() == nil || t.Symbol().Name() != "ServiceTag") {
 		return "", "", false
 	}
 	args := typeArguments(c, t)
@@ -112,7 +112,8 @@ func BuildOverview(ctx context.Context, program *compiler.Program, projectDir st
 	}
 	result := Overview{SchemaVersion: 1, Entries: []OverviewEntry{}}
 	for _, file := range program.SourceFiles() {
-		if !options.ShouldInspect(file.FileName(), projectDir) {
+		fileName := string(file.FileName())
+		if !options.ShouldInspect(fileName, projectDir) {
 			continue
 		}
 		module := c.GetSymbolAtLocation(file.AsNode())
@@ -121,22 +122,22 @@ func BuildOverview(ctx context.Context, program *compiler.Program, projectDir st
 		}
 		for _, export := range c.GetExportsOfModule(module) {
 			symbol := export
-			if symbol.Flags&ast.SymbolFlagsAlias != 0 {
+			if symbol.Flags()&ast.SymbolFlagsAlias != 0 {
 				symbol = c.GetAliasedSymbol(symbol)
 			}
 			if symbol == nil {
 				continue
 			}
-			decl := symbol.ValueDeclaration
+			decl := symbol.ValueDeclaration()
 			if decl == nil {
 				continue
 			}
 			origin := ast.GetSourceFileOfNode(decl)
-			if origin == nil || !options.ShouldInspect(origin.FileName(), projectDir) {
+			if origin == nil || !options.ShouldInspect(string(origin.FileName()), projectDir) {
 				continue
 			}
 			line, column := scanner.GetECMALineAndUTF16CharacterOfPosition(origin, scanner.GetRangeOfTokenAtPosition(origin, decl.Pos()).Pos())
-			entry := OverviewEntry{Name: export.Name, ExportedFrom: file.FileName(), Declaration: DeclarationLocation{File: origin.FileName(), Line: line + 1, Column: int(column) + 1}}
+			entry := OverviewEntry{Name: export.Name(), ExportedFrom: fileName, Declaration: DeclarationLocation{File: string(origin.FileName()), Line: line + 1, Column: int(column) + 1}}
 			t := c.GetTypeOfSymbolAtLocation(symbol, decl)
 			if channels, ok := typeChannels(c, t, decl); ok {
 				entry.Kind = "value"
@@ -193,7 +194,7 @@ func HoverAt(ctx context.Context, program *compiler.Program, path string, offset
 		return "", fmt.Errorf("unable to acquire TypeScript checker")
 	}
 	for _, file := range program.SourceFiles() {
-		if filepath.Clean(file.FileName()) != filepath.Clean(path) {
+		if filepath.Clean(string(file.FileName())) != filepath.Clean(path) {
 			continue
 		}
 		var selected *ast.Node
@@ -217,6 +218,15 @@ func HoverAt(ctx context.Context, program *compiler.Program, path string, offset
 		t := c.GetTypeAtLocation(selected)
 		if id, contract, ok := serviceDetails(c, t, selected); ok {
 			return fmt.Sprintf("**Service** `%s`\n\nContract: `%s`", id, contract), nil
+		}
+		if typeSymbolName(t) == "MatchMatcher" || (t.Symbol() != nil && t.Symbol().Name() == "MatchMatcher") {
+			arguments := typeArguments(c, t)
+			if len(arguments) >= 3 {
+				render := func(channel *checker.Type) string {
+					return c.TypeToStringEx(channel, selected, checker.TypeFormatFlagsNoTruncation, nil)
+				}
+				return fmt.Sprintf("**Match input**\n```ts\n%s\n```\n**Remaining cases**\n```ts\n%s\n```\n**Matched output**\n```ts\n%s\n```", render(arguments[0]), render(arguments[1]), render(arguments[2])), nil
+			}
 		}
 		channels, ok := typeChannels(c, t, selected)
 		if !ok {
@@ -249,7 +259,7 @@ func Refactors(ctx context.Context, program *compiler.Program, path string) ([]F
 	a := Analyzer{checker: c}
 	result := []Fix{}
 	for _, file := range program.SourceFiles() {
-		if filepath.Clean(file.FileName()) != filepath.Clean(path) {
+		if filepath.Clean(string(file.FileName())) != filepath.Clean(path) {
 			continue
 		}
 		source := func(node *ast.Node) string {
@@ -261,10 +271,10 @@ func Refactors(ctx context.Context, program *compiler.Program, path string) ([]F
 				return false
 			}
 			symbol := c.GetSymbolAtLocation(node)
-			if symbol == nil || symbol.ValueDeclaration == nil {
+			if symbol == nil || symbol.ValueDeclaration() == nil {
 				return false
 			}
-			decl := symbol.ValueDeclaration
+			decl := symbol.ValueDeclaration()
 			return decl.Kind == ast.KindVariableDeclaration && decl.Parent != nil && decl.Parent.Kind == ast.KindVariableDeclarationList && decl.Parent.Flags&ast.NodeFlagsConst != 0
 		}
 		comments := sourceComments(file)
@@ -280,11 +290,98 @@ func Refactors(ctx context.Context, program *compiler.Program, path string) ([]F
 			fix.Description = "Preserves task execution order and cleanup."
 			result = append(result, fix)
 		}
+		pipeIdent := ""
 		visit(file.AsNode(), func(node *ast.Node) {
+			if pipeIdent != "" {
+				return
+			}
+			switch node.Kind {
+			case ast.KindImportSpecifier:
+				if node.Name() != nil && a.canonicalExpressionName(node.Name()) == "pipe" {
+					pipeIdent = node.Name().Text()
+				}
+			case ast.KindFunctionDeclaration, ast.KindVariableDeclaration:
+				if node.Name() != nil && node.Name().Kind == ast.KindIdentifier && node.Name().Text() == "pipe" {
+					pipeIdent = "pipe"
+				}
+			}
+		})
+		visit(file.AsNode(), func(node *ast.Node) {
+			if (node.Kind == ast.KindArrowFunction || node.Kind == ast.KindFunctionExpression) && node.Body() != nil {
+				outerText := strings.TrimSpace(source(node))
+				if strings.HasPrefix(outerText, "async ") || strings.HasPrefix(outerText, "async(") {
+					return
+				}
+				if node.Kind == ast.KindFunctionExpression && node.AsFunctionExpression().AsteriskToken != nil {
+					return
+				}
+				var genCall *ast.Node
+				if node.Body().Kind == ast.KindCallExpression {
+					genCall = node.Body()
+				} else if node.Body().Kind == ast.KindBlock {
+					stmts := node.Body().AsBlock().Statements.Nodes
+					if len(stmts) == 1 && stmts[0].Kind == ast.KindReturnStatement && stmts[0].Expression() != nil {
+						expr := unwrapExpression(stmts[0].Expression())
+						if expr != nil && expr.Kind == ast.KindCallExpression {
+							genCall = expr
+						}
+					}
+				}
+				if genCall != nil {
+					call := genCall.AsCallExpression()
+					namespace := a.staticNamespace(call.Expression, "gen")
+					if (namespace == "ResultTask" || namespace == "Result") && len(call.Arguments.Nodes) == 1 && call.Expression.Kind == ast.KindPropertyAccessExpression {
+						nsReceiver := call.Expression.AsPropertyAccessExpression().Expression
+						if c.GetPropertyOfType(c.GetTypeAtLocation(nsReceiver), "fn") != nil {
+							innerGen := unwrapExpression(call.Arguments.Nodes[0])
+							if innerGen != nil && innerGen.Kind == ast.KindFunctionExpression && innerGen.AsFunctionExpression().AsteriskToken != nil && len(innerGen.Parameters()) == 0 && innerGen.Body() != nil && innerGen.Body().Kind == ast.KindBlock {
+								innerText := strings.TrimSpace(source(innerGen))
+								prefix := "function*"
+								if strings.HasPrefix(innerText, "async") {
+									prefix = "async function*"
+								}
+								typeParamsText := ""
+								if tps := node.TypeParameters(); len(tps) > 0 {
+									parts := make([]string, 0, len(tps))
+									for _, tp := range tps {
+										parts = append(parts, source(tp))
+									}
+									typeParamsText = "<" + strings.Join(parts, ", ") + ">"
+								}
+								params := make([]string, 0, len(node.Parameters()))
+								for _, param := range node.Parameters() {
+									params = append(params, source(param))
+								}
+								replacement := fmt.Sprintf("%s.fn(%s%s(%s) %s)", source(nsReceiver), prefix, typeParamsText, strings.Join(params, ", "), source(innerGen.Body()))
+								add(node, fmt.Sprintf("Convert to %s.fn", namespace), replacement)
+							}
+						}
+					}
+				}
+				return
+			}
 			if node.Kind != ast.KindCallExpression {
 				return
 			}
 			call := node.AsCallExpression()
+			if call.Expression.Kind != ast.KindPropertyAccessExpression && a.canonicalExpressionName(call.Expression) == "pipe" && len(call.Arguments.Nodes) >= 2 {
+				firstArg := call.Arguments.Nodes[0]
+				firstType := c.GetTypeAtLocation(firstArg)
+				if isResultLikeType(firstType) && c.GetPropertyOfType(firstType, "pipe") != nil {
+					steps := make([]string, 0, len(call.Arguments.Nodes)-1)
+					for _, step := range call.Arguments.Nodes[1:] {
+						steps = append(steps, source(step))
+					}
+					recvText := source(firstArg)
+					switch firstArg.Kind {
+					case ast.KindIdentifier, ast.KindCallExpression, ast.KindPropertyAccessExpression, ast.KindElementAccessExpression, ast.KindParenthesizedExpression:
+					default:
+						recvText = "(" + recvText + ")"
+					}
+					add(node, "Convert to method .pipe()", fmt.Sprintf("%s.pipe(%s)", recvText, strings.Join(steps, ", ")))
+				}
+				return
+			}
 			if a.isResultTaskStaticCall(call.Expression, "gen") && len(call.Arguments.Nodes) == 1 {
 				body := a.resultTaskGenBody(node)
 				if body == nil || body.Body() == nil || body.Body().Kind != ast.KindBlock {
@@ -301,16 +398,25 @@ func Refactors(ctx context.Context, program *compiler.Program, path string) ([]F
 				task := unwrapExpression(yield.Expression())
 				// A generator can capture a const that is initialized later; replacing it
 				// with an eager reference would access the binding before initialization.
-				if stable(task) && c.GetSymbolAtLocation(task).ValueDeclaration.End() < node.Pos() && isResultTaskLikeType(c.GetTypeAtLocation(task)) {
+				if stable(task) && c.GetSymbolAtLocation(task).ValueDeclaration().End() < node.Pos() && isResultTaskLikeType(c.GetTypeAtLocation(task)) {
 					add(node, "Simplify delegating task generator", source(task))
 				}
 				return
 			}
 			method, receiver, _ := methodCall(node)
+			if method == "pipe" && len(call.Arguments.Nodes) >= 1 && receiver != nil && pipeIdent != "" && isResultLikeType(c.GetTypeAtLocation(receiver)) {
+				args := make([]string, 0, len(call.Arguments.Nodes)+1)
+				args = append(args, source(receiver))
+				for _, step := range call.Arguments.Nodes {
+					args = append(args, source(step))
+				}
+				add(node, "Convert to pipe(...)", fmt.Sprintf("%s(%s)", pipeIdent, strings.Join(args, ", ")))
+				return
+			}
 			if receiver == nil || !isResultTaskLikeType(c.GetTypeAtLocation(receiver)) {
 				return
 			}
-			if method == "catchAll" && len(call.Arguments.Nodes) == 1 {
+			if (method == "catchAll" || method == "orElse") && len(call.Arguments.Nodes) == 1 {
 				callback := unwrapExpression(call.Arguments.Nodes[0])
 				if callback == nil || callback.Kind != ast.KindArrowFunction {
 					return
@@ -356,7 +462,7 @@ func Refactors(ctx context.Context, program *compiler.Program, path string) ([]F
 					return
 				}
 				fallback := expression.AsCallExpression()
-				if !a.isResultTaskStaticCall(fallback.Expression, "fail") || len(fallback.Arguments.Nodes) != 1 || fallback.Arguments.Nodes[0].Kind != ast.KindIdentifier || fallback.Arguments.Nodes[0].Text() != name {
+				if (!a.isResultTaskStaticCall(fallback.Expression, "err") && !a.isResultTaskStaticCall(fallback.Expression, "fail")) || len(fallback.Arguments.Nodes) != 1 || fallback.Arguments.Nodes[0].Kind != ast.KindIdentifier || fallback.Arguments.Nodes[0].Text() != name {
 					return
 				}
 				add(node, "Recover task failures by tag", source(receiver)+".catchTags({ "+strings.Join(handlers, ", ")+" })")

@@ -22,9 +22,9 @@ import {
   runPromise,
   tryResultAsync,
   unitAsync,
-} from '../src/result-async.js'
-import { Result, err, ok, runSync, tryResult, unit } from '../src/result.js'
-import { createTaggedError } from '../src/tagged-error.js'
+} from '../src/result-async/result-async.js'
+import { Result, err, ok, runSync, tryResult, unit } from '../src/result/result.js'
+import { createTaggedError } from '../src/tagged/tagged-error.js'
 
 const validateUser = (user: Readonly<{ name: string }>): ResultAsync<{ name: string }, string> => {
   if (user.name === 'superadmin') {
@@ -374,6 +374,37 @@ describe('Result.Ok', async () => {
     equal(matched, 'weeeeee')
     equal(okMapper.mock.calls.length, 1)
     equal(errMapper.mock.calls.length, 0)
+  })
+
+  it('Matches with { ok, err } and { ok, error } object handlers', () => {
+    equal(
+      ok<number, string>(12).match({
+        ok: (value) => `ok:${value}`,
+        err: (error) => `err:${error}`,
+      }),
+      'ok:12',
+    )
+    equal(
+      err<number, string>('bad').match({
+        ok: (value) => `ok:${value}`,
+        err: (error) => `err:${error}`,
+      }),
+      'err:bad',
+    )
+    equal(
+      err<number, string>('bad').match({
+        ok: (value) => `ok:${value}`,
+        error: (error) => `err:${error}`,
+      }),
+      'err:bad',
+    )
+    equal(
+      Result.match(err<number, string>('bad'), {
+        ok: (value) => `ok:${value}`,
+        err: (error) => `err:${error}`,
+      }),
+      'err:bad',
+    )
   })
 
   it('matches tagged errors from a result boundary', () => {
@@ -1147,6 +1178,37 @@ describe('ResultAsync', async () => {
       equal(errMapper.mock.calls.length, 1)
     })
 
+    it('Matches with { ok, err } and { ok, error } object handlers', async () => {
+      equal(
+        await ResultAsync.ok<number, string>(12).match({
+          ok: (value) => `ok:${value}`,
+          err: (error) => `err:${error}`,
+        }),
+        'ok:12',
+      )
+      equal(
+        await ResultAsync.err<number, string>('bad').match({
+          ok: (value) => `ok:${value}`,
+          err: (error) => `err:${error}`,
+        }),
+        'err:bad',
+      )
+      equal(
+        await ResultAsync.err<number, string>('bad').match({
+          ok: (value) => `ok:${value}`,
+          error: (error) => `err:${error}`,
+        }),
+        'err:bad',
+      )
+      deepEqual(
+        await ResultAsync.match(ResultAsync.err<number, string>('bad'), {
+          ok: (value) => `ok:${value}`,
+          err: (error) => `err:${error}`,
+        }),
+        ok('err:bad'),
+      )
+    })
+
     it('partially matches tagged async errors with a fallback', async () => {
       const validationError = new ValidationError({ field: 'email' })
       const permissionError = new PermissionError({ permission: 'admin:read' })
@@ -1614,6 +1676,66 @@ describe('ResultAsync', async () => {
       equal(sideEffectErr.mock.calls.length, 1)
     })
   })
+
+  describe('inspect', async () => {
+    it('Taps into an async value', async () => {
+      const asyncVal = okAsync(12)
+
+      const sideEffect = vi.fn((number) => {
+        console.log(number)
+      })
+
+      const mapped = asyncVal.inspect(sideEffect)
+
+      isTrue(mapped instanceof ResultAsync)
+
+      const newVal = await mapped
+
+      isTrue(newVal.isOk())
+      equal(newVal._unsafeUnwrap(), 12)
+      equal(sideEffect.mock.calls.length, 1)
+    })
+
+    it('Cannot change an async value with .tap', async () => {
+      const original = { name: 'John' }
+      const asyncVal = okAsync(original)
+
+      const sideEffect = vi.fn((_person) => okAsync({ name: 'Alice' }))
+
+      const mapped = asyncVal.inspect(sideEffect)
+
+      isTrue(mapped instanceof ResultAsync)
+
+      const newVal = await mapped
+
+      isTrue(newVal.isOk())
+      deepEqual(newVal._unsafeUnwrap(), original)
+      equal(sideEffect.mock.calls.length, 1)
+    })
+
+    it('Skips side effect ok and taps into an error', async () => {
+      const asyncErr = errAsync<number, string>('Wrong format')
+
+      const sideEffect = vi.fn((number) => {
+        console.log(number)
+      })
+
+      const sideEffectErr = vi.fn((number) => {
+        console.error(number)
+      })
+
+      const notMapped = asyncErr.inspect(sideEffect).inspectError(sideEffectErr)
+
+      isTrue(notMapped instanceof ResultAsync)
+
+      const newVal = await notMapped
+
+      isTrue(newVal.isErr())
+      equal(newVal._unsafeUnwrapErr(), 'Wrong format')
+      equal(sideEffect.mock.calls.length, 0)
+      equal(sideEffectErr.mock.calls.length, 1)
+    })
+  })
 })
 
 describe('OrElse', async () => {
@@ -1821,6 +1943,16 @@ describe('Utils', async () => {
         isTrue(result.isOk())
         deepEqual(result._unsafeUnwrap(), [123, 456, 789])
       })
+
+      it('Skips empty slots in sparse arrays', () => {
+        const sparseList: Result<number, string>[] = []
+        sparseList[1] = ok(42)
+
+        const result = Result.combine(sparseList)
+
+        isTrue(result.isOk())
+        deepEqual(result._unsafeUnwrap(), [42])
+      })
     })
 
     it('Combines a list of results into an Err value', async () => {
@@ -1931,6 +2063,16 @@ describe('Utils', async () => {
 
       isTrue(result.isErr())
       deepEqual(result._unsafeUnwrapErr(), ['boooom!', 'ahhhhh!'])
+    })
+
+    it('skips empty slots in sparse arrays when combining with all errors', () => {
+      const sparseList: Result<number, string>[] = []
+      sparseList[1] = ok(42)
+
+      const result = Result.combineWithAllErrors(sparseList)
+
+      isTrue(result.isOk())
+      deepEqual(result._unsafeUnwrap(), [42])
     })
 
     it('maps all sync items before collecting validation errors', () => {

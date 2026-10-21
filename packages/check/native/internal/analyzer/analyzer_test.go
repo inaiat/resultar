@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/microsoft/typescript-go/resultar-check/internal/config"
-	"github.com/microsoft/typescript-go/resultar-check/internal/project"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/config"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/project"
 )
 
 const pilotFixture = `
@@ -897,4 +897,209 @@ func writeFixture(t *testing.T, source string) string {
 		t.Fatal(err)
 	}
 	return directory
+}
+func TestTaskStaticCompositionConsumesInput(t *testing.T) {
+	directory := writeFixture(t, `
+interface Result<T, E = never> {readonly value:T;readonly error:E}
+interface ResultAsync<T, E = never> {readonly value:T;readonly error:E}
+interface ResultTask<T, E = never, R = never> {
+  readonly value:T;readonly error:E;readonly requirements:R
+  [Symbol.iterator](): Generator<unknown, T, unknown>
+}
+declare const Result: {
+  catchTag<T,E,F>(result:Result<T,E>,tag:string,fn:(error:E)=>Result<T,F>):Result<T,F>
+  catchReason<T,E,F>(result:Result<T,E>,tag:string,reasonTag:string,fn:(reason:unknown,error:E)=>Result<T,F>):Result<T,F>
+  catchReasons<T,E,F>(result:Result<T,E>,tag:string,handlers:Record<string,(reason:unknown,error:E)=>Result<T,F>>):Result<T,F>
+  unwrapReason<T,E>(result:Result<T,E>,tag:string):Result<T,E>
+  orElseSucceed<T,E,B>(result:Result<T,E>,fn:(error:E)=>B):Result<T|B,never>
+  unwrapOr<T,E,B>(result:Result<T,E>,fallback:B):T|B
+  matchTags<T,E,A>(result:Result<T,E>,handlers:Record<string,(value:unknown)=>A>):A
+  inspectBoth<T,E>(result:Result<T,E>,onOk:(value:T)=>unknown,onErr:(error:E)=>unknown):Result<T,E>
+  all<T,E>(results:readonly Result<T,E>[]):Result<T[],E>
+}
+declare const ResultAsync: {
+  catchTag<T,E,F>(result:ResultAsync<T,E>,tag:string,fn:(error:E)=>ResultAsync<T,F>):ResultAsync<T,F>
+  catchReason<T,E,F>(result:ResultAsync<T,E>,tag:string,reasonTag:string,fn:(reason:unknown,error:E)=>ResultAsync<T,F>):ResultAsync<T,F>
+  catchReasons<T,E,F>(result:ResultAsync<T,E>,tag:string,handlers:Record<string,(reason:unknown,error:E)=>ResultAsync<T,F>>):ResultAsync<T,F>
+  unwrapReason<T,E>(result:ResultAsync<T,E>,tag:string):ResultAsync<T,E>
+  orElseSucceed<T,E,B>(result:ResultAsync<T,E>,fn:(error:E)=>B):ResultAsync<T|B,never>
+  unwrapOr<T,E,B>(result:ResultAsync<T,E>,fallback:B):Promise<T|B>
+  matchTags<T,E,A>(result:ResultAsync<T,E>,handlers:Record<string,(value:unknown)=>A>):Promise<A>
+  inspectBoth<T,E>(result:ResultAsync<T,E>,onOk:(value:T)=>unknown,onErr:(error:E)=>unknown):ResultAsync<T,E>
+  all<T,E>(results:readonly ResultAsync<T,E>[]):ResultAsync<T[],E>
+}
+declare const ResultTask: {
+  mapError<T,E,R,F>(task:ResultTask<T,E,R>,fn:(error:E)=>F):ResultTask<T,F,R>
+  mapErr<T,E,R,F>(task:ResultTask<T,E,R>,fn:(error:E)=>F):ResultTask<T,F,R>
+  flatMap<T,E,R,U,F,S>(task:ResultTask<T,E,R>,fn:(value:T)=>ResultTask<U,F,S>):ResultTask<U,E|F,R|S>
+  andThen<T,E,R,U,F,S>(task:ResultTask<T,E,R>,fn:(value:T)=>ResultTask<U,F,S>):ResultTask<U,E|F,R|S>
+  catchAll<T,E,R,U,F,S>(task:ResultTask<T,E,R>,fn:(error:E)=>ResultTask<U,F,S>):ResultTask<T|U,F,R|S>
+  orElse<T,E,R,U,F,S>(task:ResultTask<T,E,R>,fn:(error:E)=>ResultTask<U,F,S>):ResultTask<T|U,F,R|S>
+  orElseSucceed<T,E,R,B>(task:ResultTask<T,E,R>,fn:(error:E)=>B):ResultTask<T|B,never,R>
+  unwrapOr<T,E,R,B>(task:ResultTask<T,E,R>,fallback:B):ResultTask<T|B,never,R>
+  catchTag<T,E,R>(task:ResultTask<T,E,R>,tag:string,fn:(error:E)=>ResultTask<T,never,R>):ResultTask<T,never,R>
+  catchTags<T,E,R>(task:ResultTask<T,E,R>,handlers:Record<string,(error:E)=>ResultTask<T,never,R>>):ResultTask<T,never,R>
+  catchReason<T,E,R>(task:ResultTask<T,E,R>,tag:string,reasonTag:string,fn:(reason:unknown,error:E)=>ResultTask<T,never,R>):ResultTask<T,never,R>
+  catchReasons<T,E,R>(task:ResultTask<T,E,R>,tag:string,handlers:Record<string,(reason:unknown,error:E)=>ResultTask<T,never,R>>):ResultTask<T,never,R>
+  unwrapReason<T,E,R>(task:ResultTask<T,E,R>,tag:string):ResultTask<T,E,R>
+  filterOrElse<T,E,R,F>(task:ResultTask<T,E,R>,predicate:(value:T)=>boolean,onFalse:(value:T)=>F):ResultTask<T,E|F,R>
+  matchTags<T,E,R,A>(task:ResultTask<T,E,R>,handlers:Record<string,(value:unknown)=>A>):ResultTask<A,never,R>
+  matchTagsPartial<T,E,R,A>(task:ResultTask<T,E,R>,handlers:Record<string,(value:unknown)=>A>,onUnmatched:(error:E)=>A):ResultTask<A,never,R>
+  inspectBoth<T,E,R>(task:ResultTask<T,E,R>,onOk:(value:T)=>unknown,onErr:(error:E)=>unknown):ResultTask<T,E,R>
+  tapBoth<T,E,R>(task:ResultTask<T,E,R>,onOk:(value:T)=>unknown,onErr:(error:E)=>unknown):ResultTask<T,E,R>
+  toResultAsync<T,E>(task:ResultTask<T,E,never>):ResultAsync<T,E>
+  acquireRelease<T>(options: object): ResultTask<T, never, never>
+  scoped<T,E,R>(task:ResultTask<T,E,R>):ResultTask<T,E,R>
+  fn<T>(body: () => Generator<unknown, T, unknown>, op: (task: ResultTask<T>) => ResultTask<T>): () => ResultTask<T>
+}
+declare function make():ResultTask<number,string>
+declare function makeSync():Result<number,string>
+declare function makeAsync():ResultAsync<number,string>
+const mapped = make()
+void ResultTask.mapError(mapped,error=>error.length)
+const chained = make()
+void ResultTask.flatMap(chained,()=>make())
+const recovered = make()
+void ResultTask.catchAll(recovered,()=>make())
+const newMapped = make()
+void ResultTask.mapErr(newMapped,error=>error.length)
+const newChained = make()
+void ResultTask.andThen(newChained,()=>make())
+const newRecovered = make()
+void ResultTask.orElse(newRecovered,()=>make())
+const newSucceeded = make()
+void ResultTask.orElseSucceed(newSucceeded,()=>0)
+const newUnwrapped = make()
+void ResultTask.unwrapOr(newUnwrapped,0)
+const tagCaught = make()
+void ResultTask.catchTag(tagCaught,"Err",()=>make())
+const tagsCaught = make()
+void ResultTask.catchTags(tagsCaught,{Err:()=>make()})
+const reasonCaught = make()
+void ResultTask.catchReason(reasonCaught,"Err","Reason",()=>make())
+const reasonsCaught = make()
+void ResultTask.catchReasons(reasonsCaught,"Err",{Reason:()=>make()})
+const reasonUnwrapped = make()
+void ResultTask.unwrapReason(reasonUnwrapped,"Err")
+const filtered = make()
+void ResultTask.filterOrElse(filtered,v=>v>0,()=>"neg")
+const matchedTags = make()
+void ResultTask.matchTags(matchedTags,{ok:()=>1,Err:()=>0})
+const matchedPartial = make()
+void ResultTask.matchTagsPartial(matchedPartial,{ok:()=>1},()=>0)
+const taskInspectedBoth = make()
+void ResultTask.inspectBoth(taskInspectedBoth,()=>{},()=>{})
+const taskTappedBoth = make()
+void ResultTask.tapBoth(taskTappedBoth,()=>{},()=>{})
+const converted = make()
+void ResultTask.toResultAsync(converted)
+const syncCaught = makeSync()
+void Result.catchTag(syncCaught,"Err",()=>makeSync())
+const syncReasonCaught = makeSync()
+void Result.catchReason(syncReasonCaught,"Err","Reason",()=>makeSync())
+const syncReasonsCaught = makeSync()
+void Result.catchReasons(syncReasonsCaught,"Err",{Reason:()=>makeSync()})
+const syncReasonUnwrapped = makeSync()
+void Result.unwrapReason(syncReasonUnwrapped,"Err")
+const syncSucceeded = makeSync()
+void Result.orElseSucceed(syncSucceeded,()=>0)
+const syncUnwrapped = makeSync()
+void Result.unwrapOr(syncUnwrapped,0)
+const syncMatched = makeSync()
+void Result.matchTags(syncMatched,{ok:()=>1,Err:()=>0})
+const syncInspectedBoth = makeSync()
+void Result.inspectBoth(syncInspectedBoth,()=>{},()=>{})
+const syncAllItem = makeSync()
+void Result.all([syncAllItem])
+const asyncCaught = makeAsync()
+void ResultAsync.catchTag(asyncCaught,"Err",()=>makeAsync())
+const asyncReasonCaught = makeAsync()
+void ResultAsync.catchReason(asyncReasonCaught,"Err","Reason",()=>makeAsync())
+const asyncReasonsCaught = makeAsync()
+void ResultAsync.catchReasons(asyncReasonsCaught,"Err",{Reason:()=>makeAsync()})
+const asyncReasonUnwrapped = makeAsync()
+void ResultAsync.unwrapReason(asyncReasonUnwrapped,"Err")
+const asyncSucceeded = makeAsync()
+void ResultAsync.orElseSucceed(asyncSucceeded,()=>0)
+const asyncUnwrapped = makeAsync()
+void ResultAsync.unwrapOr(asyncUnwrapped,0)
+const asyncMatched = makeAsync()
+void ResultAsync.matchTags(asyncMatched,{ok:()=>1,Err:()=>0})
+const asyncInspectedBoth = makeAsync()
+void ResultAsync.inspectBoth(asyncInspectedBoth,()=>{},()=>{})
+const asyncAllItem = makeAsync()
+void ResultAsync.all([asyncAllItem])
+const scopedFn = ResultTask.fn(function* () {
+  yield* ResultTask.acquireRelease({})
+  return 1
+}, ResultTask.scoped)
+void scopedFn
+`)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil || len(diagnostics) != 0 {
+		t.Fatalf("open: %v %v", err, diagnostics)
+	}
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, config.Defaults())
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("canonical Task composition: %v %#v", err, findings)
+	}
+}
+
+func TestDelegatingAssignedResultsConsumesTheChannel(t *testing.T) {
+	directory := writeFixture(t, `
+interface Result<T,E> {
+ readonly value:T;readonly error:E
+ map<U>(mapper:(value:T)=>U):Result<U,E>
+ [Symbol.iterator]():Generator<Result<never,E>,T,unknown>
+}
+declare const Result: {gen(body:unknown):unknown}
+declare function make():Result<number,string>
+void Result.gen(function*(){
+ const result = make()
+ return yield* result
+})
+void Result.gen(async function*(){
+ const result = make()
+ return yield* result.map(value=>value+1)
+})
+`)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil || len(diagnostics) != 0 {
+		t.Fatalf("open: %v %v", err, diagnostics)
+	}
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, config.Defaults())
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("yield* must consume assigned Result channels: %v %#v", err, findings)
+	}
+}
+
+func TestTaskCollectionsAndFibersConsumeAssignedTasks(t *testing.T) {
+	directory := writeFixture(t, `
+interface ResultTask<T, E = never, R = never> {readonly value:T;readonly error:E;readonly requirements:R}
+declare const ResultTask: {
+ all(tasks:readonly ResultTask<number,string>[]|Record<string,ResultTask<number,string>>):ResultTask<number[],string>
+ race(left:ResultTask<number,string>,right:ResultTask<number,string>):ResultTask<number,string>
+ raceFirst(left:ResultTask<number,string>,right:ResultTask<number,string>):ResultTask<number,string>
+ forkChild(task:ResultTask<number,string>):ResultTask<unknown>
+}
+declare function make():ResultTask<number,string>
+const first = make(), second = make()
+void ResultTask.all([first,second])
+const recordFirst = make(), recordSecond = make()
+void ResultTask.all({first:recordFirst,second:recordSecond})
+const left = make(), right = make()
+void ResultTask.race(left,right)
+const raceFirstLeft = make(), raceFirstRight = make()
+void ResultTask.raceFirst(raceFirstLeft,raceFirstRight)
+const child = make()
+void ResultTask.forkChild(child)
+`)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil || len(diagnostics) != 0 {
+		t.Fatalf("open: %v %v", err, diagnostics)
+	}
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, config.Defaults())
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("collections and fibers must consume their task inputs: %v %#v", err, findings)
+	}
 }

@@ -3,11 +3,22 @@
 ## Architecture
 
 This directory contains the Go implementation of all current Resultar rules on
-the TypeScript 7 native compiler. It pins the same `typescript-go` revision as
-TypeScript `7.0.2` and opens each project only once for TypeScript diagnostics
-and Resultar analysis.
+the TypeScript 7 native compiler (`github.com/microsoft/TypeScript/tsc`). It opens
+each project only once for TypeScript diagnostics and Resultar analysis.
 
 ## Rules
+
+New async application workflows should use `ResultTask` and explicit runners. The
+`prefer-result-async` rule name is retained for an optional eager compatibility policy;
+`ResultAsync` and `StrictResultAsync` represent in-flight `Result` values in `resultar`. Configure that rule as `off`
+when the eager policy is not wanted. Its existing default severity and modes remain supported.
+
+Task diagnostics and refactors prefer `ok` / `err`, `mapErr`, `andThen`, and `orElse`, while
+recognizing the retained deprecated aliases. Prefer `RetryPolicy` for retry and `{ ok, err }`
+for object-form matching. `no-discard` also tracks `Promise<Result>` / `Promise.all(...).then(...)`
+and array `.map` / `.forEach` / `.flatMap` chains through curried/static Resultar consumers,
+transformers, tuple combiners, `.bind(...)`, conditional callbacks, object-literal property callbacks,
+and higher-order callback factories. The eager entry point retains its existing compatibility contracts.
 
 The native backend implements these stable rule IDs and their tsconfig options:
 
@@ -41,11 +52,22 @@ The native backend implements these stable rule IDs and their tsconfig options:
 - `resultar/no-result-in-task-gen` (`noResultInTaskGen`)
 - `resultar/no-await-in-result-task-gen` (`noAwaitInResultTaskGen`)
 - `resultar/no-throw-in-task-sync` (`noThrowInTaskSync`)
+- `resultar/prefer-or-else-succeed` (`preferOrElseSucceed`)
+- `resultar/prefer-tap` (`preferTap`)
+- `resultar/prefer-tap-error` (`preferTapError`)
+- `resultar/prefer-as-void` (`preferAsVoid`)
+- `resultar/prefer-filter-or-else` (`preferFilterOrElse`)
+- `resultar/prefer-acquire-disposable` (`preferAcquireDisposable`)
+- `resultar/no-fn-iife` (`noFnIife`)
+- `resultar/require-return-yield-star` (`requireReturnYieldStar`)
+- `resultar/no-unnecessary-err-wrap-in-gen` (`noUnnecessaryErrWrapInGen`)
+- `resultar/unnecessary-pipe` (`unnecessaryPipe`)
+- `resultar/no-run-inside-gen` (`noRunInsideGen`)
 - shared `ignoreFilePatterns`, `diagnosticSeverity`, `overrides`, and `failOn`
 
 The stdio LSP builds read-only project snapshots from open buffers, uses a single analysis
 worker with debounced changes, and publishes versioned diagnostics/edits. Hover exposes
-Resultar channels. Conservative contextual refactors share the same typed snapshot.
+Resultar channels, `MatchMatcher` state, and service contracts. Conservative contextual refactors share the same typed snapshot.
 `overview` and `quickfixes` provide read-only human/JSON previews through the native CLI.
 
 ## Development
@@ -66,7 +88,7 @@ resultar-check lsp
 compiled `resultar-check-native` binary resolves `--project` from the caller's
 working directory like the public CLI.
 
-The Go module path intentionally lives below `github.com/microsoft/typescript-go`.
+The Go module path intentionally lives below `github.com/microsoft/TypeScript/tsc`.
 TypeScript-Go does not publish a public Go plugin API yet, and Go only permits
 imports of its `internal` compiler packages from that namespace. Unlike a fork,
 this approach does not patch compiler sources; upgrading is an explicit change

@@ -4,8 +4,8 @@
   "license": "MIT",
   "exports": "./src/index.ts",
   "imports": {
-    "resultar": "jsr:@inaiat/resultar@^3.4.0",
-    "resultar-request": "jsr:@inaiat/resultar-request@^0.1.0",
+    "resultar": "jsr:@inaiat/resultar@^4.0.0",
+    "resultar-request": "jsr:@inaiat/resultar-request@^1.0.0",
     "zod": "npm:zod@^4.4.3"
   },
   "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }

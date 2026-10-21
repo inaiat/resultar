@@ -1,3 +1,5 @@
+// Lifecycle sessions retain their eager ResultAsync compatibility boundary.
+/* eslint-disable typescript/no-deprecated */
 import {
   err,
   fromSafePromise,
@@ -23,7 +25,9 @@ const sessionError = (defect: unknown): ResultTaskCauseError =>
 function interruptedOnly(cause: Cause<unknown>): boolean {
   return (
     cause._tag === "Interrupt" ||
-    (cause._tag === "Sequential" && interruptedOnly(cause.left) && interruptedOnly(cause.right))
+    ((cause._tag === "Sequential" || cause._tag === "Parallel") &&
+      interruptedOnly(cause.left) &&
+      interruptedOnly(cause.right))
   );
 }
 
@@ -55,19 +59,21 @@ export function startServiceTask(
   let closing: ResultAsync<void, ResultTaskCauseError> | undefined = undefined;
   const task = ResultTask.gen(function* runApplicationTask() {
     return yield* use(
-      startup.flatMap(() => {
+      startup.andThen(() => {
         initialized = true;
         readiness.resolve();
         return ResultTask.fromResultAsync(() => finished);
       }),
     );
   });
-  const completion = fromSafePromise(ResultTask.runExit(task, { signal: controller.signal })).map(
-    (exit) => {
-      completed = true;
-      if (exit._tag === "Failure") readiness.reject(new ResultTaskCauseError(exit.cause));
-      return exit;
-    },
+  const completion = fromSafePromise(
+    Promise.resolve()
+      .then(() => ResultTask.runExit(task, { signal: controller.signal }))
+      .then((exit) => {
+        completed = true;
+        if (exit._tag === "Failure") readiness.reject(new ResultTaskCauseError(exit.cause));
+        return exit;
+      }),
   );
   return {
     ready,

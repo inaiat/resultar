@@ -13,16 +13,20 @@
   "testFiles": ["tests/**/*.test.ts"],
   "thresholds": { "high": 80, "low": 60, "break": null },
   "mutate": [
-    "src/abort-error.ts",
-    "src/error.ts",
-    "src/pipe.ts",
-    "src/redacted.ts",
-    "src/result.ts",
-    "src/result-async.ts",
-    "src/result-async-adapter.ts",
-    "src/result-task.ts",
-    "src/tagged-error.ts",
-    "src/tagged-match.ts"
+    "src/core/abort-error.ts",
+    "src/core/error.ts",
+    "src/core/pipe.ts",
+    "src/core/redacted.ts",
+    "src/result-async/disposable-result-async.ts",
+    "src/result-async/result-async-adapter.ts",
+    "src/result-async/result-async.ts",
+    "src/result/result-helpers.ts",
+    "src/result/result.ts",
+    "src/task/result-task.ts",
+    "src/task/task-helpers.ts",
+    "src/task/task-service.ts",
+    "src/tagged/tagged-error.ts",
+    "src/tagged/tagged-match.ts"
   ],
   "vitest": { "configFile": "vitest-stryker.config.ts", "related": false }
 }

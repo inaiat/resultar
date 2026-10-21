@@ -58,7 +58,7 @@
         },
         "diagnosticSeverity": {
           "$ref": "#/definitions/diagnosticSeverity",
-          "description": "Set severities by stable diagnostic rule id. Names may use camelCase, kebab-case, or resultar/<rule>."
+          "description": "Set all rule severities with a single severity string (for example \"error\"), or map stable diagnostic rule ids (including \"*\") to severities. Names may use camelCase, kebab-case, or resultar/<rule>."
         },
         "overrides": {
           "type": "array",
@@ -99,7 +99,7 @@
         "noResultInTaskGen": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",
-          "description": "Require ResultTask.gen or ResultTask.fn bodies to return plain success values instead of nested ok/err Results."
+          "description": "Require ResultTask.gen, ResultTask.fn, Result.gen, and Result.fn bodies to return plain success values instead of nested ok/err Results."
         },
         "noTaggedErrorConstructorOverride": {
           "$ref": "#/definitions/ruleSeverity",
@@ -171,7 +171,7 @@
         "preferFirstSuccessOf": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",
-          "description": "Prefer Result.firstSuccessOf or ResultAsync.firstSuccessOf for independent orElse fallbacks."
+          "description": "Prefer Result.firstSuccessOf, ResultAsync.firstSuccessOf, or ResultTask.firstSuccessOf for independent orElse fallbacks."
         },
         "preferMap": {
           "$ref": "#/definitions/ruleSeverity",
@@ -197,7 +197,7 @@
         "preferResultForEach": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",
-          "description": "Prefer Result.forEach or ResultAsync.forEach over combine applied to an intermediate map result list."
+          "description": "Prefer Result.forEach, ResultAsync.forEach, or ResultTask.forEach over combine/all applied to an intermediate map result list."
         },
         "preferTaggedError": {
           "$ref": "#/definitions/ruleSeverity",
@@ -238,6 +238,61 @@
           "$ref": "#/definitions/ruleSeverity",
           "default": "suggestion",
           "description": "Report unknown rule IDs and unused entries in line suppression directives for enabled diagnostics."
+        },
+        "preferOrElseSucceed": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "suggestion",
+          "description": "Prefer orElseSucceed when orElse or catchAll ignores the error parameter and returns an infallible Ok/succeed fallback."
+        },
+        "preferTap": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "suggestion",
+          "description": "Prefer tap when map, andThen, or flatMap performs side effects and returns the original input value unchanged."
+        },
+        "preferTapError": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "suggestion",
+          "description": "Prefer tapError when orElse, catchAll, mapErr, or mapError performs side effects and forwards the original error unchanged."
+        },
+        "preferAsVoid": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "suggestion",
+          "description": "Prefer asVoid() when map(() => undefined) or map(() => void ...) discards the success value manually."
+        },
+        "preferFilterOrElse": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "suggestion",
+          "description": "Prefer filterOrElse when andThen or flatMap only validates a predicate on the input and returns it unchanged or fails."
+        },
+        "preferAcquireDisposable": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "suggestion",
+          "description": "Prefer ResultTask.acquireDisposable when ResultTask.acquireRelease only calls [Symbol.dispose] or [Symbol.asyncDispose]."
+        },
+        "noFnIife": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Disallow immediately invoking Result.fn(...)() or ResultTask.fn(...)() as an IIFE; use Result.gen or ResultTask.gen."
+        },
+        "requireReturnYieldStar": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Require return yield* for terminal error or defect yields in generators so TypeScript narrows control flow."
+        },
+        "noUnnecessaryErrWrapInGen": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "suggestion",
+          "description": "Discourage wrapping TaggedError instances in err(new MyError(...)) or wrapping Results in ResultTask.fromResult(...) inside generators."
+        },
+        "unnecessaryPipe": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "suggestion",
+          "description": "Flag single-argument pipe(x) and zero-argument x.pipe() no-op calls."
+        },
+        "noRunInsideGen": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "warning",
+          "description": "Disallow executing task runners (runPromise, runSync, ResultTask.run*) or unsafe unwraps inside Resultar generators; compose with yield*."
         }
       }
     },
@@ -252,9 +307,14 @@
       "enum": ["error", "warning", "suggestion", "message", "off"]
     },
     "diagnosticSeverity": {
-      "type": "object",
-      "additionalProperties": { "$ref": "#/definitions/ruleSeverity" },
-      "propertyNames": { "pattern": "^(resultar/)?[A-Za-z][A-Za-z0-9_-]*$" }
+      "oneOf": [
+        { "$ref": "#/definitions/ruleSeverity" },
+        {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/ruleSeverity" },
+          "propertyNames": { "pattern": "^(\\*|(resultar/)?[A-Za-z][A-Za-z0-9_-]*)$" }
+        }
+      ]
     },
     "diagnosticOverride": {
       "type": "object",

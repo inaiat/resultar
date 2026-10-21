@@ -1,5 +1,10 @@
 # RFC 0002: Explicit lifetimes and request scopes (resultar-di)
 
+> Design history: v4 prefers `ResultTask` for new async workflows. `ResultAsync` (`StrictResultAsync`)
+> is the active in-flight `Result` returned by `task.runResult()`, while deprecated eager orchestration helpers live in the `resultar/async` subpath with explicit bridges. For current contracts,
+> see the [core guide](../../packages/resultar/README.md) and
+> [v4 migration notes](../migrations/v4.md); retain earlier examples below as design context.
+
 - Status: implemented in `resultar-di`; Hono adapter and concurrent cache remain outside the package.
 - Date: 2026-09-05.
 - Context: private consumer migration and Hono example in `examples/hono`.

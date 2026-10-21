@@ -1,5 +1,10 @@
 # Resolution of Phase 0 Pending Items — RFC 0001: ResultTask
 
+> Design history: v4 prefers `ResultTask` for new async workflows. `ResultAsync` (`StrictResultAsync`)
+> is the active in-flight `Result` returned by `task.runResult()`, while deprecated eager orchestration helpers live in the `resultar/async` subpath with explicit bridges. For current contracts,
+> see the [core guide](../../packages/resultar/README.md) and
+> [v4 migration notes](../migrations/v4.md); retain earlier examples below as design context.
+
 - **Reference:** [rfc-0001-result-task-core.md](./rfc-0001-result-task-core.md)
 - **Date:** 2026-09-07
 - **Branch:** `feat/result-task-phase-0`

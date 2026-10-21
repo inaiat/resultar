@@ -118,7 +118,7 @@ describe('ResultTask resource scopes', () => {
     deepEqual(await ResultTask.runExit(task), expected)
     deepEqual(exits, [failExit('boot'), failExit('boot')])
     await rejects(
-      () => ResultTask.runResult(task),
+      async () => await ResultTask.runResult(task),
       (error: unknown) => {
         equal(error instanceof ResultTaskCauseError, true)
         deepEqual((error as ResultTaskCauseError).cause, expected.cause)
@@ -208,7 +208,10 @@ describe('ResultTask resource scopes', () => {
       _tag: 'Failure',
       cause: { _tag: 'Interrupt', reason: 'stop' },
     })
-    await rejects(() => ResultTask.runResult(task, { signal: controller.signal }), AbortError)
+    await rejects(
+      async () => await ResultTask.runResult(task, { signal: controller.signal }),
+      AbortError,
+    )
     equal(opened, false)
   })
 

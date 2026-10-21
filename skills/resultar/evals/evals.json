@@ -10,13 +10,13 @@
     {
       "id": 2,
       "prompt": "Design a Resultar async workflow that loads a user from a flaky upstream, retries only retryable failures, applies one overall timeout, races a primary and replica for the first success, writes the result with bounded concurrency, always releases an acquired session, and records metrics. Explain cancellation and cleanup semantics.",
-      "expected_output": "Uses ResultAsync.retry or retryOrElse, timeout nesting that makes the total budget explicit, raceFirst for first success, bounded forEach, withResource, and tap/tapError for best-effort observation. It forwards AbortSignal to underlying work and states that release/observation failures are best-effort unless modeled in the result channel.",
+      "expected_output": "Chooses ResultAsync for existing Promise-shaped work or ResultTask for reusable lazy work; uses retry policies, an overall timeout, race for first success and raceFirst only for first completion, and bounded forEach. Uses scoped/acquireRelease for owned task resources or documents best-effort withResource release for ResultAsync. Uses ResultAsync inspect/inspectError for best-effort observation; legacy tap/tapError remain equivalent, while ResultTask tap/tapError failures participate in the workflow. Forwards AbortSignal and explains cooperative cancellation and awaited task cleanup.",
       "files": []
     },
     {
       "id": 3,
       "prompt": "Add tests for a Resultar tagged-error workflow. Cover success and every expected failure at runtime, inferred template props and error unions at the type level, exhaustive boundary matching, and deterministic retry, timeout, cancellation, and cleanup behavior. Use this repository's real test runner.",
-      "expected_output": "Uses vite-plus/test in the Resultar repository, runtime assertions for Ok and Err paths, expectTypeOf and @ts-expect-error for type behavior, and deterministic fakes for async policy. It keeps _unsafeUnwrap helpers in tests only and validates exhaustive tagged-error handling.",
+      "expected_output": "Uses vite-plus/test in the Resultar repository, runtime assertions for Ok and Err paths, expectTypeOf and @ts-expect-error for type behavior, and deterministic fakes or Clock.virtual for time-dependent task policies. Tests inspect/inspectError as best-effort observations and verifies that deprecated Result/ResultAsync taps preserve their existing equivalent behavior. ResultTask tap failures affect its outcome. Preserves task laziness, keeps _unsafeUnwrap helpers in tests only, and validates exhaustive tagged-error handling.",
       "files": []
     },
     {
@@ -40,7 +40,7 @@
     {
       "id": 7,
       "prompt": "Design a lazy ResultTask workflow that reads config from a typed service, fetches a user over a cancellable transport, holds a database connection in a resource scope, and runs at an explicit boundary. Explain what stays lazy, how release failures surface, and which boundary preserves composite causes.",
-      "expected_output": "Builds with tryPromise/gen without starting work; declares the service tag and provides it at runResult/runExit; owns the connection with acquireRelease plus scoped; states that deferred release errors fold into E at scoped, catchAll recovers them only after scoped, runExit preserves Sequential while runResult rejects composites, and cancellation is cooperative with no fibers on ResultTask.",
+      "expected_output": "Builds with tryPromise/gen without starting work; declares the service tag and provides it at runResult/runExit; owns the connection with acquireRelease plus scoped. Explains that deferred release errors fold into E at scoped, orElse recovers typed errors only after scoped, runExit preserves Sequential/Parallel causes while runResult rejects composites, and cancellation is cooperative. Uses forkChild/join/interrupt for concurrent child work when needed, with children owned by their scope and interruption awaiting cleanup.",
       "files": []
     }
   ],

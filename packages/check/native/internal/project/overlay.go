@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/microsoft/typescript-go/internal/tspath"
-	"github.com/microsoft/typescript-go/internal/vfs"
-	"github.com/microsoft/typescript-go/internal/vfs/wrapvfs"
+	"github.com/microsoft/TypeScript/tsc/internal/tspath"
+	"github.com/microsoft/TypeScript/tsc/internal/vfs"
+	"github.com/microsoft/TypeScript/tsc/internal/vfs/wrapvfs"
 )
 
 // overlayFS copies the editor snapshot and leaves the underlying filesystem untouched.
@@ -20,7 +20,7 @@ func overlayFS(base vfs.FS, overlay map[string]string) vfs.FS {
 			path = absolute
 		}
 		path = tspath.NormalizePath(path)
-		if !base.UseCaseSensitiveFileNames() {
+		if !base.CaseSensitivity().IsCaseSensitive() {
 			path = strings.ToLower(path)
 		}
 		return path
@@ -63,37 +63,44 @@ func overlayFS(base vfs.FS, overlay map[string]string) vfs.FS {
 		return result
 	}
 	return wrapvfs.Wrap(base, wrapvfs.Replacements{
-		ReadFile: func(path string) (string, bool) {
-			if text, ok := files[normalize(path)]; ok {
+		ReadFile: func(path tspath.RootedFilePath) (string, bool) {
+			if text, ok := files[normalize(string(path))]; ok {
 				return text, true
 			}
 			return base.ReadFile(path)
 		},
-		FileExists:      func(path string) bool { _, ok := files[normalize(path)]; return ok || base.FileExists(path) },
-		DirectoryExists: func(path string) bool { _, ok := directories[normalize(path)]; return ok || base.DirectoryExists(path) },
-		GetAccessibleEntries: func(path string) vfs.Entries {
+		FileExists: func(path tspath.RootedFilePath) bool {
+			_, ok := files[normalize(string(path))]
+			return ok || base.FileExists(path)
+		},
+		DirectoryExists: func(path tspath.RootedDirectoryPath) bool {
+			_, ok := directories[normalize(string(path))]
+			return ok || base.DirectoryExists(path)
+		},
+		GetAccessibleEntries: func(path tspath.RootedDirectoryPath) vfs.Entries {
 			entry := base.GetAccessibleEntries(path)
-			virtual := directories[normalize(path)]
+			virtual := directories[normalize(string(path))]
 			entry.Files = unique(append(append([]string{}, entry.Files...), virtual.Files...))
 			entry.Directories = unique(append(append([]string{}, entry.Directories...), virtual.Directories...))
 			return entry
 		},
-		Stat: func(path string) vfs.FileInfo {
-			if text, ok := files[normalize(path)]; ok {
-				return overlayInfo{name: filepath.Base(path), size: int64(len(text))}
+		Stat: func(path tspath.RootedPath) vfs.FileInfo {
+			raw := string(path)
+			if text, ok := files[normalize(raw)]; ok {
+				return overlayInfo{name: filepath.Base(raw), size: int64(len(text))}
 			}
-			if _, ok := directories[normalize(path)]; ok && !base.DirectoryExists(path) {
-				return overlayInfo{name: filepath.Base(path), directory: true}
+			if _, ok := directories[normalize(raw)]; ok && !base.DirectoryExists(tspath.RootedDirectoryPathFromPath(path)) {
+				return overlayInfo{name: filepath.Base(raw), directory: true}
 			}
 			return base.Stat(path)
 		},
-		Realpath: func(path string) string {
-			normalized := normalize(path)
+		Realpath: func(path tspath.RootedPath) tspath.RootedPath {
+			normalized := normalize(string(path))
 			if _, ok := files[normalized]; ok {
-				return names[normalized]
+				return tspath.RootedPathFromNormalized(names[normalized])
 			}
-			if _, ok := directories[normalized]; ok && !base.DirectoryExists(path) {
-				return names[normalized]
+			if _, ok := directories[normalized]; ok && !base.DirectoryExists(tspath.RootedDirectoryPathFromPath(path)) {
+				return tspath.RootedPathFromNormalized(names[normalized])
 			}
 			return base.Realpath(path)
 		},

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { ResultAsync, createTaggedError, runPromise } from "resultar";
+import { createTaggedError, ResultAsync, runPromise } from "resultar";
 import { type RequestJsonMapError } from "resultar-request";
 import { requestJson as requestJsonZod } from "resultar-request-zod";
 
@@ -68,9 +68,8 @@ export const loadAccountWithZod = (baseUrl: string) =>
   });
 
 const runZodExample = (baseUrl: string) =>
-  loadAccountWithZod(baseUrl).map((account) => {
+  loadAccountWithZod(baseUrl).tap((account) => {
     process.stdout.write(`Zod account: ${account.email}, ${account.seatLabel}\n`);
-    return account;
   });
 
 const runZodExampleCli = () =>

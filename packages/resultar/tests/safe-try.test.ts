@@ -9,22 +9,6 @@ describe('safeTry', async () => {
   const barValue = okAsync('bar')
   const errValue = errAsync('boom')
 
-  it('exposes gen as an exact safeTry alias', async () => {
-    equal(Result.gen, safeTry)
-
-    const syncResult = Result.gen(function* () {
-      const value = yield* ok(1)
-      return ok(value + 1)
-    })
-    deepEqual(syncResult, { value: 2 })
-
-    const asyncResult = Result.gen(async function* () {
-      const value = yield* okAsync(1)
-      return ok(value + 1)
-    })
-    deepEqual(await asyncResult, { value: 2 })
-  })
-
   it('SafeTryAsync with all Ok', async () => {
     const resultAsync = safeTry(async function* () {
       const okValues = new Array<string>()
@@ -391,5 +375,90 @@ describe("Tests if README's examples work", async () => {
       isOk(result.isOk())
       equal(result._unsafeUnwrap(), okValue + okValue)
     })
+  })
+})
+
+describe('existing generator contracts', () => {
+  it('keeps safeTry returning the original final Result while Result.gen wraps plain values', async () => {
+    const payload = { id: 'user-1' }
+    const success = ok(payload)
+    const failure = err('returned failure')
+
+    equal(
+      safeTry(function* () {
+        return success
+      }),
+      success,
+    )
+    equal(
+      safeTry(function* () {
+        return failure
+      }),
+      failure,
+    )
+    equal(
+      await safeTry(async function* () {
+        return success
+      }),
+      success,
+    )
+    equal(
+      await safeTry(async function* () {
+        return failure
+      }),
+      failure,
+    )
+    equal(
+      Result.gen(function* () {
+        return payload
+      })._unsafeUnwrap(),
+      payload,
+    )
+    equal(
+      Result.gen(function* () {
+        return yield* failure
+      }),
+      failure,
+    )
+    equal(
+      (
+        await Result.gen(async function* () {
+          return payload
+        })
+      )._unsafeUnwrap(),
+      payload,
+    )
+    equal(
+      await Result.gen(async function* () {
+        return yield* failure
+      }),
+      failure,
+    )
+  })
+
+  it('preserves first-yield short circuit without adding generator cleanup execution', async () => {
+    let syncFinally = false
+    let asyncFinally = false
+    const sync = Result.gen(function* () {
+      try {
+        yield* err('sync failure')
+        return 1
+      } finally {
+        syncFinally = true
+      }
+    })
+    const async = await Result.gen(async function* () {
+      try {
+        yield* errAsync('async failure')
+        return 1
+      } finally {
+        asyncFinally = true
+      }
+    })
+
+    equal(sync._unsafeUnwrapErr(), 'sync failure')
+    equal(async._unsafeUnwrapErr(), 'async failure')
+    equal(syncFinally, false)
+    equal(asyncFinally, false)
   })
 })

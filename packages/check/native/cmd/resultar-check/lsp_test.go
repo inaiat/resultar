@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/microsoft/typescript-go/resultar-check/internal/analyzer"
-	"github.com/microsoft/typescript-go/resultar-check/internal/output"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/analyzer"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/output"
 )
 
 func TestReadLSPMessage(t *testing.T) {

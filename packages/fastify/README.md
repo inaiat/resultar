@@ -6,11 +6,15 @@ and `HttpApplication`. These are the original `resultar-di` exports, with the sa
 and behavior. You do not need to import or directly install `resultar-di` for this API.
 Keep `resultar-di` as a direct dependency for framework-independent shared services or
 when importing framework adapter helpers such as `withProvider` and `useServiceAccess`.
-Core helpers such as `ResultTask` and `okAsync` continue to come from `resultar`.
+Core helpers such as `ResultTask` continue to come from `resultar`.
 The DI package has one entry point; migrate old `resultar-di/advanced` imports to `resultar-di`.
 
 Native Fastify plugins and request services backed by `resultar-di`. Routes keep ordinary
 `async` handlers, schemas, type providers, `request.log` and `reply.code().send()`.
+
+Prefer lazy `ResultTask` values for new async service methods and run them explicitly in routes.
+`ResultAsync` and `StrictResultAsync` are the in-flight `Result` types in `resultar` (returned by `task.runResult()`); existing eager contracts keep one
+shared execution and can be adapted with `ResultTask.fromResultAsync(() => legacyMethod())`.
 
 ```sh
 pnpm add fastify resultar resultar-fastify
@@ -24,12 +28,13 @@ For a new application, `createFastifyApp(options, configure)` follows the same s
 Hono's `createHonoApp`. It creates a native Fastify instance, registers the services plugin,
 and calls `configure` synchronously once.
 
-The factory accepts the same checked service options as `createFastifyPlugin`. It does not
-start a listener or initialize providers; native `ready()`, `inject()` and `listen()` drive
-initialization, and `close()` releases resources. Its return type, `FastifyServicesApplication`,
-preserves the selected services for `InferRequestServices` and `InferAppServices` without adding
-runtime metadata. For an existing server or custom Fastify constructor
-options, register `createFastifyPlugin` on your own instance.
+The factory accepts `FastifyAppOptions`, combining the same checked service options as
+`createFastifyPlugin` with Fastify HTTP server options (such as `logger`, `loggerInstance`
+and `requestIdHeader`). It does not start a listener or initialize providers; native `ready()`,
+`inject()` and `listen()` drive initialization, and `close()` releases resources. Its return type,
+`FastifyServicesApplication`, preserves the selected services for `InferRequestServices` and
+`InferAppServices` without adding runtime metadata. For an existing server, register
+`createFastifyPlugin` on your own instance.
 
 ## Optional request bindings
 
@@ -98,11 +103,11 @@ To register on an existing instance:
 
 ```ts
 import Fastify from 'fastify'
-import { okAsync } from 'resultar'
+import { ResultTask } from 'resultar'
 import { createModule, service, createFastifyPlugin, type InferRequestServices } from 'resultar-fastify'
 
 const Greeting = service('greeting', {}, () => ({
-  greet(name: string) { return okAsync({ message: `Hello, ${name}` }) },
+  greet(name: string) { return ResultTask.sync(() => ({ message: `Hello, ${name}` })) },
 }))
 
 const plugin = createFastifyPlugin({
@@ -118,7 +123,7 @@ declare module 'fastify' {
 const app = Fastify()
 await app.register(plugin)
 app.get<{ Params: { name: string } }>('/hello/:name', async (request, reply) => {
-  const result = await request.services.greeting.greet(request.params.name)
+  const result = await request.services.greeting.greet(request.params.name).runResult()
   return result.match(value => reply.send(value), () => reply.code(500).send())
 })
 await app.listen({ port: 3000 })
@@ -127,8 +132,11 @@ await app.listen({ port: 3000 })
 Use `Service` classes with `requires` for dependencies, or
 `service(name, dependencies, factory)` for a function-based service. The
 [runnable example](../../examples/fastify/README.md) combines class-based `UsersRepository`
-and `Users` with function-based `Health`. Business methods return `StrictResultAsync`,
-compose operations through `Result.gen`, and map errors explicitly in TypeBox routes.
+and `Users` with function-based `Health`. That fixture retains eager `StrictResultAsync`
+methods and `Result.gen` from `resultar` for compatibility coverage, and maps errors explicitly in TypeBox
+routes. New service methods should use `ResultTask.gen` and `tryPromise`; Task has no `.then`,
+`map` is synchronous, and `match` returns a Task. Run it at the route boundary, or match the
+`Result` returned by `runResult` as above.
 
 ## Application and request lifetimes
 
@@ -202,7 +210,7 @@ are not automatically disposed by inspecting their methods.
 The adapter keeps `scope.use` callbacks alive through the response, including streamed replies.
 Completion, client disconnect and transport failure release each child once. `request.signal`
 propagates native disconnect/handler-timeout cancellation to acquisition; pass the same signal to
-your own clients and `ResultTask.run*` calls. Cancellation is cooperative.
+your own clients and `task.run*` / `ResultTask.run*` calls. Cancellation is cooperative.
 
 Fastify 5.12 can emit a generic abort when a fully received request body closes. The adapter
 ignores that input-completion signal so JSON uploads retain their scopes through the response.
@@ -217,7 +225,8 @@ failures reject shutdown with their causes retained.
 Cleanup ownership is registered before acquisition, including Fastify plugin timeouts; pending
 startup work must settle before its resources can be released.
 
-Internal readiness, completion and shutdown use `ResultAsync`; lifecycle signals are adapted with
+Internal readiness, completion and shutdown retain eager `ResultAsync` compatibility boundaries;
+lifecycle signals are adapted with
 `ResultAsync.fromCallback`. Readiness failures are typed `Err` values. Completion retains the full
 `Exit`, including interruptions and composite release failures, without starting a second execution.
 Native module/locals callbacks continue to accept ordinary async functions.

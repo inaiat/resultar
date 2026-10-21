@@ -32,7 +32,9 @@ function run(command, args, options = {}) {
   });
 
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status ?? "unknown"}`);
+    throw new Error(
+      `${command} ${args.join(" ")} failed with exit code ${result.status ?? "unknown"}`,
+    );
   }
 }
 
@@ -53,7 +55,11 @@ function packageExists(name, version) {
   }
 
   const output = `${result.stdout}\n${result.stderr}`;
-  if (output.includes("E404") || output.includes("No match found") || output.includes("Not Found")) {
+  if (
+    output.includes("E404") ||
+    output.includes("No match found") ||
+    output.includes("Not Found")
+  ) {
     return false;
   }
 
@@ -63,11 +69,11 @@ function packageExists(name, version) {
 }
 
 function readDistTags(name) {
-  const result = spawnSync(
-    "npm",
-    ["view", name, "dist-tags", "--json", "--registry", registry],
-    { cwd: rootDir, encoding: "utf8", stdio: "pipe" },
-  );
+  const result = spawnSync("npm", ["view", name, "dist-tags", "--json", "--registry", registry], {
+    cwd: rootDir,
+    encoding: "utf8",
+    stdio: "pipe",
+  });
 
   if (result.status !== 0) {
     process.stdout.write(result.stdout);

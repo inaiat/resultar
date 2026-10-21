@@ -2,7 +2,7 @@ import { equal } from 'node:assert'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import { Result, ResultAsync, err, errAsync, ok, okAsync } from '../src/index.js'
+import { Result, ResultAsync, err, errAsync, ok, okAsync, pipe } from '../src/index.js'
 
 describe('Result conditional helpers', () => {
   it('runs the true branch for Result.if', () => {
@@ -203,6 +203,26 @@ describe('Result conditional helpers', () => {
       Result<number | undefined, 'condition-error' | 'body-error'>
     >()
   })
+
+  it('supports Result conditions, direct bodies, curried pipe forms, and instance .when/.unless in Result', () => {
+    const directWhen = Result.when(() => ok<boolean, 'cond-err'>(true), ok<number, 'body-err'>(42))
+    const curriedUnless = pipe(
+      ok<number, 'body-err'>(7),
+      Result.unless(ok<boolean, 'cond-err'>(true)),
+    )
+    const instanceWhen = ok<number, 'body-err'>(10).when(err<boolean, 'cond-err'>('cond-err'))
+    const instanceUnless = ok<number, 'body-err'>(10).unless(() => false)
+
+    equal(directWhen._unsafeUnwrap(), 42)
+    equal(curriedUnless._unsafeUnwrap(), undefined)
+    equal(instanceWhen._unsafeUnwrapErr(), 'cond-err')
+    equal(instanceUnless._unsafeUnwrap(), 10)
+
+    expectTypeOf(directWhen).toEqualTypeOf<Result<number | undefined, 'cond-err' | 'body-err'>>()
+    expectTypeOf(curriedUnless).toEqualTypeOf<Result<number | undefined, 'cond-err' | 'body-err'>>()
+    expectTypeOf(instanceWhen).toEqualTypeOf<Result<number | undefined, 'cond-err' | 'body-err'>>()
+    expectTypeOf(instanceUnless).toEqualTypeOf<Result<number | undefined, 'body-err'>>()
+  })
 })
 
 describe('ResultAsync conditional helpers', () => {
@@ -354,5 +374,36 @@ describe('ResultAsync conditional helpers', () => {
     expectTypeOf(whenCondition).toEqualTypeOf<
       ResultAsync<number | undefined, 'condition-error' | 'body-error'>
     >()
+  })
+
+  it('supports Result/ResultAsync conditions, direct bodies, curried pipe forms, and instance .when/.unless in ResultAsync', async () => {
+    const directWhen = ResultAsync.when(
+      () => okAsync<boolean, 'cond-err'>(true),
+      ok<number, 'body-err'>(42),
+    )
+    const curriedUnless = pipe(
+      okAsync<number, 'body-err'>(7),
+      ResultAsync.unless(ok<boolean, 'cond-err'>(true)),
+    )
+    const instanceWhen = okAsync<number, 'body-err'>(10).when(
+      errAsync<boolean, 'cond-err'>('cond-err'),
+    )
+    const instanceUnless = okAsync<number, 'body-err'>(10).unless(() => false)
+
+    equal((await directWhen)._unsafeUnwrap(), 42)
+    equal((await curriedUnless)._unsafeUnwrap(), undefined)
+    equal((await instanceWhen)._unsafeUnwrapErr(), 'cond-err')
+    equal((await instanceUnless)._unsafeUnwrap(), 10)
+
+    expectTypeOf(directWhen).toEqualTypeOf<
+      ResultAsync<number | undefined, 'cond-err' | 'body-err'>
+    >()
+    expectTypeOf(curriedUnless).toEqualTypeOf<
+      ResultAsync<number | undefined, 'cond-err' | 'body-err'>
+    >()
+    expectTypeOf(instanceWhen).toEqualTypeOf<
+      ResultAsync<number | undefined, 'cond-err' | 'body-err'>
+    >()
+    expectTypeOf(instanceUnless).toEqualTypeOf<ResultAsync<number | undefined, 'body-err'>>()
   })
 })

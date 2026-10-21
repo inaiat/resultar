@@ -9,8 +9,15 @@ It deliberately keeps three independent projects:
 - [`src/resultar-clean.ts`](src/resultar-clean.ts) contains the corresponding recommended patterns
   and must pass without compiler or Resultar diagnostics;
 - [`src/contracts.ts`](src/contracts.ts) enables `preferResultAsyncMode: "all"` and rejects raw
-  Promise repository contracts and inferred implementations while accepting `StrictResultAsync`
-  and explicit native boundary suppressions.
+  Promise repository contracts and inferred implementations while accepting existing eager
+  `StrictResultAsync` contracts and explicit native boundary suppressions. This is an optional
+  legacy policy fixture, not the v4 recommendation for new async application code.
+
+Prefer lazy `ResultTask` workflows with explicit runners in new async code. `ResultAsync` and
+`StrictResultAsync` are exported from `resultar` as in-flight `Result` representations (`task.runResult()`), together with their standalone eager constructors.
+The legacy `preferResultAsync` option remains available to enforce existing eager contracts;
+disable it with `"preferResultAsync": "off"` when that project policy does not apply.
+The fixture imports eager helpers, `safeTry`, `Result.gen`, and `Result.fn` from `resultar`.
 
 ## Run
 
@@ -66,13 +73,17 @@ The diagnostics catalog covers:
 - `map`, `andThen`, recovery, fallback, and collection simplifications;
 - concrete error and requirement channels, safe type assertions, and typed catch mappers;
 - tagged-error construction and naming conventions;
-- Promise safety, `ResultAsync` service contracts, raw `await`, and exact ignored-call paths;
+- Promise safety, legacy eager `ResultAsync` service contracts, raw `await`, and exact ignored-call paths;
 - `yield*` composition in `safeTry`, `ResultTask.gen`, and parameterized `ResultTask.fn`;
 - DI lifetimes, `acquireRelease` / `acquireDisposable` scope ownership, plain generator returns,
   and typed `sync` failures;
 - `no-unknown-task-requirements` for aliased `any` / `unknown` requirements;
 - assertions that remove services or deferred scope errors, including `as unknown as` bridges;
-- `unused-suppression` for obsolete rules, partially used directives, wildcards, and unknown IDs.
+- `unused-suppression` for obsolete rules, partially used directives, wildcards, and unknown IDs;
+- `prefer-or-else-succeed`, `prefer-tap`, `prefer-tap-error`, `prefer-as-void`, `prefer-filter-or-else`,
+  and `prefer-acquire-disposable` for ergonomic combinator and resource simplifications;
+- `no-fn-iife`, `require-return-yield-star`, `no-unnecessary-err-wrap-in-gen`, `unnecessary-pipe`,
+  and `no-run-inside-gen` for generator and pipeline hygiene.
 
 The clean fixture preserves concrete service requirements through `ResultTask.fn`, satisfies them
 with `provideService`, closes pending scopes with `scoped`, acquires native disposables in an owned
@@ -81,7 +92,7 @@ scope, and retains a justified suppression only at an explicit terminal throwing
 The smoke test builds the Resultar package, the `resultar-check` launcher, and the native binary for
 the current platform. It then verifies that:
 
-- all 30 native rules report their exact expected finding counts;
+- all 41 native rules report their exact expected finding counts;
 - all three fixture projects compile with the installed TypeScript version;
 - every configured severity is `error`;
 - TypeScript-Go reports no compiler diagnostics;
@@ -91,11 +102,11 @@ the current platform. It then verifies that:
 Rule configuration lives in [`tsconfig.json`](tsconfig.json). The
 [`tsconfig.clean.json`](tsconfig.clean.json) project inherits the same configuration and changes only
 the included source file.
-[`tsconfig.contracts.json`](tsconfig.contracts.json) enables the stricter async contract policy.
+[`tsconfig.contracts.json`](tsconfig.contracts.json) enables the optional eager contract policy.
 
 ## Limitations
 
 This is a diagnostics fixture, not application code: `src/index.ts` is intentionally invalid and
 must keep failing, while only `src/resultar-clean.ts` shows the recommended patterns. The catalog
-covers the 30 implemented native rules; it does not promise future rules, auto-fixes, or IDE
+covers the 41 implemented native rules; it does not promise future rules, auto-fixes, or IDE
 integrations.

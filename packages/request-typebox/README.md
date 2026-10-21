@@ -5,6 +5,9 @@ TypeBox adapter for `resultar-request`.
 Use this package when a request response should be validated with TypeBox while the transport and
 Resultar error flow stay in `resultar-request`.
 
+Prefer `ResultTask` for new async workflows. This adapter returns eager `ResultAsync`
+from `resultar`; defer the adapter call with `fromResultAsync(factory)`.
+
 For a schema-library-agnostic request, use
 [`resultar-request`](https://www.npmjs.com/package/resultar-request) directly with its `validator`
 or `decode` options. The sibling
@@ -14,17 +17,17 @@ same request flow with Zod schemas instead of TypeBox.
 ## Install
 
 ```sh
-pnpm add resultar-request-typebox typebox
+pnpm add resultar-request-typebox resultar typebox
 ```
 
 ```sh
-npm install resultar-request-typebox typebox
+npm install resultar-request-typebox resultar typebox
 ```
 
 ## `requestJson`
 
 ```ts
-import { createTaggedError } from 'resultar'
+import { createTaggedError, ResultTask } from 'resultar'
 import {
   requestJson as requestJsonTypeBox,
   type RequestJsonMapError,
@@ -63,20 +66,28 @@ const mapUserError = {
     }),
 } satisfies RequestJsonMapError
 
-const user = requestJsonTypeBox({
-  request: () => fetch('https://example.com/users/123'),
-  schema: userSchema,
-  mapError: mapUserError,
-})
+const userTask = ResultTask.fromResultAsync(() =>
+  requestJsonTypeBox({
+    request: () => fetch('https://example.com/users/123'),
+    schema: userSchema,
+    mapError: mapUserError,
+  }),
+)
 
-const userLabel = user.map(({ email, plan }) => `${email} (${plan})`)
+const userLabelTask = userTask.map(({ email, plan }) => `${email} (${plan})`)
+const result = await userLabelTask.runResult()
 ```
 
-`Static<typeof userSchema>` is the success type, so the request returns
-`ResultAsync<User, UserApiError>` in this example. TypeBox validates the unknown JSON response at
+`Static<typeof userSchema>` is the success type, so the adapter call itself returns
+`ResultAsync<User, UserApiError>`. TypeBox validates the unknown JSON response at
 runtime, while Resultar keeps request, HTTP, invalid-JSON, and validation failures in the error
 channel. `requestJsonTypeBox` is the named adapter helper, and `requestJson` is an alias for
 package-local ergonomics.
+
+The bridge above produces `ResultTask<User, UserApiError>` and calls the adapter afresh on each
+run. Passing an existing Async value would reuse its already-started execution. Task is lazy,
+non-thenable and uses explicit runners; its `map` is synchronous and its `match` returns another
+Task to run. Existing callers can keep awaiting the adapter's eager Async result during migration.
 
 The package also re-exports the public `resultar-request` API, including `RequestError`, map-error
 types, retry types, and structural response types.

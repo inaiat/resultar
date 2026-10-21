@@ -79,6 +79,11 @@ const config: UserConfig = defineConfig({
     },
     overrides: [
       {
+        // This eager compatibility adapter and its tests retain the ResultAsync contract.
+        files: ["src/request-json-typebox.ts", "tests/request-json-typebox.test.ts"],
+        rules: { "@typescript-eslint/no-deprecated": "allow" },
+      },
+      {
         files: ["**/tests/**", "**/test/**", "scripts/**/*.ts"],
         rules: {
           "@typescript-eslint/require-await": "allow",

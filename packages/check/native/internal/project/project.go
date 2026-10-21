@@ -5,14 +5,14 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/microsoft/typescript-go/internal/ast"
-	"github.com/microsoft/typescript-go/internal/bundled"
-	"github.com/microsoft/typescript-go/internal/compiler"
-	"github.com/microsoft/typescript-go/internal/core"
-	"github.com/microsoft/typescript-go/internal/tsoptions"
-	"github.com/microsoft/typescript-go/internal/tspath"
-	"github.com/microsoft/typescript-go/internal/vfs/cachedvfs"
-	"github.com/microsoft/typescript-go/internal/vfs/osvfs"
+	"github.com/microsoft/TypeScript/tsc/internal/ast"
+	"github.com/microsoft/TypeScript/tsc/internal/bundled"
+	"github.com/microsoft/TypeScript/tsc/internal/compiler"
+	"github.com/microsoft/TypeScript/tsc/internal/core"
+	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
+	"github.com/microsoft/TypeScript/tsc/internal/tspath"
+	"github.com/microsoft/TypeScript/tsc/internal/vfs/cachedvfs"
+	"github.com/microsoft/TypeScript/tsc/internal/vfs/osvfs"
 )
 
 type Opened struct {
@@ -37,12 +37,12 @@ func OpenWithOverlay(configPath string, overlay map[string]string) (*Opened, []*
 	}
 	directory := tspath.GetDirectoryPath(absolutePath)
 	fs := bundled.WrapFS(cachedvfs.From(overlayFS(osvfs.FS(), overlay)))
-	host := compiler.NewCompilerHost(directory, fs, bundled.LibPath(), nil, nil)
+	host := compiler.NewCompilerHost(fs, bundled.LibPath(), nil, nil, nil)
 	parsed, diagnostics := tsoptions.GetParsedCommandLineOfConfigFile(
-		absolutePath,
+		tspath.RootedFilePathFromNormalized(tspath.NormalizePath(absolutePath)),
 		&core.CompilerOptions{},
 		nil,
-		host,
+		fs,
 		nil,
 	)
 	if len(diagnostics) > 0 {
@@ -56,10 +56,14 @@ func OpenWithOverlay(configPath string, overlay map[string]string) (*Opened, []*
 	}
 
 	program := compiler.NewProgram(compiler.ProgramOptions{
-		Config:                      parsed,
-		Host:                        host,
-		SingleThreaded:              core.TSTrue,
-		UseSourceOfProjectReference: true,
+		ProgramConfig: compiler.ProgramConfig{
+			Config:                      parsed,
+			SingleThreaded:              core.TSTrue,
+			UseSourceOfProjectReference: true,
+		},
+		ProgramHosts: compiler.ProgramHosts{
+			Host: host,
+		},
 	})
 	if program == nil {
 		return nil, nil, fmt.Errorf("unable to create TypeScript program %s", absolutePath)

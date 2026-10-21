@@ -1,5 +1,5 @@
 import { expect, expectTypeOf, test } from "vite-plus/test";
-import { ResultTask, type Result } from "resultar";
+import { ResultTask, type ResultAsync } from "resultar";
 import { createModule, resource, service } from "../src/index.js";
 
 test("useSingletons is lazy, shares acquisitions and retains resources until root close", async () => {
@@ -70,10 +70,10 @@ test("root close waits for the application callback and retains selected error t
   const Bad = service("bad", ResultTask.fail("offline" as const));
   const scope = createModule().singleton(Bad).value("answer", 42).scope();
   const task = scope.useSingletons(["answer"], ({ answer }) => ResultTask.succeed(answer));
-  expectTypeOf(ResultTask.runResult(task)).toEqualTypeOf<Promise<Result<number, never>>>();
+  expectTypeOf(ResultTask.runResult(task)).toEqualTypeOf<ResultAsync<number, never>>();
   expectTypeOf(
     ResultTask.runResult(scope.useSingletons(["bad"], () => ResultTask.succeed(1))),
-  ).toEqualTypeOf<Promise<Result<number, "offline">>>();
+  ).toEqualTypeOf<ResultAsync<number, "offline">>();
   const running = ResultTask.runPromise(
     scope.useSingletons([], () =>
       ResultTask.tryPromise({

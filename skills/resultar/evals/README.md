@@ -6,6 +6,18 @@ checker configuration, composition repair, and lazy resource ownership. Narrativ
 outside those contracts still need human review. The runner is `scripts/eval-agents.mjs` at the
 workspace root.
 
+The scenarios include existing eager compatibility contracts. Their fixed support types and graders
+may intentionally require eager `ResultAsync` / `StrictResultAsync` contracts and helpers from `resultar`;
+preserve their execution contracts when evaluating a submission. They do not make Async the default
+for new v4 workflows. New code uses `ResultTask`, explicit runners, and structural Task factories
+for eager adapters. `Result.gen` / `Result.fn` support sync and async bodies with modern
+plain-value returns; legacy `safeTry` supports both forms with final-Result returns. All runtime
+and type exports come from the single `resultar` package entrypoint.
+
+Fixtures are version-specific and remain frozen until a separate migration is authorized. Existing
+Async exports and deprecated aliases in `resultar` remain supported. Report semantic conflicts, such
+as equating modern `Result.gen` with legacy final-Result `safeTry`, without changing fixed graders.
+
 ## Verify the graders in CI
 
 ```sh

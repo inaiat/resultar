@@ -282,7 +282,7 @@ test("native handler timeout aborts request work and releases scoped resources",
         catch: (error) => error,
       }),
       { signal: request.signal },
-    ).catch(() => {
+    ).then(undefined, () => {
       /* The native timeout response owns interruption. */
     });
     return result ?? "interrupted";

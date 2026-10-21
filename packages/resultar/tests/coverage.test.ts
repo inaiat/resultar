@@ -1,10 +1,16 @@
 import { deepEqual, equal, ok as isTrue, rejects, throws } from 'node:assert'
-import { describe, it } from 'vite-plus/test'
+import { describe, expect, it } from 'vite-plus/test'
 
-import { createResultarError } from '../src/error.js'
-import type { Result, TaggedEnum } from '../src/index.js'
+import { createResultarError } from '../src/core/error.js'
+import type { Fiber as FiberType, Result, TaggedEnum } from '../src/index.js'
 import * as resultar from '../src/index.js'
-import type * as ResultAsyncAdapter from '../src/result-async-adapter.js'
+import { Fiber, ResultTask, Semaphore, err } from '../src/index.js'
+import { FiberSignal, NEVER_ABORTED_SIGNAL } from '../src/task/exit.js'
+import { registerFiberTaskFactory, startFiber } from '../src/task/fiber-runtime.js'
+import { MissingServiceError, ResultTaskYieldTypeId } from '../src/task/result-task.js'
+import { TaskScope } from '../src/task/scope.js'
+import { schedulerCheckpoint } from '../src/task/task-scheduler.js'
+import type * as ResultAsyncAdapter from '../src/result-async/result-async-adapter.js'
 
 const resultAsyncForEach: typeof resultar.ResultAsync.forEach = resultar.ResultAsync.forEach
 
@@ -613,7 +619,7 @@ describe('coverage-focused public behavior', () => {
 
   it('covers ResultAsync adapter registration failure in isolation', async () => {
     const adapter = (await import(
-      new URL('../src/result-async-adapter.ts?coverage', import.meta.url).href
+      new URL('../src/result-async/result-async-adapter.ts?coverage', import.meta.url).href
     )) as typeof ResultAsyncAdapter
 
     throws(() => adapter.createResultAsync(Promise.resolve(resultar.ok(1))), /not registered/u)
@@ -756,5 +762,1093 @@ describe('coverage-focused public behavior', () => {
     equal(typeof resultar.isError, 'function')
     equal(typeof resultar.matchError, 'function')
     equal(typeof resultar.matchErrorPartial, 'function')
+  })
+
+  /* eslint-disable max-statements, no-throw-literal, no-empty-function, no-promise-executor-return, init-declarations, prefer-promise-reject-errors, unicorn/no-array-for-each, unicorn/prefer-native-coercion-functions, unicorn/require-array-join-separator, @typescript-eslint/no-non-null-assertion, @typescript-eslint/only-throw-error, @typescript-eslint/prefer-promise-reject-errors */
+  it('covers remaining task runtime branches', async () => {
+    // FiberSignal and schedulerCheckpoint direct edge cases
+    const parentFs = new FiberSignal()
+    parentFs.abort()
+    expect(parentFs.aborted).toBe(true)
+    parentFs.addEventListener('abort', () => {})
+    const nativeSig = parentFs.toNativeSignal()
+    expect(nativeSig.aborted).toBe(true)
+    const childFs = new FiberSignal(parentFs.asAbortSignal())
+    expect(childFs.aborted).toBe(true)
+    expect(childFs.reason).toBe(parentFs.reason)
+    expect(schedulerCheckpoint(undefined, NEVER_ABORTED_SIGNAL)).toBeUndefined()
+
+    // Semaphore abort on second signal read (semaphore.ts line 123 & result-task.ts line 3533)
+    let semAbortReads = 0
+    const semFlipSignal = {
+      get aborted() {
+        semAbortReads += 1
+        return semAbortReads >= 2
+      },
+      reason: 'sem-flip-2',
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    } as unknown as AbortSignal
+    expect(
+      await ResultTask.runExit(Semaphore.make(1).withPermit(ResultTask.ok(1)), {
+        signal: semFlipSignal,
+      }),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Interrupt', reason: 'sem-flip-2' } })
+
+    // TaskScope child disposer, repeat closeSyncOrAsync/close, and drainFinalizersAsync rejections
+    const childDisposerScope = new TaskScope()
+    const removeChild = childDisposerScope.addChild({
+      interrupt: () => {},
+      close: async () => ({ _tag: 'Success', value: undefined }),
+    })
+    removeChild()
+    removeChild()
+    childDisposerScope.unregisterChild({
+      interrupt: () => {},
+      close: async () => ({ _tag: 'Success', value: undefined }),
+    })
+    const firstClosed = childDisposerScope.closeSyncOrAsync({ _tag: 'Success', value: 1 })
+    expect(childDisposerScope.closeSyncOrAsync({ _tag: 'Success', value: 2 })).toBe(firstClosed)
+
+    // Semaphore waiter inside cleanup scope (NEVER_ABORTED_SIGNAL)
+    const unintSem = Semaphore.make(1)
+    expect(
+      await ResultTask.runPromise(
+        ResultTask.all(
+          [
+            unintSem.withPermit(ResultTask.sleep(10)),
+            ResultTask.ok(42).ensuring(() => unintSem.withPermit(ResultTask.ok(1))),
+          ],
+          { concurrency: 2 },
+        ),
+      ),
+    ).toEqual([undefined, 42])
+
+    const asyncRejectScope = new TaskScope()
+    asyncRejectScope.add(() => Promise.reject('fin-loop-reject'))
+    asyncRejectScope.add(async () => ({ _tag: 'Success', value: undefined }))
+    asyncRejectScope.add(() => Promise.reject('pending-release-reject'))
+    const closingPromise = asyncRejectScope.closeSyncOrAsync({ _tag: 'Success', value: undefined })
+    expect(asyncRejectScope.closeSyncOrAsync({ _tag: 'Success', value: undefined })).toBe(
+      closingPromise,
+    )
+    expect(asyncRejectScope.close({ _tag: 'Success', value: undefined })).toBe(closingPromise)
+    expect(await closingPromise).toEqual({
+      _tag: 'Failure',
+      cause: {
+        _tag: 'Sequential',
+        left: { _tag: 'Die', defect: 'pending-release-reject' },
+        right: { _tag: 'Die', defect: 'fin-loop-reject' },
+      },
+    })
+
+    // fiber-runtime getFiberMeta(null), executeStructuralJoin sync/uninitialized, sync throw in ManagedFiber.run with async scope finalizer, and ManagedFiber.cleanup with completeFn
+    expect(() => Fiber.join(null as never)).toThrow(TypeError)
+    const syncStructuralFiber: FiberType<number, never> = {
+      interrupt: () => ResultTask.ok({ _tag: 'Success' as const, value: 77 }),
+      join: () => ResultTask.ok(77),
+    }
+    expect(
+      await ResultTask.runPromise(Fiber.join(syncStructuralFiber, { interruption: 'detach' })),
+    ).toBe(77)
+
+    const structuralAwaitTask = Fiber.await(syncStructuralFiber)
+    const prevFactory2 = registerFiberTaskFactory(undefined)
+    try {
+      expect(await ResultTask.runExit(structuralAwaitTask)).toEqual({
+        _tag: 'Success',
+        value: {
+          _tag: 'Failure',
+          cause: { _tag: 'Die', defect: new TypeError('ResultTask has not initialized') },
+        },
+      })
+    } finally {
+      registerFiberTaskFactory(prevFactory2)
+    }
+
+    const syncThrowStartFiber = startFiber({
+      scope: new TaskScope(),
+      signal: new AbortController().signal,
+      prepare: (scope) => {
+        scope.add(async () => ({ _tag: 'Success', value: undefined }))
+        return {
+          execute: () => {
+            throw 'sync-start-fiber-boom'
+          },
+          complete: (exit) => exit,
+        }
+      },
+    })
+    expect(await ResultTask.runExit(Fiber.await(syncThrowStartFiber.handle))).toEqual({
+      _tag: 'Success',
+      value: { _tag: 'Failure', cause: { _tag: 'Die', defect: 'sync-start-fiber-boom' } },
+    })
+
+    expect(
+      await ResultTask.runPromise(
+        ResultTask.ok('main').ensuring(() =>
+          ResultTask.race(ResultTask.sleep(50), ResultTask.ok('win')),
+        ),
+      ),
+    ).toBe('main')
+
+    const addFn = ResultTask.fn(function* (a: number, b: number) {
+      const x = yield* ResultTask.ok(a)
+      const y = yield* ResultTask.ok(b)
+      return x + y
+    })
+    expect(await ResultTask.runPromise(addFn(20, 22))).toBe(42)
+
+    // Structural ResultTaskYield and ServiceYield in ResultTask.gen
+    const IterTag = ResultTask.service<number, 'IterTag'>('IterTag')
+    expect(
+      await ResultTask.runPromise(
+        (
+          ResultTask.gen(function* () {
+            const a = (yield {
+              [ResultTaskYieldTypeId]: ResultTaskYieldTypeId,
+              _tag: 'ResultTask',
+              task: ResultTask.ok(40),
+            } as never) as { value: number }
+            const b = (yield {
+              [ResultTaskYieldTypeId]: ResultTaskYieldTypeId,
+              _tag: 'Service',
+              tag: IterTag,
+            } as never) as number
+            return a.value + b
+          }) as ResultTask<number, never, typeof IterTag>
+        ).provideService(IterTag, 2),
+      ),
+    ).toBe(42)
+
+    for (const invalidYield of [
+      null,
+      { [ResultTaskYieldTypeId]: Symbol('wrong'), _tag: 'ResultTask', task: ResultTask.ok(1) },
+      { [ResultTaskYieldTypeId]: ResultTaskYieldTypeId, _tag: 'Wrong', task: ResultTask.ok(1) },
+      { [ResultTaskYieldTypeId]: ResultTaskYieldTypeId, _tag: 'ResultTask', task: 123 },
+      { [ResultTaskYieldTypeId]: Symbol('wrong'), _tag: 'Service', tag: IterTag },
+      { [ResultTaskYieldTypeId]: ResultTaskYieldTypeId, _tag: 'Service', tag: 123 },
+    ]) {
+      expect(
+        await ResultTask.runExit(
+          ResultTask.gen(function* () {
+            yield invalidYield as never
+            return 1
+          }),
+        ),
+      ).toEqual({
+        _tag: 'Failure',
+        cause: {
+          _tag: 'Die',
+          defect: new TypeError('ResultTask.gen yielded an unsupported value'),
+        },
+      })
+    }
+
+    // resolveService when service is provided in context AND serviceResolver is present during closeGeneratorAsync
+    let seenInFinally = 0
+    expect(
+      await ResultTask.runExit(
+        (
+          ResultTask.provideServiceResolver(
+            ResultTask.gen(function* () {
+              try {
+                return yield* ResultTask.err('body-err')
+              } finally {
+                yield* ResultTask.sleep(0)
+                seenInFinally = yield* IterTag
+              }
+            }),
+            { IterTag: () => ResultTask.err('resolver-should-not-run') },
+          ) as ResultTask<never, string, typeof IterTag>
+        ).provideService(IterTag, 42),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'body-err' } })
+    expect(seenInFinally).toBe(42)
+
+    // A Result-producing promise is interrupted while awaiting an Err result
+    const promiseAbortController = new AbortController()
+    const promiseTask = ResultTask.fromResultAsync(
+      new Promise<Result<number, string>>((resolve) => {
+        setImmediate(() => {
+          promiseAbortController.abort('promise-ctor-aborted')
+          resolve(err('ignored-err'))
+        })
+      }),
+    )
+    expect(
+      await ResultTask.runExit(promiseTask, { signal: promiseAbortController.signal }),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Interrupt', reason: 'promise-ctor-aborted' } })
+
+    // closeGeneratorAsync catch block (throw inside finally after yielding in finally)
+    expect(
+      await ResultTask.runExit(
+        ResultTask.gen(function* () {
+          try {
+            return yield* ResultTask.err('gen-err')
+          } finally {
+            yield* ResultTask.ok(1)
+            // eslint-disable-next-line no-unsafe-finally
+            throw 'finally-after-yield-boom'
+          }
+        }),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'finally-after-yield-boom' } })
+
+    // Scheduler failures, recoverScheduling, and combineExits in runTaskLoop, #runTaskLoopFromYield, and #resumeTaskLoopAsync
+    let schedCount = 0
+    let cleanupSteps = 0
+    expect(
+      await ResultTask.runExit(
+        ResultTask.ok(1).ensuring(() =>
+          ResultTask.ok(1)
+            .map((x) => {
+              cleanupSteps += 1
+              return x + 1
+            })
+            .map((x) => {
+              cleanupSteps += 1
+              return x + 1
+            }),
+        ),
+        {
+          yieldEvery: 2,
+          scheduler: {
+            yield: () => {
+              schedCount += 1
+              if (schedCount >= 2) throw 'cleanup-sync-sched-boom'
+              return Promise.resolve()
+            },
+          },
+        },
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'cleanup-sync-sched-boom' } })
+    expect(schedCount).toBe(2)
+    expect(cleanupSteps).toBe(2)
+
+    // Sync scheduler throw outside cleanup (currentExit undefined vs defined)
+    expect(
+      await ResultTask.runExit(
+        ResultTask.ok(1).map((x) => x + 1),
+        {
+          yieldEvery: 1,
+          scheduler: {
+            yield: () => {
+              throw 'sync-sched-outside-cleanup'
+            },
+          },
+        },
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'sync-sched-outside-cleanup' } })
+
+    let syncAfterErrCalls = 0
+    expect(
+      await ResultTask.runExit(
+        ResultTask.err('first-err').map((x) => x),
+        {
+          yieldEvery: 1,
+          scheduler: {
+            yield: () => {
+              syncAfterErrCalls += 1
+              if (syncAfterErrCalls === 3) throw 'sync-sched-after-err'
+              return undefined as unknown as Promise<void>
+            },
+          },
+        },
+      ),
+    ).toEqual({
+      _tag: 'Failure',
+      cause: {
+        _tag: 'Sequential',
+        left: { _tag: 'Fail', error: 'first-err' },
+        right: { _tag: 'Die', defect: 'sync-sched-after-err' },
+      },
+    })
+
+    // Sync scheduler throw in runTaskLoop (L1493) when currentExit is already a Failure (yieldEvery: 3)
+    expect(
+      await ResultTask.runExit(
+        ResultTask.err('first-sync-loop-err').map((x) => x),
+        {
+          yieldEvery: 3,
+          scheduler: {
+            yield: () => {
+              throw 'sync-loop-sched-after-err'
+            },
+          },
+        },
+      ),
+    ).toEqual({
+      _tag: 'Failure',
+      cause: {
+        _tag: 'Sequential',
+        left: { _tag: 'Fail', error: 'first-sync-loop-err' },
+        right: { _tag: 'Die', defect: 'sync-loop-sched-after-err' },
+      },
+    })
+
+    // Async scheduler rejection in cleanup (#runTaskLoopFromYield cleanup branch + recoverScheduling)
+    let asyncCleanupYieldCalls = 0
+    let asyncCleanupSteps = 0
+    expect(
+      await ResultTask.runExit(
+        ResultTask.ok(1).ensuring(() =>
+          ResultTask.ok(1)
+            .map((x) => {
+              asyncCleanupSteps += 1
+              return x + 1
+            })
+            .map((x) => {
+              asyncCleanupSteps += 1
+              return x + 1
+            }),
+        ),
+        {
+          yieldEvery: 2,
+          scheduler: {
+            yield: () => {
+              asyncCleanupYieldCalls += 1
+              if (asyncCleanupYieldCalls >= 2) return Promise.reject('cleanup-async-yield-1')
+              return Promise.resolve()
+            },
+          },
+        },
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'cleanup-async-yield-1' } })
+    expect(asyncCleanupYieldCalls).toBe(2)
+    expect(asyncCleanupSteps).toBe(2)
+
+    // Async scheduler rejection inside #resumeTaskLoopAsync in cleanup (recoverScheduling at L1745)
+    let resumeCleanupYieldCalls = 0
+    let resumeCleanupSteps = 0
+    expect(
+      await ResultTask.runExit(
+        ResultTask.ok(1).ensuring(() =>
+          ResultTask.sleep(0)
+            .andThen(() =>
+              ResultTask.sync(() => {
+                resumeCleanupSteps += 1
+                return 1
+              }),
+            )
+            .map((x) => {
+              resumeCleanupSteps += 1
+              return x + 1
+            })
+            .map((x) => {
+              resumeCleanupSteps += 1
+              return x + 1
+            }),
+        ),
+        {
+          yieldEvery: 2,
+          scheduler: {
+            yield: () => {
+              resumeCleanupYieldCalls += 1
+              if (resumeCleanupYieldCalls >= 3) {
+                return Promise.reject('cleanup-resume-async-sched-boom')
+              }
+              return Promise.resolve()
+            },
+          },
+        },
+      ),
+    ).toEqual({
+      _tag: 'Failure',
+      cause: { _tag: 'Die', defect: 'cleanup-resume-async-sched-boom' },
+    })
+    expect(resumeCleanupYieldCalls).toBe(3)
+    expect(resumeCleanupSteps).toBe(3)
+
+    // Async scheduler rejection in #runTaskLoopFromYield (L1617) after an Err exit (yieldEvery: 3)
+    expect(
+      await ResultTask.runExit(
+        ResultTask.err('first-async-err').map((x) => x),
+        { yieldEvery: 3, scheduler: { yield: () => Promise.reject('async-sched-after-err') } },
+      ),
+    ).toEqual({
+      _tag: 'Failure',
+      cause: {
+        _tag: 'Sequential',
+        left: { _tag: 'Fail', error: 'first-async-err' },
+        right: { _tag: 'Die', defect: 'async-sched-after-err' },
+      },
+    })
+
+    const schedAbortCtrl = new AbortController()
+    expect(
+      await ResultTask.runExit(
+        ResultTask.ok(1).map((x) => x + 1),
+        {
+          yieldEvery: 1,
+          signal: schedAbortCtrl.signal,
+          scheduler: {
+            yield: () => {
+              schedAbortCtrl.abort('sched-aborted')
+              throw 'ignored-sched-throw'
+            },
+          },
+        },
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Interrupt', reason: 'sched-aborted' } })
+
+    const resumeSchedAbortCtrl = new AbortController()
+    let resumeSchedAbortCalls = 0
+    expect(
+      await ResultTask.runExit(
+        ResultTask.sleep(0).andThen(() => ResultTask.ok(1)),
+        {
+          yieldEvery: 2,
+          signal: resumeSchedAbortCtrl.signal,
+          scheduler: {
+            yield: () => {
+              resumeSchedAbortCalls += 1
+              if (resumeSchedAbortCalls >= 2) {
+                resumeSchedAbortCtrl.abort('resume-sched-aborted')
+                throw 'ignored-resume-sched-throw'
+              }
+              return Promise.resolve()
+            },
+          },
+        },
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Interrupt', reason: 'resume-sched-aborted' } })
+
+    let asyncSchedCount = 0
+    expect(
+      await ResultTask.runExit(
+        ResultTask.sleep(0).andThen(() => ResultTask.ok(1)),
+        {
+          yieldEvery: 1,
+          scheduler: {
+            yield: () => {
+              asyncSchedCount += 1
+              if (asyncSchedCount >= 2) return Promise.reject('async-sched-reject-no-exit')
+              return Promise.resolve()
+            },
+          },
+        },
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'async-sched-reject-no-exit' } })
+
+    const midSyncAbort = new AbortController()
+    expect(
+      await ResultTask.runExit(
+        ResultTask.sleep(0)
+          .andThen(() =>
+            ResultTask.sync(() => {
+              midSyncAbort.abort('mid-sync-aborted')
+              return 1
+            }),
+          )
+          .map(() => {
+            throw 'should-not-run'
+          }),
+        { signal: midSyncAbort.signal },
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Interrupt', reason: 'mid-sync-aborted' } })
+
+    // Signal aborted during a failing step preserves Failure rather than overwriting with Interrupt
+    const failSyncAbort = new AbortController()
+    expect(
+      await ResultTask.runExit(
+        ResultTask.try({
+          try: () => {
+            failSyncAbort.abort('aborted-during-fail')
+            throw 'sync-fail-err'
+          },
+          catch: (e) => String(e),
+        }).map((x) => x),
+        { signal: failSyncAbort.signal },
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'sync-fail-err' } })
+
+    const failAsyncResumeAbort = new AbortController()
+    expect(
+      await ResultTask.runExit(
+        ResultTask.sleep(0)
+          .andThen(() =>
+            ResultTask.try({
+              try: () => {
+                failAsyncResumeAbort.abort('aborted-during-async-fail')
+                throw 'async-fail-err'
+              },
+              catch: (e) => String(e),
+            }),
+          )
+          .map((x) => x),
+        { signal: failAsyncResumeAbort.signal },
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'async-fail-err' } })
+
+    // #resumeTaskLoopAsync TapError, TapBoth, and throwing Sync
+    let tapErrSeen = ''
+    let tapBothSeen = 0
+    expect(
+      await ResultTask.runExit(
+        ResultTask.sleep(0).andThen(() =>
+          ResultTask.err('tap-err-val').tapError((e) => {
+            tapErrSeen = e
+          }),
+        ),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'tap-err-val' } })
+    expect(tapErrSeen).toBe('tap-err-val')
+
+    expect(
+      await ResultTask.runPromise(
+        ResultTask.sleep(0).andThen(() =>
+          ResultTask.ok(7).tapBoth({
+            ok: (v) => {
+              tapBothSeen = v
+            },
+            err: () => {},
+          }),
+        ),
+      ),
+    ).toBe(7)
+    expect(tapBothSeen).toBe(7)
+
+    expect(
+      await ResultTask.runExit(
+        ResultTask.sleep(0).andThen(() =>
+          ResultTask.sync(() => {
+            throw 'sync-after-async-boom'
+          }),
+        ),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'sync-after-async-boom' } })
+
+    // inspectError and inspectCause returning a ResultTask (not executed) vs async Promise (awaited)
+    let inspectTaskExecuted = false
+    const unexecutedTask = ResultTask.sync(() => {
+      inspectTaskExecuted = true
+    })
+    let inspectErrAsyncDone = false
+    let inspectCauseAsyncDone = false
+    expect(
+      await ResultTask.runExit(
+        ResultTask.err('e')
+          .inspectError(() => unexecutedTask)
+          .inspectError(async () => {
+            await sleep(5)
+            inspectErrAsyncDone = true
+          })
+          .inspectCause(() => unexecutedTask)
+          .inspectCause(async () => {
+            await sleep(5)
+            inspectCauseAsyncDone = true
+          }),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'e' } })
+    expect(inspectTaskExecuted).toBe(false)
+    expect(inspectErrAsyncDone).toBe(true)
+    expect(inspectCauseAsyncDone).toBe(true)
+
+    // Internal executors must fail without being caught by a public factory so the interpreter handles them.
+    const InternalDefectTask = ResultTask as unknown as new (
+      execute: () => Promise<never>,
+    ) => ResultTask<never, never>
+
+    // Non-root Async instruction sync throw, async reject with continuation, and reject after async resume
+    const syncThrowAsyncTask = new InternalDefectTask(() => {
+      throw 'non-root-sync-boom'
+    })
+    expect(await ResultTask.runExit(syncThrowAsyncTask.map((x) => x))).toEqual({
+      _tag: 'Failure',
+      cause: { _tag: 'Die', defect: 'non-root-sync-boom' },
+    })
+
+    const rawRejectAsyncTask = new InternalDefectTask(() => Promise.reject('non-root-async-reject'))
+    expect(await ResultTask.runExit(rawRejectAsyncTask.map((x) => x))).toEqual({
+      _tag: 'Failure',
+      cause: { _tag: 'Die', defect: 'non-root-async-reject' },
+    })
+    expect(await ResultTask.runExit(ResultTask.sleep(0).andThen(() => rawRejectAsyncTask))).toEqual(
+      { _tag: 'Failure', cause: { _tag: 'Die', defect: 'non-root-async-reject' } },
+    )
+
+    // tryPromise({ try, catch }) error/abort paths (1891, 1897, 1902)
+    expect(
+      await ResultTask.runExit(
+        ResultTask.tryPromise({
+          try: () => Promise.reject('try-reject'),
+          catch: () => {
+            throw 'catch-async-boom'
+          },
+        }),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'catch-async-boom' } })
+
+    const trySyncAbort = new AbortController()
+    expect(
+      await ResultTask.runExit(
+        ResultTask.tryPromise({
+          try: () => {
+            trySyncAbort.abort('try-sync-aborted')
+            throw 'ignored-sync'
+          },
+          catch: () => 'mapped',
+        }),
+        { signal: trySyncAbort.signal },
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Interrupt', reason: 'try-sync-aborted' } })
+
+    expect(
+      await ResultTask.runExit(
+        ResultTask.tryPromise({
+          try: () => {
+            throw 'try-sync-boom'
+          },
+          catch: () => {
+            throw 'catch-sync-boom'
+          },
+        }),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'catch-sync-boom' } })
+
+    // #registerAcquireReleaseFinalizer async inner scope close (1953), raw reject (1961), and raw sync throw (1965)
+    expect(
+      await ResultTask.runExit(
+        ResultTask.scoped(
+          ResultTask.acquireRelease({
+            acquire: ResultTask.ok('res'),
+            release: () =>
+              ResultTask.acquireRelease({
+                acquire: ResultTask.ok(undefined),
+                release: () => ResultTask.sleep(0),
+              }),
+          }),
+        ),
+      ),
+    ).toEqual({ _tag: 'Success', value: 'res' })
+
+    const customRejectRelease = ResultTask.ok(undefined)
+    ;(customRejectRelease as unknown as { execute: () => unknown }).execute = () => undefined
+    ;(customRejectRelease as unknown as { execute: () => unknown }).execute = () =>
+      Promise.reject('release-custom-reject')
+    expect(
+      await ResultTask.runExit(
+        ResultTask.scoped(
+          ResultTask.acquireRelease({
+            acquire: ResultTask.ok('res'),
+            release: () => customRejectRelease,
+          }),
+        ),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'release-custom-reject' } })
+
+    const customThrowRelease = ResultTask.ok(undefined)
+    ;(customThrowRelease as unknown as { execute: () => unknown }).execute = () => {
+      throw 'release-custom-throw'
+    }
+    expect(
+      await ResultTask.runExit(
+        ResultTask.scoped(
+          ResultTask.acquireRelease({
+            acquire: ResultTask.ok('res'),
+            release: () => customThrowRelease,
+          }),
+        ),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'release-custom-throw' } })
+
+    // #resumeGenFromTaskAsync, #resumeGenFromServiceAsync, and #resumeGenLoopAsync (2347, 2363-2510)
+    expect(
+      await ResultTask.runExit(
+        ResultTask.gen(function* () {
+          return yield* customRejectRelease
+        }),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'release-custom-reject' } })
+
+    expect(
+      await ResultTask.runExit(
+        ResultTask.gen(function* () {
+          yield* ResultTask.sleep(0)
+          throw 'after-sleep-boom'
+        }),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'after-sleep-boom' } })
+
+    const AsyncSvc = ResultTask.service<number, 'AsyncSvc'>('AsyncSvc')
+    expect(
+      await ResultTask.runExit(
+        ResultTask.provideServiceResolver(
+          ResultTask.gen(function* () {
+            yield* AsyncSvc
+            throw 'after-svc-boom'
+          }),
+          { AsyncSvc: () => ResultTask.ok(10) },
+        ),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'after-svc-boom' } })
+
+    expect(
+      await ResultTask.runExit(
+        ResultTask.gen(function* () {
+          yield* ResultTask.sleep(0)
+          return yield* customRejectRelease
+        }),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'release-custom-reject' } })
+
+    expect(
+      await ResultTask.runExit(
+        ResultTask.gen(function* () {
+          yield* ResultTask.sleep(0)
+          return yield* ResultTask.err('step2-task-err')
+        }),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'step2-task-err' } })
+
+    expect(
+      await ResultTask.runExit(
+        ResultTask.gen(function* () {
+          yield* ResultTask.sleep(0)
+          return yield* AsyncSvc
+        }).provideService(AsyncSvc, 99),
+      ),
+    ).toEqual({ _tag: 'Success', value: 99 })
+
+    expect(
+      await ResultTask.runExit(
+        ResultTask.provideServiceResolver(
+          ResultTask.gen(function* () {
+            yield* ResultTask.sleep(0)
+            return yield* AsyncSvc
+          }),
+          { AsyncSvc: () => ResultTask.ok(77) },
+        ),
+      ),
+    ).toEqual({ _tag: 'Success', value: 77 })
+
+    expect(
+      await ResultTask.runExit(
+        ResultTask.provideServiceResolver(
+          ResultTask.gen(function* () {
+            yield* ResultTask.sleep(0)
+            return yield* AsyncSvc
+          }),
+          { AsyncSvc: () => ResultTask.err('svc-effect-err') },
+        ),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'svc-effect-err' } })
+
+    const MissingAfterAsyncSvc = ResultTask.service<number, 'MissingAfterAsyncSvc'>(
+      'MissingAfterAsyncSvc',
+    )
+    const missingAfterAsyncExit = await ResultTask.runExit(
+      ResultTask.gen(function* () {
+        yield* ResultTask.sleep(0)
+        return yield* MissingAfterAsyncSvc
+      }) as ResultTask<number>,
+    )
+    expect(missingAfterAsyncExit).toEqual({
+      _tag: 'Failure',
+      cause: { _tag: 'Die', defect: new MissingServiceError('MissingAfterAsyncSvc') },
+    })
+
+    expect(
+      await ResultTask.runExit(
+        ResultTask.provideServiceResolver(
+          ResultTask.gen(function* () {
+            yield* ResultTask.sleep(0)
+            return yield* AsyncSvc
+          }),
+          {
+            AsyncSvc: () => {
+              throw 'svc-effect-die'
+            },
+          },
+        ),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'svc-effect-die' } })
+
+    expect(
+      await ResultTask.runExit(
+        ResultTask.gen(function* () {
+          yield* ResultTask.sleep(0)
+          return yield* err('step2-sync-err')
+        }),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'step2-sync-err' } })
+
+    const unsupportedAfterAsyncExit = await ResultTask.runExit(
+      ResultTask.gen(function* () {
+        yield* ResultTask.sleep(0)
+        yield 123 as never
+        return 1
+      }),
+    )
+    expect(unsupportedAfterAsyncExit).toEqual({
+      _tag: 'Failure',
+      cause: { _tag: 'Die', defect: new TypeError('ResultTask.gen yielded an unsupported value') },
+    })
+
+    expect(
+      await ResultTask.runExit(
+        ResultTask.gen(function* () {
+          yield* ResultTask.sleep(0)
+          yield* ResultTask.ok(1)
+          throw 'step3-sync-boom'
+        }),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'step3-sync-boom' } })
+
+    // Semaphore custom task sync throw (3512-3513) and raw promise reject (3522-3523) still release permit
+    const sharedSem = Semaphore.make(1)
+    expect(await ResultTask.runExit(sharedSem.withPermit(customThrowRelease))).toEqual({
+      _tag: 'Failure',
+      cause: { _tag: 'Die', defect: 'release-custom-throw' },
+    })
+    expect(await ResultTask.runExit(sharedSem.withPermit(customRejectRelease))).toEqual({
+      _tag: 'Failure',
+      cause: { _tag: 'Die', defect: 'release-custom-reject' },
+    })
+    expect(await ResultTask.runPromise(sharedSem.withPermit(ResultTask.ok('acquired-after')))).toBe(
+      'acquired-after',
+    )
+
+    // forEach worker async scope close on success (3904) and sync/async in catch block (3909)
+    expect(await ResultTask.runExit(ResultTask.forEach([1], () => customThrowRelease))).toEqual({
+      _tag: 'Failure',
+      cause: { _tag: 'Die', defect: 'release-custom-throw' },
+    })
+    const customAsyncScopeThrowTask = ResultTask.ok(1)
+    ;(
+      customAsyncScopeThrowTask as unknown as { execute: (ctx: { scope: TaskScope }) => unknown }
+    ).execute = (ctx) => {
+      ctx.scope.add(async () => ({ _tag: 'Success', value: undefined }))
+      throw 'foreach-async-scope-throw'
+    }
+    expect(
+      await ResultTask.runExit(
+        ResultTask.forEach(
+          [1, 2],
+          (n) =>
+            n === 1
+              ? ResultTask.acquireRelease({
+                  acquire: ResultTask.ok(1),
+                  release: () => ResultTask.sleep(0),
+                })
+              : customAsyncScopeThrowTask,
+          { concurrency: 2 },
+        ),
+      ),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'foreach-async-scope-throw' } })
+
+    // runExitSyncOrAsync async scope close interruption (for both sync and async root tasks) and non-Error option throw
+    const syncBodyAsyncCloseAbort = new AbortController()
+    expect(
+      await ResultTask.runExit(
+        ResultTask.ok('sync-body').ensuring(() =>
+          ResultTask.tryPromise(async () => {
+            await Promise.resolve()
+            syncBodyAsyncCloseAbort.abort('abort-in-sync-body-async-close')
+          }),
+        ),
+        { signal: syncBodyAsyncCloseAbort.signal },
+      ),
+    ).toEqual({
+      _tag: 'Failure',
+      cause: { _tag: 'Interrupt', reason: 'abort-in-sync-body-async-close' },
+    })
+
+    const asyncBodyAsyncCloseAbort = new AbortController()
+    expect(
+      await ResultTask.runExit(
+        ResultTask.sleep(0)
+          .as('async-body')
+          .ensuring(() =>
+            ResultTask.tryPromise(async () => {
+              await Promise.resolve()
+              asyncBodyAsyncCloseAbort.abort('abort-in-async-body-async-close')
+            }),
+          ),
+        { signal: asyncBodyAsyncCloseAbort.signal },
+      ),
+    ).toEqual({
+      _tag: 'Failure',
+      cause: { _tag: 'Interrupt', reason: 'abort-in-async-body-async-close' },
+    })
+
+    const nonErrorRunOptions = {
+      get yieldEvery(): number {
+        throw 'non-error-run-option'
+      },
+    }
+    await expect(ResultTask.runExit(ResultTask.ok(1), nonErrorRunOptions)).rejects.toThrow(
+      expect.objectContaining({ message: 'non-error-run-option', cause: 'non-error-run-option' }),
+    )
+    await expect(ResultTask.runResult(ResultTask.ok(1), nonErrorRunOptions)).rejects.toThrow(
+      expect.objectContaining({ message: 'non-error-run-option', cause: 'non-error-run-option' }),
+    )
+    await expect(ResultTask.runPromise(ResultTask.ok(1), nonErrorRunOptions)).rejects.toThrow(
+      expect.objectContaining({ message: 'non-error-run-option', cause: 'non-error-run-option' }),
+    )
+
+    // ResultTask.match callback overloads and validation (5729-5732, 5740-5745)
+    expect(
+      await ResultTask.runPromise(
+        ResultTask.match(
+          ResultTask.ok(5),
+          (v) => v * 2,
+          () => 0,
+        ),
+      ),
+    ).toBe(10)
+    expect(
+      await ResultTask.runPromise(
+        ResultTask.match(
+          (v: number) => v + 1,
+          () => 0,
+        )(ResultTask.ok(5)),
+      ),
+    ).toBe(6)
+    expect(() =>
+      (ResultTask.match as (...args: unknown[]) => unknown)(ResultTask.ok(1), (v: number) => v),
+    ).toThrow(new TypeError('ResultTask.match requires both onOk and onErr callbacks'))
+    expect(() => (ResultTask.match as (...args: unknown[]) => unknown)((v: number) => v)).toThrow(
+      new TypeError('ResultTask.match requires both onOk and onErr callbacks'),
+    )
+
+    const genFnSingleArg = ResultTask.fn(function* (x: number) {
+      const y = yield* ResultTask.ok(x + 1)
+      return y * 2
+    })
+    expect(await ResultTask.runPromise(genFnSingleArg(4).map((v) => v + 1))).toBe(11)
+    expect(
+      await ResultTask.runPromise(
+        ResultTask.tryPromise(() => Promise.resolve(3)).andThen((v) => genFnSingleArg(v)),
+      ),
+    ).toBe(8)
+
+    const settledFiber = ResultTask.runFork(ResultTask.ok(7))
+    expect(await ResultTask.runPromise(settledFiber.join())).toBe(7)
+    expect(await ResultTask.runPromise(settledFiber.interrupt())).toEqual({
+      _tag: 'Success',
+      value: 7,
+    })
+
+    // Result.fromThrowable without errorFn with >1 argument (result.ts:971)
+    const sumNoMapper = resultar.Result.fromThrowable((a: number, b: number) => a + b)
+    expect(sumNoMapper(2, 3)).toEqual(resultar.ok(5))
+
+    // ResultTask.mapErr and ResultTask.orElse missing callback validation (result-task.ts:3619, 3726)
+    expect(() => (ResultTask.mapErr as (...args: unknown[]) => unknown)(ResultTask.ok(1))).toThrow(
+      new TypeError('ResultTask.mapErr requires an error mapping function'),
+    )
+    expect(() => (ResultTask.orElse as (...args: unknown[]) => unknown)(ResultTask.ok(1))).toThrow(
+      new TypeError('ResultTask.orElse requires a recovery function'),
+    )
+
+    // #stepFlatMapFastPath synchronous throw for Error and non-Error (result-task.ts:5352-5354)
+    await expect(
+      ResultTask.ok(1)
+        .andThen(() => {
+          throw new Error('fastpath-andthen-error')
+        })
+        .runResult(),
+    ).rejects.toThrow('fastpath-andthen-error')
+    await expect(
+      ResultTask.ok(1)
+        .andThen(() => {
+          throw 'fastpath-andthen-non-error'
+        })
+        .runResult(),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        message: 'fastpath-andthen-non-error',
+        cause: 'fastpath-andthen-non-error',
+      }),
+    )
+
+    // runTryPromiseResult fast-path branches (result-task.ts:5742, 5754-5757, 5776, 5785)
+    await expect(
+      ResultTask.tryPromise({
+        try: () => Promise.reject(new Error('rejected')),
+        catch: () => {
+          throw new Error('catch-defect')
+        },
+      }).runResult(),
+    ).rejects.toThrow('catch-defect')
+    expect(
+      await ResultTask.tryPromise(() => {
+        throw 'sync-throw-no-mapper'
+      }).runResult(),
+    ).toEqual(err('sync-throw-no-mapper'))
+    expect(
+      await ResultTask.tryPromise({
+        try: () => {
+          throw 'sync-throw-with-mapper'
+        },
+        catch: (e) => `mapped:${String(e)}`,
+      }).runResult(),
+    ).toEqual(err('mapped:sync-throw-with-mapper'))
+    await expect(
+      ResultTask.tryPromise({
+        try: () => {
+          throw 'sync-throw'
+        },
+        catch: () => {
+          throw new Error('sync-catch-error')
+        },
+      }).runResult(),
+    ).rejects.toThrow('sync-catch-error')
+    await expect(
+      ResultTask.tryPromise({
+        try: () => {
+          throw 'sync-throw'
+        },
+        catch: () => {
+          throw 'sync-catch-non-error'
+        },
+      }).runResult(),
+    ).rejects.toThrow(
+      expect.objectContaining({ message: 'sync-catch-non-error', cause: 'sync-catch-non-error' }),
+    )
+
+    // canonicalRetryDelay zero-delay uninterruptible fast-path with resolving async onRetry (task-helpers.ts:208)
+    let retryAttempts = 0
+    const retryObserved: number[] = []
+    const zeroDelayAsyncOnRetry = ResultTask.sync(() => {
+      retryAttempts += 1
+      return retryAttempts
+    })
+      .andThen((attempt) => (attempt === 1 ? ResultTask.err('first-fail') : ResultTask.ok(attempt)))
+      .retry(
+        resultar.Retry.policy({
+          times: 1,
+          onRetry: async (_err, ctx) => {
+            await Promise.resolve()
+            retryObserved.push(ctx.attempt)
+          },
+        }),
+      )
+    expect(await zeroDelayAsyncOnRetry.runResult()).toEqual(resultar.ok(2))
+    expect(retryObserved).toEqual([0])
+
+    // ResultTask.run root flatMap fast-path with err Result (result-task.ts:718)
+    // and runTaskLoop flatMap continuation with ok Result (result-task.ts:981)
+    // and ResultTask.match 2-callback positional form on Err (result-task.ts:2485)
+    expect(
+      await ResultTask.ok(1)
+        .andThen(() => err('root-flatmap-err'))
+        .runExit(),
+    ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'root-flatmap-err' } })
+    expect(
+      await ResultTask.sync(() => 1)
+        .andThen((v) => resultar.ok(v + 1))
+        .runExit(),
+    ).toEqual({ _tag: 'Success', value: 2 })
+    expect(
+      await ResultTask.err<string, number>(42)
+        .match(
+          (v) => `ok:${v}`,
+          (e) => `err:${String(e)}`,
+        )
+        .runResult(),
+    ).toEqual(resultar.ok('err:42'))
   })
 })

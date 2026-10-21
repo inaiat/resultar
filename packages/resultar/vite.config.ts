@@ -19,7 +19,7 @@ export default defineConfig({
     clean: true,
     dts: { sourcemap: false },
     deps: { onlyBundle: false },
-    entry: ['src/index.ts'],
+    entry: { index: 'src/index.ts' },
     format: ['esm'],
     outExtensions: () => ({ dts: '.d.ts', js: '.js' }),
     sourcemap: false,
@@ -90,15 +90,38 @@ export default defineConfig({
     },
     overrides: [
       {
-        files: ['src/result.ts', 'src/tagged-error.ts'],
+        files: ['src/result-async/**/*.ts'],
+        rules: {
+          '@typescript-eslint/no-explicit-any': 'allow',
+          '@typescript-eslint/no-deprecated': 'allow',
+        },
+      },
+      {
+        files: ['src/result/result.ts', 'src/tagged/tagged-error.ts'],
         rules: { '@typescript-eslint/no-explicit-any': 'allow' },
+      },
+      {
+        // These modules retain supported deprecated synchronous composition names.
+        files: [
+          'src/index.ts',
+          'src/core/utils.ts',
+          'src/result/result.ts',
+          'src/result/result-types.ts',
+          'src/task/result-task.ts',
+          'src/tagged/tagged-error.ts',
+          'src/tagged/tagged-types.ts',
+        ],
+        rules: { '@typescript-eslint/no-deprecated': 'allow' },
       },
       {
         files: ['**/tests/**', '**/test/**'],
         rules: {
+          // Compatibility tests exercise deprecated entrypoints that remain supported.
+          '@typescript-eslint/no-deprecated': 'allow',
           'prefer-readonly-parameter-types': 'allow',
           'prefer-template': 'allow',
           'no-shadow': 'allow',
+          '@typescript-eslint/restrict-template-expressions': 'allow',
           '@typescript-eslint/strict-boolean-expressions': 'allow',
           '@typescript-eslint/return-await': 'allow',
           '@typescript-eslint/await-thenable': 'allow',

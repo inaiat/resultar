@@ -41,9 +41,9 @@
     }
   },
   "scripts": {
-    "analyze": "fallow",
     "build": "vp pack && node ../../scripts/build-agent-guide.mjs",
     "check": "vp check",
+    "check:fallow": "fallow",
     "check:full": "pnpm run build && pnpm run check && vp test run --coverage",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",

@@ -4,7 +4,7 @@ import type { StrictResult } from 'resultar'
 export class InvalidEmailError extends createTaggedError({
   name: 'InvalidEmailError',
   message: 'Invalid email $email',
-}) {}
+}).withProps<{ email: string }>() {}
 
 export const validateEmail = (email: string): StrictResult<string, InvalidEmailError> => {
   const normalized = email.trim().toLowerCase()
@@ -14,14 +14,19 @@ export const validateEmail = (email: string): StrictResult<string, InvalidEmailE
 export const account = (email: string): StrictResult<{ email: string }, InvalidEmailError> =>
   Result.gen(function* () {
     const normalized = yield* validateEmail(email)
-    return ok({ email: normalized })
+    return { email: normalized }
   })
 
-export const Greeting = ResultTask.service<string, 'greeting'>('greeting')
+export const Greeting = ResultTask.service<string>()('greeting')
 
 // Creating this task runs no work. The boundary supplies its typed dependency.
-export const welcome = (email: string) => ResultTask.gen(function* () {
-  const normalized = yield* validateEmail(email)
-  const greeting = yield* Greeting
-  return `${greeting}, ${normalized}`
-})
+export const welcome = (email: string) =>
+  ResultTask.gen(function* () {
+    const normalized = yield* validateEmail(email)
+    const greeting = yield* Greeting
+    return `${greeting}, ${normalized}`
+  })
+
+// The instance runner enforces the same service requirement as ResultTask.runResult.
+export const runWelcome = (email: string) =>
+  welcome(email).runResult({ services: { greeting: 'Welcome' } })

@@ -5,6 +5,9 @@ Zod adapter for `resultar-request`.
 Use this package when a request response should be parsed with Zod while the transport and Resultar
 error flow stay in `resultar-request`.
 
+Prefer `ResultTask` for new async workflows. This adapter returns eager `ResultAsync`
+from `resultar`; defer the adapter call with `fromResultAsync(factory)`.
+
 For a schema-library-agnostic request, use
 [`resultar-request`](https://www.npmjs.com/package/resultar-request) directly with its `validator`
 or `decode` options. The sibling
@@ -14,17 +17,17 @@ provides the same request flow with TypeBox schemas instead of Zod.
 ## Install
 
 ```sh
-pnpm add resultar-request-zod zod
+pnpm add resultar-request-zod resultar zod
 ```
 
 ```sh
-npm install resultar-request-zod zod
+npm install resultar-request-zod resultar zod
 ```
 
 ## `requestJson`
 
 ```ts
-import type { ResultAsync } from 'resultar'
+import { ResultTask } from 'resultar'
 import {
   requestJson as requestJsonZod,
   type RequestError,
@@ -46,24 +49,32 @@ const userSchema = z
 
 type User = z.output<typeof userSchema>
 
-const user: ResultAsync<User, RequestError> = requestJsonZod({
-  request: () => fetch('https://example.com/users/123'),
-  schema: userSchema,
-  retry: {
-    times: 2,
-    delayMs: ({ nextAttempt }) => nextAttempt * 100,
-  },
-  validationError: ({ errors }) =>
-    `User response failed validation with ${errors.length} issue(s)`,
-})
+const userTask: ResultTask<User, RequestError> = ResultTask.fromResultAsync(() =>
+  requestJsonZod({
+    request: () => fetch('https://example.com/users/123'),
+    schema: userSchema,
+    retry: {
+      times: 2,
+      delayMs: ({ nextAttempt }) => nextAttempt * 100,
+    },
+    validationError: ({ errors }) =>
+      `User response failed validation with ${errors.length} issue(s)`,
+  }),
+)
 
-const userLabel = user.map(({ email, seatLabel }) => `${email} (${seatLabel})`)
+const userLabelTask = userTask.map(({ email, seatLabel }) => `${email} (${seatLabel})`)
+const result = await userLabelTask.runResult()
 ```
 
-The returned type is `ResultAsync<User, RequestError>`. Zod validates the unknown JSON response,
+The adapter call itself returns `ResultAsync<User, RequestError>`. Zod validates the unknown JSON response,
 applies the transform, and passes the transformed `z.output<typeof userSchema>` value into the
 Resultar success channel. The request can also retry request or HTTP `5xx` failures without retrying
 invalid JSON or validation failures.
+
+The bridge above produces `ResultTask<User, RequestError>` and calls the adapter afresh on each
+run. Passing an existing Async value would reuse its already-started execution. Task is lazy,
+non-thenable and uses explicit runners; its `map` is synchronous and its `match` returns another
+Task to run. Existing callers can keep awaiting the adapter's eager Async result during migration.
 
 `requestJsonZod` is exported as the named adapter helper, and `requestJson` is an alias for
 package-local ergonomics.

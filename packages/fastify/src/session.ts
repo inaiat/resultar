@@ -1,3 +1,5 @@
+// Lifecycle sessions retain their eager ResultAsync compatibility boundary.
+/* eslint-disable typescript/no-deprecated */
 import {
   fromSafePromise,
   ResultAsync,
@@ -47,18 +49,20 @@ export function startSession(
     catch: sessionError,
   }).mapErr(sessionError);
   const task = use((services) =>
-    ResultTask.sync(() => readiness.resolve(services)).flatMap(() =>
+    ResultTask.sync(() => readiness.resolve(services)).andThen(() =>
       ResultTask.fromResultAsync(() => finished),
     ),
   );
   signal?.addEventListener("abort", finish, { once: true });
   if (signal?.aborted === true) finish();
   // runExit always fulfills with the complete outcome, including interruption and release failures.
-  const completion = fromSafePromise(ResultTask.runExit(task, { signal })).map((exit) => {
-    signal?.removeEventListener("abort", finish);
-    if (exit._tag === "Failure") readiness.reject(new ResultTaskCauseError(exit.cause));
-    return exit;
-  });
+  const completion = fromSafePromise(
+    ResultTask.runExit(task, { signal }).then((exit) => {
+      signal?.removeEventListener("abort", finish);
+      if (exit._tag === "Failure") readiness.reject(new ResultTaskCauseError(exit.cause));
+      return exit;
+    }),
+  );
   return {
     ready,
     completion,
@@ -71,6 +75,7 @@ export function startSession(
 
 export function hasFailure(cause: Cause<unknown>): boolean {
   if (cause._tag === "Interrupt") return false;
-  if (cause._tag === "Sequential") return hasFailure(cause.left) || hasFailure(cause.right);
+  if (cause._tag === "Sequential" || cause._tag === "Parallel")
+    return hasFailure(cause.left) || hasFailure(cause.right);
   return true;
 }

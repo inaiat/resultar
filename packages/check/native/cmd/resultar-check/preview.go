@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/microsoft/typescript-go/resultar-check/internal/analyzer"
-	"github.com/microsoft/typescript-go/resultar-check/internal/config"
-	"github.com/microsoft/typescript-go/resultar-check/internal/output"
-	"github.com/microsoft/typescript-go/resultar-check/internal/project"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/analyzer"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/config"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/output"
+	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/project"
 )
 
 func matchesFile(path, filter, directory string) bool {
@@ -81,7 +81,7 @@ func printQuickfixes(opened *project.Opened, findings []analyzer.Finding, filter
 				fmt.Fprintln(os.Stdout, fix.Description)
 			}
 			for _, file := range opened.Program.SourceFiles() {
-				if filepath.Clean(file.FileName()) != filepath.Clean(finding.File) {
+				if filepath.Clean(string(file.FileName())) != filepath.Clean(finding.File) {
 					continue
 				}
 				for _, edit := range fix.Edits {

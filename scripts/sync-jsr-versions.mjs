@@ -1,18 +1,22 @@
 import { execFileSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const formatter = fileURLToPath(import.meta.resolve("vite-plus/bin"));
 
-const packages = [
-  "packages/resultar",
-  "packages/di",
-  "packages/request",
-  "packages/request-typebox",
-  "packages/request-zod",
-];
+const packages = [];
+for (const entry of await readdir(join(rootDir, "packages"), { withFileTypes: true })) {
+  if (!entry.isDirectory()) continue;
+  const packageDir = join("packages", entry.name);
+  try {
+    await access(join(rootDir, packageDir, "jsr.json"));
+    packages.push(packageDir);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
 
 const parseJsonRecord = (contents, filePath) => {
   const parsed = JSON.parse(contents);

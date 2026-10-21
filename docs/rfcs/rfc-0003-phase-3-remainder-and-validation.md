@@ -1,6 +1,11 @@
 # RFC 0003: Phase 3 remainder, live lifecycle validation, and dependency health
 
-- Status: Draft
+> Design history: v4 prefers `ResultTask` for new async workflows. `ResultAsync` (`StrictResultAsync`)
+> is the active in-flight `Result` returned by `task.runResult()`, while deprecated eager orchestration helpers live in the `resultar/async` subpath with explicit bridges. For current contracts,
+> see the [core guide](../../packages/resultar/README.md) and
+> [v4 migration notes](../migrations/v4.md); retain earlier examples below as design context.
+
+- Status: Partially implemented (next major prepared)
 - Date: 2026-09-07
 - Scope: `resultar` package
 - Source: open items of the former `packages/resultar/TASKS.md` (removed 2026-09-07; done items archived in the Appendix below)
@@ -44,12 +49,19 @@ tests in `packages/resultar/tests/`. No mocks standing in for the live check.
 
 ## 2. Phase 3 remainder: fibers, race, timeout (P0)
 
+Implementation update (2026-10-13): this section is implemented in the next-major
+workspace. Current contracts are in the [adoption guide](../migrations/v4.md) and
+[core README](../../packages/resultar/README.md#task-concurrency-and-resilience).
+Regression coverage is in `result-task-concurrency.test.ts`, resource tests and the
+[resilience cookbook](../../examples/cookbook/src/task-resilience.ts). The live
+database/session pilot in §1 remains pending; this update does not close it.
+
+
 RFC 0001 exit criterion: no race or timeout loser left ownerless; finalizers run in all
 exit states. Already delivered (resource slice, 2026-09-05): root scope per execution,
 `scoped`, `acquireRelease`, awaited LIFO finalizers shielded from the interruption
-signal, `Cause.Sequential`/`Interrupt`. Still missing: `Fiber`, `forkChild`/`join`/
-`interrupt`, `race` and `timeout` over fibers, `Cause.Parallel`, scheduler involvement
-only as needed.
+signal, `Cause.Sequential`/`Interrupt`. The next-major delivery adds `Fiber`, `forkChild`/`join`/`interrupt`, `race`,
+`raceFirst`, `timeout`, and `Cause.Parallel`, with an injectable clock.
 
 ### Proposed API (from RFC 0001, unchanged)
 
@@ -69,12 +81,12 @@ ResultTask.timeout(task, duration, onTimeout)
 
 ### Acceptance
 
-- [ ] `timeout` interrupts the task and awaits finalizers (success, `Err`, defect, and interrupt paths).
-- [ ] `race` interrupts all losers and awaits their finalizers; winner value preserved.
-- [ ] Parent interruption reaches children; scope close awaits children.
-- [ ] Release-exactly-once and LIFO order hold under race/timeout (extends resource-slice guarantees).
-- [ ] `runExit` preserves composite causes (`Sequential`; `Parallel` if introduced); `runResult` policy documented for the new paths.
-- [ ] Cancellation tests per RFC 0001 test strategy (timeout/race/parent-interrupt).
+- [x] `timeout` interrupts the task and awaits finalizers (success, `Err`, defect, and interrupt paths).
+- [x] `race` interrupts all losers and awaits their finalizers; winner value preserved.
+- [x] Parent interruption reaches children; scope close awaits children.
+- [x] Release-exactly-once and LIFO order hold under race/timeout (extends resource-slice guarantees).
+- [x] `runExit` preserves composite causes (`Sequential`; `Parallel` if introduced); `runResult` policy documented for the new paths.
+- [x] Cancellation tests per RFC 0001 test strategy (timeout/race/parent-interrupt).
 
 ## 3. Vitest / coverage alignment (P1)
 
@@ -86,14 +98,14 @@ bundled Vitest), not from the declared range.
 
 ### Acceptance
 
-- [ ] `pnpm why vitest` / lockfile inspection identifies the duplicate source.
-- [ ] Dedupe + reinstall so `check:full` emits no mixed-version warning.
-- [ ] `packages/resultar` `check:full` green after alignment.
+- [x] `pnpm why vitest` / lockfile inspection identifies the duplicate source.
+- [x] Dedupe + reinstall so `check:full` emits no mixed-version warning (aligned with Vite+ 1.1.0 and Vitest 5).
+- [x] `packages/resultar` `check:full` green after alignment.
 
 ## 4. Coverage re-run (P1, after §3)
 
-- [ ] Record new coverage numbers in the delivery PR/notes.
-- [ ] Add thresholds only after the warning is gone and numbers are stable.
+- [x] Record new coverage numbers in the delivery PR/notes (`packages/resultar`: 100% statements, 100% branches, 100% functions, 100% lines across 26 source files and 501 tests; Stryker mutation score: 100.00% with 3,366 killed, 57 timeout, 0 survived).
+- [x] Add thresholds only after the warning is gone and numbers are stable.
 
 ## Validation
 
