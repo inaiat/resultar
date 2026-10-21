@@ -13,9 +13,11 @@ import (
 )
 
 type Analyzer struct {
+	program    *compiler.Program
 	checker    *checker.Checker
 	options    config.Options
 	projectDir string
+	cache      *analyzerCache
 }
 
 func Run(ctx context.Context, program *compiler.Program, projectDir string, options config.Options) ([]Finding, error) {
@@ -24,7 +26,7 @@ func Run(ctx context.Context, program *compiler.Program, projectDir string, opti
 	if checker_ == nil {
 		return nil, fmt.Errorf("unable to acquire TypeScript checker")
 	}
-	analyzer := Analyzer{checker: checker_, options: options, projectDir: projectDir}
+	analyzer := Analyzer{program: program, checker: checker_, options: options, projectDir: projectDir, cache: newAnalyzerCache()}
 	findings := make([]Finding, 0)
 	for _, file := range program.SourceFiles() {
 		fileName := string(file.FileName())

@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,10 @@ export interface ResultTask<T, E> {
 }
 export declare function ok<T>(value: T): Result<T, never>
 export declare function fromPromise<T, E>(value: Promise<T>, mapError: (cause: unknown) => E): ResultAsync<T, E>
+export declare function identity<A>(value: A): A
+export declare function flow<A, B, C>(ab: (a: A) => B, bc: (b: B) => C): (a: A) => C
+export declare function pipe<A, B>(a: A, ab: (a: A) => B): B
+export declare function pipe<A, B, C>(a: A, ab: (a: A) => B, bc: (b: B) => C): C
 `
 
 func TestPreferResultAsyncContractsAndInference(t *testing.T) {
@@ -328,7 +333,7 @@ export async function runUnhandled(): Promise<void> {
 }
 
 func TestNoDiscardResultAsyncRegressions(t *testing.T) {
-	source := `import {Result, type ResultTask} from "resultar"
+	source := `import {Result, identity, flow, pipe, type ResultTask} from "resultar"
 import * as namespace from "./handlers.js"
 import {foldImported} from "./handlers.js"
 declare const task: ResultTask<number, Error>
@@ -774,6 +779,21 @@ export function runCallAndMemberCallbacksHandled(): PromiseLike<number> {
   const pendingNamespaceMatchAlias = task.runResult()
   const combineFirst = task.runResult()
   const combineSecond = task.runResult()
+  const pendingCurriedArrowMatch = task.runResult()
+  const pendingCurriedBlockMatch = task.runResult()
+  const pendingCurriedMapThenMatch = task.runResult()
+  const pendingIdentityThenMatch = task.runResult()
+  const pendingInlineIdentityThenMatch = task.runResult()
+  const pendingIdentityWrappedMatch = task.runResult()
+  const pendingIdentityReceiverMatch = task.runResult()
+  const pendingFlowMatch = task.runResult()
+  const pendingFlowMapMatch = task.runResult()
+  const pendingPipeMatch = task.runResult()
+  const pendingIdentityWrappedTarget = task.runResult()
+  const allIdentityFirst = task.runResult()
+  const allIdentitySecond = task.runResult()
+  const pendingSafeDerivedFold = task.runResult()
+  const pendingGoodSpreadFold = task.runResult()
 
   const handlers = { ok: (value: number) => value, err: () => 0 }
   const tupleHandlers = { ok: (values: number[]) => values.length, err: () => 0 }
@@ -782,6 +802,20 @@ export function runCallAndMemberCallbacksHandled(): PromiseLike<number> {
   }
   const { fold: destructuredFold } = localBox
   const makeHandler = () => (result: Result<number, Error>) => result.match(handlers)
+
+  class SafeBase {
+    fold(result: Result<number, Error>): number {
+      return result.match(handlers)
+    }
+  }
+  class SafeDerived extends SafeBase {
+    override fold(result: Result<number, Error>): number {
+      return result.match({ ok: value => value + 1, err: () => 0 })
+    }
+  }
+  const safeHandler: SafeBase = new SafeDerived()
+  const badBaseObj = { fold: (_r: Result<number, Error>) => 0 }
+  const goodSpreadObj: typeof badBaseObj = { ...badBaseObj, fold: foldImported }
 
   void pendingMatch.then(Result.match(handlers))
   void pendingUnwrapOr.then(Result.unwrapOr(0))
@@ -793,6 +827,24 @@ export function runCallAndMemberCallbacksHandled(): PromiseLike<number> {
   void pendingDestructuredFold.then(destructuredFold)
   void pendingHigherOrder.then(makeHandler())
   void Promise.all([combineFirst, combineSecond]).then(Result.combine).then(Result.match(tupleHandlers))
+  void pendingCurriedArrowMatch.then(r => Result.match(handlers)(r))
+  void pendingCurriedBlockMatch.then(r => {
+    return Result.match(handlers)(r)
+  })
+  void pendingCurriedMapThenMatch.then(r => Result.map((value: number) => value + 1)(r)).then(Result.match(handlers))
+  void pendingIdentityThenMatch.then(identity).then(Result.match(handlers))
+  void pendingInlineIdentityThenMatch.then(r => identity(r)).then(Result.match(handlers))
+  void pendingIdentityWrappedMatch.then(identity(Result.match(handlers)))
+  void pendingIdentityReceiverMatch.then(r => identity(r).match(handlers))
+  void pendingFlowMatch.then(flow(identity, Result.match(handlers)))
+  void pendingFlowMapMatch.then(flow(Result.map((value: number) => value + 1), Result.match(handlers)))
+  void pendingPipeMatch.then(r => pipe(r, identity, Result.match(handlers)))
+  void identity(pendingIdentityWrappedTarget).then(Result.match(handlers))
+  void Promise.all([allIdentityFirst, allIdentitySecond])
+    .then(identity)
+    .then(([x, y]) => x.match(handlers) + y.match(handlers))
+  void pendingSafeDerivedFold.then(safeHandler.fold)
+  void pendingGoodSpreadFold.then(goodSpreadObj.fold)
   return pendingNamespaceMatchAlias.then(namespace.matchAlias(handlers))
 }
 
@@ -805,6 +857,20 @@ export function runCallAndMemberCallbacksUnhandled(): PromiseLike<number> {
   const combineThenIgnoredFirst = task.runResult()
   const combineThenIgnoredSecond = task.runResult()
   const shadowedResultMatchUnhandled = task.runResult()
+  const aliasMutatedFoldUnhandled = task.runResult()
+  const objectAssignMutatedFoldUnhandled = task.runResult()
+  const reflectSetMutatedFoldUnhandled = task.runResult()
+  const helperMutatedFoldUnhandled = task.runResult()
+  const overriddenMethodViaBaseAnnotationUnhandled = task.runResult()
+  const overriddenMethodViaAsCastUnhandled = task.runResult()
+  const overriddenSpreadObjectUnhandled = task.runResult()
+  const localClassResultMatchUnhandled = task.runResult()
+  const curriedMapArrowThenIgnoredUnhandled = task.runResult()
+  const identityChainThenIgnoredUnhandled = task.runResult()
+  const pendingBareIdentityThenUnhandled = task.runResult()
+  const flowMapThenIgnoredUnhandled = task.runResult()
+
+  const handlers = { ok: (value: number) => value, err: () => 0 }
 
   const mutableBox: { fold: (result: Result<number, Error>) => number } = {
     fold: foldImported,
@@ -816,14 +882,84 @@ export function runCallAndMemberCallbacksUnhandled(): PromiseLike<number> {
   }
   bracketBox["fold"] = () => 0
 
+  const aliasedBox: { fold: (result: Result<number, Error>) => number } = {
+    fold: foldImported,
+  }
+  const boxAlias = aliasedBox
+  boxAlias.fold = () => 0
+
+  const assignedBox: { fold: (result: Result<number, Error>) => number } = {
+    fold: foldImported,
+  }
+  Object.assign(assignedBox, { fold: () => 0 })
+
+  const reflectBox: { fold: (result: Result<number, Error>) => number } = {
+    fold: foldImported,
+  }
+  Reflect.set(reflectBox, "fold", () => 0)
+
+  const passedBox: { fold: (result: Result<number, Error>) => number } = {
+    fold: foldImported,
+  }
+  function clobberBox(target: { fold: (result: Result<number, Error>) => number }) {
+    target.fold = () => 0
+  }
+  clobberBox(passedBox)
+
+  class BaseHandler {
+    fold(result: Result<number, Error>): number {
+      return result.match(handlers)
+    }
+  }
+  class DerivedHandler extends BaseHandler {
+    override fold(_result: Result<number, Error>): number {
+      return 0
+    }
+  }
+  const baseTypedHandler: BaseHandler = new DerivedHandler()
+
+  function runWithBaseParam(h: BaseHandler) {
+    const overriddenMethodViaParameterUnhandled = task.runResult()
+    void overriddenMethodViaParameterUnhandled.then(h.fold)
+  }
+  runWithBaseParam(new DerivedHandler())
+
+  const baseObj: { fold: (result: Result<number, Error>) => number } = { fold: foldImported }
+  const spreadOverriddenObj: typeof baseObj = { ...baseObj, fold: () => 0 }
+
+  function runWithFakeResultParam(Result: { match: (_h: unknown) => (_r: Result<number, Error>) => number }) {
+    const paramResultMatchUnhandled = task.runResult()
+    void paramResultMatchUnhandled.then(Result.match(handlers))
+  }
+  runWithFakeResultParam({ match: () => () => 0 })
+
   const makeIgnoredHandler = () => (_result: Result<number, Error>) => 0
 
   void curriedMapThenIgnored.then(Result.map((value: number) => value + 1)).then(() => 0)
   void namespaceIgnoreUnhandled.then(namespace.ignoreImported)
   void mutatedObjectFoldUnhandled.then(mutableBox.fold)
   void mutatedBracketObjectFoldUnhandled.then(bracketBox["fold"])
+  void aliasMutatedFoldUnhandled.then(aliasedBox.fold)
+  void objectAssignMutatedFoldUnhandled.then(assignedBox.fold)
+  void reflectSetMutatedFoldUnhandled.then(reflectBox.fold)
+  void helperMutatedFoldUnhandled.then(passedBox.fold)
+  void overriddenMethodViaBaseAnnotationUnhandled.then(baseTypedHandler.fold)
+  void overriddenMethodViaAsCastUnhandled.then((new DerivedHandler() as BaseHandler).fold)
+  void overriddenSpreadObjectUnhandled.then(spreadOverriddenObj.fold)
   void higherOrderIgnoredUnhandled.then(makeIgnoredHandler())
   void Promise.all([combineThenIgnoredFirst, combineThenIgnoredSecond]).then(Result.combine).then(() => 0)
+  void curriedMapArrowThenIgnoredUnhandled.then(r => Result.map((value: number) => value + 1)(r)).then(() => 0)
+  void identityChainThenIgnoredUnhandled.then(identity).then(() => 0)
+  pendingBareIdentityThenUnhandled.then(identity)
+  void flowMapThenIgnoredUnhandled.then(flow(identity, Result.map((value: number) => value + 1))).then(() => 0)
+  {
+    class Result {
+      static match(_h: unknown) {
+        return (_r: unknown) => 0
+      }
+    }
+    void localClassResultMatchUnhandled.then(Result.match(handlers))
+  }
   {
     const Result = {
       match: (_h: unknown) => (_r: Result<number, Error>) => 0,
@@ -895,5 +1031,289 @@ export function runCallAndMemberCallbacksUnhandled(): PromiseLike<number> {
 		"const combineThenIgnoredFirst = task.runResult()",
 		"const combineThenIgnoredSecond = task.runResult()",
 		"const shadowedResultMatchUnhandled = task.runResult()",
+		"const aliasMutatedFoldUnhandled = task.runResult()",
+		"const objectAssignMutatedFoldUnhandled = task.runResult()",
+		"const reflectSetMutatedFoldUnhandled = task.runResult()",
+		"const helperMutatedFoldUnhandled = task.runResult()",
+		"const overriddenMethodViaBaseAnnotationUnhandled = task.runResult()",
+		"const overriddenMethodViaAsCastUnhandled = task.runResult()",
+		"const overriddenSpreadObjectUnhandled = task.runResult()",
+		"const localClassResultMatchUnhandled = task.runResult()",
+		"const curriedMapArrowThenIgnoredUnhandled = task.runResult()",
+		"const identityChainThenIgnoredUnhandled = task.runResult()",
+		"const pendingBareIdentityThenUnhandled = task.runResult()",
+		"const flowMapThenIgnoredUnhandled = task.runResult()",
+		"const overriddenMethodViaParameterUnhandled = task.runResult()",
+		"const paramResultMatchUnhandled = task.runResult()",
 	})
 }
+
+func TestNoDiscardRecursiveCallbacksDoNotStackOverflow(t *testing.T) {
+	source := `import {Result, identity, type ResultTask} from "resultar"
+declare const task: ResultTask<number, Error>
+const handlers = { ok: (value: number) => value, err: () => 0 }
+
+const userId = <T>(x: T): T => x
+function userIdDecl<T>(x: T): T {
+  return x
+}
+const userIdAlias = userId
+const recBadId = <T>(x: T): T => recBadId(x)
+
+function handleRec(r: Result<number, Error>): number {
+  return Math.random() > 0.5 ? handleRec(r) : r.match(handlers)
+}
+
+const handleArrow = (r: Result<number, Error>): number =>
+  Math.random() > 0.5 ? handleArrow(r) : r.match(handlers)
+
+const stepMultiArg = (r: Result<number, Error>, n = 2): number =>
+  n > 0 ? stepMultiArg(r, n - 1) : r.match(handlers)
+
+const stepMultiArgSecondPos = (n: number, r: Result<number, Error>): number =>
+  n > 0 ? stepMultiArgSecondPos(n - 1, r) : r.match(handlers)
+
+const stepMultiArgUnhandled = (r: Result<number, Error>, n = 2): number =>
+  n > 0 ? stepMultiArgUnhandled(r, n - 1) : 0
+
+function mutualA(r: Result<number, Error>): number {
+  return Math.random() > 0.5 ? mutualB(r) : r.match(handlers)
+}
+function mutualB(r: Result<number, Error>): number {
+  return Math.random() > 0.5 ? mutualA(r) : r.match(handlers)
+}
+
+function makeHandler(n: number): (r: Result<number, Error>) => number {
+  return n > 0 ? makeHandler(n - 1) : Result.match(handlers)
+}
+
+function makeWrappedHandler(n: number): (r: Result<number, Error>) => number {
+  return n > 0 ? userId(makeWrappedHandler(n - 1)).bind(null) : Result.match(handlers)
+}
+
+function makeMutualFactoryA(n: number): (r: Result<number, Error>) => number {
+  return n > 0 ? makeMutualFactoryB(n - 1) : Result.match(handlers)
+}
+function makeMutualFactoryB(n: number): (r: Result<number, Error>) => number {
+  return n > 0 ? makeMutualFactoryA(n - 1) : Result.match(handlers)
+}
+
+function makeReceiver(n: number): { readonly fold: (r: Result<number, Error>) => number } {
+  return n > 0 ? userId(makeReceiver(n - 1)) : { fold: Result.match(handlers) }
+}
+
+function makeInfiniteHandler(n: number): (r: Result<number, Error>) => number {
+  return makeInfiniteHandler(n - 1)
+}
+
+function pureRecUnhandled(r: Result<number, Error>): number {
+  return pureRecUnhandled(r)
+}
+
+function forwardRec(r: Result<number, Error>): Result<number, Error> {
+  return Math.random() > 0.5 ? forwardRec(r) : r
+}
+
+function handleTupleRec(pair: readonly [Result<number, Error>, Result<number, Error>]): number {
+  return Math.random() > 0.5 ? handleTupleRec(pair) : pair[0].match(handlers) + pair[1].match(handlers)
+}
+
+const stepTupleMultiArg = (pair: readonly [Result<number, Error>, Result<number, Error>], n = 2): number =>
+  n > 0 ? stepTupleMultiArg(pair, n - 1) : pair[0].match(handlers) + pair[1].match(handlers)
+
+export function runRecursiveCallbacks(): PromiseLike<number> {
+  const recDeclHandled = task.runResult()
+  void recDeclHandled.then(handleRec)
+
+  const recArrowHandled = task.runResult()
+  void recArrowHandled.then(handleArrow)
+
+  const stepPointFreeHandled = task.runResult()
+  void stepPointFreeHandled.then(stepMultiArg)
+
+  const stepInlineHandled = task.runResult()
+  void stepInlineHandled.then((r) => stepMultiArg(r, 2))
+
+  const stepSecondPosHandled = task.runResult()
+  void stepSecondPosHandled.then((r) => stepMultiArgSecondPos(2, r))
+
+  const userIdHandled = task.runResult()
+  void userIdHandled.then(userId(Result.match(handlers)))
+
+  const userIdDeclHandled = task.runResult()
+  void userIdDeclHandled.then(userIdDecl( userIdAlias(Result.match(handlers)) ))
+
+  const mutualHandled = task.runResult()
+  void mutualHandled.then(mutualA)
+
+  const factoryHandled = task.runResult()
+  void factoryHandled.then(makeHandler(2))
+
+  const wrappedFactoryHandled = task.runResult()
+  void wrappedFactoryHandled.then(makeWrappedHandler(2))
+
+  const mutualFactoryHandled = task.runResult()
+  void mutualFactoryHandled.then(makeMutualFactoryA(2))
+
+  const receiverFactoryHandled = task.runResult()
+  void receiverFactoryHandled.then(makeReceiver(2).fold)
+
+  const forwardThenHandled = task.runResult()
+  void forwardThenHandled.then(forwardRec).then(Result.match(handlers))
+
+  const tupleFirstHandled = task.runResult()
+  const tupleSecondHandled = task.runResult()
+  void Promise.all([tupleFirstHandled, tupleSecondHandled]).then(handleTupleRec)
+
+  const tupleStepFirstHandled = task.runResult()
+  const tupleStepSecondHandled = task.runResult()
+  void Promise.all([tupleStepFirstHandled, tupleStepSecondHandled]).then((pair) => stepTupleMultiArg(pair, 2))
+
+  const infiniteFactoryUnhandled = task.runResult()
+  void infiniteFactoryUnhandled.then(makeInfiniteHandler(2))
+
+  const pureRecTaskUnhandled = task.runResult()
+  void pureRecTaskUnhandled.then(pureRecUnhandled)
+
+  const stepPointFreeUnhandled = task.runResult()
+  void stepPointFreeUnhandled.then(stepMultiArgUnhandled)
+
+  const stepInlineUnhandled = task.runResult()
+  void stepInlineUnhandled.then((r) => stepMultiArgUnhandled(r, 2))
+
+  const recBadIdUnhandled = task.runResult()
+  void recBadIdUnhandled.then(recBadId(Result.match(handlers)))
+
+  const forwardBareUnhandled = task.runResult()
+  forwardBareUnhandled.then(forwardRec)
+
+  const forwardSwallowedUnhandled = task.runResult()
+  void forwardSwallowedUnhandled.then(forwardRec).then(() => 0)
+
+  return identity(task.runResult()).then(handleRec)
+}
+`
+	directory := writeResultAsyncFixture(t, source)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil || len(diagnostics) != 0 {
+		t.Fatalf("open: %v, compiler diagnostics: %v", err, diagnostics)
+	}
+	options := config.Defaults()
+	options.NoUnsafeAwait = config.SeverityOff
+	options.PreferResultAsync = config.SeverityOff
+	options.NoDiscard = config.SeverityWarning
+	options.NoDiscardMode = "must-use"
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertInstanceRunnerFindingLines(t, source, findings, []string{
+		"const infiniteFactoryUnhandled = task.runResult()",
+		"const pureRecTaskUnhandled = task.runResult()",
+		"const stepPointFreeUnhandled = task.runResult()",
+		"const stepInlineUnhandled = task.runResult()",
+		"const recBadIdUnhandled = task.runResult()",
+		"const forwardBareUnhandled = task.runResult()",
+		"const forwardSwallowedUnhandled = task.runResult()",
+	})
+}
+
+func TestNoDiscardCurriedCallbacksScaleLinearly(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`import {Result, type ResultTask} from "resultar"` + "\n")
+	b.WriteString(`declare const task: ResultTask<number, Error>` + "\n")
+	b.WriteString(`export function runMany(): void {` + "\n")
+	for i := range 500 {
+		fmt.Fprintf(&b, "  const p_%d = task.runResult()\n", i)
+		fmt.Fprintf(&b, "  void p_%d.then(Result.match({ ok: (x: number) => x, err: () => 0 }))\n", i)
+	}
+	b.WriteString("}\n")
+	source := b.String()
+
+	t.Run("package declaration files", func(t *testing.T) {
+		directory := writeResultAsyncFixture(t, source)
+		opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+		if err != nil || len(diagnostics) != 0 {
+			t.Fatalf("open: %v, compiler diagnostics: %v", err, diagnostics)
+		}
+		options := config.Defaults()
+		options.NoUnsafeAwait = config.SeverityOff
+		options.PreferResultAsync = config.SeverityOff
+		options.NoDiscard = config.SeverityWarning
+		options.NoDiscardMode = "must-use"
+		findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for 500 curried Result.match calls, got %d", len(findings))
+		}
+	})
+
+	t.Run("workspace source files", func(t *testing.T) {
+		directory := t.TempDir()
+		workspacePkg := `export interface Result<T, E> {
+  readonly value: T
+  readonly error: E
+  match<U>(handlers: { readonly ok: (value: T) => U; readonly err: (error: E) => U }): U
+}
+export class BaseResult<T, E> {
+  match<U>(handlers: { readonly ok: (value: T) => U; readonly err: (error: E) => U }): U {
+    return handlers.ok(undefined as unknown as T)
+  }
+}
+export const Result = {
+  match<T, E, U>(handlers: { readonly ok: (value: T) => U; readonly err: (error: E) => U }): (result: Result<T, E>) => U {
+    return (result) => result.match(handlers)
+  },
+}
+export interface ResultAsync<T, E> extends PromiseLike<Result<T, E>> {}
+export interface ResultTask<T, E> {
+  readonly task: () => Result<T, E>
+  runResult(): ResultAsync<T, E>
+}
+`
+		files := map[string]string{
+			"tsconfig.json": `{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "paths": {
+      "resultar": ["./packages/resultar/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "packages/**/*.ts"]
+}`,
+			"packages/resultar/src/index.ts": workspacePkg,
+			"src/index.ts":                   source,
+		}
+		for name, contents := range files {
+			path := filepath.Join(directory, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+		if err != nil || len(diagnostics) != 0 {
+			t.Fatalf("open: %v, compiler diagnostics: %v", err, diagnostics)
+		}
+		options := config.Defaults()
+		options.NoUnsafeAwait = config.SeverityOff
+		options.PreferResultAsync = config.SeverityOff
+		options.NoDiscard = config.SeverityWarning
+		options.NoDiscardMode = "must-use"
+		findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for 500 workspace curried Result.match calls, got %d", len(findings))
+		}
+	})
+}
+
