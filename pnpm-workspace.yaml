@@ -6,6 +6,9 @@ packages:
   - packages/check/native-packages/*
 
 catalog:
+  "@nestjs/common": 12.2.0
+  "@nestjs/core": 12.2.0
+  "@nestjs/platform-fastify": 12.2.0
   "@stryker-mutator/core": 10.0.0
   "@stryker-mutator/vitest-runner": 10.0.0
   "@types/node": 26.6.5
@@ -15,6 +18,8 @@ catalog:
   fastify: 5.12.7
   fastify-plugin: 6.0.1
   hono: 4.13.13
+  reflect-metadata: 0.2.2
+  rxjs: 7.8.2
   tsx: 4.23.15
   typebox: 1.4.2
   vitest: 5.0.5
@@ -52,6 +57,7 @@ minimumReleaseAge: 10080 # 1 week
 minimumReleaseAgeExclude:
   # Align the Fastify peer used by locally linked integration consumers.
   - "fastify@5.12.4"
+  - "@nestjs/*"
   - "@fallow-cli/*"
   # Transitive checker used internally by Vite+; not part of resultar-check's public surface.
   - "@oxlint/*"

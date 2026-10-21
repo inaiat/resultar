@@ -1,6 +1,6 @@
 # Typed services and HTTP scopes
 
-Read the installed `resultar-di/README.md`, `resultar-hono/README.md` and `resultar-fastify/README.md` for the exact companion
+Read the installed `resultar-di/README.md`, `resultar-hono/README.md`, `resultar-fastify/README.md` and `resultar-nestjs/README.md` for the exact companion
 versions. The application DI helpers are `createModule`, `service`, `Service`, and `resource`.
 Named factory overloads and low-level adapter access use the same `resultar-di` entry point.
 The former `/advanced` subpath has been removed; migrate existing imports to `resultar-di`.
@@ -96,7 +96,7 @@ explicit callers/runners and cannot be substituted by a return-type annotation a
 
 ## Framework DI exports
 
-`resultar-fastify` and `resultar-hono` reexport the application DI helpers: `createModule`, `Service`,
+`resultar-fastify`, `resultar-hono` and `resultar-nestjs` reexport the application DI helpers: `createModule`, `Service`,
 `service`, `resource`, plus `HttpApplication`, `ServiceClass`, `ServiceLifetime`, `ServiceModule`
 and `ServiceScope` types. In framework-specific code, import these from the adapter together
 with its integration helpers. Core APIs such as `ResultTask` still come from `resultar`.
@@ -106,10 +106,10 @@ with older versions.
 
 ## Runnable HTTP examples
 
-The maintained Fastify and Hono examples each contain their own `services.ts`, `routes.ts`
+The maintained Fastify, Hono and NestJS examples each contain their own `services.ts`, `routes.ts`
 and `main.ts`. `services.ts` declares `Cache`, `UsersRepository` and `Users` classes,
 function-based `Health`, and the `createServices` module factory. `main.ts` omits
 `bindings` and owns framework typing and startup. The default request view includes all
 registered services, including the cache and repository. Do not introduce
 a shared package, separate `users.ts` or an extra `app.ts` for these small examples.
-Start either example with `pnpm dev` from its directory; `PORT` defaults to 3000.
+Start any of these examples with `pnpm dev` from its directory; `PORT` defaults to 3000.

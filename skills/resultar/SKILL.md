@@ -91,7 +91,7 @@ accept the same `ResultTaskRunOptions<R>` (`services`, `signal`, `clock`, `sched
 Deferred scope release errors join the runner's error type (`E | ScopeError<R>` internally).
 Every runner call starts another execution; there is no public `task.run()` method.
 See [API details](references/api.md).
-For DI, Hono and Fastify, read [services and HTTP scopes](references/services.md). Use
+For DI, Hono, Fastify and NestJS, read [services and HTTP scopes](references/services.md). Use
 `ResultTask.service<T>()(name)` or DI `Service.require<T>()(name)` for inferred identifiers. Class
 services support optional `requires` with a factory returning a synchronous value or ResultTask
 (Promises and thenables are rejected); generator-only `make`
