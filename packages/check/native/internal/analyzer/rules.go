@@ -1442,53 +1442,6 @@ func (a *Analyzer) resultarStaticNamespace(expression *ast.Node, methodName stri
 	return ""
 }
 
-// Compatibility helpers are recognized by their imported declarations, including aliases.
-func (a *Analyzer) asyncCompatibilityFunctionName(expression *ast.Node) string {
-	expression = unwrapExpression(expression)
-	if expression == nil {
-		return ""
-	}
-	curried := expression.Kind == ast.KindCallExpression
-	if curried {
-		call := expression.AsCallExpression()
-		if len(call.Arguments.Nodes) != 1 {
-			return ""
-		}
-		expression = unwrapExpression(call.Expression)
-		if expression == nil {
-			return ""
-		}
-	}
-	symbol := a.checker.GetSymbolAtLocation(expression)
-	if symbol != nil && symbol.Flags()&ast.SymbolFlagsAlias != 0 {
-		symbol = a.checker.GetAliasedSymbol(symbol)
-	}
-	if symbol == nil {
-		return ""
-	}
-	name := symbol.Name()
-	if name != "gen" && name != "fn" && name != "asyncMap" && name != "asyncAndThen" {
-		return ""
-	}
-	if curried && name != "asyncMap" && name != "asyncAndThen" {
-		return ""
-	}
-	for _, declaration := range symbol.Declarations() {
-		if declaration.Kind != ast.KindFunctionDeclaration && declaration.Kind != ast.KindVariableDeclaration {
-			continue
-		}
-		file := ast.GetSourceFileOfNode(declaration)
-		if file == nil {
-			continue
-		}
-		path := strings.ReplaceAll(string(file.FileName()), "\\", "/")
-		if strings.Contains(path, "/packages/resultar/src/result-async/") || strings.Contains(path, "/packages/resultar/dist/") || strings.Contains(path, "/node_modules/resultar/dist/") {
-			return name
-		}
-	}
-	return ""
-}
-
 func callbackChecksNestedReasonTag(callback *ast.Node) bool {
 	callback = unwrapExpression(callback)
 	if callback == nil || (callback.Kind != ast.KindArrowFunction && callback.Kind != ast.KindFunctionExpression) || callback.Body() == nil {
@@ -1516,8 +1469,7 @@ func (a *Analyzer) safeTryBody(node *ast.Node) *ast.Node {
 		return nil
 	}
 	call := node.AsCallExpression()
-	compatibility := a.asyncCompatibilityFunctionName(call.Expression)
-	if (a.canonicalExpressionName(call.Expression) != "safeTry" && a.staticNamespace(call.Expression, "gen") != "Result" && a.staticNamespace(call.Expression, "fn") != "Result" && compatibility != "gen" && compatibility != "fn") || len(call.Arguments.Nodes) == 0 {
+	if (a.canonicalExpressionName(call.Expression) != "safeTry" && a.staticNamespace(call.Expression, "gen") != "Result" && a.staticNamespace(call.Expression, "fn") != "Result") || len(call.Arguments.Nodes) == 0 {
 		return nil
 	}
 	first := unwrapExpression(call.Arguments.Nodes[0])
@@ -1553,8 +1505,7 @@ func (a *Analyzer) resultGenOrFnBody(node *ast.Node) *ast.Node {
 		return nil
 	}
 	call := node.AsCallExpression()
-	compatibility := a.asyncCompatibilityFunctionName(call.Expression)
-	if (a.staticNamespace(call.Expression, "gen") != "Result" && a.staticNamespace(call.Expression, "fn") != "Result" && compatibility != "gen" && compatibility != "fn") || len(call.Arguments.Nodes) == 0 {
+	if (a.staticNamespace(call.Expression, "gen") != "Result" && a.staticNamespace(call.Expression, "fn") != "Result") || len(call.Arguments.Nodes) == 0 {
 		return nil
 	}
 	first := unwrapExpression(call.Arguments.Nodes[0])
@@ -3884,9 +3835,6 @@ func (a *Analyzer) classifyResultCallbackWithVisited(node *ast.Node, visited map
 		args := call.Arguments.Nodes
 		firstArgIsResult := len(args) > 0 && isResultLikeType(a.checker.GetTypeAtLocation(args[0]))
 		if !firstArgIsResult {
-			if compat := a.asyncCompatibilityFunctionName(node); compat == "asyncMap" || compat == "asyncAndThen" {
-				return save(resultCallbackTransformer)
-			}
 			ns, member := a.staticMemberAccessWithVisited(call.Expression, cloneSymbolVisited(visited))
 			switch ns {
 			case "Result", "ResultAsync", "ResultTask":
@@ -6076,10 +6024,6 @@ func (a *Analyzer) isResultTaskStaticConsumerCall(expression *ast.Node) bool {
 	if a.classifyCallbackOrResolved(expression) == resultCallbackConsumer {
 		return true
 	}
-	compatibility := a.asyncCompatibilityFunctionName(expression)
-	if compatibility == "asyncMap" || compatibility == "asyncAndThen" {
-		return true
-	}
 	for method := range resultTaskStaticConsumerMethods {
 		if a.isResultTaskStaticCall(expression, method) || a.resultarStaticNamespace(expression, method) != "" {
 			return true
@@ -6891,11 +6835,6 @@ func (a *Analyzer) noFnIife(file *ast.SourceFile) []Finding {
 			return
 		}
 		innerCallee := callee.AsCallExpression().Expression
-		if a.asyncCompatibilityFunctionName(innerCallee) == "fn" {
-			findings = append(findings, newFinding(file, node, "no-fn-iife", a.options.NoFnIife,
-				"`fn(...)` from `resultar/async` returns a reusable function. Use its `gen(...)` helper for immediate generator composition.", ""))
-			return
-		}
 		namespace := a.staticNamespace(innerCallee, "fn")
 		if namespace != "Result" && namespace != "ResultTask" {
 			return

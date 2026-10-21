@@ -1,4 +1,4 @@
-import type { ResultAsyncRetryContext } from "resultar/async";
+import type { ResultAsyncRetryContext } from "resultar";
 
 import type { RequestError } from "./request-json.js";
 

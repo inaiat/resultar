@@ -7,7 +7,7 @@
 [![TypeScript 7 Native Checks](https://img.shields.io/badge/resultar--check-TypeScript--Go-3178c6?logo=typescript&logoColor=white)](https://github.com/inaiat/resultar/blob/main/packages/check/README.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/inaiat/resultar/blob/main/LICENSE)
 
-[Gradual Adoption](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md) · [Full Reference (`DOCUMENTATION.md`)](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md) · [`resultar-check` Compiler CLI/LSP](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) · [Benchmarks](https://github.com/inaiat/resultar/blob/main/benchmarks/README.md) · [API Decision Guide](#api-decision-guide)
+[What's New in v4](#whats-new-in-v4) · [v4 Migration](https://github.com/inaiat/resultar/blob/main/docs/migrations/v4.md) · [Gradual Adoption](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md) · [Full Reference (`DOCUMENTATION.md`)](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md) · [`resultar-check` Compiler CLI/LSP](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) · [Benchmarks](https://github.com/inaiat/resultar/blob/main/benchmarks/README.md) · [API Decision Guide](#api-decision-guide)
 
 In standard TypeScript, `throw` and rejected promises are invisible in function signatures. Callers have no way of knowing what can fail—or whether they handled every failure case—without reading the implementation.
 
@@ -146,6 +146,19 @@ npm install resultar
 
 ---
 
+## What's New in v4
+
+- **`ResultTask<T, E, R>` is the default for new async workflows**: Lazy, repeatable execution blueprints with typed service requirements (`R`), LIFO resource cleanup (`acquireRelease`, `acquireDisposable`, `scoped`), structured child fibers (`forkChild`, `Fiber`), bounded collection concurrency (`all`, `forEach`, `validateAll`, `makeSemaphore`), portable retry policies (`Retry.policy`), and deterministic virtual time (`Clock.virtual()`).
+- **Unified execution boundary (`task.runResult()` returns `ResultAsync<T, E>`)**: Execute tasks explicitly via instance or static runners (`runResult`, `runPromise`, `runExit`, `runFork`). `task.runResult()` starts the task and returns an in-flight `ResultAsync<T, E>` (`PromiseLike<Result<T, E>>`) that can be awaited directly or transformed and folded with `Result` methods (`map`, `andThen`, `catchTag`, `matchTags`, `unwrapOr`, etc.).
+- **Plain-return generators (`Result.gen` / `Result.fn` & `ResultTask.gen` / `ResultTask.fn`)**: Generator workflows unwrap steps with `yield*` and return plain success values (`return value`), while legacy `safeTry` remains supported for final-`Result` generator bodies.
+- **Canonical error boundaries & sound tagged recovery**: `Result.try`, `ResultAsync.try`, `ResultTask.try`, and `ResultTask.tryPromise` accept both `(fn, catchFn)` and `{ try, catch }`. Tagged recovery (`catchTag`, `catchTags`, `matchTagsPartial`) removes an error from `E` only when its handler is required and defined across all table variants.
+- **Context-aware pattern matching & framework scopes**: `Match.context<Input, [ctx]>()` builds reusable route/event matchers without repeating the matched input, and [`resultar-di`](https://www.npmjs.com/package/resultar-di), [`resultar-hono`](https://www.npmjs.com/package/resultar-hono), and [`resultar-fastify`](https://www.npmjs.com/package/resultar-fastify) wire application and request scopes automatically.
+- **Gradual migration & eager `ResultAsync` compatibility**: In-flight constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) remain active in `resultar`, while legacy eager `ResultAsync` orchestration helpers remain supported as `@deprecated` compatibility APIs.
+
+> Upgrading from v3? Read the full **[v4 Migration & Compatibility Guide (`docs/migrations/v4.md`)](https://github.com/inaiat/resultar/blob/main/docs/migrations/v4.md)** for the complete before/after API table, retained aliases, and `PromiseLike` boundary notes.
+
+---
+
 ## Adopt Gradually: Three Primitives, One Mental Model
 
 You do not need to rewrite your application to use Resultar. Start with a single function returning `Result<T, E>` and scale up only when a workflow needs async I/O or typed dependencies:
@@ -169,8 +182,8 @@ Prefer `ResultTask` for new asynchronous workflows and run it explicitly, includ
 `R = never`. Providing services or closing a scope leaves a Task. Calling `task.runResult()`
 (or `ResultTask.runResult(task)`) starts the task and returns `ResultAsync<T, E>` — an in-flight
 `Result` (`PromiseLike<Result<T, E>>`) that can be awaited directly or transformed and folded
-with the same methods as `Result`. In-flight constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) are active in `resultar` and `resultar/async`, while static orchestration methods on
-`ResultAsync` remain deprecated in `resultar/async` for existing eager contracts.
+with the same methods as `Result`. In-flight constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) are active in `resultar`, while static orchestration methods on
+`ResultAsync` remain deprecated in `resultar` for existing eager contracts.
 Its inbound `fromResultAsync` bridge accepts structural `PromiseLike<Result<T, E>>` values.
 
 | Stage                        | When to use it                                                                                 | Key APIs                                                                                  |
@@ -184,7 +197,7 @@ Its inbound `fromResultAsync` bridge accepts structural `PromiseLike<Result<T, E
 Result values remain synchronous, and the Task runtime uses synchronous fast paths until an
 asynchronous step is needed. The separate Async facade retains its memoized Promise contract:
 
-- **Explicit `yield*` interop**: Core `Result.gen` / `Result.fn` support sync and eager async generators. Free `gen` / `fn` are also available from `resultar/async`. `ResultTask.gen` composes Results, Tasks and service tags; adapt Async with `fromResultAsync`. Satisfying `R` keeps the Task contract.
+- **Explicit `yield*` interop**: Core `Result.gen` / `Result.fn` support sync and eager async generators. `ResultTask.gen` composes Results, Tasks and service tags; adapt Async with `fromResultAsync`. Satisfying `R` keeps the Task contract.
 - **Zero-microtask synchronous fast path**: `Result.gen`, synchronous `ResultTask` pipelines, and `ResultTask.scoped` workflows without async steps execute inside a tight synchronous `while` loop (`runTaskLoop` / `#runGen`) without scheduling microtasks—reusing static singletons (`sharedSuccessExit`, `idleTaskIterator`, `idleRunContext`) on the happy path until a real `Promise` or cooperative `yieldEvery` checkpoint is encountered.
 - **Pay only for the stage you use**: Service maps, LIFO finalizer stacks, and fiber schedulers are allocated lazily only when a workflow invokes `service()`, `acquireRelease()`, or `forkChild()`.
 
@@ -194,6 +207,7 @@ See the [Gradual Adoption Guide](https://github.com/inaiat/resultar/blob/main/do
 
 ## Contents
 
+- [What's New in v4](#whats-new-in-v4)
 - [Tagged Errors (`createTaggedError`)](#tagged-errors)
 - [Synchronous Workflows (`Result`)](#synchronous-workflows)
 - [Linear Workflows (Result and Task generators)](#linear-workflows-with-resultgen)
@@ -241,7 +255,7 @@ Every tagged error class includes static helpers to construct failures directly 
 ```ts
 AccountAlreadyExistsError.err({ email }); // Err<never, AccountAlreadyExistsError>
 AccountAlreadyExistsError.taskErr({ email }); // ResultTask<never, AccountAlreadyExistsError>
-// In resultar/async: errAsync(new AccountAlreadyExistsError({ email }))
+AccountAlreadyExistsError.errAsync({ email }); // deprecated eager ResultAsync<never, AccountAlreadyExistsError>
 AccountAlreadyExistsError.is(unknownValue); // nominal type guard
 ```
 
@@ -389,7 +403,7 @@ const result = await getOrCreateAccount(input).runResult();
 
 - Return `value` for success; use `return yield* step()` or `return yield* MyError.err(...)` for a final fallible step.
 - Task generators are synchronous `function*` bodies describing asynchronous steps. Compose those steps with `yield*`; execute the completed Task with an explicit runner.
-- Core `Result.gen` / `Result.fn` and legacy `safeTry` support sync and eager async bodies. Free `gen` / `fn` / `safeTry` are also available from `resultar/async`; see [compatibility](#in-flight-resultasync--deprecated-eager-compatibility).
+- Core `Result.gen` / `Result.fn` and legacy `safeTry` support sync and eager async bodies; see [compatibility](#in-flight-resultasync--deprecated-eager-compatibility).
 - Deprecated `safeTry` remains a separate helper returning the final Result. It is not an identity alias of modern `Result.gen`.
 - Its implementation belongs to the Async compatibility layer; root imports re-export the same deprecated helper. Use `ResultTask.gen` for Task workflows; Task has no `safeTry` alias.
 
@@ -619,7 +633,7 @@ if (exit._tag === "Failure") {
 ## In-Flight `ResultAsync` & Deprecated Eager Compatibility
 
 `ResultAsync<T, E>` (and `StrictResultAsync<T, E>`) is the official in-flight `Result`
-(`PromiseLike<Result<T, E>>`), exported from both `resultar` and `resultar/async`.
+(`PromiseLike<Result<T, E>>`), exported from `resultar`.
 When you execute a `ResultTask` with `task.runResult(options?)` (or `ResultTask.runResult(task, options?)`),
 it returns a `ResultAsync<T, E>` that can be awaited directly for `Result<T, E>` or transformed
 and consumed with the same methods as `Result` (`map`, `mapErr`, `andThen`, `orElse`,
@@ -640,10 +654,9 @@ in-flight values, mocks, and Promise boundary adaptation. Legacy eager adapters 
 `ResultAsync.fromThrowable`, `ResultAsync.fromTask`, `ResultAsync.fromCallback`) and static
 orchestration helpers on `ResultAsync` (`retry`, `retryOrElse`, `race`, `raceAll`, `raceFirst`,
 `raceWith`, `timeout`, `withResource`, `forEach`, `validateAll`, `loop`, `iterate`, `firstSuccessOf`,
-`all`, `combine`, `combineWithAllErrors`, `zip`) remain available in `resultar/async` (and re-exported
-from `resultar`) as deprecated compatibility APIs for existing eager contracts, while free `gen`,
-`fn`, `asyncMap`, and `asyncAndThen` are exported from `resultar/async` only. Prefer `ResultTask` for
-new asynchronous workflows and orchestration.
+`all`, `combine`, `combineWithAllErrors`, `zip`) remain available in `resultar` as deprecated
+compatibility APIs for existing eager contracts. Prefer `ResultTask` for new asynchronous workflows
+and orchestration.
 
 ### Wrapping external async boundaries (eager compatibility)
 
@@ -661,7 +674,7 @@ their signatures and eager behavior. Preserve them during migration; new workflo
 the Task policies above. Transformation callback defects can still reject the Async Promise:
 
 ```ts
-import { ResultAsync } from "resultar/async";
+import { ResultAsync } from "resultar";
 
 // 1. Timeout with cooperative AbortSignal
 const timedAccount = ResultAsync.timeout((signal) => loadAccount(accountId, { signal }), {
@@ -706,15 +719,14 @@ const inserted = ResultAsync.withResource({
 
 ### Async Result generators and bridges
 
-Free `gen` / `fn` from `resultar/async` support sync and async bodies. Async bodies
-start eagerly and return `ResultAsync`. Core `Result.gen` / `Result.fn` also support these async bodies:
+Core `Result.gen` / `Result.fn` support sync and async bodies. Async bodies
+start eagerly and return `ResultAsync`:
 
 ```ts
-import { ResultTask } from "resultar";
-import { gen, tryResultAsync } from "resultar/async";
+import { Result, ResultTask, tryResultAsync } from "resultar";
 
 const loadLegacyAccount = (id: string) =>
-  gen(async function* () {
+  Result.gen(async function* () {
     const account = yield* tryResultAsync(
       () => accountClient.load(id),
       (cause) => new AccountLoadError({ cause }),
@@ -736,8 +748,7 @@ The factory form receives the active signal; pass it to cooperative clients when
 Provide all services and close required scopes before calling `task.runResult()`.
 Static/instance `ResultTask.toResultAsync` and `ResultAsync.fromTask(task)` remain supported as
 deprecated aliases of `task.runResult()`, and tagged-error `.errAsync` helpers remain supported.
-Result `asyncMap` / `asyncAndThen` methods and statics remain supported. Free `asyncMap(result, f)` /
-`asyncAndThen(result, f)` functions in `resultar/async` also provide curried forms for `pipe`.
+Result `asyncMap` / `asyncAndThen` methods and statics remain supported.
 
 Async instance `match`, `matchTags`, `matchTagsPartial` and `unwrapOr` remain native Promise terminals.
 Their static/direct/curried forms return Async values for composition. At an instance boundary,
@@ -844,8 +855,7 @@ Resultar's companion packages integrate directly with the core primitives:
 | [`resultar-hono`](https://www.npmjs.com/package/resultar-hono)                       | Hono integration with per-request DI scopes and graceful shutdown                 | [README](https://github.com/inaiat/resultar/blob/main/packages/hono/README.md)            |
 | [`resultar-fastify`](https://www.npmjs.com/package/resultar-fastify)                 | Fastify plugin with application/request DI scopes and lifecycle cleanup           | [README](https://github.com/inaiat/resultar/blob/main/packages/fastify/README.md)         |
 
-Deprecated eager compatibility is included in `resultar` through the
-[`resultar/async` subpath](#in-flight-resultasync--deprecated-eager-compatibility); no additional package is needed.
+Deprecated eager compatibility is included directly in [`resultar`](#in-flight-resultasync--deprecated-eager-compatibility); no additional package or subpath is needed.
 
 Request helpers return an in-flight `ResultAsync` (`StrictResultAsync`) that starts executing on call. Their public
 execution contract is unchanged. Wrap the call in a factory to create a new request per Task run:
@@ -914,7 +924,7 @@ Every npm release bundles `dist/llms.txt`, `dist/agent/SKILL.md`, focused API an
 
 - **Focused scope**: Resultar is not a full Effect port—it intentionally omits `Stream`, STM, distributed clustering, and a global application runtime.
 - **Cooperative cancellation**: Task timeouts and fiber interruptions abort the `AbortSignal` and await scope finalizers; underlying drivers must respect the signal. `ResultTask.tryPromise` can opt into `interruption: 'detach'`. Legacy Async signal-aware helpers remain cooperative, with best-effort resource release.
-- **Deferred execution vs. already-started Promises**: Task factories defer work until an explicit `run*`. Helpers and async `gen` / `fn` from `resultar/async` start eagerly and share one execution. Wrapping an already-created Promise cannot defer or replay it.
+- **Deferred execution vs. already-started Promises**: Task factories defer work until an explicit `run*`. Eager async helpers and async `Result.gen` / `Result.fn` start eagerly and share one execution. Wrapping an already-created Promise cannot defer or replay it.
 
 ## License
 

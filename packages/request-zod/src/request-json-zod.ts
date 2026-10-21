@@ -1,4 +1,4 @@
-import type { ResultAsync } from "resultar/async";
+import type { ResultAsync } from "resultar";
 import type { z } from "zod";
 
 import {

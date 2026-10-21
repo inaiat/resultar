@@ -4,8 +4,8 @@
  * @module
  */
 
+export { DisposableResultAsync } from './result-async/disposable-result-async.js'
 export {
-  DisposableResultAsync,
   errAsync,
   fromCallback,
   fromPromise,
@@ -15,41 +15,41 @@ export {
   ResultAsync,
   runPromise,
   // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
-  safeTry,
-  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
-  tryAsync,
+  tryCatchAsync as tryAsync,
   // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
   tryCatchAsync,
   tryResultAsync,
   unitAsync,
-} from './result-async/index.js'
+} from './result-async/result-async.js'
 
 export type {
   AsyncResultGenOptions,
+  ResultAsyncGenerator,
+  SafeTryAsyncOptions,
+  SafeTryOptions,
+} from './result-async/generator-types.js'
+export type {
   ResultAsyncAbortSignal,
   ResultAsyncCallbackCleanup,
   ResultAsyncCallbackContext,
   ResultAsyncConcurrency,
   ResultAsyncFromCallbackOptions,
-  ResultAsyncGenerator,
   ResultAsyncRaceHandle,
   ResultAsyncRaceTask,
-  ResultAsyncRetryContext,
-  ResultAsyncRetryOptions,
-  ResultAsyncRetryOrElseOptions,
-  ResultAsyncRetryTask,
   ResultAsyncResourceAcquire,
   ResultAsyncResourceEffect,
   ResultAsyncResourceRelease,
   ResultAsyncResourceReleaseContext,
   ResultAsyncResourceUse,
+  ResultAsyncRetryContext,
+  ResultAsyncRetryOptions,
+  ResultAsyncRetryOrElseOptions,
+  ResultAsyncRetryTask,
   ResultAsyncTimeoutOptions,
   ResultAsyncWithResourceOptions,
-  SafeTryAsyncOptions,
-  SafeTryOptions,
   StrictResultAsync,
   TryResultAsyncOptions,
-} from './result-async/index.js'
+} from './result-async/result-async.js'
 export {
   DisposableResult,
   err,
@@ -57,6 +57,8 @@ export {
   ok,
   Result,
   runSync,
+  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
+  safeTry,
   // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
   tryCatch,
   tryResult,

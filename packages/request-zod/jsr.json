@@ -6,8 +6,7 @@
   "imports": {
     "resultar": "jsr:@inaiat/resultar@^4.0.0",
     "resultar-request": "jsr:@inaiat/resultar-request@^1.0.0",
-    "zod": "npm:zod@^4.4.3",
-    "resultar/async": "jsr:@inaiat/resultar@^4.0.0/async"
+    "zod": "npm:zod@^4.4.3"
   },
   "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }
 }

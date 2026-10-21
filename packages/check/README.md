@@ -337,11 +337,11 @@ generator recognition resolve imported symbols, including renamed imports, names
 and barrel reexports. Rule IDs retain the `safe-try` spelling for `safeTry`, `Result.gen`, and `Result.fn`.
 
 For v4 application code, prefer lazy `ResultTask` workflows and explicit runners (`task.runResult()` returns an in-flight `ResultAsync`). `ResultAsync`
-and `StrictResultAsync` are exported from both `resultar` and the `resultar/async` compatibility subpath and preserve eager, single-execution contracts.
+and `StrictResultAsync` are exported from `resultar` and preserve eager, single-execution contracts.
 The legacy rule name `prefer-result-async` is retained for teams enforcing an existing eager
 boundary policy; it is not a general recommendation to introduce Async into new Task workflows.
 Set `"preferResultAsync": "off"` if that policy does not apply to your project.
-The main `resultar` entry point exports `Result`, `ResultTask`, and in-flight `ResultAsync` helpers, while free eager helpers (`gen`, `fn`, `asyncMap`, `asyncAndThen`) live in `resultar/async`.
+The `resultar` entry point exports `Result`, `ResultTask`, and `ResultAsync` together with its eager helpers.
 
 The rule checks type references (including aliases, interface properties and methods) and
 inferred function returns. `preferResultAsyncMode` controls its scope:
@@ -376,7 +376,7 @@ Task has no `.then`; `map` is synchronous, and `match` produces another Task to 
 return the composed operation directly instead of declaring the wrapper `async`:
 
 ```ts
-import { tryResultAsync, type StrictResultAsync } from "resultar/async";
+import { tryResultAsync, type StrictResultAsync } from "resultar";
 
 const load = (): StrictResultAsync<User, LoadError> =>
   tryResultAsync(fetchUser, (cause) => new LoadError({ cause }));

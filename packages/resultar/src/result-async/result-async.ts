@@ -1,21 +1,21 @@
-/* eslint-disable @typescript-eslint/no-deprecated -- This subpath preserves the supported deprecated eager Async contract. */
+/* eslint-disable @typescript-eslint/no-deprecated -- Preserve the supported deprecated eager Async contract. */
 import { AbortError } from '../core/abort-error.js'
-import { isResultTask } from '../task/task-helpers.js'
-import type { ResultTask } from '../task/result-task.js'
-import { Result, err, ok as resultOk } from '../result/result.js'
-import type { RetryContext, RetryPolicy } from '../core/retry.js'
+import { dual } from '../core/dual.js'
+import { Pipeable } from '../core/pipe.js'
 import {
-  createEmptyResultsCollectionError,
-  dual,
-  getMatchErrorHandler,
-  isError,
   isRetryPolicy,
   observeRetry,
-  Pipeable,
   retryContext,
   retryPolicyDelay,
   validateRetryPolicy,
-} from '../internal.js'
+} from '../core/retry.js'
+import type { RetryContext, RetryPolicy } from '../core/retry.js'
+import type { InferErrTypes, InferOkTypes } from '../core/utils.js'
+import { Result, err, ok as resultOk } from '../result/result.js'
+import {
+  createEmptyResultsCollectionError,
+  getMatchErrorHandler,
+} from '../result/result-helpers.js'
 import type {
   Combine,
   Dedup,
@@ -24,24 +24,27 @@ import type {
   MatchHandlers,
   MemberListOf,
   MembersToUnion,
-  InferErrTypes,
-  InferOkTypes,
+} from '../result/result-types.js'
+import { isError } from '../tagged/tagged-match.js'
+import type {
+  CatchReasonHandlerResult,
   CatchTagHandlerResult,
   CoveredHandlerKeys,
-  CatchReasonHandlerResult,
   ErrorForTag,
   ExcludeReasonTag,
   ExcludeTag,
   MatchTagHandlerResult,
   MatchTagHandlers,
   PartialMatchTagHandlers,
-  RemainingMatchTagErrors,
   ReasonForTag,
-  ReasonTagsOf,
   ReasonsOf,
+  ReasonTagsOf,
+  RemainingMatchTagErrors,
   TagsOf,
   TagsWithReasonOf,
-} from '../internal.js'
+} from '../tagged/tagged-types.js'
+import type { ResultTask } from '../task/result-task.js'
+import { isResultTask } from '../task/task-helpers.js'
 import type {
   ExtractErrAsyncTypes,
   ExtractOkAsyncTypes,

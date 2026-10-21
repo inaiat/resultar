@@ -8,9 +8,7 @@ The former `/advanced` subpath has been removed; migrate existing imports to `re
 Use `ResultTask` for new asynchronous service methods and initialization. Tasks are lazy and
 nonthenable: return them directly from methods, compose them with `andThen` or `ResultTask.gen`,
 and execute them through an explicit runner (`task.runResult()`, `task.runPromise()`, `task.runExit()`, or `task.runFork()`) at the owning application or request boundary.
-`task.runResult()` returns an in-flight `ResultAsync<T, E>`. Existing methods returning eager `ResultAsync` or `StrictResultAsync` directly remain eager compatibility contracts; import
-eager compatibility helpers and deprecated orchestration methods from `resultar/async`. This subpath is included
-in `resultar`; existing main-entry Async exports remain supported with the same identities.
+`task.runResult()` returns an in-flight `ResultAsync<T, E>`. Existing methods returning eager `ResultAsync` or `StrictResultAsync` directly remain eager compatibility contracts; import in-flight constructors, eager compatibility helpers, and `ResultAsync` directly from `resultar`.
 
 - Use `ResultTask.service<Contract>()('name')` in core or `Service.require<Contract>()('name')`
   in DI to infer the literal identifier. The direct core overload remains supported; do not invent

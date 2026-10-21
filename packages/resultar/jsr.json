@@ -2,6 +2,6 @@
   "name": "@inaiat/resultar",
   "version": "3.10.0",
   "license": "MIT",
-  "exports": { ".": "./src/index.ts", "./async": "./src/result-async/index.ts" },
+  "exports": "./src/index.ts",
   "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }
 }

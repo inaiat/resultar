@@ -3,9 +3,6 @@ import type { ResultTask } from '../task/result-task.js'
 import type { InferErrTypes, InferOkTypes } from '../core/utils.js'
 import type { ResultAsync } from './result-async.js'
 
-export type { ResultGenerator, ResultGenOptions } from '../result/result-types.js'
-export type { ResultAsyncAndThen, ResultAsyncMap } from './async-types.js'
-
 /** Object-form synchronous generator workflow accepted by `safeTry`. */
 export interface SafeTryOptions<
   YieldErr extends Result<never, unknown>,

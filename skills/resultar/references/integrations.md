@@ -28,9 +28,7 @@ versions and local README files before copying an example.
 All three share the same transport implementation. The adapters add schema validation and re-export
 the public `resultar-request` types. Install only the core and schema adapter the service needs.
 
-Their `requestJson` helpers return eager `ResultAsync` (also re-exported from the `resultar/async`
-compatibility subpath, included in the `resultar` installation). Use `resultar` or `resultar/async` when importing
-in-flight constructors, helpers, or types in application code.
+Their `requestJson` helpers return eager `ResultAsync` from `resultar`. Import in-flight constructors, helpers, or types from `resultar` in application code.
 Calling a helper starts its request; the examples below document that real API. New workflows can
 compose these adapters lazily through the Task factory bridge without changing the request contract.
 
@@ -293,9 +291,8 @@ When an agent encounters a diagnostic, fix the architecture first:
 - replace project-wide `try/catch` with a narrow adapter when `noTryCatch` is enabled: `tryResult`
   for sync work, `ResultTask.tryPromise` for new lazy work, or `tryResultAsync` for eager compatibility;
 - wrap raw promise awaits in Resultar contexts;
-- use `yield*` in generators. Modern `Result.gen` returns plain success values; deprecated
-  `safeTry` returns a final Result. Both core helpers support async bodies with eager execution;
-  explicit eager recipes can import `gen` / `fn` / `safeTry` from `resultar/async` with aliases. Use `ResultTask.gen`
+- use `yield*` in generators. Modern `Result.gen` / `Result.fn` return plain success values; deprecated
+  `safeTry` returns a final Result. Both support sync and async bodies (with async bodies returning eager `ResultAsync`). Use `ResultTask.gen`
   for new lazy async work and bridge eager helpers inside it explicitly;
 - preserve inferred error and task requirements channels instead of asserting them away;
 - remove obsolete suppression entries without suppressing their diagnostic broadly.

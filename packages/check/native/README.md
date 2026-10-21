@@ -10,7 +10,7 @@ each project only once for TypeScript diagnostics and Resultar analysis.
 
 New async application workflows should use `ResultTask` and explicit runners. The
 `prefer-result-async` rule name is retained for an optional eager compatibility policy;
-`ResultAsync` and `StrictResultAsync` represent in-flight `Result` values (and are re-exported from `resultar/async`). Configure that rule as `off`
+`ResultAsync` and `StrictResultAsync` represent in-flight `Result` values in `resultar`. Configure that rule as `off`
 when the eager policy is not wanted. Its existing default severity and modes remain supported.
 
 Task diagnostics and refactors prefer `ok` / `err`, `mapErr`, `andThen`, and `orElse`, while

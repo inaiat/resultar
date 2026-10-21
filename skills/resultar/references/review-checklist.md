@@ -5,9 +5,8 @@ validation. Report only issues supported by the installed Resultar version and r
 
 ## Source And Scope
 
-- Confirm installed `resultar`, request adapter, and checker versions; `resultar/async` ships with `resultar`.
-- Prefer `resultar/async` imports for explicit eager code. Existing main-entry Async exports and
-  Result/Task/tagged-error bridges remain available; migration preserves their contracts.
+- Confirm installed `resultar`, request adapter, and checker versions.
+- Import all synchronous, lazy `ResultTask`, and in-flight/eager `ResultAsync` helpers and types from `resultar`. Existing Result/Task/Async/tagged-error bridges remain available; migration preserves their contracts.
 - Inspect local exports, types, package README files, and runnable examples before suggesting an API.
 - Separate issues introduced by the change from pre-existing workspace or dependency problems.
 - Preserve unrelated changes in a dirty worktree.
@@ -16,7 +15,7 @@ validation. Report only issues supported by the installed Resultar version and r
 
 - New sync failures return `Result` / `StrictResult`; new async workflows return lazy `ResultTask`
   with concrete error and requirement types. Programmer defects may still throw.
-- `ResultAsync` / `StrictResultAsync` are the official in-flight `Result` types returned by `task.runResult()`. Legacy adapters and static orchestration helpers on `ResultAsync` in `resultar/async` remain deprecated for existing eager boundaries; migration
+- `ResultAsync` / `StrictResultAsync` are the official in-flight `Result` types returned by `task.runResult()`. Legacy adapters and static orchestration helpers on `ResultAsync` remain deprecated for existing eager boundaries; migration
   preserves their start-once and repeat-await behavior until callers move to explicit Task workflows and runners.
 - Tagged errors have stable names, useful metadata, inferred template props, and preserved causes.
 - Error unions remain concrete instead of widening early to `Error`, `unknown`, or a string.
@@ -29,14 +28,13 @@ validation. Report only issues supported by the installed Resultar version and r
   Promise-awaiting callbacks; a Task mapper returning a Promise stores it as a success value.
 - `filterOrElse` represents predicate validation.
 - Task `andThen` composes Task or synchronous Result steps. `fromResult` lifts a Result, and
-  structural `fromResultAsync(factory)` defers a `PromiseLike<Result>` producer. Free `asyncAndThen`
-  / `asyncMap` from `resultar/async` provide alternatives to the retained Result methods and statics.
+  structural `fromResultAsync(factory)` defers a `PromiseLike<Result>` producer. `Result.asyncAndThen`
+  / `Result.asyncMap` (and the `.asyncAndThen` / `.asyncMap` instance methods) bridge synchronous Results into eager `ResultAsync`.
 - Prefer `task.runResult()` (or `ResultTask.runResult(task)`) when bridging a requirement-free Task into an in-flight `ResultAsync`, and `errAsync(new DomainError(props))` in eager compatibility code;
   `ResultAsync.fromTask`, Task `toResultAsync`, and tagged `.errAsync()` remain supported.
 - `orElse` recovers the whole error channel; `catchTag` / `catchTags` recover selected domain cases.
-- Core `Result.gen` / `Result.fn` and legacy core `safeTry` support sync and async bodies. Modern
-  `gen` returns plain success values; `safeTry` returns a final Result. Explicit eager imports
-  can use `resultar/async` as `genAsync` / `fnAsync` / `safeTryAsync` aliases.
+- `Result.gen` / `Result.fn` and legacy `safeTry` support sync and async bodies. Modern
+  `Result.gen` returns plain success values; `safeTry` returns a final Result.
   New async generators use `ResultTask.gen`, yielding Tasks, Results, and services.
   No raw Promise yields, raw `await`, or broad `try/catch` bypass typed composition.
 - Returned `Result`, `ResultAsync`, and `ResultTask` values are handled or explicitly discarded by supported policy.
@@ -48,7 +46,7 @@ validation. Report only issues supported by the installed Resultar version and r
 - Error mappers accept `unknown` and produce concrete errors with `cause`.
 - New Promise factories use `ResultTask.tryPromise({ try, catch })` and forward its signal.
 - Existing eager adapters import `tryResultAsync`, `fromPromise`, and `fromSafePromise` from
-  `resultar/async`, using factories for fresh work and `fromPromise` for existing Promises,
+  `resultar`, using factories for fresh work and `fromPromise` for existing Promises,
   and `fromSafePromise` only when rejection is impossible by contract.
 - Callback integrations provide cleanup and model `AbortError` where applicable.
 - Retry policy defines bounded attempts, delay/jitter, retryable errors, and cancellation.
@@ -124,7 +122,7 @@ validation. Report only issues supported by the installed Resultar version and r
 - API names, package links, and version claims match current source.
 - `Result.gen` and `ResultTask.gen` return plain success values and compose fallible steps or early
   errors via `yield*`; `safeTry` retains its final-Result contract.
-- APIs retained in the compatibility subpath and main entry preserve eagerness and legacy callback
+- Eager compatibility APIs exported from `resultar` preserve eagerness and legacy callback
   semantics. Prefer canonical Task names while preserving deprecated aliases during migration.
 - Stable checker names such as `preferResultAsync` describe an existing eager-contract policy,
   scoped deliberately; they do not override the Task default for new workflows.

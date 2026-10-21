@@ -1,23 +1,20 @@
 import {
   createTaggedError,
   Fiber,
+  fromPromise,
   Match,
   ok,
   pipe,
   ResultTask,
+  runPromise,
   safeTry,
   tryResult,
+  tryResultAsync,
   type Result,
   type ResultTaskScope,
   type StrictResult,
-} from "resultar";
-import {
-  fromPromise,
-  runPromise,
-  tryResultAsync,
   type StrictResultAsync,
-} from "resultar/async";
-import { safeTry as safeTryAsync } from "resultar/async";
+} from "resultar";
 import { createModule } from "resultar-di";
 
 interface User {
@@ -198,7 +195,7 @@ export const createUserWithGenerator = (
 // no-await-in-safe-try: async safeTry generators use yield* for ResultAsync
 // values instead of await.
 export const loadUserWithSafeTry = (id: string): StrictResultAsync<User, FetchUserError> =>
-  safeTryAsync(async function* () {
+  safeTry(async function* () {
     const user = yield* loadUser(id);
 
     return ok(user);

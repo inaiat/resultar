@@ -9,14 +9,18 @@ import Fastify, {
 import fp from "fastify-plugin";
 // Lifecycle sessions retain their eager ResultAsync compatibility boundary.
 /* eslint-disable typescript/no-deprecated */
-import { err, ResultTask, ResultTaskCauseError, tryResult, unit } from "resultar";
 import {
-  asyncAndThen,
+  err,
   fromSafePromise,
+  Result,
+  ResultTask,
+  ResultTaskCauseError,
+  tryResult,
   tryResultAsync,
+  unit,
   unitAsync,
   type ResultAsync,
-} from "resultar/async";
+} from "resultar";
 import {
   useServiceAccess,
   inspectModule,
@@ -354,7 +358,7 @@ function buildFastifyPlugin(options: FastifyServicesOptions): FastifyPluginAsync
         .unwrapOrThrow();
     });
     return (
-      asyncAndThen(
+      Result.asyncAndThen(
         tryResult(() => {
           application.session = startSession((hold) =>
             exposeApplication === undefined

@@ -2,8 +2,7 @@
 
 Use these v4 patterns as starting points, then align names and types with the consuming domain.
 New async recipes use lazy, nonthenable `ResultTask` from `resultar`. Use `ResultAsync` for
-in-flight Results and preserve eager `ResultAsync` boundaries (and `resultar/async` compatibility helpers) where callers require eager execution;
-both entry points ship in one npm package, and existing main-entry Async exports remain available.
+in-flight Results and preserve eager `ResultAsync` boundaries (and compatibility helpers exported from `resultar`) where callers require eager execution.
 
 ## Contents
 
@@ -53,9 +52,8 @@ const createUser = (input: CreateUserInput): ResultTask<User, CreateUserError> =
   `ResultTask.map(asyncCallback)` stores a Promise as the success value.
 - Use `filterOrElse` for predicate validation.
 - Use `andThen` when the next operation can fail.
-- Use `ResultTask.fromResult` to enter a lazy workflow from a synchronous Result. The free
-  `asyncAndThen(result, callback)` from `resultar/async` bridges into the eager compatibility model;
-  Existing Result `asyncAndThen` methods and statics remain supported.
+- Use `ResultTask.fromResult` to enter a lazy workflow from a synchronous Result.
+  `Result.asyncAndThen(result, callback)` (or `.asyncAndThen(callback)`) bridges into the eager `ResultAsync` compatibility model.
 - Keep each function's error type narrow and allow the final union to be inferred.
 
 ## Write A Linear Workflow
@@ -79,10 +77,8 @@ Execute the workflow explicitly at its boundary.
 
 For a wholly synchronous linear flow, use `Result.gen(function* () { ... })` with the same
 plain-value return convention. `Result.gen` / `Result.fn` also support eager async bodies;
-`safeTry` supports both forms with final-Result returns. Explicit eager recipes use
-`gen` / `fn` / `safeTry` from `resultar/async`, usually imported with
-`Async` aliases. The legacy `safeTry` contract returns a final Result; it is not an alias of modern
-plain-value `gen`.
+`safeTry` supports both forms with final-Result returns. The legacy `safeTry` contract returns a
+final Result; it is not an alias of modern plain-value `Result.gen`.
 
 ## Wrap External Work
 
@@ -114,7 +110,7 @@ Deprecated `fromCallback` returns eager `ResultAsync`. Invoke it inside a Task f
 cleanup from `subscribe`:
 
 ```ts
-import { fromCallback } from "resultar/async";
+import { fromCallback } from "resultar";
 
 const message = ResultTask.fromResultAsync((signal) =>
   fromCallback<Message, SubscriptionError>({
@@ -155,8 +151,7 @@ For a policy reused across Task workflows and an existing eager contract, constr
 contract explicitly:
 
 ```ts
-import { Retry } from "resultar";
-import { ResultAsync } from "resultar/async";
+import { ResultAsync, Retry } from "resultar";
 
 const retryPolicy = Retry.policy({
   times: 2,
@@ -317,13 +312,12 @@ typed error channel spread in reviewable steps.
 
 `ResultAsync<T, E>` and `StrictResultAsync<T, E>` are the official in-flight `Result` types
 (`PromiseLike<Result<T, E>>`), returned by `task.runResult()` / `ResultTask.runResult(task)`.
-Import from `resultar/async` when eager compatibility constructors or static orchestration helpers
-are needed; the subpath ships with `resultar`. Keep them when existing callers depend
-on starting once at construction or awaiting the same execution:
+Import eager compatibility constructors or static orchestration helpers from `resultar` when
+existing callers depend on starting once at construction or awaiting the same execution:
 
 ```ts
-import { ResultAsync, tryResultAsync } from "resultar/async";
-import type { StrictResultAsync } from "resultar/async";
+import { ResultAsync, tryResultAsync } from "resultar";
+import type { StrictResultAsync } from "resultar";
 
 const loadProfileAsync = (userId: string): StrictResultAsync<Profile, ProfileApiError> =>
   tryResultAsync({
@@ -340,18 +334,17 @@ const existingCaller = loadProfileTask(userId).runResult();
 
 Use `fromPromise` for an already-created Promise and `fromSafePromise` only when rejection is
 impossible by contract. Async `map` / `mapErr` still await Promise-returning callbacks; `andThen`
-accepts Result or Async. Existing Result async methods remain supported; new eager recipes can
-use the equivalent free functions:
+accepts Result or Async. `Result.asyncMap` and `Result.asyncAndThen` (and their instance methods) bridge synchronous Results into eager `ResultAsync`:
 
 ```ts
-import { asyncMap, asyncAndThen, okAsync } from "resultar/async";
+import { Result, ok, okAsync } from "resultar";
 
-const eagerMapped = asyncMap(ok(20), async (value) => value + 1);
-const eagerChained = asyncAndThen(ok(20), (value) => okAsync(value + 1));
+const eagerMapped = Result.asyncMap(ok(20), async (value) => value + 1);
+const eagerChained = Result.asyncAndThen(ok(20), (value) => okAsync(value + 1));
 ```
 
-Both helpers also accept curried calls for `pipe`. All eager constructors and helpers, including
-`errAsync`, are available from `resultar/async`; main-entry exports remain supported. Prefer
+Both static helpers also accept curried calls for `pipe`. All eager constructors and helpers, including
+`errAsync`, are available from `resultar`. Prefer
 `task.runResult()` (or `ResultTask.runResult(task)`) when bridging a requirement-free Task into an
 in-flight `ResultAsync`, and `errAsync(new DomainError(props))` in eager recipes;
 `DomainError.errAsync(props)`, `ResultAsync.fromTask(task)`, and static/instance `ResultTask.toResultAsync` remain callable as compatibility aliases.
@@ -364,31 +357,30 @@ best-effort release is the existing contract. A cleanup failure that must affect
 needs an explicit fallible step. These policies and deprecated observer methods are documented in
 [the compatibility API reference](api.md#eager-async-compatibility-policies).
 
-Core `Result.gen` / `Result.fn` support eager async bodies, and core `safeTry` supports legacy
-async final-Result bodies. The subpath makes the eager generator imports explicit:
+`Result.gen` / `Result.fn` support eager async bodies, and `safeTry` supports legacy
+async final-Result bodies:
 
 ```ts
-import { gen as genAsync, fn as fnAsync, safeTry as safeTryAsync } from "resultar/async";
+import { Result, ok, safeTry } from "resultar";
 
-const eagerWorkflow = genAsync(async function* () {
+const eagerWorkflow = Result.gen(async function* () {
   const profile = yield* loadProfileAsync(userId);
   return profile;
 });
 
-const reusableEager = fnAsync(async function* (id: string) {
+const reusableEager = Result.fn(async function* (id: string) {
   return yield* loadProfileAsync(id);
 });
 
-const legacyEager = safeTryAsync(async function* () {
+const legacyEager = safeTry(async function* () {
   const profile = yield* loadProfileAsync(userId);
   return ok(profile);
 });
 ```
 
 Do not change legacy `safeTry` generators to return plain values: their final value is a Result.
-Modern `genAsync` retains plain-value returns. New synchronous generators use core `Result.gen`;
-new lazy workflows use `ResultTask.gen`. Move legacy imports to `resultar/async` while preserving
-eagerness; migrate a service to Task by changing creation, composition, runners, and callers together.
+Modern `Result.gen` retains plain-value returns. New synchronous generators use `Result.gen`;
+new lazy workflows use `ResultTask.gen`. Migrate a service to Task by changing creation, composition, runners, and callers together.
 
 ## Test Runtime And Type Behavior
 

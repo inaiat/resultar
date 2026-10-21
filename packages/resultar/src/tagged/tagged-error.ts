@@ -626,7 +626,7 @@ const createTaggedErrorClass = <
 
     /**
      * Creates a failed ResultAsync containing this tagged error.
-     * @deprecated Use taskErr for Task workflows, or errAsync from resultar/async for legacy consumers.
+     * @deprecated Use taskErr for Task workflows, or errAsync(new DomainError(props)) for in-flight ResultAsync values.
      */
     public static errAsync<
       This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate>) => Error,

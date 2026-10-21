@@ -3,7 +3,7 @@
 Start by making one expected failure explicit with `Result<T, E>`. Keep existing
 Promise APIs at their boundaries and prefer `ResultTask` for new asynchronous
 workflows. Add time policies, service requirements or owned concurrent work as
-needed. `ResultAsync` represents an in-flight `Result` returned at execution boundaries (`runResult()`) and by active in-flight constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`), while deprecated eager orchestration helpers from `resultar/async` preserve legacy boundaries during migration.
+needed. `ResultAsync` represents an in-flight `Result` returned at execution boundaries (`runResult()`) and by active in-flight constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`), while deprecated eager orchestration helpers remain available in `resultar` to preserve legacy boundaries during migration.
 Each step is useful on its own; an application can keep all three models.
 
 `Result<T, E>` uses `T` for success and `E` for expected errors.
@@ -169,8 +169,8 @@ Runnable examples: [task resilience](../examples/cookbook/src/task-resilience.ts
 ## 4. Bridge existing eager APIs during migration
 
 `ResultAsync` and `StrictResultAsync` represent an in-flight `Result` (`PromiseLike<Result<T, E>>`)
-and are exported from both `resultar` and `resultar/async`. Active in-flight constructors
-such as `tryResultAsync` and `fromPromise` are also exported from both entry points to keep
+and are exported from `resultar`. Active in-flight constructors
+such as `tryResultAsync` and `fromPromise` are also exported from `resultar` to keep
 their eager, single-execution behavior where existing callers
 depend on that contract. For a new Task workflow, adapt the existing operation with
 `fromResultAsync`; a factory creates fresh work on each run. The following
@@ -241,8 +241,8 @@ factory overload; defer a Result-producing call inside `ResultTask.gen` as above
 
 The incoming bridge accepts any `PromiseLike<Result<T, E>>`. Core `Result.gen` and
 `Result.fn` accept synchronous and asynchronous generators with plain return values;
-legacy `safeTry` preserves the final Result. Existing root imports remain supported,
-and `resultar/async` provides the eager helpers in the same package; see the
+legacy `safeTry` preserves the final Result. Existing eager imports remain supported
+in `resultar`; see the
 [v4 migration table](migrations/v4.md).
 
 ## 5. Add services where a task needs them

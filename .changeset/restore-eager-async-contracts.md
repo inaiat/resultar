@@ -10,8 +10,7 @@
 ---
 
 Preserve eager shared execution, awaited mapping and validation callbacks, best-effort
-observation, and Promise-returning boundary matching through the `resultar/async`
-subpath in the same package. Preserve the existing root exports and explicit bridges.
+observation, and Promise-returning boundary matching in `resultar`, along with explicit Task bridges.
 
 Keep tasks lazy and non-thenable, with explicit runners and a structural incoming bridge.
 Preserve the concurrent runtime and create complete clock and scheduler contexts at

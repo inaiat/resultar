@@ -1,7 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 
-import { createTaggedError, err, ok, type StrictResult } from "resultar";
-import { ResultAsync } from "resultar/async";
+import { createTaggedError, err, ok, ResultAsync, type StrictResult } from "resultar";
 
 export class AccountExampleServerError extends createTaggedError({
   name: "AccountExampleServerError",

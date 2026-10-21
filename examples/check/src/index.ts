@@ -3,8 +3,10 @@ import {
   err,
   Match,
   ok,
+  okAsync,
   pipe,
   Result,
+  ResultAsync,
   ResultTask,
   runSync,
   safeTry,
@@ -12,8 +14,6 @@ import {
   type ResultTaskScope,
   type StrictResult,
 } from "resultar";
-import { okAsync, ResultAsync } from "resultar/async";
-import { safeTry as safeTryAsync } from "resultar/async";
 import { createModule } from "resultar-di";
 
 interface User {
@@ -252,7 +252,7 @@ export const noTryCatchInSafeTryExample = (): Result<User, SaveUserError> =>
 // resultar/no-await-in-safe-try: inside safeTry, compose Resultar values with
 // yield*. Awaiting a ResultAsync unwraps the channel into ordinary control flow.
 export const noAwaitInSafeTryExample = (): ResultAsync<User, SaveUserError> =>
-  safeTryAsync(async function* () {
+  safeTry(async function* () {
     const result = await saveUserAsync("await-in-safe-try");
 
     return result;

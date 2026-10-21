@@ -1,5 +1,4 @@
-import { createTaggedError, ResultTask } from "resultar";
-import { gen as genAsync, okAsync, type StrictResultAsync } from "resultar/async";
+import { createTaggedError, okAsync, Result, ResultTask, type StrictResultAsync } from "resultar";
 import { createModule, Service, service } from "resultar-hono";
 
 export type User = { readonly id: string; readonly name: string };
@@ -34,14 +33,14 @@ export class Users extends Service("users", {
   requires: { repository: UsersRepository },
   make: ({ repository }) => ({
     findById(id: string): StrictResultAsync<User, UserNotFoundError | UserReadError> {
-      return genAsync(async function* () {
+      return Result.gen(async function* () {
         const user = yield* repository.findById(id);
         if (user === undefined) return yield* UserNotFoundError.err({ id });
         return user;
       });
     },
     remove(id: string): StrictResultAsync<void, UserNotFoundError> {
-      return genAsync(async function* () {
+      return Result.gen(async function* () {
         const removed = yield* repository.remove(id);
         if (!removed) return yield* UserNotFoundError.err({ id });
       });

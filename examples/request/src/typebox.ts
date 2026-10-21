@@ -1,7 +1,6 @@
 import { Type, type Static } from "typebox";
 
-import { createTaggedError } from "resultar";
-import { ResultAsync, runPromise } from "resultar/async";
+import { createTaggedError, ResultAsync, runPromise } from "resultar";
 import { requestJson as requestJsonTypeBox } from "resultar-request-typebox";
 
 import { closeServer, startAccountExampleServer } from "./account-server.js";

@@ -2,7 +2,7 @@
 
 > Typed, composable error handling for TypeScript: start with explicit `Result` values,
 > use lazy `ResultTask` for new asynchronous workflows, use `ResultAsync` for in-flight
-> `Result` values, and retain eager compatibility helpers from `resultar/async` at existing
+> `Result` values, and retain eager compatibility helpers from `resultar` at existing
 > boundaries during migration. Add typed services, scopes, clocks, retry,
 > and fibers as needed. Tagged errors and
 > compiler-backed diagnostics. Node.js 24+, ESM-only.
@@ -27,7 +27,7 @@ rewriting existing Result helpers, eager adapters, or the whole application. Pre
 execution contracts when bridging between them.
 
 `ResultAsync` and `StrictResultAsync` are the official in-flight `Result` types (returned by
-`task.runResult()`) and are exported from both `resultar` and the `resultar/async` subpath,
+`task.runResult()`) and are exported from `resultar`,
 together with their eager factories and compatibility helpers.
 No additional package installation is needed. Task is non-thenable: use explicit
 `runResult`, `runExit`, `runPromise`, or `runFork` boundaries even when `R = never`.
@@ -35,12 +35,12 @@ Task `map` is synchronous; compose Promise steps with `andThen` and `tryPromise`
 `ResultTask.fromResultAsync(factory)` defers an eager adapter until each run;
 `ResultAsync.fromTask(task)` is a deprecated alias of `task.runResult()`.
 Core `Result.gen` and `Result.fn` accept sync and async generators with plain return
-values; legacy `safeTry` preserves the final Result. Existing Async root imports
-remain supported; prefer `resultar/async` when migrating eager consumers.
+values; legacy `safeTry` preserves the final Result. Existing Async imports
+remain supported in `resultar` when migrating eager consumers.
 
 ## Packages
 
-- [Async subpath](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): in-flight `ResultAsync`, eager factories, generators, free async composition helpers, and deprecated orchestration APIs, included in `resultar`.
+- [resultar](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): core `Result`, lazy `ResultTask`, in-flight `ResultAsync`, eager factories, generators, and deprecated orchestration APIs.
 - [resultar-di](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/README.md): services, typed composition, lifetimes, overrides, named registration and framework adapter APIs.
 - [resultar-hono](https://raw.githubusercontent.com/inaiat/resultar/main/packages/hono/README.md): Hono bindings, one scope per response, CloseError.
 - [resultar-fastify](https://raw.githubusercontent.com/inaiat/resultar/main/packages/fastify/README.md): native plugins, application/request services, cancellation and cleanup.

@@ -4,7 +4,7 @@
 
 Use `Result<T, E>` for synchronous domain operations and `ResultTask<T, E, R>` for
 new asynchronous workflows. `ResultAsync` and `StrictResultAsync` represent in-flight
-`Result` values (returned by `task.runResult()`) and remain supported for existing eager contracts alongside the `resultar/async` compatibility subpath.
+`Result` values (returned by `task.runResult()`) and remain supported in `resultar` for existing eager contracts.
 
 ```typescript
 import { createTaggedError, ResultTask } from 'resultar';
@@ -36,7 +36,7 @@ execution boundaries, and bridges from existing eager APIs.
 ## Historical v3 article
 
 The article below preserves the original exception-to-value examples. Its async
-recipes use the v3 eager API and `safeTry`; in v4, import their counterparts from `resultar/async` as described in the migration guide. For new v4 code, follow
+recipes use the v3 eager API and `safeTry`; in v4, these remain available in `resultar` for compatibility as described in the migration guide. For new v4 code, follow
 the Task recipe above. Fetch resolves on HTTP error statuses; the short example
 above maps network/body failures, while application HTTP status policy belongs
 in the adapter or the [request packages](../../packages/request/README.md).

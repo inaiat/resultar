@@ -5,8 +5,8 @@ An example application combining dependency injection with
 [resultar-hono](../../packages/hono/README.md).
 
 Prefer lazy `ResultTask` workflows and explicit runners for new async code. This runnable fixture
-retains eager `ResultAsync` / `StrictResultAsync` service methods from the `resultar/async`
-subpath for compatibility coverage.
+retains eager `ResultAsync` / `StrictResultAsync` service methods from `resultar`
+for compatibility coverage.
 Both types represent one shared in-flight execution.
 
 The file layout matches the [Fastify example](../fastify/README.md):
@@ -73,7 +73,7 @@ import { Service, service, createModule } from "resultar-hono";
 
 `Users` declares `requires: { repository: UsersRepository }`; the repository declares
 `requires: { cache: Cache }`. Their existing methods return eager `StrictResultAsync`,
-and the user service composes lookup and removal through `genAsync` from `resultar/async`. `Health` uses the
+and the user service composes lookup and removal through `Result.gen` from `resultar`. `Health` uses the
 function-based `service` API and reads the same cache. For new methods, return `ResultTask`, use
 `ResultTask.tryPromise` for drivers and `ResultTask.gen` for composition.
 

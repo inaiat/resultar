@@ -13,7 +13,7 @@ Native Fastify plugins and request services backed by `resultar-di`. Routes keep
 `async` handlers, schemas, type providers, `request.log` and `reply.code().send()`.
 
 Prefer lazy `ResultTask` values for new async service methods and run them explicitly in routes.
-`ResultAsync` and `StrictResultAsync` are the in-flight `Result` types (returned by `task.runResult()` and re-exported from `resultar/async`); existing eager contracts keep one
+`ResultAsync` and `StrictResultAsync` are the in-flight `Result` types in `resultar` (returned by `task.runResult()`); existing eager contracts keep one
 shared execution and can be adapted with `ResultTask.fromResultAsync(() => legacyMethod())`.
 
 ```sh
@@ -133,7 +133,7 @@ Use `Service` classes with `requires` for dependencies, or
 `service(name, dependencies, factory)` for a function-based service. The
 [runnable example](../../examples/fastify/README.md) combines class-based `UsersRepository`
 and `Users` with function-based `Health`. That fixture retains eager `StrictResultAsync`
-methods and `genAsync` from `resultar/async` for compatibility coverage, and maps errors explicitly in TypeBox
+methods and `Result.gen` from `resultar` for compatibility coverage, and maps errors explicitly in TypeBox
 routes. New service methods should use `ResultTask.gen` and `tryPromise`; Task has no `.then`,
 `map` is synchronous, and `match` returns a Task. Run it at the route boundary, or match the
 `Result` returned by `runResult` as above.

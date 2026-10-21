@@ -5,14 +5,17 @@ import type { HonoOptions } from "hono/hono-base";
 import {
   AbortError,
   err,
+  errAsync,
+  fromSafePromise,
   ResultTask,
   ResultTaskCauseError,
   unit,
+  unitAsync,
   ok,
   type Exit,
   type Result,
+  type ResultAsync,
 } from "resultar";
-import { errAsync, fromSafePromise, unitAsync, type ResultAsync } from "resultar/async";
 import {
   inspectModule,
   startServiceTask,

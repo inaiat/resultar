@@ -71,9 +71,6 @@ export const taskFailureHandler = <A, E, B, C>(
   return handlers.err
 }
 
-export const getReason = (value: unknown): unknown =>
-  (value as { readonly reason?: unknown }).reason
-
 /**
  * A lazy, composable workflow that can succeed with `A`, fail with a typed error `E`,
  * and declare execution requirements `R` (such as `ServiceTag`s or `ResultTaskScope`).

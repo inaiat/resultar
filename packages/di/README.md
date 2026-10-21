@@ -8,7 +8,7 @@ Resultar handles execution, interruption, failure causes, and cleanup.
 
 Use `ResultTask` for new async service methods as well as initialization. Tasks are lazy and
 repeatable, have no `.then`, and execute through explicit runners (`task.runResult()` returns an in-flight `ResultAsync`). `ResultAsync` and
-`StrictResultAsync` (also re-exported from `resultar/async`) retain eager, single-execution compatibility for existing methods.
+`StrictResultAsync` in `resultar` retain eager, single-execution compatibility for existing methods.
 
 ## Contents
 
@@ -22,8 +22,6 @@ repeatable, have no `.then`, and execute through explicit runners (`task.runResu
 - [Testing with overrides](#testing-with-overrides)
 - [Framework service facades](#framework-service-facades)
 - [Limitations](#limitations)
-
-The `resultar/async` subpath is included in the `resultar` installation.
 
 ## Install
 

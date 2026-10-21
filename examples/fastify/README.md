@@ -2,7 +2,7 @@
 
 For new async code, return lazy `ResultTask` workflows and run them explicitly in native route
 handlers. This runnable fixture retains eager `ResultAsync` / `StrictResultAsync` service methods
-from the `resultar/async` subpath for compatibility coverage. Both types represent one shared in-flight execution.
+from `resultar` for compatibility coverage. Both types represent one shared in-flight execution.
 
 ```sh
 cd examples/fastify
@@ -101,8 +101,7 @@ The following compatibility excerpt comes from `services.ts`; it is retained to 
 existing eager callers. The function-based health service and registration follow below:
 
 ```ts
-import { createTaggedError, ResultTask } from "resultar";
-import { gen as genAsync, okAsync, type StrictResultAsync } from "resultar/async";
+import { createTaggedError, okAsync, Result, ResultTask, type StrictResultAsync } from "resultar";
 import { createModule, Service, service } from "resultar-fastify";
 
 export type User = { readonly id: string; readonly name: string };
@@ -137,14 +136,14 @@ export class Users extends Service("users", {
   requires: { repository: UsersRepository },
   make: ({ repository }) => ({
     findById(id: string): StrictResultAsync<User, UserNotFoundError | UserReadError> {
-      return genAsync(async function* () {
+      return Result.gen(async function* () {
         const user = yield* repository.findById(id);
         if (user === undefined) return yield* UserNotFoundError.err({ id });
         return user;
       });
     },
     remove(id: string): StrictResultAsync<void, UserNotFoundError> {
-      return genAsync(async function* () {
+      return Result.gen(async function* () {
         const removed = yield* repository.remove(id);
         if (!removed) return yield* UserNotFoundError.err({ id });
       });
@@ -163,7 +162,7 @@ The failing-repository test uses `services.override("repository", brokenReposito
 For a synchronous factory, use `service` with its dependencies directly:
 
 ```ts
-import { okAsync } from "resultar/async";
+import { okAsync } from "resultar";
 import { service } from "resultar-fastify";
 // Cache is declared above in the same services.ts file.
 

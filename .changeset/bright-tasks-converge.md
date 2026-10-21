@@ -15,8 +15,8 @@
 "resultar-request-zod": major
 ---
 
-Prepare the next core major with plain-value Result generators and separate eager
-compatibility in `resultar/async`. Preserve legacy synchronous and asynchronous safeTry
+Prepare the next core major with plain-value Result generators and unified `ResultTask` / `ResultAsync`
+execution boundaries in `resultar`. Preserve legacy synchronous and asynchronous safeTry
 Result-returning generators, tap observation behavior and checker configuration.
 Add best-effort task observation with inspect/inspectError. Retain unrelated
 deprecated synchronous method names with equivalent replacements. Result/ResultAsync tap remains
@@ -33,7 +33,6 @@ Preserve native Hono response unions and Fastify response contracts.
 
 Recognize yielded Results and task collection/fiber consumers in the checker,
 and expose Match coverage in hover. Update companion cause inspection for
-parallel failures. Prefer `resultar/async` for eager consumers while preserving existing
-root imports and Async-producing methods; exhaustive Cause consumers
+parallel failures. Preserve existing `resultar` exports and Async-producing methods; exhaustive Cause consumers
 must handle the new Parallel branch, and corrected tagged recovery types retain
 errors that optional handlers do not guarantee to recover.

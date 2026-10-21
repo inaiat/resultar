@@ -6,15 +6,13 @@ Use this package when a request response should be parsed with Zod while the tra
 error flow stay in `resultar-request`.
 
 Prefer `ResultTask` for new async workflows. This adapter returns eager `ResultAsync`
-(also re-exported from the `resultar/async` subpath); defer the adapter call with `fromResultAsync(factory)`.
+from `resultar`; defer the adapter call with `fromResultAsync(factory)`.
 
 For a schema-library-agnostic request, use
 [`resultar-request`](https://www.npmjs.com/package/resultar-request) directly with its `validator`
 or `decode` options. The sibling
 [`resultar-request-typebox`](https://www.npmjs.com/package/resultar-request-typebox) package
 provides the same request flow with TypeBox schemas instead of Zod.
-
-The `resultar/async` subpath is included in the `resultar` installation.
 
 ## Install
 

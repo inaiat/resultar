@@ -48,7 +48,7 @@ Construct promises and mutable per-run state inside the Task so repeated runs cr
 
 - [`src/sync-validation.ts`](src/sync-validation.ts): field validation with `Result.validateAll`,
   tagged errors (`createTaggedError`, `.is()`), redacted props (`redact`, `revealRedacted`,
-  `isRedacted`), validation adapter issues (`resultar/validation`), and HTTP-style boundary mapping.
+  `isRedacted`), untrusted payload decoding (`decodeSignupPayload`), and HTTP-style boundary mapping.
 - [`src/domain-workflow.ts`](src/domain-workflow.ts): a linear domain flow using `andThen`, `mapErr`,
   synchronous `Result.gen`, lazy `ResultTask.gen`, deprecated synchronous `safeTry`, `findCause`,
   and `.matchTags()` with typed error unions.

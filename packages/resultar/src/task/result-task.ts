@@ -28,6 +28,7 @@ import { identity } from '../core/function.js'
 import { type FnPipe, Pipeable, runFnPipe } from '../core/pipe.js'
 import type { Result } from '../result/result.js'
 import { createEmptyResultsCollectionError, err, ok } from '../result/result.js'
+import { getReason } from '../result/result-helpers.js'
 import { AbortError } from '../core/abort-error.js'
 import { createResultAsync } from '../result-async/result-async-adapter.js'
 import '../result-async/result-async.js'
@@ -67,7 +68,6 @@ import {
   collectOutcomes,
   completeCleanup,
   finishRace,
-  getReason,
   hasCleanupCause,
   isExternalInterruptOnly,
   isObjectLike,

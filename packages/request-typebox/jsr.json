@@ -7,8 +7,7 @@
     "resultar": "jsr:@inaiat/resultar@^4.0.0",
     "resultar-request": "jsr:@inaiat/resultar-request@^1.0.0",
     "typebox": "npm:typebox@^1.3.3",
-    "typebox/value": "npm:typebox@^1.3.3/value",
-    "resultar/async": "jsr:@inaiat/resultar@^4.0.0/async"
+    "typebox/value": "npm:typebox@^1.3.3/value"
   },
   "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }
 }

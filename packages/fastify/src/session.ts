@@ -1,7 +1,14 @@
 // Lifecycle sessions retain their eager ResultAsync compatibility boundary.
 /* eslint-disable typescript/no-deprecated */
-import { ResultTask, ResultTaskCauseError, type Cause, type Exit } from "resultar";
-import { fromSafePromise, ResultAsync, type ResultAsyncCallbackContext } from "resultar/async";
+import {
+  fromSafePromise,
+  ResultAsync,
+  ResultTask,
+  ResultTaskCauseError,
+  type Cause,
+  type Exit,
+  type ResultAsyncCallbackContext,
+} from "resultar";
 
 // Native lifecycle hooks erase provider error types while preserving every cause at runtime.
 // resultar-check-disable-next-line no-unknown-result-error

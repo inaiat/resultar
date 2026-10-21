@@ -4,7 +4,7 @@
 
 Use `Result<T, E>` para operações síncronas de domínio e `ResultTask<T, E, R>`
 para novos fluxos assíncronos. `ResultAsync` e `StrictResultAsync` representam valores
-`Result` em andamento (retornados por `task.runResult()`) e continuam suportados para contratos eager existentes junto ao subpath de compatibilidade `resultar/async`.
+`Result` em andamento (retornados por `task.runResult()`) e continuam suportados em `resultar` para contratos eager existentes.
 
 ```typescript
 import { createTaggedError, ResultTask } from 'resultar';
@@ -36,7 +36,7 @@ execução e pontes com APIs eager existentes.
 ## Artigo histórico da v3
 
 O texto abaixo preserva os exemplos originais de conversão de exceções em valores.
-As receitas assíncronas usam a API eager da v3 e `safeTry`; na v4, importe os equivalentes de `resultar/async`, conforme o guia de migração. Para código
+As receitas assíncronas usam a API eager da v3 e `safeTry`; na v4, elas continuam disponíveis em `resultar` para compatibilidade, conforme o guia de migração. Para código
 novo na v4, siga a receita Task acima. Fetch resolve mesmo em status HTTP de erro;
 o exemplo curto acima mapeia falhas de rede/leitura do corpo. A política de status
 deve ficar no adapter ou nos [pacotes de request](../../packages/request/README.md).

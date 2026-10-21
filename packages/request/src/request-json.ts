@@ -1,5 +1,12 @@
-import { err, fromThrowable, ok } from "resultar";
-import { errAsync, fromPromise, ResultAsync, type ResultAsyncRetryContext } from "resultar/async";
+import {
+  err,
+  errAsync,
+  fromPromise,
+  fromThrowable,
+  ok,
+  ResultAsync,
+  type ResultAsyncRetryContext,
+} from "resultar";
 
 import type {
   RequestHeaders,
