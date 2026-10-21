@@ -37,6 +37,15 @@ try {
       join(directory, "node_modules", name),
     );
   }
+  const diManifest: unknown = JSON.parse(
+    readFileSync(join(root, "..", "di", "package.json"), "utf8"),
+  );
+  assert.ok(
+    diManifest !== null &&
+      typeof diManifest === "object" &&
+      "version" in diManifest &&
+      typeof diManifest.version === "string",
+  );
   const manifest: unknown = JSON.parse(
     readFileSync(join(directory, "node_modules", "resultar-fastify", "package.json"), "utf8"),
   );
@@ -45,7 +54,7 @@ try {
   assert.ok(
     dependencies !== null && typeof dependencies === "object" && "resultar-di" in dependencies,
   );
-  assert.equal(dependencies["resultar-di"], "^0.4.1");
+  assert.equal(dependencies["resultar-di"], `^${diManifest.version}`);
   const file = join(directory, "consumer.mts");
   writeFileSync(
     file,
