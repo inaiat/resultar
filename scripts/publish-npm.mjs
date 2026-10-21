@@ -17,6 +17,7 @@ const packages = [
   "packages/di",
   "packages/hono",
   "packages/fastify",
+  "packages/nestjs",
   "packages/check",
   "packages/request",
   "packages/request-typebox",

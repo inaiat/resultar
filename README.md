@@ -311,13 +311,14 @@ The Resultar monorepo ships focused, zero-bloat companion packages for DI, HTTP 
 | [`resultar-di`](packages/di/README.md) | Typed dependency injection, class/function services, request scopes, and test overrides for `ResultTask`. | [README](packages/di/README.md) |
 | [`resultar-hono`](packages/hono/README.md) | Typed Hono middleware & bindings with one DI resource scope per HTTP response and graceful shutdown. | [README](packages/hono/README.md) |
 | [`resultar-fastify`](packages/fastify/README.md) | Native Fastify plugin providing application & request-scoped DI services, cancellation, and cleanup. | [README](packages/fastify/README.md) |
+| [`resultar-nestjs`](packages/nestjs/README.md) | Native NestJS module & `@Services()` decorator providing application & request-scoped DI services, cancellation, and cleanup. | [README](packages/nestjs/README.md) |
 | [`resultar-request`](packages/request/README.md) | Fetch-first JSON HTTP client preserving its eager `ResultAsync` return contract; bridge into Task workflows. | [README](packages/request/README.md) |
 | [`resultar-request-zod`](packages/request-zod/README.md) | Zod schema validation adapter for `resultar-request`. | [README](packages/request-zod/README.md) |
 | [`resultar-request-typebox`](packages/request-typebox/README.md) | TypeBox schema validation adapter for `resultar-request`. | [README](packages/request-typebox/README.md) |
 
-### End-to-End Web Service Example (`resultar-di` + `resultar-hono` / `resultar-fastify`)
+### End-to-End Web Service Example (`resultar-di` + `resultar-hono` / `resultar-fastify` / `resultar-nestjs`)
 
-Define services once with `resultar-di` and expose them to Hono or Fastify routes with automatic per-request resource cleanup and inferred `c.env` / `request.services` types:
+Define services once with `resultar-di` and expose them to Hono, Fastify, or NestJS routes with automatic per-request resource cleanup and inferred `c.env` / `request.services` / `@Services()` types:
 
 ```ts
 import { createTaggedError, ResultTask } from 'resultar'
@@ -370,6 +371,7 @@ Explore complete, runnable projects in [`examples/`](examples):
 | [`examples/request`](examples/request) | `resultar-request` + Zod / TypeBox | Fetch-first JSON requests with schema validation, retries, and typed HTTP error handling |
 | [`examples/hono`](examples/hono) | `resultar-hono` + `resultar-di` | Class services, inferred `AppHono` bindings, test overrides, and per-response DI scopes |
 | [`examples/fastify`](examples/fastify) | `resultar-fastify` + `resultar-di` | Application/request DI scopes, TypeBox routes, and explicit HTTP boundary mapping |
+| [`examples/nestjs`](examples/nestjs) | `resultar-nestjs` + `resultar-di` | Native NestJS controllers, `@Services()` injection, application/request DI scopes, and explicit HTTP boundary mapping |
 
 ---
 

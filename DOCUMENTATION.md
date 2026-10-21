@@ -128,7 +128,7 @@ If you already know Result-style error handling, jump to:
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Adopt one function or workflow at a time    | [Gradual adoption](docs/gradual-adoption.md)                                                              | `Result`, `ResultTask`, `Clock`, `Retry`, `Fiber`                                                    |
 | Declare service dependencies                | [Lazy tasks and service requirements](#lazy-tasks-and-service-requirements)                               | `ResultTask.service`, `Service.require`, `Service`, `requires`                                       |
-| Connect services to HTTP routes             | [Services in Fastify and Hono](#services-in-fastify-and-hono)                                             | `createFastifyApp`, `createHonoApp`, `InferRequestServices`                                          |
+| Connect services to HTTP routes             | [Services in Fastify and Hono](#services-in-fastify-and-hono)                                             | `createFastifyApp`, `createHonoApp`, `createNestApp`, `InferRequestServices`                         |
 | Create success or failure values            | [Creating Results](#creating-results)                                                                     | `ok`, `err`, `unit`, `ResultTask.ok`, `ResultTask.err`, `fromNullishOr`, `liftPredicate`             |
 | Model expected domain failures              | [Tagged Errors](#tagged-errors)                                                                           | `createTaggedError`, `.withProps`, `.err`, `StrictResult`                                            |
 | Model lightweight tagged unions             | [Tagged Enums](#tagged-enums)                                                                             | `TaggedEnum`, `taggedEnum`                                                                           |
@@ -493,10 +493,10 @@ registration, named factories and framework adapter helpers. Replace imports fro
 `resultar-di/advanced` subpath with `resultar-di` when migrating.
 
 Application code can import `createModule`, `Service`, `service` and `resource` directly from
-`resultar-fastify` or `resultar-hono`. Core operators and result types still come from `resultar`.
+`resultar-fastify`, `resultar-hono` or `resultar-nestjs`. Core operators and result types still come from `resultar`.
 Framework adapter helpers such as `withProvider` and `useServiceAccess` come from `resultar-di`.
 
-The runnable [Fastify](examples/fastify/README.md) and [Hono](examples/hono/README.md) examples
+The runnable [Fastify](examples/fastify/README.md), [Hono](examples/hono/README.md) and [NestJS](examples/nestjs/README.md) examples
 have matching, self-contained layouts:
 
 | File          | Responsibility                                                                       |
