@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout } from "node:timers/promises";
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const dryRun = process.argv.includes("--dry-run");
@@ -100,6 +101,7 @@ function removeStalePrereleaseTags(name, version) {
 }
 
 run("pnpm", ["--filter", "resultar-check", "native:build:all"]);
+const pending = new Map();
 
 for (const packageDir of packages) {
   const packageJsonPath = join(rootDir, packageDir, "package.json");
@@ -135,5 +137,40 @@ for (const packageDir of packages) {
   }
 
   console.log(`${dryRun ? "Dry-running" : "Publishing"} ${id}`);
-  run("pnpm", publishArgs, { cwd: join(rootDir, packageDir) });
+  const result = spawnSync("pnpm", publishArgs, {
+    cwd: join(rootDir, packageDir),
+    encoding: "utf8",
+    stdio: "pipe",
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  process.stdout.write(result.stdout ?? "");
+  process.stderr.write(result.stderr ?? "");
+  const output = `${result.stdout}\n${result.stderr}`;
+  const staged = !dryRun && /Cannot publish over previously staged version/u.test(output);
+  if (result.error || (result.status !== 0 && !staged)) {
+    throw new Error(`Publishing ${id} failed with exit code ${result.status ?? "unknown"}`, {
+      cause: result.error,
+    });
+  }
+  if (!dryRun)
+    pending.set(id, { name: packageJson.name, version: packageJson.version, publishTag });
+}
+
+// Upload acceptance does not guarantee availability while npm scans a release.
+// Submit all packages first, then wait up to 15 minutes without republishing.
+for (let attempt = 0; pending.size > 0; attempt += 1) {
+  for (const [id, { name, version, publishTag }] of pending) {
+    if (!packageExists(name, version)) continue;
+    ensureDistTag(name, version, publishTag);
+    if (publishTag === "latest") removeStalePrereleaseTags(name, version);
+    pending.delete(id);
+  }
+  if (pending.size === 0) break;
+  if (attempt === 30) {
+    throw new Error(
+      `npm versions are still unavailable after 15 minutes: ${[...pending.keys()].join(", ")}. Check their registry staging/review status before retrying; do not publish replacement versions.`,
+    );
+  }
+  console.log(`Waiting for npm availability: ${[...pending.keys()].join(", ")}`);
+  await setTimeout(30_000);
 }
