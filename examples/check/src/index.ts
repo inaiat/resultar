@@ -1,3 +1,5 @@
+// Intentionally invalid diagnostic catalog: these examples must FAIL resultar-check.
+// For valid code use resultar-clean.ts; for new async APIs prefer its Task examples.
 import {
   createTaggedError,
   err,
@@ -645,3 +647,13 @@ export const curriedNoUselessRecoveryExample = () =>
     ResultTask.ok("curried-infallible"),
     ResultTask.orElse(() => ResultTask.ok("unreachable")),
   );
+
+// resultar/no-promise-resultar: Promise<ResultTask<...>> and union Promise<Result<...> | undefined>
+// contracts must return ResultTask or ResultAsync directly without an async wrapper.
+export interface PromiseTaskContract {
+  readonly load: (id: string) => Promise<ResultTask<User, FetchUserError>>;
+}
+
+export const inferredPromiseTaskExample = async () => loadUserTask("promise-task");
+
+export type MixedPromiseResultContract = Promise<StrictResult<User, SaveUserError> | undefined>;

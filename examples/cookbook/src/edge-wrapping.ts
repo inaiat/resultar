@@ -88,6 +88,7 @@ export const parseConfigWithReusableWrapper = (
 ): StrictResult<AppConfig, ConfigShapeError | ParseConfigError> =>
   parseJson(raw).andThen(decodeConfig);
 
+// External I/O stub: its Promise stays behind the loadConfig Task adapter.
 const readConfigText = async (source: string): Promise<string> => {
   if (source === "missing") {
     // resultar-check-disable-next-line no-throw

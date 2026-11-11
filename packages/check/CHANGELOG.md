@@ -1,5 +1,49 @@
 # resultar-check
 
+## 5.0.0
+
+### Major Changes
+
+- Enable `noPromiseResultar` at error severity by default. Native `Promise<Result>`,
+  `Promise<StrictResult>`, and `Promise<ResultTask>` contracts now fail validation even
+  with `failOn: "error"`, without an explicit per-rule configuration. Return `ResultAsync`,
+  `StrictResultAsync`, or `ResultTask` directly instead of wrapping them in `async`.
+
+  Explicit severity overrides remain available for gradual adoption. The `failOn`
+  default and existing runtime APIs are unchanged.
+
+### Minor Changes
+
+- Implement RFC 0005 contract safety, HTTP cancellation/error-stage fixes, and Task-native HTTP entrypoints:
+
+  Breaking change: `RequestJsonSource` factories now receive a required `AbortSignal`
+  argument. Existing zero-argument factories remain accepted, but consumers invoking
+  a narrowed `RequestJsonSource` must pass a signal. Factories with an optional first
+  parameter of another type must be wrapped in a callback that ignores the signal.
+  The schema adapters expose the same changed input contract. Existing HTTP APIs
+  remain eager; the new Task entrypoints are lazy.
+
+  - `resultar-check`: add `no-promise-resultar` (`noPromiseResultar`, default `"error"`) to reject native `Promise<Result<T, E>>`, `Promise<StrictResult<T, E>>`, and `Promise<ResultTask<T, E, R>>` contracts and unannotated `async` wrappers, recommending direct `ResultAsync`, `StrictResultAsync`, or `ResultTask` returns without duplicating `prefer-result-async` findings.
+  - `resultar-request`, `resultar-request-zod`, `resultar-request-typebox`: propagate `AbortSignal` cancellation through `requestJson` and retries (`signal` and `(signal) => Promise<Response>` request factories), stop retry scheduling immediately on cancellation while keeping cancellations inside the declared eager error channel, classify HTTP failures at their originating stage (only JSON parse `SyntaxError` reaches `invalidJson`), safely format unserializable HTTP metadata (circular/`bigint`/throwing headers) inside `HttpResponseErrorCauseError`, and add lazy repeatable `requestJsonTask`, `requestJsonZodTask`, and `requestJsonTypeBoxTask` entrypoints backed by `ResultTask` and `TaskClock`.
+  - `resultar`: refresh bundled coding-agent manuals, generated API inventory, compiled recipes, and evaluation regression cases.
+
+### Patch Changes
+
+- Align human and coding-agent documentation with the public v4 contracts while preserving
+  existing eager and deprecated behavior. Bundle the canonical manuals, generated API inventory,
+  and compiled contract recipes with the core package. Route agents to relevant references
+  instead of loading every manual by default.
+
+  Correct runner failure channels, numeric retry options, callbacks, race semantics, service
+  provision, resource ownership and checker defaults. Document request error helpers and lazy
+  bridging. Add CI checks for public-surface drift, recipe behavior, checker severities and
+  bundled links; extend generation graders with HTTP, DI, matching, retry and Cause scenarios.
+
+  Clarify Promise input/output roles throughout the guides: new application methods expose
+  Tasks, raw driver Promises adapt directly via tryPromise, existing typed Async operations
+  use fromResultAsync, and native execution boundaries retain Promises. Label negative
+  checker fixtures and exercise typed repository contracts, rejection mapping and cancellation.
+
 ## 4.0.0
 
 ### Major Changes

@@ -1,115 +1,82 @@
-# Typed services and HTTP scopes
+# Services and ecosystem packages
 
-Read the installed `resultar-di/README.md`, `resultar-hono/README.md`, `resultar-fastify/README.md` and `resultar-nestjs/README.md` for the exact companion
-versions. The application DI helpers are `createModule`, `service`, `Service`, and `resource`.
-Named factory overloads and low-level adapter access use the same `resultar-di` entry point.
-The former `/advanced` subpath has been removed; migrate existing imports to `resultar-di`.
+Read the matching package README before generating framework or request code.
+These manuals are included in the published agent bundle; installed declarations
+win when companion versions differ from the bundle's `versions.json`.
 
-Use `ResultTask` for new asynchronous service methods and initialization. Tasks are lazy and
-nonthenable: return them directly from methods, compose them with `andThen` or `ResultTask.gen`,
-and execute them through an explicit runner (`task.runResult()`, `task.runPromise()`, `task.runExit()`, or `task.runFork()`) at the owning application or request boundary.
-`task.runResult()` returns an in-flight `ResultAsync<T, E>`. Existing methods returning eager `ResultAsync` or `StrictResultAsync` directly remain eager compatibility contracts; import in-flight constructors, eager compatibility helpers, and `ResultAsync` directly from `resultar`.
+## Core services and DI
 
-- Use `ResultTask.service<Contract>()('name')` in core or `Service.require<Contract>()('name')`
-  in DI to infer the literal identifier. The direct core overload remains supported; do not invent
-  `Result.service`. Service requirements are represented by `R` in `ResultTask<T, E, R>`.
-- Declare class services with `Service('name', { requires: { alias: Token }, make: ({ alias }) =>
-  ({ ... }) })`. The readonly dependency object is inferred; `make` can return the service
-  object directly or a ResultTask. Factories remain lazy and synchronous values add no typed
-  initialization errors. Promises and thenables are rejected. Use `ResultTask.gen` for
-  initialization with typed failures, additional requirements or owned resources. Without `requires`, pass a task or a zero-argument factory returning a synchronous value or ResultTask. Tasks can yield requirements inline or by token.
-  Both forms support `Service<Contract>()('name', definition)`.
-- Keep provider registration explicit. `requires` does not acquire or register dependencies.
-  Inline tokens resolve by name in DI or `provideServices`; core `provideService` supplies an exact
-  token binding plus a named fallback. Reuse the same token for exact identity when identifiers
-  collide; separately created tags can resolve the named fallback.
-- Register a service token with `.singleton(Token)`, `.scoped(Token)`, or `.transient(Token)`.
-  Dependency objects are inferred from tokens. Use `service(name, task)` for asynchronous
-  initialization; an async function passed as an ordinary factory is a defect in the contract.
-- Keep a server's serving-and-waiting task inside its owning `use` / ResultTask scope. Returning a
-  live resource from a completed scope returns a resource whose finalizer has already run.
-- Use `createHonoApp` for Hono routes. Ordinary `await` and `result.match` inside a route are valid;
-  generator-specific restrictions do not apply to a route body.
-  For a Task-returning method, either run `await task.runResult().matchTags(...)` or compose `task.matchTags(...)` and return
-  `responseTask.runPromise()` from the route. For an existing Async method, awaiting it
-  still observes its eager execution; `await task` never executes a Task.
-  Export `type AppHono = Hono<{ Bindings: InferRequestServices<typeof createApplication> }>`
-  from `main.ts`, using `InferRequestServices` from `resultar-hono`. Separate route files import
-  `AppHono` with `import type` and receive `(app: AppHono)`. Bindings follow the application
-  selection without repeating service tokens.
-- `bindings` is optional in `createHonoApp`, `createFastifyApp` and `createFastifyPlugin`.
-  Omission selects all registrations; an explicit list restricts the view and `[]` selects none.
-  Selected services resolve before the handler, preserving each lifetime and resource ownership.
-  Unused default-selected services can still fail acquisition and prevent the handler.
-  Fastify `appBindings` continues to default to `[]`; locals satisfy requirements without being
-  automatically exposed as registrations. The Hono middleware API still takes explicit keys.
-- `startup` is optional in the native application adapters and accepts a `ResultTask<void, E, R>`
-  whose requirements are checked against the module. Fastify runs it in `onReady` after plugin
-  loading and also accepts `(app: FastifyInstance) => ResultTask<void, E, R>`. Hono runs it on
-  `ready()` or before the first request. Direct resources live until close and release before
-  singleton dependencies; scoped/transient dependencies are rejected. A failure rolls back the
-  application root, preserving cleanup causes. Hono close cancels pending startup cooperatively.
-  The low-level lifecycle sessions retain eager Async `ready` / `close` or `finish` values where
-  exposed by their installed types; these bridge an explicitly running Task and are compatibility
-  boundaries, not a recommendation to make new service methods eager.
-  Prefer `task.runResult()` (or `ResultTask.runResult(task)`) when bridging a requirement-free Task into an in-flight `ResultAsync`;
-  `ResultAsync.fromTask(task)` and static/instance `ResultTask.toResultAsync` remain supported as deprecated aliases. The inbound `ResultTask.fromResultAsync` bridge accepts structural
-  `PromiseLike<Result>` values or factories and needs no class registration.
-- Use `createHonoServices(module).middleware(keys, { locals })` to add services to an existing Hono
-  router. Inline route middleware infers `c.var.services` while preserving `c.env` and native RPC
-  responses. Install one services middleware per request; consume/cancel responses before `close()`.
-- Use `createFastifyApp({ services, bindings? }, configure)` for a new native Fastify application,
-  or `createFastifyPlugin({ services, bindings?, appBindings?, locals? })` for an existing server.
-  Derive `FastifyRequest.services` once with
-  `InferRequestServices<typeof createApplication>` directly in `main.ts` or in a declaration
-  file included by TypeScript. `InferAppServices` also accepts the application return type. Both follow the
-  selected bindings or custom exposed views; no global types or runtime metadata are installed
-  by the adapter. Native routes and autoload do not need wrappers.
-  `app.services` contains the selected startup singletons; `request.services` is available from
-  `preHandler` through response completion. Register authentication providing locals earlier.
-  Infer decorators with `InferAppServices` / `InferRequestServices`; augment Fastify in the application
-  or use its typed `getDecorator`. Annotate module/locals callback parameters with native Fastify
-  types when their inferred return values participate in selection checking.
-- Keep business logic in plain factories with methods returning Tasks when sufficient. Register
-  them using `service(name, dependencies, factory)`. Wrap a Promise client with `ResultTask.tryPromise`
-  and keep `map` synchronous. For an existing eager Async repository or request helper, invoke it
-  inside `ResultTask.fromResultAsync((signal) => adapter(signal))` to create a fresh operation per run.
-  Map results through compositional `matchTags`, an explicit runner, and native response APIs;
-  the framework adapters install no status table or `reply.result` helper.
-- `scope.useSingletons(keys, callback)` restricts selected services and callback tokens to the root
-  lifetime. Keep its callback active while serving; it is not a free-standing resolver. Factory
-  initialization stays lazy until selection; resource release remains explicit.
-- `scope.fetch`, `services.http`, and `createHonoApp` keep the request scope open until the Response
-  body ends, fails, or is canceled. Tests must consume or cancel response bodies before shutdown.
-- Stop and drain the server, finish/cancel persistent streams, then await application close.
-  Handle typed release errors; defects and composite causes may reject `close()`.
-- Supply authenticated request locals through the appropriate per-request integration. A singleton
-  cannot capture scoped services or request-local data. Extracting authentication remains the
-  framework adapter's responsibility.
+Core [service requirements](../../../DOCUMENTATION.md#lazy-tasks-and-service-requirements)
+use `serviceTag` / `ResultTask.service`, `provideService`, `provideServices`,
+`provideServiceResolver`, and runner `services` options. Do not require `R = never`
+before calling a runner that receives the required services.
 
-For a complete runnable pattern, see the workspace `examples/hono/` and `examples/cookbook/`
-application lifecycle examples. The distributed guide includes the checked core recipe at
-`examples/workflow.mjs`; use the published declarations to adapt companion integrations.
-Some maintained examples and installed request adapters keep eager Async methods to demonstrate
-compatibility. Preserve that behavior during an incremental migration; new Task methods require
-explicit callers/runners and cannot be substituted by a return-type annotation alone.
+The [DI manual](../../../packages/di/README.md) covers:
 
-## Framework DI exports
+- `Service`, `Service.require`, `service`, `resource`, and `createModule`;
+- named/token registration: `value`, `singleton`, `scoped`, `transient`, `task`, `resource`;
+- immutable `merge` and type-checked `override` (an externally owned replacement value);
+- `use`, `scope`, `withServices`, `useSingletons`, `close`, `http`, and `scope.fetch`;
+- framework author APIs: `withProvider`, `inspectModule`, `useServiceAccess`,
+  `ServiceAccessError`, and `startServiceTask`.
 
-`resultar-fastify`, `resultar-hono` and `resultar-nestjs` reexport the application DI helpers: `createModule`, `Service`,
-`service`, `resource`, plus `HttpApplication`, `ServiceClass`, `ServiceLifetime`, `ServiceModule`
-and `ServiceScope` types. In framework-specific code, import these from the adapter together
-with its integration helpers. Core APIs such as `ResultTask` still come from `resultar`.
-Keep direct `resultar-di` imports and dependencies in framework-independent shared code and
-for framework adapter helpers such as `withProvider` and `useServiceAccess`. Check the installed adapter exports before using this convenience
-with older versions.
+A singleton cannot capture scoped/transient/request-local dependencies; scoped
+providers cannot capture transient dependencies. Register dependencies before their
+dependents. `value` and `override` do not transfer disposal ownership. Use task
+providers for fallible initialization and resource providers for acquisition/release.
+`scope.close()` waits for active children and releases root resources. Streaming
+HTTP lifetimes need `http` / `fetch` ownership through body consumption, not only
+through creation of the Response.
 
-## Runnable HTTP examples
+## Frameworks
 
-The maintained Fastify, Hono and NestJS examples each contain their own `services.ts`, `routes.ts`
-and `main.ts`. `services.ts` declares `Cache`, `UsersRepository` and `Users` classes,
-function-based `Health`, and the `createServices` module factory. `main.ts` omits
-`bindings` and owns framework typing and startup. The default request view includes all
-registered services, including the cache and repository. Do not introduce
-a shared package, separate `users.ts` or an extra `app.ts` for these small examples.
-Start any of these examples with `pnpm dev` from its directory; `PORT` defaults to 3000.
+| Package | Features and boundary |
+| --- | --- |
+| [Hono](../../../packages/hono/README.md) | `createHonoApp`, `createHonoServices`, inferred request services, optional bindings, locals, startup and response-body lifetime; Deno/server limitations |
+| [Fastify](../../../packages/fastify/README.md) | `createFastifyApp`, `createFastifyPlugin`, `request.services`, `app.services`, request/app bindings, locals, startup, cancellation, close and exposure policy |
+| [NestJS](../../../packages/nestjs/README.md) | `createNestApp`, `createNestModule`, `Services`, `APP_SERVICES`, `getRequestServices`, `getAppServices`, inferred request/app services, bindings, locals and native lifecycle |
+
+Select the adapter for the existing framework. Keep framework-native request,
+reply, decorators, and bootstrap contracts at the boundary. App bindings must
+satisfy singleton lifetime rules; request bindings select request-visible services.
+Read each adapter's startup, error, streaming, and shutdown sections before promising
+resource behavior. The [framework examples](../../../README.md#runnable-examples) are executable
+integration projects, including external route/controller files.
+
+## Outbound HTTP
+
+[`resultar-request`](../../../packages/request/README.md) supplies lazy `requestJsonTask`
+(returning `ResultTask<T, E>`) and eager `requestJson` (returning `ResultAsync<T, E>`),
+Fetch/Undici response support, validators/decoders, status and body checks, cancellation-aware retry,
+and stage-preserving domain `mapError`. Its public error helpers are `RequestError`,
+`HttpResponseErrorCauseError` (also `HttpClientRequestErrorCause`),
+`baseRequestErrorHandler`, `integrationErrorHandler`, and `isHttpResponseError`.
+The README describes structured error contexts and exported transport/validation types.
+
+[`resultar-request-zod`](../../../packages/request-zod/README.md) adds `requestJsonZodTask` /
+`requestJsonZod` and derives transformed success from `z.output<Schema>`.
+[`resultar-request-typebox`](../../../packages/request-typebox/README.md) adds
+`requestJsonTypeBoxTask` / `requestJsonTypeBox` and infers `Static<Schema>`. Both offer
+package-local `requestJsonTask` and `requestJson` aliases and re-export the base public API.
+
+Raw Promise-returning SDK/database drivers use `ResultTask.tryPromise` directly
+inside repository adapters; new repository/service methods expose Tasks, not Promises.
+
+For new lazy HTTP orchestration, return `requestJsonTask` / `requestJsonZodTask` /
+`requestJsonTypeBoxTask` directly without `async` or `ResultTask.fromResultAsync`:
+
+```ts
+const load = requestJsonTask({
+  request: signal => fetch(url, { signal }),
+  validator: isPayload,
+})
+```
+
+Preserve `requestJson` in existing eager `ResultAsync` callers (passing `signal` to cancel
+attempts and retry delays), and use `ResultTask.fromResultAsync(signal => existingAsyncHelper(signal))`
+when bridging an existing `ResultAsync` helper into a Task. `url` and `isPayload` above are
+application-specific. The complete [request example](../../../examples/request/README.md) and
+[agent evaluation cases](../evals/cases.mjs) demonstrate plain, Zod, and TypeBox validation,
+cancellation, and lazy execution. Keep retry ownership explicit; do not retry invalid payloads merely
+because they arrived over HTTP. Use the helpers rather than duplicating HTTP
+status/JSON/error mapping logic, unless the application's contract requires it.

@@ -5,11 +5,11 @@
   "scripts": {
     "build:deps": "pnpm --filter resultar build && pnpm --filter resultar-di build && pnpm --filter resultar-hono build && pnpm --filter resultar-check build && pnpm --filter resultar-check native:build:current",
     "check": "node ../../packages/check/dist/cli.js",
-    "dev": "pnpm run build:deps && node --import tsx src/main.ts",
-    "smoke": "pnpm run build:deps && pnpm run check && node --import tsx scripts/smoke.ts"
+    "dev": "pnpm run build:deps && node --import vite-plus/register src/main.ts",
+    "smoke": "pnpm run build:deps && pnpm run check && node --import vite-plus/register scripts/smoke.ts"
   },
   "dependencies": {
-    "@hono/node-server": "2.1.5",
+    "@hono/node-server": "2.1.6",
     "hono": "catalog:",
     "resultar": "workspace:*",
     "resultar-hono": "workspace:*"
@@ -17,7 +17,6 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "resultar-check": "workspace:*",
-    "tsx": "catalog:",
     "typescript": "catalog:"
   }
 }

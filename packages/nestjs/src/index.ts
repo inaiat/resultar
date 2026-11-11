@@ -1167,9 +1167,9 @@ export function createNestApp<const Options extends NestAppOptions>(
       }
       pendingOperations.length = 0;
       await created.init();
-      const instance = adapter.getInstance() as
-        | { readonly ready?: () => PromiseLike<unknown> }
-        | undefined;
+      const instance = adapter.getInstance<
+        { readonly ready?: () => PromiseLike<unknown> } | undefined
+      >();
       if (typeof instance?.ready === "function") {
         await instance.ready();
       }

@@ -1,10 +1,11 @@
 import { strict as assert } from "node:assert";
-import type { ResultAsync } from "resultar";
+import { Cause, Clock, Match, ResultTask, type ResultAsync } from "resultar";
 import { describe, it } from "vite-plus/test";
 
 import {
   isHttpResponseError,
   requestJson,
+  requestJsonTask,
   RequestError,
   type RequestJsonMapError,
   type UndiciJsonResponseData,
@@ -512,5 +513,601 @@ describe("requestJson", () => {
     assert.equal(errorSignal.message, "signal timeout");
     assert.equal(errorSignal.statusCode, 408);
     assert.equal(errorSignal.cause, abortTimeoutError);
+  });
+
+  it("given pre-aborted signal, then skips request attempt and preserves custom abort reason", async () => {
+    const controller = new AbortController();
+    const customReason = new Error("caller cancelled before attempt");
+    controller.abort(customReason);
+    let attempts = 0;
+
+    const result = await requestJson({
+      request: async () => {
+        attempts += 1;
+
+        return createFetchResponse(userSample);
+      },
+      retry: { delayMs: 10, times: 2 },
+      signal: controller.signal,
+      validator: isUserSample,
+    });
+
+    assert.equal(attempts, 0);
+    assert.ok(result.isErr());
+    const error = expectRequestError(result.error);
+    assert.equal(error.message, "caller cancelled before attempt");
+    assert.equal(error.cause, customReason);
+  });
+
+  it("given signal aborts during retry delay, then cancels immediately without starting next attempt", async () => {
+    const controller = new AbortController();
+    const customReason = { code: "CANCELLED_IN_BACKOFF" };
+    let attempts = 0;
+
+    const pending = requestJson({
+      request: async () => {
+        attempts += 1;
+
+        return createFetchResponse("Service Unavailable", { status: 503 });
+      },
+      retry: {
+        backoff: 2,
+        delayMs: 10_000,
+        onRetry: () => {
+          setTimeout(() => {
+            controller.abort(customReason);
+          }, 5);
+        },
+        times: 3,
+      },
+      signal: controller.signal,
+      validator: isUserSample,
+    });
+
+    const result = await pending;
+
+    assert.equal(attempts, 1);
+    assert.ok(result.isErr());
+    const error = expectRequestError(result.error);
+    assert.equal(error.message, '{"code":"CANCELLED_IN_BACKOFF"}');
+    assert.equal(error.cause, customReason);
+  });
+
+  it("given signal aborts during attempt, then stops scheduling retries even when custom when returns true", async () => {
+    const controller = new AbortController();
+    let attempts = 0;
+
+    const result = await requestJson({
+      mapError: createMapError({
+        request: ({ cause, error }) =>
+          new MappedRequestJsonError("request", error.message, { cause }),
+      }),
+      request: (signal) => {
+        attempts += 1;
+        assert.equal(signal, controller.signal);
+        controller.abort(new Error("aborted in flight"));
+
+        return Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
+      },
+      retry: { delayMs: 0, times: 3, when: () => true },
+      signal: controller.signal,
+      validator: isUserSample,
+    });
+
+    assert.equal(attempts, 1);
+    assert.ok(result.isErr());
+    const error = expectMappedError(result.error);
+    assert.equal(error.kind, "request");
+    assert.equal(error.message, "aborted in flight");
+  });
+
+  it("given transport abort without external signal, then default retry policy does not retry", async () => {
+    let attempts = 0;
+
+    const result = await requestJson({
+      request: async () => {
+        attempts += 1;
+        throw new DOMException("Transport aborted", "AbortError");
+      },
+      retry: { delayMs: 0, times: 2 },
+      validator: isUserSample,
+    });
+
+    assert.equal(attempts, 1);
+    assert.ok(result.isErr());
+    const error = expectRequestError(result.error);
+    assert.equal(error.message, "Transport aborted");
+  });
+
+  it("given request-stage SyntaxError, then classifies as request failure and retries by default", async () => {
+    let attempts = 0;
+
+    const retried = await requestJson({
+      request: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new SyntaxError("Invalid URL configuration");
+        }
+
+        return createFetchResponse(userSample);
+      },
+      retry: { delayMs: 0, times: 1 },
+      validator: isUserSample,
+    });
+
+    assert.equal(attempts, 2);
+    assert.ok(retried.isOk());
+
+    const mapped = await requestJson({
+      mapError: createMapError(),
+      request: async () => {
+        throw new SyntaxError("Invalid header token");
+      },
+      validator: isUserSample,
+    });
+
+    assert.ok(mapped.isErr());
+    const mappedError = expectMappedError(mapped.error);
+    assert.equal(mappedError.kind, "request");
+    assert.equal(mappedError.message, "Invalid header token");
+  });
+
+  it("given JSON parse SyntaxError vs body stream read error, then classifies only JSON parse SyntaxError as invalidJson", async () => {
+    let jsonParseAttempts = 0;
+    const parseFailure = await requestJson({
+      mapError: createMapError(),
+      request: async () => {
+        jsonParseAttempts += 1;
+
+        return createFetchResponse("{invalid-json");
+      },
+      retry: { delayMs: 0, times: 2 },
+      validator: isUserSample,
+    });
+
+    assert.equal(jsonParseAttempts, 1);
+    assert.ok(parseFailure.isErr());
+    assert.equal(expectMappedError(parseFailure.error).kind, "invalid-json");
+
+    let streamReadAttempts = 0;
+    const streamReadFailure = await requestJson({
+      mapError: createMapError(),
+      request: async () => {
+        streamReadAttempts += 1;
+
+        return {
+          headers: {},
+          json: () => Promise.reject(new TypeError("terminated")),
+          status: 200,
+          text: async () => "",
+        };
+      },
+      retry: { delayMs: 0, times: 1 },
+      validator: isUserSample,
+    });
+
+    assert.equal(streamReadAttempts, 2);
+    assert.ok(streamReadFailure.isErr());
+    assert.equal(expectMappedError(streamReadFailure.error).kind, "request");
+  });
+
+  it("given HTTP 5xx with circular, bigint, or throwing toJSON headers, then returns Err without rejecting Promise", async () => {
+    const circularHeaders: Record<string, unknown> = { "x-trace": "1" };
+    circularHeaders.self = circularHeaders;
+
+    const bigintHeaders = { "x-ratelimit-reset": 123_456_789n };
+    const throwingHeaders = {
+      toJSON() {
+        throw new Error("toJSON failed");
+      },
+    };
+
+    for (const headers of [circularHeaders, bigintHeaders, throwingHeaders]) {
+      // eslint-disable-next-line no-await-in-loop
+      const result = await requestJson({
+        request: async () => ({
+          headers,
+          json: async () => ({}),
+          status: 503,
+          text: async () => "Service Unavailable",
+        }),
+        validator: isUserSample,
+      });
+
+      assert.ok(result.isErr());
+      const error = expectRequestError(result.error);
+      assert.equal(error.statusCode, 503);
+      assert.equal(error.message, "Service Unavailable");
+      assert.ok(isHttpResponseError(error));
+      assert.equal(error.cause.headers, headers);
+      assert.equal(error.cause.body, "Service Unavailable");
+      assert.equal(error.cause.statusCode, 503);
+    }
+
+    const serializableHeaders = { "x-request-id": "req-1" };
+    const ordinary = await requestJson({
+      request: async () =>
+        createFetchResponse("Bad Gateway", { headers: serializableHeaders, status: 502 }),
+      validator: isUserSample,
+    });
+
+    assert.ok(ordinary.isErr());
+    const ordinaryError = expectRequestError(ordinary.error);
+    assert.ok(isHttpResponseError(ordinaryError));
+    assert.equal(
+      ordinaryError.cause.message,
+      JSON.stringify({
+        body: "Bad Gateway",
+        headers: new Response("", { headers: serializableHeaders }).headers,
+        statusCode: 502,
+      }),
+    );
+  });
+
+  it("given pre-started rejecting Promise and cancelled or early-failing call, then never emits unhandledRejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      const preAborted = new AbortController();
+      const abortReason = new Error("already cancelled");
+      preAborted.abort(abortReason);
+
+      const asyncRejectingPromise = new Promise<Response>((_resolve, reject) => {
+        setTimeout(() => {
+          reject(new Error("late transport failure"));
+        }, 5);
+      });
+      const preAbortedResult = await requestJson({
+        request: asyncRejectingPromise,
+        signal: preAborted.signal,
+        validator: isUserSample,
+      });
+
+      assert.ok(preAbortedResult.isErr());
+      assert.equal(expectRequestError(preAbortedResult.error).cause, abortReason);
+
+      const immediateRejected = Promise.reject<Response>(new Error("already rejected"));
+      const immediateResult = await requestJson({
+        request: immediateRejected,
+        signal: preAborted.signal,
+        validator: isUserSample,
+      });
+      assert.ok(immediateResult.isErr());
+
+      const syncAbortController = new AbortController();
+      const syncAbortPromise = new Promise<Response>((_resolve, reject) => {
+        setTimeout(() => {
+          reject(new Error("post-abort transport rejection"));
+        }, 5);
+      });
+      const syncAbortPending = requestJson({
+        request: syncAbortPromise,
+        signal: syncAbortController.signal,
+        validator: isUserSample,
+      });
+      syncAbortController.abort(new Error("aborted immediately after call"));
+      const syncAbortResult = await syncAbortPending;
+      assert.ok(syncAbortResult.isErr());
+
+      const retryRejected = new Promise<Response>((_resolve, reject) => {
+        setTimeout(() => {
+          reject(new Error("rejected with invalid retry config"));
+        }, 5);
+      });
+      const retryResult = await requestJson({
+        request: retryRejected,
+        retry: { times: 1 },
+        validator: isUserSample,
+      });
+      assert.ok(retryResult.isErr());
+
+      const missingDecoderRejected = new Promise<Response>((_resolve, reject) => {
+        setTimeout(() => {
+          reject(new Error("rejected with missing decoder"));
+        }, 5);
+      });
+      const missingDecoderResult = await requestJsonUnsafe({ request: missingDecoderRejected });
+      assert.ok(missingDecoderResult.isErr());
+
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 25);
+      });
+
+      assert.deepEqual(unhandled, []);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("given synchronous abort immediately after calling requestJson, then never invokes request factory", async () => {
+    const directController = new AbortController();
+    const directReason = new Error("cancelled before microtask");
+    let directCalls = 0;
+
+    const directPending = requestJson({
+      request: async () => {
+        directCalls += 1;
+
+        return createFetchResponse(userSample);
+      },
+      signal: directController.signal,
+      validator: isUserSample,
+    });
+    directController.abort(directReason);
+    const directResult = await directPending;
+
+    assert.equal(directCalls, 0);
+    assert.ok(directResult.isErr());
+    const directError = expectRequestError(directResult.error);
+    assert.equal(directError.message, "cancelled before microtask");
+    assert.equal(directError.cause, directReason);
+
+    const retryController = new AbortController();
+    const retryReason = new Error("cancelled retry before microtask");
+    let retryCalls = 0;
+
+    const retryPending = requestJson({
+      request: async () => {
+        retryCalls += 1;
+
+        return createFetchResponse(userSample);
+      },
+      retry: { backoff: 2, delayMs: 10, times: 2 },
+      signal: retryController.signal,
+      validator: isUserSample,
+    });
+    retryController.abort(retryReason);
+    const retryResult = await retryPending;
+
+    assert.equal(retryCalls, 0);
+    assert.ok(retryResult.isErr());
+    const retryError = expectRequestError(retryResult.error);
+    assert.equal(retryError.message, "cancelled retry before microtask");
+    assert.equal(retryError.cause, retryReason);
+  });
+
+  it("given signal aborts during retry.when or with null reason, then preserves exact abort cause instead of prior attempt error", async () => {
+    for (const decision of [false, true]) {
+      const controller = new AbortController();
+      const abortReason = new Error(`aborted inside retry.when (${String(decision)})`);
+      let attempts = 0;
+
+      // eslint-disable-next-line no-await-in-loop
+      const result = await requestJson({
+        request: async () => {
+          attempts += 1;
+          throw new Error("initial transport failure");
+        },
+        retry: {
+          delayMs: 0,
+          times: 2,
+          when: async () => {
+            await Promise.resolve();
+            controller.abort(abortReason);
+
+            return decision;
+          },
+        },
+        signal: controller.signal,
+        validator: isUserSample,
+      });
+
+      assert.equal(attempts, 1);
+      assert.ok(result.isErr());
+      const error = expectRequestError(result.error);
+      assert.equal(error.message, abortReason.message);
+      assert.equal(error.cause, abortReason);
+    }
+
+    const mappedController = new AbortController();
+    const mappedAbortCause = new Error("aborted after 503 during retry.when");
+    const mappedResult = await requestJson({
+      mapError: createMapError({
+        request: ({ cause, error }) =>
+          new MappedRequestJsonError("request", error.message, { cause }),
+      }),
+      request: async () => createFetchResponse("Service Unavailable", { status: 503 }),
+      retry: {
+        backoff: 2,
+        delayMs: 10,
+        times: 2,
+        when: () => {
+          mappedController.abort(mappedAbortCause);
+
+          return false;
+        },
+      },
+      signal: mappedController.signal,
+      validator: isUserSample,
+    });
+
+    assert.ok(mappedResult.isErr());
+    const mappedError = expectMappedError(mappedResult.error);
+    assert.equal(mappedError.kind, "request");
+    assert.equal(mappedError.message, "aborted after 503 during retry.when");
+    assert.equal(mappedError.context.cause, mappedAbortCause);
+
+    const nullReason: unknown = JSON.parse("null");
+    const preNullController = new AbortController();
+    preNullController.abort(nullReason);
+    const preNullResult = await requestJson({
+      request: async () => createFetchResponse(userSample),
+      signal: preNullController.signal,
+      validator: isUserSample,
+    });
+    assert.ok(preNullResult.isErr());
+    const preNullError = expectRequestError(preNullResult.error);
+    assert.equal(preNullError.message, "null");
+    assert.equal(Object.is(preNullError.cause, nullReason), true);
+
+    const inFlightNullController = new AbortController();
+    const inFlightNullResult = await requestJson({
+      request: () => {
+        inFlightNullController.abort(nullReason);
+
+        return Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
+      },
+      signal: inFlightNullController.signal,
+      validator: isUserSample,
+    });
+    assert.ok(inFlightNullResult.isErr());
+    const inFlightNullError = expectRequestError(inFlightNullResult.error);
+    assert.equal(inFlightNullError.message, "null");
+    assert.equal(Object.is(inFlightNullError.cause, nullReason), true);
+
+    const retryWhenNullController = new AbortController();
+    const retryWhenNullResult = await requestJson({
+      request: async () => createFetchResponse("Service Unavailable", { status: 503 }),
+      retry: {
+        delayMs: 10,
+        times: 2,
+        when: () => {
+          retryWhenNullController.abort(nullReason);
+
+          return true;
+        },
+      },
+      signal: retryWhenNullController.signal,
+      validator: isUserSample,
+    });
+    assert.ok(retryWhenNullResult.isErr());
+    const retryWhenNullError = expectRequestError(retryWhenNullResult.error);
+    assert.equal(retryWhenNullError.message, "null");
+    assert.equal(Object.is(retryWhenNullError.cause, nullReason), true);
+  });
+});
+
+describe("requestJsonTask", () => {
+  it("stays lazy at construction and executes fresh on every run", async () => {
+    let calls = 0;
+
+    const task = requestJsonTask({
+      request: async (signal) => {
+        assert.equal(signal.aborted, false);
+        calls += 1;
+
+        return createFetchResponse({ ...userSample, name: `User ${calls}` });
+      },
+      validator: isUserSample,
+    });
+
+    expectType<ResultTask<UserSample, RequestError>>(task);
+    assert.equal(calls, 0);
+
+    const first = await task.runResult();
+    const second = await task.runResult();
+
+    assert.equal(calls, 2);
+    assert.ok(first.isOk());
+    assert.ok(second.isOk());
+    assert.equal(first.value.name, "User 1");
+    assert.equal(second.value.name, "User 2");
+  });
+
+  it("reuses Task clock for retries and preserves domain error mapping", async () => {
+    let calls = 0;
+    const delays: number[] = [];
+    const clock = {
+      now: () => 0,
+      random: () => 0.5,
+      sleep: async (ms: number) => {
+        delays.push(ms);
+      },
+    };
+
+    const mappedErrors = {
+      http: ({ statusCode }) => new MappedRequestJsonError("http", String(statusCode)),
+      invalidJson: ({ cause }) => new MappedRequestJsonError("invalid-json", cause.message),
+      request: ({ cause }) => new MappedRequestJsonError("request", cause.message),
+      validation: ({ message }) => new MappedRequestJsonError("validation", message),
+    } satisfies RequestJsonMapError;
+
+    const task = requestJsonTask({
+      mapError: mappedErrors,
+      request: async () => {
+        calls += 1;
+
+        return calls < 3
+          ? createFetchResponse("Temporary error", { status: 503 })
+          : createFetchResponse(userSample);
+      },
+      retry: { backoff: 2, delayMs: 25, jittered: 0, times: 2 },
+      validator: isUserSample,
+    });
+
+    expectType<ResultTask<UserSample, MappedRequestJsonError>>(task);
+    assert.equal(calls, 0);
+
+    const value = await task.runPromise({ clock });
+
+    assert.deepEqual(value, userSample);
+    assert.equal(calls, 3);
+    assert.deepEqual(delays, [25, 50]);
+  });
+
+  it("propagates Task interruption and awaits scope cleanup on timeout or cancellation", async () => {
+    const events: string[] = [];
+    let observedAbort = false;
+    const clock = Clock.virtual();
+
+    const workflow = ResultTask.scoped(
+      ResultTask.gen(function* scopedRequestWorkflow() {
+        yield* ResultTask.acquireRelease({
+          acquire: ResultTask.sync(() => {
+            events.push("acquire");
+            return "lease";
+          }),
+          release: () =>
+            ResultTask.sync(() => {
+              events.push("release");
+            }),
+        });
+
+        return yield* requestJsonTask({
+          request: (signal) =>
+            new Promise<Response>((_resolve, reject) => {
+              signal.addEventListener(
+                "abort",
+                () => {
+                  observedAbort = true;
+                  events.push("transport-aborted");
+                  reject(new DOMException("Aborted", "AbortError"));
+                },
+                { once: true },
+              );
+            }),
+          retry: { delayMs: 100, times: 3 },
+          validator: isUserSample,
+        });
+      }),
+    );
+
+    const timed = ResultTask.timeout(
+      workflow,
+      50,
+      () => new MappedRequestJsonError("timeout", "Request timed out"),
+    );
+
+    const pending = timed.runResult({ clock });
+    await clock.advanceBy(50);
+    const outcome = await pending;
+
+    assert.ok(outcome.isErr());
+    assert.equal(observedAbort, true);
+    assert.deepEqual(events, ["acquire", "transport-aborted", "release"]);
+    assert.equal(outcome.error.message, "Request timed out");
+
+    const controller = new AbortController();
+    controller.abort();
+    const interruptedExit = await workflow.runExit({ signal: controller.signal });
+    const wasInterrupted = Match.valueTags(interruptedExit, {
+      Failure: ({ cause }) => Cause.hasInterrupts(cause),
+      Success: () => false,
+    });
+    assert.equal(wasInterrupted, true);
   });
 });

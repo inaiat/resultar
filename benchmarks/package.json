@@ -3,24 +3,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "bench": "pnpm --filter resultar build && node --import tsx resultar-vs-neverthrow.ts",
+    "bench": "pnpm --filter resultar build && node --import vite-plus/register resultar-vs-neverthrow.ts",
     "bench:check-cli": "pnpm run bench:check-native",
-    "bench:check-native": "pnpm --filter resultar-check build && pnpm --filter resultar-check native:build && node --import tsx resultar-check-native.ts",
+    "bench:check-native": "pnpm --filter resultar-check build && pnpm --filter resultar-check native:build && node --import vite-plus/register resultar-check-native.ts",
     "bench:neverthrow": "pnpm run bench",
-    "bench:stable": "pnpm --filter resultar build && node --import tsx resultar-vs-stable.ts",
-    "bench:task": "pnpm --filter resultar build && node --import tsx resultar-task-chains.ts",
-    "bench:effect": "pnpm --filter resultar build && node --import tsx resultar-vs-effect.ts",
-    "bench:function": "pnpm --filter resultar build && node --import tsx resultar-functional-ergonomics.ts"
+    "bench:stable": "pnpm --filter resultar build && node --import vite-plus/register resultar-vs-stable.ts",
+    "bench:task": "pnpm --filter resultar build && node --import vite-plus/register resultar-task-chains.ts",
+    "bench:effect": "pnpm --filter resultar build && node --import vite-plus/register resultar-vs-effect.ts",
+    "bench:function": "pnpm --filter resultar build && node --import vite-plus/register resultar-functional-ergonomics.ts"
   },
   "dependencies": {
     "resultar": "workspace:*"
   },
   "devDependencies": {
     "cronometro": "^7.0.1",
-    "effect": "^4.0.5",
+    "effect": "^4.1.2",
     "neverthrow": "^8.2.0",
     "resultar-check": "workspace:*",
-    "tsx": "catalog:",
     "typescript": "catalog:"
   }
 }

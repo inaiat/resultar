@@ -90,6 +90,7 @@ assert.ok(good.isOk()); assert.equal(good.value, 9)`,
   },
   {
     id: 4,
+    guidance: ["references/services.md", "manual/packages/request-zod/README.md", "manual/packages/request-typebox/README.md"],
     contract: `Export loadZod(request: () => Promise<Response>) and loadTypeBox(request: () => Promise<Response>)
 using the corresponding resultar-request adapters. Zod accepts {id: string} containing only digits
 and transforms it to {numericId: number}; TypeBox validates {numericId: number} directly. Derive
@@ -118,6 +119,7 @@ export type TypeBoxCheck = Assert<Equal<ReturnType<typeof loadTypeBox>, ResultAs
   },
   {
     id: 5,
+    guidance: ["references/anti-patterns.md", "manual/packages/check/README.md"],
     contract: `Export tsconfig with strict NodeNext/ESNext compiler options and a resultar-check plugin
 requiring noDiscard and noAwaitInSafeTry as errors, failing on warning. Export commands as
 {check: 'resultar-check --project tsconfig.json', editor: 'resultar-check lsp --project tsconfig.json'}.
@@ -162,6 +164,7 @@ const existing = solution.doublePositive(err('upstream')); assert.ok(existing.is
   },
   {
     id: 7,
+    guidance: ["references/patterns.md", "references/integrations.md"],
     contract: `Use Prefix, AcquireError, ReadError, CloseError, Acquire from ./contract.mjs.
 Export scopedRead(acquire: Acquire), a lazy ResultTask requiring Prefix, acquiring one connection,
 reading its value and prepending Prefix, then awaiting close exactly once. Map external failures
@@ -215,5 +218,319 @@ const acquireCause = new Error('acquire')
 const bad = await ResultTask.runResult(solution.scopedRead(async () => {throw acquireCause}), {services: {prefix: ''}})
 assert.ok(bad.isErr()); assert.equal(bad.error._tag, 'AcquireError'); assert.equal(bad.error.cause, acquireCause)`,
     mutate: source => source.replace('return prefix + value', "return prefix + 'wrong'"),
+  },
+  {
+    id: 8,
+    guidance: ['references/services.md', 'manual/packages/request/README.md'],
+    contract: `The request callback is an external transport, not an application repository.
+Export load(request: (signal: AbortSignal) => Promise<Response>) as a lazy Task
+using requestJson. Validate {value: number}; preserve RequestError. Do not make a request until
+run, and make a new request on every run, forwarding the Task signal.`,
+    reference: `import {ResultTask} from 'resultar'
+import {requestJson} from 'resultar-request'
+export const load = (request: (signal: AbortSignal) => Promise<Response>) => ResultTask.fromResultAsync(signal => requestJson({
+  request: () => request(signal),
+  validator: (value): value is {value: number} => typeof value === 'object' && value !== null && 'value' in value && typeof value.value === 'number',
+}))`,
+    types: `import {load} from './solution.mjs'
+import type {ResultTask} from 'resultar'
+import type {RequestError} from 'resultar-request'
+export type Check = Assert<Equal<ReturnType<typeof load>, ResultTask<{value: number}, RequestError>>>`,
+    checks: `let calls = 0
+const task = solution.load(async signal => { assert.equal(signal.aborted, false); return Response.json({value: ++calls}) })
+assert.equal(calls, 0)
+assert.deepEqual(await task.runPromise(), {value: 1})
+assert.deepEqual(await task.runPromise(), {value: 2})
+assert.equal((await solution.load(async () => Response.json({value: 'bad'})).runResult()).isErr(), true)`,
+    mutate: source => source.replace("typeof value.value === 'number'", "typeof value.value === 'string'"),
+  },
+  {
+    id: 9,
+    guidance: ['references/services.md', 'manual/packages/di/README.md'],
+    contract: `Export makeApplication(events: string[]). Return a resultar-di root scope with
+a singleton resource named cache (Map<string,string>) and scoped service named users depending
+on cache and the external tenant local. users.find(id) reads tenant + ':' + id from cache.
+Acquisition pushes 'open', release pushes 'close'. Each scope.use gets a child; closing the root
+releases the cache once. Populate the initial cache with acme:1 -> Ada and other:1 -> Grace.`,
+    reference: `import {ResultTask} from 'resultar'
+import {createModule, resource, service, Service} from 'resultar-di'
+export const makeApplication = (events: string[]) => {
+  const Cache = resource('cache', {
+    acquire: ResultTask.sync(() => {events.push('open'); return new Map([['acme:1', 'Ada'], ['other:1', 'Grace']])}),
+    release: () => ResultTask.sync(() => {events.push('close')}),
+  })
+  const Tenant = Service.require<string>()('tenant')
+  const Users = service('users', {cache: Cache, tenant: Tenant}, ({cache, tenant}) => ({find: (id: string) => cache.get(tenant + ':' + id)}))
+  return createModule().singleton(Cache).scoped(Users).scope()
+}`,
+    types: `import {makeApplication} from './solution.mjs'
+export type Check = Assert<Equal<Parameters<typeof makeApplication>, [string[]]>>`,
+    checks: `const {ResultTask} = await import('resultar')
+const events: string[] = []
+const root = solution.makeApplication(events)
+assert.deepEqual(events, [])
+for (const [tenant, name] of [['acme','Ada'], ['other','Grace']]) {
+  const found = await root.withServices({tenant}).use(['users'], ({users}) => ResultTask.ok(users.find('1'))).runPromise()
+  assert.equal(found, name)
+}
+assert.deepEqual(events, ['open'])
+await root.close().runPromise()
+assert.deepEqual(events, ['open', 'close'])`,
+    mutate: source => source.replace("tenant + ':' + id", "'acme:' + id"),
+  },
+  {
+    id: 10,
+    guidance: ['references/api.md'],
+    contract: `Export toStatus(input: Input): number for the supplied discriminated union.
+Use exhaustive Match discrimination on kind: missing -> 404, denied -> 403, ready -> 200.
+Export mask(value: string): string using redact with label token; never expose the input.`,
+    support: `export type Input = {kind: 'missing'} | {kind: 'denied'} | {kind: 'ready'; value: number}`,
+    reference: `import {Match, redact} from 'resultar'
+import type {Input} from './contract.mjs'
+export const toStatus = (input: Input): number => Match.value(input).pipe(Match.discriminatorsExhaustive('kind')({missing: () => 404, denied: () => 403, ready: () => 200}))
+export const mask = (value: string): string => String(redact(value, 'token'))`,
+    types: `import {toStatus} from './solution.mjs'
+export type Check = Assert<Equal<ReturnType<typeof toStatus>, number>>`,
+    checks: `assert.equal(solution.toStatus({kind: 'missing'}), 404)
+assert.equal(solution.toStatus({kind: 'denied'}), 403)
+assert.equal(solution.toStatus({kind: 'ready', value: 3}), 200)
+assert.equal(solution.mask('secret'), '<redacted:token>')`,
+    mutate: source => source.replace('denied: () => 403', 'denied: () => 401'),
+  },
+  {
+    id: 11,
+    guidance: ['references/patterns.md'],
+    contract: `Export retry(load: () => ResultTask<number, LoadError>). Use the supplied LoadError.
+Use Retry.policy to allow two retries, delays 10ms then 20ms, with numeric backoff and no jitter.
+Retry only retryable failures. Invoke the load factory lazily anew for every attempt.`,
+    support: `import {createTaggedError} from 'resultar'
+export class LoadError extends createTaggedError({name: 'LoadError', message: 'Load failed'}).withProps<{readonly retryable: boolean}>() {}`,
+    reference: `import {ResultTask, Retry} from 'resultar'
+import {LoadError} from './contract.mjs'
+export const retry = (load: () => ResultTask<number, LoadError>) => ResultTask.gen(function* () { return yield* load() }).retry(Retry.policy<LoadError>({times: 2, delayMs: 10, backoff: 2, jittered: 0, while: error => error.retryable}))`,
+    types: `import {retry} from './solution.mjs'
+import type {LoadError} from './contract.mjs'
+import type {ResultTask} from 'resultar'
+export type Check = Assert<Equal<ReturnType<typeof retry>, ResultTask<number, LoadError>>>`,
+    checks: `const {ResultTask} = await import('resultar')
+const {LoadError} = await import('./contract.mjs')
+let calls = 0
+const delays: number[] = []
+const task = solution.retry(() => ++calls < 3 ? ResultTask.err(new LoadError({retryable: true})) : ResultTask.ok(9))
+assert.equal(calls, 0)
+assert.equal(await task.runPromise({clock: {now: () => 0, random: () => 0.5, sleep: async ms => {delays.push(ms)}}}), 9)
+assert.equal(calls, 3); assert.deepEqual(delays, [10,20])
+calls = 0
+const fatal = await solution.retry(() => {calls++; return ResultTask.err(new LoadError({retryable: false}))}).runResult()
+assert.equal(fatal.isErr(), true); assert.equal(calls, 1)`,
+    mutate: source => source.replace('backoff: 2', 'backoff: 1'),
+  },
+  {
+    id: 12,
+    guidance: ['references/api.md', 'references/integrations.md'],
+    contract: `Implement an explicit native execution boundary, not a reusable repository method.
+Export describe(task: ResultTask<number, string>, signal?: AbortSignal): Promise<string>. Execute once
+with runExit. Return success:<value> for success, interrupted for a cause containing interruption,
+defect for a cause containing a defect, failure otherwise, in that priority order. Never throw
+merely because the Task has a typed failure, defect, or interruption.`,
+    reference: `import {Cause, type ResultTask} from 'resultar'
+export const describe = async (task: ResultTask<number, string>, signal?: AbortSignal): Promise<string> => {
+  const exit = await task.runExit({signal})
+  if (exit._tag === 'Success') return 'success:' + exit.value
+  if (Cause.hasInterrupts(exit.cause)) return 'interrupted'
+  if (Cause.hasDies(exit.cause)) return 'defect'
+  return 'failure'
+}`,
+    types: `import {describe} from './solution.mjs'
+export type Check = Assert<Equal<ReturnType<typeof describe>, Promise<string>>>`,
+    checks: `const {ResultTask} = await import('resultar')
+assert.equal(await solution.describe(ResultTask.ok(3)), 'success:3')
+assert.equal(await solution.describe(ResultTask.err('expected')), 'failure')
+assert.equal(await solution.describe(ResultTask.sync(() => {throw new Error('defect')})), 'defect')
+const controller = new AbortController(); controller.abort()
+assert.equal(await solution.describe(ResultTask.ok(0), controller.signal), 'interrupted')`,
+    mutate: source => source.replace("return 'defect'", "return 'failure'"),
+  },
+  {
+    id: 13,
+    guidance: ['references/patterns.md', 'references/services.md'],
+    contract: `Implement makeRepository(driver: (id: string, signal: AbortSignal) => Promise<number>).
+The driver is an external SDK. Return an object with load(id: string): ResultTask<number, LoadError>.
+Use the supplied LoadError with id and cause. Adapt the raw Promise directly with tryPromise;
+do not construct ResultAsync just to convert it back to a Task. Neither makeRepository nor load
+is async. Map synchronous driver throws and Promise rejections. Keep work lazy and repeatable,
+and forward the Task cancellation signal.`,
+    support: `import {createTaggedError} from 'resultar'
+export class LoadError extends createTaggedError({name: 'LoadError', message: 'Load failed for $id'}) {}`,
+    reference: `import {ResultTask} from 'resultar'
+import {LoadError} from './contract.mjs'
+export const makeRepository = (driver: (id: string, signal: AbortSignal) => Promise<number>) => ({
+  load: (id: string): ResultTask<number, LoadError> => ResultTask.tryPromise({
+    try: signal => driver(id, signal),
+    catch: cause => new LoadError({id, cause}),
+  }),
+})`,
+    types: `import {makeRepository} from './solution.mjs'
+import type {LoadError} from './contract.mjs'
+import type {ResultTask} from 'resultar'
+export type Check = Assert<Equal<ReturnType<ReturnType<typeof makeRepository>['load']>, ResultTask<number, LoadError>>>`,
+    checks: `const {LoadError} = await import('./contract.mjs')
+const {Cause} = await import('resultar')
+let calls = 0
+const repository = solution.makeRepository(async (id, signal) => {assert.equal(id, '1'); assert.equal(signal.aborted, false); return ++calls})
+const task = repository.load('1')
+assert.equal(calls, 0)
+assert.equal(await task.runPromise(), 1); assert.equal(await task.runPromise(), 2)
+const cause = new Error('driver')
+for (const driver of [() => {throw cause}, () => Promise.reject(cause)]) {
+  const failed = await solution.makeRepository(driver).load('bad').runResult()
+  assert.equal(failed.isErr(), true)
+  if (failed.isErr()) {assert.ok(LoadError.is(failed.error)); assert.equal(failed.error.id, 'bad'); assert.equal(failed.error.cause, cause)}
+}
+const controller = new AbortController()
+let started!: () => void
+const ready = new Promise<void>(resolve => {started = resolve})
+let aborted = false
+const pending = solution.makeRepository((_id, signal) => new Promise<number>((_resolve, reject) => {
+  signal.addEventListener('abort', () => {aborted = true; reject(new Error('cancelled'))}, {once: true})
+  started()
+})).load('1').runExit({signal: controller.signal})
+await ready; controller.abort()
+const exit = await pending
+assert.equal(aborted, true); assert.equal(exit._tag, 'Failure')
+if (exit._tag === 'Failure') assert.equal(Cause.hasInterrupts(exit.cause), true)`,
+    mutate: source => source.replace('load: (id: string): ResultTask<number, LoadError>', 'load: async (id: string)'),
+  },
+  {
+    id: 14,
+    guidance: ['references/anti-patterns.md', 'manual/packages/check/README.md'],
+    contract: `Use LoadError from ./contract.mjs. Export loadTask(driver: (signal: AbortSignal) => Promise<number>)
+and loadEager(driver: () => Promise<number>) without return type annotations on either function.
+loadTask adapts driver into a lazy, repeatable ResultTask using ResultTask.tryPromise and LoadError;
+loadEager adapts driver into an eager ResultAsync using tryResultAsync and LoadError. Do not mark
+either factory async (never return Promise<ResultTask<...>> or Promise<Result<...>>).`,
+    support: `import {createTaggedError} from 'resultar'
+export class LoadError extends createTaggedError({name: 'LoadError', message: 'Load failed'}) {}`,
+    reference: `import {ResultTask, tryResultAsync} from 'resultar'
+import {LoadError} from './contract.mjs'
+export const loadTask = (driver: (signal: AbortSignal) => Promise<number>) =>
+  ResultTask.tryPromise({try: driver, catch: cause => new LoadError({cause})})
+export const loadEager = (driver: () => Promise<number>) =>
+  tryResultAsync(driver, cause => new LoadError({cause}))`,
+    types: `import {loadTask, loadEager} from './solution.mjs'
+export type TaskParams = Assert<Equal<Parameters<typeof loadTask>, [(signal: AbortSignal) => Promise<number>]>>
+export type EagerParams = Assert<Equal<Parameters<typeof loadEager>, [() => Promise<number>]>>`,
+    checks: `const {isResultTask} = await import('resultar')
+const {LoadError} = await import('./contract.mjs')
+const api = solution as unknown as {
+  loadTask: (driver: (signal: AbortSignal) => Promise<number>) => {runPromise(): Promise<number>; runResult(): PromiseLike<{isErr(): boolean; error?: unknown}>}
+  loadEager: (driver: () => Promise<number>) => PromiseLike<{isOk(): boolean; isErr(): boolean; value?: unknown; error?: unknown}>
+}
+let taskCalls = 0
+const task = api.loadTask(async signal => { assert.equal(signal.aborted, false); return ++taskCalls })
+assert.equal(isResultTask(task), true)
+assert.equal(taskCalls, 0)
+assert.equal(await task.runPromise(), 1)
+assert.equal(await task.runPromise(), 2)
+let eagerCalls = 0
+const eager = api.loadEager(async () => ++eagerCalls)
+assert.equal(eagerCalls, 1)
+assert.equal(eager instanceof Promise, false)
+const okRes = await eager
+assert.equal(okRes.isOk(), true); assert.equal(okRes.value, 1)
+const boom = new Error('boom')
+const errTask = await api.loadTask(async () => { throw boom }).runResult()
+assert.equal(errTask.isErr(), true); assert.ok(LoadError.is(errTask.error)); if (LoadError.is(errTask.error)) assert.equal(errTask.error.cause, boom)
+const errEager = await api.loadEager(async () => { throw boom })
+assert.equal(errEager.isErr(), true); assert.ok(LoadError.is(errEager.error)); if (LoadError.is(errEager.error)) assert.equal(errEager.error.cause, boom)`,
+    mutate: source => source.replace('export const loadTask = (', 'export const loadTask = async (').replace('export const loadEager = (', 'export const loadEager = async ('),
+  },
+  {
+    id: 15,
+    guidance: ['references/services.md', 'manual/packages/request/README.md', 'manual/packages/request-zod/README.md'],
+    contract: `Use ApiError from ./contract.mjs. Export fetchAccountTask(request: (signal: AbortSignal) => Promise<Response>)
+using requestJsonZodTask from resultar-request-zod. Validate {id: string, active: boolean} with Zod and
+transform to {accountId: string, active: boolean}. Map 404 -> reason 'not-found', http -> reason 'http',
+invalidJson -> reason 'invalid-json', request -> reason 'request', and validation -> reason 'validation'
+into ApiError (preserving cause on request and invalidJson). Retry up to 2 times with delayMs: 25 and
+backoff: 2. Return the lazy ResultTask directly without async.`,
+    support: `import {createTaggedError} from 'resultar'
+import type {FetchJsonResponseData} from 'resultar-request'
+export type TransportResponse = FetchJsonResponseData
+export class ApiError extends createTaggedError({name: 'ApiError', message: 'API failed: $reason'}).withProps<{
+  readonly reason: 'not-found' | 'http' | 'invalid-json' | 'request' | 'validation'
+}>() {}`,
+    reference: `import {z} from 'zod'
+import {requestJsonZodTask, type RequestJsonMapError} from 'resultar-request-zod'
+import {ApiError, type TransportResponse} from './contract.mjs'
+const schema = z.object({id: z.string(), active: z.boolean()}).transform(({id, active}) => ({accountId: id, active}))
+const mapError = {
+  404: () => new ApiError({reason: 'not-found'}),
+  http: () => new ApiError({reason: 'http'}),
+  invalidJson: ({cause}) => new ApiError({reason: 'invalid-json', cause}),
+  request: ({cause}) => new ApiError({reason: 'request', cause}),
+  validation: () => new ApiError({reason: 'validation'}),
+} satisfies RequestJsonMapError
+export const fetchAccountTask = (request: (signal: AbortSignal) => Promise<TransportResponse>) =>
+  requestJsonZodTask({
+    request,
+    schema,
+    mapError,
+    retry: {times: 2, delayMs: 25, backoff: 2, jittered: 0},
+  })`,
+    types: `import {fetchAccountTask} from './solution.mjs'
+import type {ApiError} from './contract.mjs'
+import type {ResultTask} from 'resultar'
+export type Check = Assert<Equal<ReturnType<typeof fetchAccountTask>, ResultTask<{accountId: string; active: boolean}, ApiError>>>`,
+    checks: `const {Cause} = await import('resultar')
+const {ApiError} = await import('./contract.mjs')
+let calls = 0
+const task = solution.fetchAccountTask(async signal => {
+  assert.equal(signal.aborted, false)
+  calls++
+  return Response.json({id: 'acc_' + calls, active: true})
+})
+assert.equal(calls, 0)
+assert.deepEqual(await task.runPromise(), {accountId: 'acc_1', active: true})
+assert.deepEqual(await task.runPromise(), {accountId: 'acc_2', active: true})
+
+// Stage-accurate classification: request-stage SyntaxError maps to 'request' and retries
+let syntaxCalls = 0
+const delays: number[] = []
+const requestSyntax = await solution.fetchAccountTask(async () => {
+  syntaxCalls++
+  throw new SyntaxError('invalid request url')
+}).runResult({clock: {now: () => 0, random: () => 0.5, sleep: async ms => { delays.push(ms) }}})
+assert.equal(syntaxCalls, 3)
+assert.deepEqual(delays, [25, 50])
+assert.equal(requestSyntax.isErr(), true)
+if (requestSyntax.isErr()) { assert.ok(ApiError.is(requestSyntax.error)); assert.equal(requestSyntax.error.reason, 'request') }
+
+// Safe HTTP error construction with circular headers
+const circularHeaders: Record<string, unknown> = {}
+circularHeaders.self = circularHeaders
+const circularRes = await solution.fetchAccountTask(async () => ({
+  headers: circularHeaders,
+  status: 404,
+  json: async () => ({}),
+  text: async () => 'missing',
+})).runResult()
+assert.equal(circularRes.isErr(), true)
+if (circularRes.isErr()) assert.equal(circularRes.error.reason, 'not-found')
+
+// Cancellation stops retries immediately
+const controller = new AbortController()
+let cancelAttempts = 0
+const exit = await solution.fetchAccountTask(async () => {
+  cancelAttempts++
+  return new Response('unavailable', {status: 503})
+}).runExit({
+  signal: controller.signal,
+  clock: {now: () => 0, random: () => 0.5, sleep: async () => { controller.abort('stop') }},
+})
+assert.equal(cancelAttempts, 1)
+assert.equal(exit._tag, 'Failure')
+if (exit._tag === 'Failure') assert.equal(Cause.hasInterrupts(exit.cause), true)`,
+    mutate: source => source.replace('times: 2', 'times: 0'),
   },
 ];

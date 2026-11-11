@@ -5,8 +5,9 @@ Zod adapter for `resultar-request`.
 Use this package when a request response should be parsed with Zod while the transport and Resultar
 error flow stay in `resultar-request`.
 
-Prefer `ResultTask` for new async workflows. This adapter returns eager `ResultAsync`
-from `resultar`; defer the adapter call with `fromResultAsync(factory)`.
+Prefer `requestJsonZodTask` (also exported as `requestJsonTask`) for new lazy `ResultTask`
+workflows, and `requestJsonZod` (also exported as `requestJson`) when preserving an eager
+`ResultAsync` boundary.
 
 For a schema-library-agnostic request, use
 [`resultar-request`](https://www.npmjs.com/package/resultar-request) directly with its `validator`
@@ -24,12 +25,15 @@ pnpm add resultar-request-zod resultar zod
 npm install resultar-request-zod resultar zod
 ```
 
-## `requestJson`
+## `requestJsonZodTask` and `requestJson`
+
+For new lazy `ResultTask` services, return `requestJsonZodTask` directly without `async` or
+`ResultTask.fromResultAsync`:
 
 ```ts
 import { ResultTask } from 'resultar'
 import {
-  requestJson as requestJsonZod,
+  requestJsonZodTask,
   type RequestError,
 } from 'resultar-request-zod'
 import { z } from 'zod'
@@ -49,35 +53,51 @@ const userSchema = z
 
 type User = z.output<typeof userSchema>
 
-const userTask: ResultTask<User, RequestError> = ResultTask.fromResultAsync(() =>
-  requestJsonZod({
-    request: () => fetch('https://example.com/users/123'),
+const fetchUserTask = (id: string): ResultTask<User, RequestError> =>
+  requestJsonZodTask({
+    request: (signal) => fetch(`https://example.com/users/${id}`, { signal }),
     schema: userSchema,
-    retry: {
-      times: 2,
-      delayMs: ({ nextAttempt }) => nextAttempt * 100,
-    },
+    retry: { times: 2, delayMs: 100, backoff: 2 },
     validationError: ({ errors }) =>
       `User response failed validation with ${errors.length} issue(s)`,
-  }),
-)
+  })
 
-const userLabelTask = userTask.map(({ email, seatLabel }) => `${email} (${seatLabel})`)
-const result = await userLabelTask.runResult()
+const loadUserLabelTask = ResultTask.fn(function* (id: string) {
+  const { email, seatLabel } = yield* fetchUserTask(id)
+  return `${email} (${seatLabel})`
+})
+
+const result = await loadUserLabelTask('123').runResult()
 ```
 
-The adapter call itself returns `ResultAsync<User, RequestError>`. Zod validates the unknown JSON response,
-applies the transform, and passes the transformed `z.output<typeof userSchema>` value into the
-Resultar success channel. The request can also retry request or HTTP `5xx` failures without retrying
+For existing eager `ResultAsync` contracts, use `requestJsonZod` (aliased as `requestJson`):
+
+```ts
+import { Result, type StrictResultAsync } from 'resultar'
+import { requestJson as requestJsonZod, type RequestError } from 'resultar-request-zod'
+
+const fetchUser = (id: string, signal?: AbortSignal): StrictResultAsync<User, RequestError> =>
+  requestJsonZod({
+    signal,
+    request: (attemptSignal) => fetch(`https://example.com/users/${id}`, { signal: attemptSignal }),
+    schema: userSchema,
+  })
+
+const loadUserLabel = (id: string): StrictResultAsync<string, RequestError> =>
+  Result.gen(async function* () {
+    const { email, seatLabel } = yield* fetchUser(id)
+    return `${email} (${seatLabel})`
+  })
+```
+
+Zod validates the unknown JSON response, applies the transform, and passes the transformed
+`z.output<typeof userSchema>` value into the Resultar success channel. Both entrypoints retry
+request-stage or HTTP `5xx` failures (stopping immediately on cancellation) without retrying
 invalid JSON or validation failures.
 
-The bridge above produces `ResultTask<User, RequestError>` and calls the adapter afresh on each
-run. Passing an existing Async value would reuse its already-started execution. Task is lazy,
-non-thenable and uses explicit runners; its `map` is synchronous and its `match` returns another
-Task to run. Existing callers can keep awaiting the adapter's eager Async result during migration.
-
-`requestJsonZod` is exported as the named adapter helper, and `requestJson` is an alias for
-package-local ergonomics.
+`requestJsonZod` / `requestJsonZodTask` are exported as named adapter helpers alongside package-local
+`requestJson` / `requestJsonTask` aliases. If an existing helper already returns `ResultAsync`, you
+can still bridge it lazily with `ResultTask.fromResultAsync((signal) => fetchUser(id, signal))`.
 
 The package also re-exports the public `resultar-request` API, including `RequestError`, map-error
 types, retry types, and structural response types.
@@ -90,11 +110,12 @@ error mapping.
 
 | Option | Purpose |
 | --- | --- |
-| `request` | Promise or retryable promise factory returning a Fetch/Undici-compatible response |
+| `request` | `(signal: AbortSignal) => Promise<Response>` factory (or eager `Promise` in `requestJson`) |
+| `signal` | Optional `AbortSignal` for eager `requestJson` (in `requestJsonZodTask`, use the Task runner signal) |
 | `schema` | Zod schema used for runtime parsing and transformed `z.output` success inference |
 | `validationError` | Static or computed validation failure message |
 | `mapError` | Status-specific and category-specific domain error mapping |
-| `retry` | Attempts, delay, jitter, `when`, and `onRetry` policy inherited from `resultar-request` |
+| `retry` | Attempts, delay, backoff, jitter, `when`, and `onRetry` policy inherited from `resultar-request` |
 
 Use a request factory whenever `retry` is enabled. A previously created promise cannot be restarted.
 

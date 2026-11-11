@@ -5,6 +5,8 @@
  * `ResultTask`, where a scope awaits release after success, failure, or interruption.
  * Finalizers receive the task Exit to choose between close and rollback, and their
  * own failures remain visible at the execution boundary.
+ * The exported async functions are executable demo/test boundaries: they run Tasks
+ * and return observed outcomes/events. Reusable repositories return the Task itself.
  */
 import { ResultTask, createTaggedError, type Exit, type Result } from "resultar";
 

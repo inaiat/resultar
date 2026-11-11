@@ -14,6 +14,7 @@ const expectedRules = [
   "no-fn-iife",
   "no-invalid-lifetime",
   "no-promise-in-result-success",
+  "no-promise-resultar",
   "no-result-in-task-gen",
   "no-run-inside-gen",
   "no-tagged-error-constructor-override",
@@ -59,6 +60,7 @@ const expectedCounts = {
   "no-fn-iife": 1,
   "no-invalid-lifetime": 2,
   "no-promise-in-result-success": 3,
+  "no-promise-resultar": 3,
   "no-result-in-task-gen": 3,
   "no-run-inside-gen": 2,
   "no-tagged-error-constructor-override": 1,
@@ -201,12 +203,39 @@ if (
   )
 ) {
   throw new Error(
-    `Expected all mode to reject both raw Promise repositories and accept ResultAsync/native boundaries\n${contractsRun.stdout}${contractsRun.stderr}`,
+    `Expected all mode to reject both raw Promise repositories and accept Task/ResultAsync/native boundaries\n${contractsRun.stdout}${contractsRun.stderr}`,
   );
 }
 
 const summary = expectedRules.map((rule) => `${rule}: ${counts[rule]}`).join(", ");
 
+const taskContractsRun = run("tsconfig.task-contracts.json", true);
+const taskContractFindings = taskContractsRun.stdout
+  .split("\n")
+  .filter((line) => line.startsWith("{"))
+  .map((line) => JSON.parse(line) as Finding);
+
+if (
+  taskContractsRun.status === 0 ||
+  taskContractsRun.stderr.trim() !== "" ||
+  taskContractFindings.length !== 9 ||
+  taskContractFindings.some(
+    (finding) =>
+      finding.rule !== "no-promise-resultar" ||
+      finding.severity !== "error" ||
+      !finding.file.endsWith("/src/task-contracts.ts"),
+  ) ||
+  !taskContractFindings.some(
+    (finding) =>
+      finding.message.includes("ResultTask<number | User, UserLookupError>") &&
+      finding.message.includes("ResultAsync<number | User, UserLookupError>"),
+  )
+) {
+  throw new Error(
+    `Expected documented Task-first config to reject all 9 Promise<Result/StrictResult/ResultTask> contracts (including constrained generics and heterogeneous unions) and allow raw SDK/Exit/direct contracts\n${taskContractsRun.stdout}${taskContractsRun.stderr}`,
+  );
+}
+
 process.stdout.write(
-  `Native resultar-check example passed (${findings.length} diagnostics across ${expectedRules.length} rules: ${summary}; all-mode Promise contracts: ${contractFindings.length}).\n`,
+  `Native resultar-check example passed (${findings.length} diagnostics across ${expectedRules.length} rules: ${summary}; all-mode Promise contracts: ${contractFindings.length}; task-first contracts: ${taskContractFindings.length}).\n`,
 );

@@ -185,6 +185,10 @@ Prefer `ResultTask` for new asynchronous workflows and run it explicitly, includ
 with the same methods as `Result`. In-flight constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) are active in `resultar`, while static orchestration methods on
 `ResultAsync` remain deprecated in `resultar` for existing eager contracts.
 Its inbound `fromResultAsync` bridge accepts structural `PromiseLike<Result<T, E>>` values.
+Use `ResultTask.tryPromise({ try, catch })` directly for raw Promise-returning drivers.
+New async repositories and use cases return Tasks without an `async` modifier;
+native Promise returns belong to explicit runners or framework/SDK boundaries.
+See the [boundary decision table](../../DOCUMENTATION.md#promise-boundaries-and-application-contracts).
 
 | Stage                        | When to use it                                                                                 | Key APIs                                                                                  |
 | ---------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -210,7 +214,7 @@ See the [Gradual Adoption Guide](https://github.com/inaiat/resultar/blob/main/do
 - [What's New in v4](#whats-new-in-v4)
 - [Tagged Errors (`createTaggedError`)](#tagged-errors)
 - [Synchronous Workflows (`Result`)](#synchronous-workflows)
-- [Linear Workflows (Result and Task generators)](#linear-workflows-with-resultgen)
+- [Linear Workflows (Result and Task generators)](#linear-workflows-with-result-and-task-generators)
 - [Recovering & Handling Boundaries](#recover-and-handle-results-at-boundaries)
 - [Lazy Workflows (`ResultTask`)](#lazy-workflows-with-resulttask)
   - [Parameterized tasks and tagged recovery](#parameterized-tasks-and-tagged-recovery)
@@ -821,7 +825,7 @@ A `Result` only protects your application if callers actually handle it. Install
 pnpm add -D resultar-check
 ```
 
-Add the rule configuration to `tsconfig.json`:
+Add the rule configuration to `tsconfig.json` (use `"diagnosticSeverity": "error"` to opt into stricter checking; disable the optional eager-boundary policy when it does not apply):
 
 ```json
 {
@@ -830,14 +834,18 @@ Add the rule configuration to `tsconfig.json`:
     "plugins": [
       {
         "name": "resultar-check",
-        "noDiscard": "error"
+        "diagnosticSeverity": "error",
+        "noDiscardMode": "must-use",
+        "noUnsafeAwaitMode": "all",
+        "preferResultAsync": "off",
+        "failOn": "error"
       }
     ]
   }
 }
 ```
 
-Run `resultar-check` in CI or `resultar-check lsp` in your editor to catch discarded `Result` / `ResultAsync` / `ResultTask` values, unprovided `any` task requirements, raw `throw` statements (`noThrow`), and ad-hoc `try/catch` blocks (`noTryCatch`). See the [`resultar-check` README](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) for all rules and editor setup.
+Run `resultar-check` in CI or `resultar-check lsp` in your editor to catch discarded `Result` / `ResultAsync` / `ResultTask` / `MatchMatcher` / `Fiber` values, `unknown` error or task requirement channels, generator anti-patterns, unscoped resources, raw `throw` statements (`noThrow`), and ad-hoc `try/catch` blocks (`noTryCatch`). See the [`resultar-check` README](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) and the [Anti-Patterns & `resultar-check` Guide](https://github.com/inaiat/resultar/blob/main/skills/resultar/references/anti-patterns.md) for all 41 rules and editor setup.
 
 ---
 
@@ -848,35 +856,37 @@ Resultar's companion packages integrate directly with the core primitives:
 | Package                                                                              | When to use it                                                                    | Documentation                                                                             |
 | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | [`resultar-check`](https://www.npmjs.com/package/resultar-check)                     | Native TypeScript-Go compiler + Resultar linter & LSP                             | [README](https://github.com/inaiat/resultar/blob/main/packages/check/README.md)           |
-| [`resultar-request`](https://www.npmjs.com/package/resultar-request)                 | Fetch-first JSON HTTP client returning `ResultAsync` with retries & typed errors  | [README](https://github.com/inaiat/resultar/blob/main/packages/request/README.md)         |
+| [`resultar-request`](https://www.npmjs.com/package/resultar-request)                 | Fetch-first JSON HTTP client returning `ResultAsync`, with retries and a Task bridge  | [README](https://github.com/inaiat/resultar/blob/main/packages/request/README.md)         |
 | [`resultar-request-zod`](https://www.npmjs.com/package/resultar-request-zod)         | Zod schema validation adapter for `resultar-request`                              | [README](https://github.com/inaiat/resultar/blob/main/packages/request-zod/README.md)     |
 | [`resultar-request-typebox`](https://www.npmjs.com/package/resultar-request-typebox) | TypeBox schema validation adapter for `resultar-request`                          | [README](https://github.com/inaiat/resultar/blob/main/packages/request-typebox/README.md) |
 | [`resultar-di`](https://www.npmjs.com/package/resultar-di)                           | Typed dependency injection, class services, and scoped resources for `ResultTask` | [README](https://github.com/inaiat/resultar/blob/main/packages/di/README.md)              |
 | [`resultar-hono`](https://www.npmjs.com/package/resultar-hono)                       | Hono integration with per-request DI scopes and graceful shutdown                 | [README](https://github.com/inaiat/resultar/blob/main/packages/hono/README.md)            |
 | [`resultar-fastify`](https://www.npmjs.com/package/resultar-fastify)                 | Fastify plugin with application/request DI scopes and lifecycle cleanup           | [README](https://github.com/inaiat/resultar/blob/main/packages/fastify/README.md)         |
+| [`resultar-nestjs`](https://www.npmjs.com/package/resultar-nestjs)                   | NestJS module & `@Services()` decorator with application/request DI scopes        | [README](https://github.com/inaiat/resultar/blob/main/packages/nestjs/README.md)          |
 
 Deprecated eager compatibility is included directly in [`resultar`](#in-flight-resultasync--deprecated-eager-compatibility); no additional package or subpath is needed.
 
-Request helpers return an in-flight `ResultAsync` (`StrictResultAsync`) that starts executing on call. Their public
-execution contract is unchanged. Wrap the call in a factory to create a new request per Task run:
+Request helpers (`requestJson`, `requestJsonZod`, `requestJsonTypeBox`) return `ResultAsync` (`StrictResultAsync`). The following preserves an existing eager API; compose new Task workflows with `ResultTask.fromResultAsync(signal => loadAccount(id, signal))`:
 
 ```ts
-import { ResultTask } from "resultar";
-import { requestJson } from "resultar-request";
+import { Result, type StrictResultAsync } from "resultar";
+import { requestJson, type RequestError } from "resultar-request";
 
-const loadAccount = (id: string) =>
-  ResultTask.fromResultAsync((signal) =>
-    requestJson({
-      request: () => fetch(`/api/accounts/${id}`, { signal }),
-      validator: (value): value is { readonly id: string } =>
-        typeof value === "object" &&
-        value !== null &&
-        "id" in value &&
-        typeof value.id === "string",
-    }),
-  );
+const loadAccount = (id: string, signal?: AbortSignal): StrictResultAsync<{ readonly id: string }, RequestError> =>
+  requestJson({
+    request: () => fetch(`/api/accounts/${id}`, { signal }),
+    validator: (value): value is { readonly id: string } =>
+      typeof value === "object" &&
+      value !== null &&
+      "id" in value &&
+      typeof value.id === "string",
+  });
 
-const result = await loadAccount("acct_1").runResult();
+const syncAccount = (id: string) =>
+  Result.gen(async function* () {
+    const account = yield* loadAccount(id);
+    return account.id;
+  });
 ```
 
 ---

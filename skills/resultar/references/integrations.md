@@ -1,318 +1,59 @@
-# Resultar Requests And Validation Tooling
+# Application boundaries
 
-Use this reference for HTTP JSON integrations and Resultar-specific diagnostics. Verify package
-versions and local README files before copying an example.
+Use the [contract recipes](../examples/contracts.mts) for complete, compiled
+callback and resource examples. Framework recipes live in their
+[package manuals](services.md#frameworks).
 
-## Contents
+## HTTP responses
 
-- [Choose A Request Package](#choose-a-request-package)
-- [Use The Schema-Agnostic Core](#use-the-schema-agnostic-core)
-- [Compose Requests In Tasks](#compose-requests-in-tasks)
-- [Use The TypeBox Adapter](#use-the-typebox-adapter)
-- [Use The Zod Adapter](#use-the-zod-adapter)
-- [Map Request Errors](#map-request-errors)
-- [Apply Retry Correctly](#apply-retry-correctly)
-- [Validate In The Preferred Order](#validate-in-the-preferred-order)
-- [Configure The Native Checker](#configure-the-native-checker)
-- [Act On Diagnostics](#act-on-diagnostics)
-- [Discover Repository Commands](#discover-repository-commands)
+At a route boundary, run a Task and map expected errors to a response using
+`Result.match`, `matchTags`, or `Match.context`. Do not call child runners within
+Task generators. Decide explicitly whether defects/interruption should reject
+through the framework or be inspected with `runExit`; an `Err` handler alone does
+not handle all Task causes. Avoid sending sensitive error props to clients.
 
-## Choose A Request Package
+`noUnsafeAwait` is off by default. When a project enables its `all` mode,
+bootstrap calls can use a typed adapter, a focused file override, or
+`noUnsafeAwaitIgnoreCalls` with exact call paths. Preserve the framework's native
+Promise contracts instead of changing them merely to satisfy an optional eager policy.
 
-| Contract style                   | Package                    | Success type                 |
-| -------------------------------- | -------------------------- | ---------------------------- |
-| Custom type guard or decoder     | `resultar-request`         | Type guard or decoder output |
-| TypeBox schema                   | `resultar-request-typebox` | `Static<typeof schema>`      |
-| Zod schema, including transforms | `resultar-request-zod`     | `z.output<typeof schema>`    |
+## Database session ownership
 
-All three share the same transport implementation. The adapters add schema validation and re-export
-the public `resultar-request` types. Install only the core and schema adapter the service needs.
-
-Their `requestJson` helpers return eager `ResultAsync` from `resultar`. Import in-flight constructors, helpers, or types from `resultar` in application code.
-Calling a helper starts its request; the examples below document that real API. New workflows can
-compose these adapters lazily through the Task factory bridge without changing the request contract.
-
-Keep request payloads concrete. Do not widen a known response contract to `JsonRecord`,
-`Record<string, unknown>`, or `unknown` after validation.
-
-## Use The Schema-Agnostic Core
-
-Use a type guard when validation does not transform the payload:
+A session bracket acquires a session, runs work, then awaits its release:
 
 ```ts
-import { requestJson } from "resultar-request";
-
-type User = { readonly email: string; readonly id: string };
-
-const isUser = (value: unknown): value is User =>
-  typeof value === "object" &&
-  value !== null &&
-  "email" in value &&
-  typeof value.email === "string" &&
-  "id" in value &&
-  typeof value.id === "string";
-
-const user = requestJson({
-  request: () => fetch(`https://example.com/users/${userId}`),
-  validator: isUser,
-});
+const withSession = <T>(work: (session: Session) => ResultTask<T, DatabaseError>) =>
+  ResultTask.scoped(
+    ResultTask.acquireRelease({
+      acquire: openSessionTask(),
+      release: session => closeSessionTask(session),
+    }).andThen(work),
+  )
 ```
 
-Use `decode` when validation also normalizes or transforms the response. The decoder must make
-success and validation failure explicit; check the installed package types for the exact shape.
+`Session`, `DatabaseError`, `openSessionTask`, and `closeSessionTask` are driver
+adapters. This is **session management**, not a transaction. A transaction needs
+explicit driver begin/commit/rollback or its transaction callback API; also preserve
+the driver's retry and commit-uncertainty semantics. Model those separately.
+Do not swallow release errors or use detachment as a guarantee against leaked
+sessions. Foreign work can continue after detachment and race with session release.
 
-## Compose Requests In Tasks
+## Events and worker callbacks
 
-Create the eager helper inside `fromResultAsync`, forwarding the Task signal to fetch:
+For an SDK callback requiring `Promise<void>`, call `.runPromise()` at that callback's
+boundary. Preserve typed failures if rejection drives redelivery; recover only when
+the application's acknowledgement policy requires it. Use a closure or
+`function* (this: Coordinator, ...) { ... }.bind(this)` for method state.
+`ResultTask.gen(this, generator)` and `Result.gen(this, generator)` are not overloads.
+Stop workers and await their finalizers before releasing shared services.
 
-```ts
-import { ResultTask } from "resultar";
-import { requestJson } from "resultar-request";
+## Existing callback APIs
 
-const loadUser = (userId: string) =>
-  ResultTask.fromResultAsync((signal) =>
-    requestJson({
-      request: () => fetch(`https://example.com/users/${userId}`, { signal }),
-      validator: isUser,
-    }),
-  );
-
-const userId = await loadUser("user-1")
-  .map((user) => user.id)
-  .runPromise();
-```
-
-This reuses the `isUser` guard above and infers `ResultTask<User, RequestError>`. Each run creates
-a fresh eager request. The same bridge works with the TypeBox and Zod helpers. Keep `map`
-synchronous, use `andThen` for another async Task, and compose `match` / `matchTags` before the
-runner when turning the response into a transport value. Use `runExit` when the boundary must
-inspect interruption, defects, and composite cleanup causes as well as typed errors.
-
-Passing `requestJson(...)` directly to `fromResultAsync` captures an already-started request;
-it cannot make that execution lazy or repeatable.
-
-## Use The TypeBox Adapter
-
-```ts
-import { createTaggedError } from "resultar";
-import {
-  requestJson as requestJsonTypeBox,
-  type RequestJsonMapError,
-} from "resultar-request-typebox";
-import { Type, type Static } from "typebox";
-
-const userSchema = Type.Object(
-  {
-    email: Type.String(),
-    id: Type.String(),
-    plan: Type.Union([Type.Literal("free"), Type.Literal("team")]),
-  },
-  { additionalProperties: false },
-);
-
-type User = Static<typeof userSchema>;
-
-class UserApiError extends createTaggedError({
-  name: "UserApiError",
-  message: "User API $reason: $detail",
-}) {}
-
-const mapUserError = {
-  404: ({ statusCode }) => new UserApiError({ detail: `HTTP ${statusCode}`, reason: "not-found" }),
-  http: ({ statusCode }) => new UserApiError({ detail: `HTTP ${statusCode}`, reason: "http" }),
-  invalidJson: ({ cause }) =>
-    new UserApiError({ cause, detail: cause.message, reason: "invalid-json" }),
-  request: ({ cause }) => new UserApiError({ cause, detail: cause.message, reason: "request" }),
-  validation: ({ errors }) =>
-    new UserApiError({ detail: `${errors.length} validation issue(s)`, reason: "validation" }),
-} satisfies RequestJsonMapError;
-
-const user = requestJsonTypeBox({
-  request: () => fetch(`https://example.com/users/${userId}`),
-  schema: userSchema,
-  mapError: mapUserError,
-  retry: { times: 2, delayMs: ({ nextAttempt }) => nextAttempt * 100, jittered: 0.2 },
-});
-```
-
-The success channel is `User`, derived from `Static<typeof userSchema>`. Keep the named adapter
-alias when a file uses more than one request helper or when the schema library should be obvious at
-the call site.
-
-## Use The Zod Adapter
-
-```ts
-import { createTaggedError } from "resultar";
-import { requestJson as requestJsonZod, type RequestJsonMapError } from "resultar-request-zod";
-import { z } from "zod";
-
-const userSchema = z
-  .object({ email: z.string().email(), id: z.string(), seats: z.number().int().nonnegative() })
-  .transform((user) => ({
-    ...user,
-    email: user.email.toLowerCase(),
-    seatLabel: `${user.seats} seats`,
-  }));
-
-type User = z.output<typeof userSchema>;
-
-class UserApiError extends createTaggedError({
-  name: "UserApiError",
-  message: "User API $reason: $detail",
-}) {}
-
-const mapUserError = {
-  404: ({ statusCode }) => new UserApiError({ detail: `HTTP ${statusCode}`, reason: "not-found" }),
-  http: ({ statusCode }) => new UserApiError({ detail: `HTTP ${statusCode}`, reason: "http" }),
-  invalidJson: ({ cause }) =>
-    new UserApiError({ cause, detail: cause.message, reason: "invalid-json" }),
-  request: ({ cause }) => new UserApiError({ cause, detail: cause.message, reason: "request" }),
-  validation: ({ errors }) =>
-    new UserApiError({ detail: `${errors.length} validation issue(s)`, reason: "validation" }),
-} satisfies RequestJsonMapError;
-
-const user = requestJsonZod({
-  request: () => fetch(`https://example.com/users/${userId}`),
-  schema: userSchema,
-  mapError: mapUserError,
-  retry: { times: 2, delayMs: ({ nextAttempt }) => nextAttempt * 100, jittered: 0.2 },
-});
-```
-
-Use `z.output`, not `z.input` or an independently maintained interface, because Zod transforms can
-change the success type.
-
-## Map Request Errors
-
-Without `mapError`, request helpers return the package's `RequestError` union. Use that union for
-infrastructure-local code. At an application boundary, use `mapError` to convert these categories
-to concrete tagged errors:
-
-- request creation, network, or fetch failure;
-- status-specific HTTP failure, with numeric handlers taking precedence over `http`;
-- invalid JSON;
-- response validation or decode failure.
-
-Preserve `cause` for request and JSON failures and preserve status, URL, validation details, and
-other safe context needed for diagnosis. Do not map every category to a message-only `Error`.
-
-## Apply Retry Correctly
-
-```ts
-const user = requestJsonZod({
-  request: () => fetch(`https://example.com/users/${userId}`),
-  schema: userSchema,
-  retry: { times: 2, delayMs: ({ nextAttempt }) => nextAttempt * 100, jittered: 0.2 },
-});
-```
-
-The default policy retries request failures and HTTP `5xx`, but not `4xx`, invalid JSON, or
-validation failures. Retry requires a request factory; an already-created promise cannot be
-restarted. Ensure each attempt receives a fresh request. The current request retry configuration
-does not expose the eager Async policy's internal retry signal, so do not claim that `requestJson`
-automatically forwards policy cancellation. Supply an external fetch signal through the request
-closure when the caller owns cancellation, including the signal supplied by a Task bridge.
-
-## Validate In The Preferred Order
-
-1. Run the native `resultar-check` CLI as the authoritative local and CI gate. It uses TypeScript-Go
-   to run compiler diagnostics and all Resultar rules over the same project.
-2. Run the repository's formatter, build, tests, static analysis, package smoke tests, and runnable
-   examples.
-
-The Go analyzer is the single implementation of Resultar diagnostics.
-
-## Configure The Native Checker
-
-Install Resultar Check. A separate TypeScript installation is not required:
-
-```sh
-pnpm add -D resultar-check
-pnpm exec resultar-check
-```
-
-Add the checker configuration marker to `tsconfig.json` and tune rules only when project policy
-requires it:
-
-```json
-{
-  "$schema": "./node_modules/resultar-check/schema.json",
-  "compilerOptions": {
-    "plugins": [
-      {
-        "name": "resultar-check",
-        "noDiscard": "error",
-        "noUnsafeAwait": "error",
-        "preferAndThen": "error",
-        "preferMapErr": "error",
-        "unsafeResultTypeAssertion": "error"
-      }
-    ]
-  }
-}
-```
-
-The `plugins` entry is consumed by the native CLI and stdio LSP server; it does not install an editor
-extension. Start `resultar-check lsp` from the editor's language-server configuration. Findings use
-rule IDs such as `resultar/no-discard`; pass `--format json` (or `--json`) when machine-readable JSON
-Lines output is needed.
-
-The `$schema` composes the standard SchemaStore `tsconfig` schema with Resultar rule options.
-Preserve it when configuring the checker so editors can complete and validate both sets of options.
-Resolving the standard reference requires SchemaStore access or an editor cache. The schema is
-independent of the installed TypeScript version; validate compiler compatibility with the native
-checker and, when relevant, the consuming project's installed compiler. The `plugins` entry remains
-configuration for the native checker, including when the project uses TypeScript 7.
-
-The LSP overlays unsaved project buffers and dependencies, debounces changes, and uses
-versioned UTF-16 edits. Hover separates task success/errors/requirements and service contracts.
-Use `resultar-check overview --json` for a sorted exported inventory and
-`resultar-check quickfixes --json` for read-only fix previews. The latter emits diagnostic
-JSONL; inventory output is one document with `schemaVersion: 1`.
-
-Read `packages/check/README.md` for all rules, severities, modes, and command-line flags. Use narrow
-`ignoreFilePatterns` only for deliberate tests, scripts, generated files, or terminal process boundaries.
-
-## Act On Diagnostics
-
-When an agent encounters a diagnostic, fix the architecture first:
-
-- handle, compose, return, or intentionally discard a returned Resultar value; a discard does not
-  run a lazy task and must not be applied just to silence diagnostics;
-- replace nested `Result` from `map` with `andThen`;
-- for existing eager contracts, replace `Promise<Result>` / `Promise<StrictResult>` with
-  `ResultAsync` / `StrictResultAsync` and return composed operations directly
-  (`prefer-result-async`); the rule name remains stable for that contract;
-- scope `preferResultAsync` to an intentional eager-boundary migration. Its `"all"` mode also
-  catches raw `Promise<T>` contracts and inferred returns. It does not make Task and Async
-  interchangeable or prescribe Async for new services. A new Task contract needs a factory,
-  Task composition, and explicit callers/runners; document native framework conversion boundaries;
-- replace error-only recovery with `mapErr`;
-- replace project-wide `try/catch` with a narrow adapter when `noTryCatch` is enabled: `tryResult`
-  for sync work, `ResultTask.tryPromise` for new lazy work, or `tryResultAsync` for eager compatibility;
-- wrap raw promise awaits in Resultar contexts;
-- use `yield*` in generators. Modern `Result.gen` / `Result.fn` return plain success values; deprecated
-  `safeTry` returns a final Result. Both support sync and async bodies (with async bodies returning eager `ResultAsync`). Use `ResultTask.gen`
-  for new lazy async work and bridge eager helpers inside it explicitly;
-- preserve inferred error and task requirements channels instead of asserting them away;
-- remove obsolete suppression entries without suppressing their diagnostic broadly.
-
-## Discover Repository Commands
-
-Inspect `package.json` scripts instead of assuming a package manager or command. In the Resultar
-repository, the relevant root commands currently include:
-
-```sh
-pnpm fmt:check
-pnpm build
-pnpm check
-pnpm test
-pnpm analyze
-pnpm smoke:package
-pnpm test:examples
-pnpm test:agents
-```
-
-Run the narrowest useful command while iterating, then the complete relevant validation set before
-claiming completion. Report pre-existing dependency, lockfile, or environment blockers separately
-from failures introduced by the skill work.
+`ResultAsync.fromCallback` is a supported deprecated eager adapter. It takes an
+options object with `subscribe({ resolve, reject, signal })`, `catch`, and optional
+external `signal`, and returns `ResultAsync<T, E | AbortError>`.
+Return a synchronous unsubscribe function from `subscribe`; it runs once on
+completion, failure, cancellation, or synchronous subscription failure. Cleanup
+throws are ignored by this compatibility API. Use a Task resource scope when cleanup
+failure must remain observable. New Task workflows can bridge this adapter with a
+factory instead of changing existing callback behavior.

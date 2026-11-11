@@ -14,7 +14,9 @@ for eager adapters. `Result.gen` / `Result.fn` support sync and async bodies wit
 plain-value returns; legacy `safeTry` supports both forms with final-Result returns. All runtime
 and type exports come from the single `resultar` package entrypoint.
 
-Fixtures are version-specific and remain frozen until a separate migration is authorized. Existing
+The original seven compatibility fixtures remain unchanged. New cases add lazy HTTP
+bridging, DI lifetime/local isolation, matching/redaction, numeric retry policies, and
+complete failure-channel inspection, and raw driver Promise-to-Task repository contracts. Fixtures are version-specific. Existing
 Async exports and deprecated aliases in `resultar` remain supported. Report semantic conflicts, such
 as equating modern `Result.gen` with legacy final-Result `safeTry`, without changing fixed graders.
 
@@ -24,14 +26,16 @@ as equating modern `Result.gen` with legacy final-Result `safeTry`, without chan
 pnpm test:agents
 ```
 
-This builds packages and the current native checker, then checks seven reference solutions and
-seven deliberately broken variants. Each reference must pass; each broken variant must fail
+This builds packages and the current native checker, then checks fifteen reference solutions and
+fifteen deliberately broken variants. Each reference must pass; each broken variant must fail
 compilation, checker validation, or runtime assertions. It makes no model calls and reports
 `kind: "grader-validation"`, with no agent-performance metrics. A passing reference suite is not
 proof that an AI can use the library correctly.
 
-The published guide's core example is compiled during package build; package smoke checks its
-presence and verifies that private continuation helpers do not leak into declarations.
+The published guide's workflow and contract recipes compile during package build.
+`vp run test:docs` verifies the generated public API inventory, published recipe source,
+native checker defaults, bundled links, and recipe behavior. Package smoke also verifies
+that private continuation helpers do not leak into declarations.
 
 ## Evaluate generated code
 
@@ -42,7 +46,7 @@ pnpm eval:agents --candidate-dir /absolute/path/to/submissions --output /tmp/can
 ```
 
 Place one generated `solution.mts` in each numbered directory (`1/solution.mts` through
-`7/solution.mts`). Public support types are defined by each case. The runner checks generated code
+`15/solution.mts`). Public support types are defined by each case. The runner checks generated code
 in fresh temporary projects against the workspace's built public declarations. It does not install
 dependencies or contact a model provider. Temporary projects isolate fixtures, not OS permissions;
 run untrusted submissions in an appropriately isolated execution environment.
@@ -60,7 +64,8 @@ by that adapter; CI never runs it. The request contains:
 
 - scenario and executable contract;
 - support-module source and installed package versions;
-- guide files (empty in `without-skill` mode);
+- entrypoint and API semantics plus scenario-specific references/manuals (empty in `without-skill` mode);
+- reports record the selected guidance files and character count for reproducibility;
 - attempt number, previous generated code, and feedback from the prior attempt.
 
 Return `{ "code": "...solution.mts...", "model": "provider/model", "usage": { ... } }`.
@@ -70,6 +75,6 @@ generation attempts are bounded (three by default, at most ten).
 
 Reports preserve every attempt, diagnostic feedback, optional provider usage/model metadata,
 first-attempt pass rate, final pass rate, total attempts, and elapsed time. Use repeated runs with
-identical model settings to compare skill variants; seven contracts are a regression suite, not a
+identical model settings to compare skill variants; these contracts are a regression suite, not a
 statistically robust benchmark. Reference solutions and mutation logic are never included in adapter
 requests. Behavioral tests are written into each temporary project only after generation returns.

@@ -10,8 +10,13 @@ It deliberately keeps three independent projects:
   and must pass without compiler or Resultar diagnostics;
 - [`src/contracts.ts`](src/contracts.ts) enables `preferResultAsyncMode: "all"` and rejects raw
   Promise repository contracts and inferred implementations while accepting existing eager
-  `StrictResultAsync` contracts and explicit native boundary suppressions. This is an optional
+  `StrictResultAsync` contracts, new lazy `ResultTask` contracts, and explicit native boundary suppressions. This is an optional
   legacy policy fixture, not the v4 recommendation for new async application code.
+
+The invalid repository declarations are labeled inside `contracts.ts` too. Copy
+`taskRepository` for the new application contract; `resultRepository` demonstrates
+an existing eager API. A Promise-returning external driver can still be an input to
+`ResultTask.tryPromise`; the returned repository method exposes a Task.
 
 Prefer lazy `ResultTask` workflows with explicit runners in new async code. `ResultAsync` and
 `StrictResultAsync` are exported from `resultar` as in-flight `Result` representations (`task.runResult()`), together with their standalone eager constructors.

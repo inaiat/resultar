@@ -344,6 +344,7 @@ export const zipTaskOrderIds = () =>
 /**
  * Preferred non-deprecated side-effect inspection helpers (`inspect`, `inspectError`, `inspectBoth`).
  * These observe successes and failures without altering the Result or Task outcome.
+ * This async demo runs the Tasks and returns observations at a test/CLI boundary.
  */
 export const inspectCheckoutEvents = async () => {
   const events: string[] = [];
@@ -415,6 +416,7 @@ export const observeCheckout = () => {
 /**
  * Tasks use `inspect` for best-effort observation and `acquireDisposable` for native
  * async cleanup. Scope closure awaits disposal and preserves any disposal defect.
+ * This async demo executes the scoped program; a reusable use case would return it.
  */
 export const observeTaskCheckout = async () => {
   const events: string[] = [];

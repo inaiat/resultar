@@ -6521,7 +6521,7 @@ func (a *Analyzer) preferTap(file *ast.SourceFile) []Finding {
 			return
 		}
 		replacement := "tap"
-		if isResultarSyncType(receiverType) && (!isStatic && a.checker.GetPropertyOfType(receiverType, "inspect") != nil || isStatic && a.hasOperatorReplacement(node, nil, "inspect")) {
+		if a.isResultarSyncType(receiverType) && (!isStatic && a.checker.GetPropertyOfType(receiverType, "inspect") != nil || isStatic && a.hasOperatorReplacement(node, nil, "inspect")) {
 			replacement = "inspect"
 		} else if !a.hasOperatorReplacement(node, receiverType, "tap") {
 			return
@@ -6574,7 +6574,7 @@ func (a *Analyzer) preferTapError(file *ast.SourceFile) []Finding {
 			return
 		}
 		replacement := "tapError"
-		if isResultarSyncType(receiverType) && (!isStatic && a.checker.GetPropertyOfType(receiverType, "inspectError") != nil || isStatic && a.hasOperatorReplacement(node, nil, "inspectError")) {
+		if a.isResultarSyncType(receiverType) && (!isStatic && a.checker.GetPropertyOfType(receiverType, "inspectError") != nil || isStatic && a.hasOperatorReplacement(node, nil, "inspectError")) {
 			replacement = "inspectError"
 		} else if !a.hasOperatorReplacement(node, receiverType, "tapError") {
 			return

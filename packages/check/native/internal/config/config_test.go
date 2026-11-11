@@ -173,6 +173,40 @@ func TestPreferResultAsyncDiagnosticNamesAndOverrides(t *testing.T) {
 	}
 }
 
+func TestNoPromiseResultarDiagnosticNamesAndOverrides(t *testing.T) {
+	if Defaults().NoPromiseResultar != SeverityError {
+		t.Fatalf("default NoPromiseResultar = %q, want error", Defaults().NoPromiseResultar)
+	}
+	for _, name := range []string{"noPromiseResultar", "no-promise-resultar", "resultar/no-promise-resultar"} {
+		t.Run(name, func(t *testing.T) {
+			directory := t.TempDir()
+			path := filepath.Join(directory, "tsconfig.json")
+			contents := `{"compilerOptions":{"plugins":[{
+  "name":"resultar-check",
+  "preferResultAsync":"off",
+  "diagnosticSeverity":{"` + name + `":"warning"},
+  "overrides":[{"include":"interop.ts","options":{"diagnosticSeverity":{"` + name + `":"off"}}}]
+}]}}`
+			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			options, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if options.NoPromiseResultar != SeverityWarning || options.PreferResultAsync != SeverityOff {
+				t.Fatalf("unexpected options: %#v", options)
+			}
+			if options.ForFile(filepath.Join(directory, "interop.ts"), directory).NoPromiseResultar != SeverityOff {
+				t.Fatal("interop override did not disable no-promise-resultar")
+			}
+			if options.ForFile(filepath.Join(directory, "service.ts"), directory).NoPromiseResultar != SeverityWarning {
+				t.Fatal("interop override affected service.ts")
+			}
+		})
+	}
+}
+
 func TestPreferResultAsyncMode(t *testing.T) {
 	if Defaults().PreferResultAsyncMode != "result" {
 		t.Fatal("default mode must preserve Promise<Result> scope")

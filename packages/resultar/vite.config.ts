@@ -133,6 +133,7 @@ export default defineConfig({
           'max-depth': 'allow',
           'max-lines': ['error', { max: 2000, skipBlankLines: true, skipComments: true }],
           'max-lines-per-function': 'allow',
+          'max-params': 'allow',
           'no-async-await': 'allow',
           'no-constant-condition': 'allow',
           'no-console': 'allow',

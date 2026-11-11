@@ -16,8 +16,16 @@ The links below follow development on `main`; they are not a substitute for vers
 
 ## Start here
 
+- [Promise boundaries and application contracts](https://raw.githubusercontent.com/inaiat/resultar/main/DOCUMENTATION.md#promise-boundaries-and-application-contracts): raw driver Promise -> tryPromise; existing typed Async -> fromResultAsync; new application methods return Task.
+
+- [Agent skill (`SKILL.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/SKILL.md): execution contracts and progressive routing for coding agents.
+- [API semantics (`references/api.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/api.md): feature map and semantic constraints for `Result`, `ResultAsync`, `ResultTask`, `createTaggedError`, `taggedEnum`, `redact`, `Match`, `Cause`, `Fiber`, `Semaphore`, `Retry`, `Clock`, `Scheduler`, and `pipe`/`flow`.
+- [Anti-patterns & `resultar-check` guide (`references/anti-patterns.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/anti-patterns.md): configuration, repair guidance, and links to all 42 native diagnostics.
+- [Production workflow patterns (`references/patterns.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/patterns.md): rich domain errors, `ResultTask.memoize`, `onExit`, background worker loops with `runFork`, uncooperative Promise timeouts with `interruption: 'detach'`, bounded concurrency, and `VirtualClock` testing.
+- [Services, DI, HTTP adapters & outbound requests (`references/services.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/services.md): `serviceTag`, `resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, and `resultar-request` (`zod` and `typebox`).
+- [Boundary integrations (`references/integrations.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/integrations.md): HTTP route status mapping, database session ownership, and event consumer bridges.
+- [Code review checklist (`references/review-checklist.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/review-checklist.md): behavior and verification checklist.
 - [Gradual adoption](https://raw.githubusercontent.com/inaiat/resultar/main/docs/gradual-adoption.md): start with Result, use ResultTask for new async work, bridge existing eager APIs explicitly, and add Clock, retry, and fibers when needed.
-- [Agent skill](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/SKILL.md): opinionated defaults and pointers for coding agents.
 - [Core package README](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): model, ResultTask, services, scopes, decision guide.
 - [Full guide](https://raw.githubusercontent.com/inaiat/resultar/main/DOCUMENTATION.md): complete API map and recipes.
 
@@ -39,6 +47,9 @@ values; legacy `safeTry` preserves the final Result. Existing Async imports
 remain supported in `resultar` when migrating eager consumers.
 
 ## Packages
+
+- [Public API inventory](https://raw.githubusercontent.com/inaiat/resultar/main/docs/api-inventory.md): generated from built declarations, including types and public members.
+- [Executable recipes](https://raw.githubusercontent.com/inaiat/resultar/main/docs/recipes.md): compiled and behavior-tested contracts.
 
 - [resultar](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): core `Result`, lazy `ResultTask`, in-flight `ResultAsync`, eager factories, generators, and deprecated orchestration APIs.
 - [resultar-di](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/README.md): services, typed composition, lifetimes, overrides, named registration and framework adapter APIs.

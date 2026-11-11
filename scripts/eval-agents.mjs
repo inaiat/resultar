@@ -43,13 +43,17 @@ const checker = join(root, "packages/check/dist/cli.js");
 const catalog = JSON.parse(readFileSync(join(root, "skills/resultar/evals/evals.json"), "utf8"));
 const guideRoot = join(root, "packages/resultar/dist/agent");
 const versions = JSON.parse(readFileSync(join(guideRoot, "versions.json"), "utf8"));
-const guidance =
-  values.guidance === "with-skill"
-    ? ["SKILL.md", "references/api.md", "references/services.md"].map((file) => ({
-        file,
-        content: readFileSync(join(guideRoot, file), "utf8"),
-      }))
+function guidanceFor(test) {
+  return values.guidance === "with-skill"
+    ? [
+        ...new Set([
+          "SKILL.md",
+          "references/api.md",
+          ...(test.guidance ?? ["references/review-checklist.md"]),
+        ]),
+      ].map((file) => ({ file, content: readFileSync(join(guideRoot, file), "utf8") }))
     : [];
+}
 const output = resolve(values.output ?? join(tmpdir(), `resultar-evals-${Date.now()}.json`));
 const results = [];
 
@@ -76,6 +80,7 @@ function prepare(test) {
   const directory = mkdtempSync(join(tmpdir(), `resultar-eval-${test.id}-`));
   const dependencies = {
     resultar: "packages/resultar",
+    "resultar-di": "packages/di",
     "resultar-request": "packages/request",
     "resultar-request-typebox": "packages/request-typebox",
     "resultar-request-zod": "packages/request-zod",
@@ -101,7 +106,9 @@ function prepare(test) {
         {
           name: "resultar-check",
           noDiscard: "error",
+          noPromiseResultar: "error",
           noUnknownResultError: "error",
+          preferResultAsync: "off",
           failOn: "warning",
         },
       ],
@@ -146,6 +153,7 @@ ${test.checks}`,
 
 async function evaluate(test, mode) {
   const started = Date.now();
+  const guidance = guidanceFor(test);
   const attempts = [];
   let feedback = "";
   const limit = values.adapter ? maxAttempts : 1;
@@ -201,6 +209,8 @@ async function evaluate(test, mode) {
   const result = {
     id: test.id,
     mode,
+    guidanceFiles: guidance.map((item) => item.file),
+    guidanceCharacters: guidance.reduce((sum, item) => sum + item.content.length, 0),
     passed,
     firstAttemptPassed: attempts[0]?.passed === true,
     attempts,

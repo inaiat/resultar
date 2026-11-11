@@ -28,6 +28,7 @@ ignoreUnresolvedImports = [
 circular-dependencies = "error"
 boundary-violation = "error"
 unused-class-members = "off"
+duplicate-export-alias = "off"
 
 [duplicates]
 # Do not force wrapper extraction for small hot-path blocks; report larger clones.

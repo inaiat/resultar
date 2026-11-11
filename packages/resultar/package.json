@@ -1,6 +1,6 @@
 {
   "name": "resultar",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "Result pattern for TypeScript",
   "keywords": [
     "error-handling",
@@ -54,7 +54,7 @@
     "test:cov": "vp test run --coverage",
     "test:mutation": "stryker run",
     "prepare": "vp config || true",
-    "smoke:package": "pnpm run build && tsx scripts/smoke-package.ts",
+    "smoke:package": "pnpm run build && vpx scripts/smoke-package.ts",
     "sync:jsr-version": "node scripts/sync-jsr-version.mjs && vp fmt jsr.json",
     "bench": "pnpm --filter resultar-benchmarks bench",
     "bench:neverthrow": "pnpm --filter resultar-benchmarks bench:neverthrow",
@@ -67,7 +67,6 @@
     "@vitest/coverage-v8": "catalog:",
     "@vitest/ui": "catalog:",
     "fallow": "catalog:",
-    "tsx": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
     "vitest": "catalog:"

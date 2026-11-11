@@ -1,5 +1,5 @@
 /**
- * Application Lifecycle & Scoped Finalizers (`ResultTask.scoped`, `ResultTask.scope`, `acquireRelease`)
+ * Application Lifecycle & Scoped Finalizers (`ResultTask.scoped`, `ResultTask.makeScope`, `acquireRelease`)
  *
  * This module demonstrates LIFO resource acquisition and teardown across a multi-service
  * server boot/shutdown sequence. If any startup step fails (or when shutdown completes),
@@ -80,6 +80,7 @@ export const applicationLifecycle = (factories: ApplicationFactories) =>
  * for scenarios where resource lifetimes span multiple separate `ResultTask` executions
  * (such as test fixtures or manually managed plugin containers).
  */
+// Executable demo boundary: starts the Tasks, awaits cleanup, and returns observations.
 export const runManualScopeOwnerExample = async () => {
   const events: string[] = []
   const owner = ResultTask.makeScope()

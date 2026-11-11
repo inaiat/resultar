@@ -89,7 +89,7 @@ Construct promises and mutable per-run state inside the Task so repeated runs cr
   assertions for success, failure rollback, and fallible release paths observed through `runExit`.
 - [`src/application-lifecycle.ts`](src/application-lifecycle.ts): a `ResultTask.scoped` server
   lifetime (database, session, HTTP serve/drain) with boot rollback on failure, plus manual scope
-  management with `ResultTask.scope()`. It is not re-exported from `src/index.ts`; it is exercised
+  management with `ResultTask.makeScope()`. It is not re-exported from `src/index.ts`; it is exercised
   directly by `scripts/lifecycle-smoke.ts`.
 
 The `src/index.ts` barrel re-exports every sample except `application-lifecycle.ts` and runs
@@ -97,6 +97,14 @@ them together via `runCookbook`. The smoke scripts check the expected `Ok` and `
 so this example stays executable as the library evolves.
 
 ## Recommended v4 workflows
+
+Promise-returning helpers in this cookbook have explicit roles: `readConfigText`
+and the transport delay stub simulate external drivers; `run*`, resource-cleanup,
+and observation demos execute Tasks and return results/events to the test or CLI.
+They are execution boundaries, not recommended repository/service signatures.
+New reusable asynchronous application methods return `ResultTask` without `async`;
+use `tryPromise` to adapt a raw driver and `fromResultAsync` only for an existing
+typed Async operation. See the [boundary decision table](../../DOCUMENTATION.md#promise-boundaries-and-application-contracts).
 
 `Result.gen` returns plain success values and uses `yield*` for fallible steps and early
 errors; deprecated `safeTry` retains its original Result-returning signatures as a separate helper.

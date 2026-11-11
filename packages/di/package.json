@@ -35,20 +35,20 @@
   },
   "scripts": {
     "analyze": "fallow",
-    "build": "vp pack && node --import tsx scripts/declaration-imports.ts",
+    "build": "vp pack && node --import vite-plus/register scripts/declaration-imports.ts",
     "check": "vp check",
     "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
     "prepare": "vp config || true",
     "prepublishOnly": "pnpm run build",
-    "smoke:package": "pnpm run build && node --import tsx scripts/smoke-package.ts",
+    "smoke:package": "pnpm run build && node --import vite-plus/register scripts/smoke-package.ts",
     "test": "vp test",
     "test:watch": "vp test watch",
     "test:ui": "vp test --ui --watch",
     "test:cov": "vp test run --coverage",
-    "test:dx": "pnpm run build && node --import tsx scripts/diagnostics.ts",
-    "test:scale": "pnpm run build && node --import tsx scripts/scale-types.ts"
+    "test:dx": "pnpm run build && node --import vite-plus/register scripts/diagnostics.ts",
+    "test:scale": "pnpm run build && node --import vite-plus/register scripts/scale-types.ts"
   },
   "dependencies": {
     "resultar": "workspace:^"
@@ -58,7 +58,6 @@
     "@vitest/coverage-v8": "catalog:",
     "@vitest/ui": "catalog:",
     "fallow": "catalog:",
-    "tsx": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
     "vitest": "catalog:"

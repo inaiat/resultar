@@ -1,3 +1,5 @@
+// Positive checker fixtures include legacy eager APIs and native execution boundaries.
+// For new application methods, follow loadUserTask / loadUserWithResultTask below.
 import {
   createTaggedError,
   Fiber,
@@ -47,6 +49,7 @@ class StartupTaskError extends createTaggedError({
   message: "Startup task failed: $label",
 }) {}
 
+// Native framework lifecycle: Promise is the framework contract.
 interface FastifyLifecycle {
   after(): Promise<void>;
 }
@@ -62,6 +65,7 @@ const ensureUserDoesNotExist = (email: string): StrictResult<string, UserAlready
 const insertUser = (email: string): StrictResult<User, never> =>
   ok({ email, id: `usr_${email.length}` });
 
+// External driver stub; application adapters below capture its rejections.
 const fetchUserRecord = async (id: string): Promise<User> => ({ email: `${id}@example.com`, id });
 
 // no-discard: returning the Result keeps the caller responsible for the channel.
@@ -115,11 +119,11 @@ export const parseUserFromObjectBoundary = (input: string): StrictResult<User, P
     catch: (cause) => new ParseUserError({ cause }),
   });
 
-// no-unsafe-await: raw Promise work is placed inside tryResultAsync so rejections
+// Legacy eager adapter: raw Promise work is placed inside tryResultAsync so rejections
 // become FetchUserError instead of escaping as rejected Promises.
 export const loadUser = (id: string): StrictResultAsync<User, FetchUserError> =>
   tryResultAsync({
-    try: async () => await fetchUserRecord(id),
+    try: () => fetchUserRecord(id),
     catch: (cause) => new FetchUserError({ cause, id }),
   });
 
@@ -127,14 +131,14 @@ export const loadUser = (id: string): StrictResultAsync<User, FetchUserError> =>
 export const loadUserWithFromPromise = (id: string): StrictResultAsync<User, FetchUserError> =>
   fromPromise(fetchUserRecord(id), (cause) => new FetchUserError({ cause, id }));
 
-// no-unsafe-await: runPromise is a final boundary. Awaiting it is allowed only
-// when its argument is ResultAsync, because errors have already been captured.
+// Legacy native execution boundary: runPromise unwraps success and rejects on failure.
+// The host handles the rejection; reusable application methods retain the typed Task.
 export const loadUserAtPromiseBoundary = async (id: string): Promise<User> =>
   await runPromise(loadUser(id));
 
 const loadUserTask = (id: string): ResultTask<User, FetchUserError> =>
   ResultTask.tryPromise({
-    try: async () => await fetchUserRecord(id),
+    try: () => fetchUserRecord(id),
     catch: (cause) => new FetchUserError({ cause, id }),
   });
 
@@ -201,6 +205,7 @@ export const loadUserWithSafeTry = (id: string): StrictResultAsync<User, FetchUs
     return ok(user);
   });
 
+// Existing eager startup adapter; the supplied callback is a native SDK Promise API.
 export const runStartupTask = (
   label: string,
   task: () => Promise<void>,
