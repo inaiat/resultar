@@ -1,9 +1,15 @@
 import { strict as assert } from "node:assert";
-import type { ResultAsync } from "resultar";
+import { Cause, Match, type ResultAsync, type ResultTask } from "resultar";
 import { describe, it } from "vite-plus/test";
 import { z } from "zod";
 
-import { requestJson, requestJsonZod, RequestError } from "../src/index.js";
+import {
+  requestJson,
+  requestJsonTask,
+  requestJsonZod,
+  requestJsonZodTask,
+  RequestError,
+} from "../src/index.js";
 
 const userSchema = z.object({ email: z.email(), name: z.string() });
 
@@ -82,5 +88,61 @@ describe("requestJsonZod", () => {
 
     assert.equal(error.message, "User API returned 1 schema errors");
     assert.equal(receivedErrorCount, 1);
+  });
+
+  it("propagates signal cancellation through requestJsonZod retries", async () => {
+    const controller = new AbortController();
+    const customReason = new Error("zod request cancelled");
+    controller.abort(customReason);
+    let attempts = 0;
+
+    const result = await requestJsonZod({
+      request: async () => {
+        attempts += 1;
+        return createFetchResponse(userSample);
+      },
+      retry: { delayMs: 10, times: 2 },
+      schema: userSchema,
+      signal: controller.signal,
+    });
+
+    assert.equal(attempts, 0);
+    assert.ok(result.isErr());
+    const error = expectRequestError(result.error);
+    assert.equal(error.cause, customReason);
+  });
+
+  it("supports lazy, repeatable requestJsonZodTask and requestJsonTask", async () => {
+    let calls = 0;
+    const task = requestJsonZodTask({
+      request: async (signal) => {
+        assert.equal(signal.aborted, false);
+        calls += 1;
+        return createFetchResponse({ id: String(calls * 10) });
+      },
+      schema: transformedUserSchema,
+    });
+
+    expectType<ResultTask<z.output<typeof transformedUserSchema>, RequestError>>(task);
+    assert.equal(calls, 0);
+
+    assert.deepEqual(await task.runPromise(), { numericId: 10 });
+    assert.deepEqual(await task.runPromise(), { numericId: 20 });
+    assert.equal(calls, 2);
+
+    const aliasTask = requestJsonTask({
+      request: async () => createFetchResponse(userSample),
+      schema: userSchema,
+    });
+    expectType<ResultTask<z.output<typeof userSchema>, RequestError>>(aliasTask);
+
+    const controller = new AbortController();
+    controller.abort();
+    const exit = await aliasTask.runExit({ signal: controller.signal });
+    const wasInterrupted = Match.valueTags(exit, {
+      Failure: ({ cause }) => Cause.hasInterrupts(cause),
+      Success: () => false,
+    });
+    assert.equal(wasInterrupted, true);
   });
 });

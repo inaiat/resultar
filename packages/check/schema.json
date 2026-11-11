@@ -85,6 +85,11 @@
           "default": "warning",
           "description": "Disallow Promise values in synchronous Result success channels; use asyncMap or ResultAsync."
         },
+        "noPromiseResultar": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "error",
+          "description": "Disallow native Promise contracts wrapping Result, StrictResult, or ResultTask; return ResultAsync, StrictResultAsync, or ResultTask directly without an async wrapper."
+        },
         "noDiscardMode": {
           "type": "string",
           "enum": ["must-use", "direct"],

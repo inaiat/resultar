@@ -65,7 +65,7 @@ describe('Result.gen value return regressions', () => {
     `
     const output = execFileSync(
       process.execPath,
-      ['--import', 'tsx', '--input-type', 'module', '--eval', script],
+      ['--import', 'vite-plus/register', '--input-type', 'module', '--eval', script],
       { cwd: fileURLToPath(new URL('..', import.meta.url)), encoding: 'utf8', timeout: 10_000 },
     )
     equal(output, '')

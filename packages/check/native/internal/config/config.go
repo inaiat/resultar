@@ -29,6 +29,7 @@ type Options struct {
 	NoDiscardMode                    string
 	NoAwaitInSafeTry                 Severity
 	NoPromiseInResultSuccess         Severity
+	NoPromiseResultar                Severity
 	NoTaggedErrorConstructorOverride Severity
 	NoThrow                          Severity
 	NoTryCatch                       Severity
@@ -94,6 +95,7 @@ func Defaults() Options {
 		NoDiscard:                        SeverityError,
 		NoDiscardMode:                    "must-use",
 		NoPromiseInResultSuccess:         SeverityWarning,
+		NoPromiseResultar:                SeverityError,
 		NoTaggedErrorConstructorOverride: SeverityWarning,
 		NoThrow:                          SeverityOff,
 		NoTryCatch:                       SeverityOff,
@@ -291,6 +293,9 @@ func applyPlugin(options *Options, plugin map[string]any) error {
 		return err
 	}
 	if err := setSeverity(plugin, "noPromiseInResultSuccess", &options.NoPromiseInResultSuccess); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "noPromiseResultar", &options.NoPromiseResultar); err != nil {
 		return err
 	}
 	if err := setSeverity(plugin, "noTaggedErrorConstructorOverride", &options.NoTaggedErrorConstructorOverride); err != nil {
@@ -567,7 +572,7 @@ func canonicalRule(name string) string {
 
 var ruleNames = map[string]struct{}{
 	"nounknowntaskrequirements": {}, "unusedsuppression": {},
-	"noawaitinsafetry": {}, "nodiscard": {}, "nopromiseinresultsuccess": {},
+	"noawaitinsafetry": {}, "nodiscard": {}, "nopromiseinresultsuccess": {}, "nopromiseresultar": {},
 	"notaggederrorconstructoroverride": {}, "nothrow": {}, "notrycatch": {},
 	"notrycatchinsafetry": {}, "nounknownresulterror": {}, "nouselessrecovery": {},
 	"nounsafeawait": {}, "noinvalidlifetime": {}, "nounscopedacquirerelease": {},
@@ -595,6 +600,8 @@ func setRuleSeverity(options *Options, name string, value Severity) error {
 		options.NoDiscard = value
 	case "nopromiseinresultsuccess":
 		options.NoPromiseInResultSuccess = value
+	case "nopromiseresultar":
+		options.NoPromiseResultar = value
 	case "notaggederrorconstructoroverride":
 		options.NoTaggedErrorConstructorOverride = value
 	case "nothrow":
@@ -741,10 +748,10 @@ func (o Options) ForFile(fileName, projectDir string) Options {
 // The default failOn value is message, preserving the historical behaviour of
 // failing for every enabled Resultar diagnostic.
 func Fails(severity, failOn Severity) bool {
-	return severityRank(failOn) > 0 && severityRank(severity) >= severityRank(failOn)
+	return SeverityRank(failOn) > 0 && SeverityRank(severity) >= SeverityRank(failOn)
 }
 
-func severityRank(value Severity) int {
+func SeverityRank(value Severity) int {
 	switch value {
 	case SeverityError:
 		return 4
@@ -911,6 +918,8 @@ func RuleSeverity(options Options, name string) (Severity, bool) {
 		return options.NoDiscard, true
 	case "nopromiseinresultsuccess":
 		return options.NoPromiseInResultSuccess, true
+	case "nopromiseresultar":
+		return options.NoPromiseResultar, true
 	case "notaggederrorconstructoroverride":
 		return options.NoTaggedErrorConstructorOverride, true
 	case "nothrow":

@@ -98,6 +98,7 @@ void test("completes Resultar options alongside standard plugin properties", asy
   );
   for (const option of [
     "noDiscard",
+    "noPromiseResultar",
     "noUnknownTaskRequirements",
     "unusedSuppression",
     "ignoreFilePatterns",

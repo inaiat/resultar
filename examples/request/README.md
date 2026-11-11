@@ -42,7 +42,7 @@ The files are split by validator:
   `ResultAsync.withResource`.
 - [`scripts/smoke.ts`](scripts/smoke.ts) executes the TypeBox and Zod examples together.
 
-The `src/typebox.ts` and `src/zod.ts` files are executable with `tsx` and always manage their local
+The `src/typebox.ts` and `src/zod.ts` files are executable with `vpx` and always manage their local
 fixture internally.
 
 It shows:

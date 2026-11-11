@@ -35,7 +35,9 @@
     "test:agents": "pnpm run build && pnpm --filter resultar-check native:build:current && node scripts/eval-agents.mjs --self-test && node --test scripts/test-agent-runner.mjs",
     "eval:agents": "node scripts/eval-agents.mjs",
     "example:fastify": "pnpm --filter resultar-fastify-example smoke",
-    "example:nestjs": "pnpm --filter resultar-nestjs-example smoke"
+    "example:nestjs": "pnpm --filter resultar-nestjs-example smoke",
+    "docs:generate": "node scripts/generate-docs.mjs",
+    "test:docs": "node scripts/generate-docs.mjs --check && node --test scripts/test-documentation.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",

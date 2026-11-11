@@ -42,6 +42,54 @@
       "prompt": "Design a lazy ResultTask workflow that reads config from a typed service, fetches a user over a cancellable transport, holds a database connection in a resource scope, and runs at an explicit boundary. Explain what stays lazy, how release failures surface, and which boundary preserves composite causes.",
       "expected_output": "Builds with tryPromise/gen without starting work; declares the service tag and provides it at runResult/runExit; owns the connection with acquireRelease plus scoped. Explains that deferred release errors fold into E at scoped, orElse recovers typed errors only after scoped, runExit preserves Sequential/Parallel causes while runResult rejects composites, and cancellation is cooperative. Uses forkChild/join/interrupt for concurrent child work when needed, with children owned by their scope and interruption awaiting cleanup.",
       "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "Bridge the JSON request client into a lazy repeatable Task and forward cancellation.",
+      "expected_output": "Request validation preserves RequestError and each run invokes the request factory anew.",
+      "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "Create a DI application with singleton cache ownership and request-local tenant isolation.",
+      "expected_output": "Use a resource provider, typed locals and scoped consumers; await root cleanup once.",
+      "files": []
+    },
+    {
+      "id": 10,
+      "prompt": "Match a custom discriminant exhaustively and redact diagnostic secrets.",
+      "expected_output": "Use declared Match discriminators and redact; preserve exhaustive output typing.",
+      "files": []
+    },
+    {
+      "id": 11,
+      "prompt": "Implement lazy retries with deterministic numeric exponential backoff.",
+      "expected_output": "Construct fresh attempts, filter retryable errors, and verify requested delays without real timers.",
+      "files": []
+    },
+    {
+      "id": 12,
+      "prompt": "Inspect every Task failure channel at an application boundary.",
+      "expected_output": "Use runExit and Cause.hasInterrupts/hasDies; do not assume runResult converts every failure into Err.",
+      "files": []
+    },
+    {
+      "id": 13,
+      "prompt": "Wrap a Promise-returning SDK in a new repository whose public methods return lazy ResultTasks. Keep the driver boundary distinct from application and native execution contracts.",
+      "expected_output": "Uses ResultTask.tryPromise directly, concrete tagged errors and cancellation forwarding. Factories are not async; returns no Promise<ResultTask> or Promise<Result>. Retains typed Async bridges only for existing ResultAsync adapters.",
+      "files": []
+    },
+    {
+      "id": 14,
+      "prompt": "Implement unannotated Task and eager ResultAsync adapter factories for Promise-returning drivers without wrapping either Resultar return contract in an outer async Promise.",
+      "expected_output": "Returns ResultTask directly from ResultTask.tryPromise and ResultAsync directly from tryResultAsync without async wrappers, preserving concrete tagged errors and failing no-promise-resultar if async is added even without explicit return type annotations.",
+      "files": []
+    },
+    {
+      "id": 15,
+      "prompt": "Implement a Task-native Zod HTTP client using requestJsonZodTask with exponential backoff, stage-accurate domain error mapping, safe HTTP error handling, and cooperative Task cancellation.",
+      "expected_output": "Uses requestJsonZodTask directly without async or manual fromResultAsync bridging, maps 404/http/invalidJson/request/validation into a tagged error, classifies transport SyntaxError as request, handles circular response headers safely, and stops retries immediately on Task cancellation.",
+      "files": []
     }
   ],
   "executable_contracts": "cases.mjs",

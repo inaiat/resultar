@@ -223,8 +223,12 @@ services and wrap scope-dependent work with `ResultTask.scoped` before running, 
 The `runResult` boundary can still reject on defects, interruption or
 composite causes. A Task itself has no `.then`; awaiting it does not execute it.
 
-For Promise adapters that need the active cancellation signal, use `ResultTask.tryPromise({ try: signal => ..., catch })`
-or `ResultTask.fromResultAsync(signal => load(signal))` and pass the signal to a cooperative driver.
+For a raw `Promise<T>` driver, use `ResultTask.tryPromise({ try: signal => ..., catch })`.
+For an existing `ResultAsync<T, E>` adapter, use `ResultTask.fromResultAsync(signal => load(signal))`.
+Forward the signal in either case. New repository and use-case methods return the Task;
+only the external driver or the explicit native execution boundary returns a Promise.
+Do not mark a Task-producing factory `async`. See the
+[boundary decision table](../DOCUMENTATION.md#promise-boundaries-and-application-contracts).
 
 | Bridge | Execution behavior |
 | --- | --- |
@@ -235,8 +239,8 @@ or `ResultTask.fromResultAsync(signal => load(signal))` and pass the signal to a
 | `task.runResult(options?)` | Starts the task once and returns an in-flight `ResultAsync` (`ResultAsync.fromTask` / `toResultAsync` are deprecated aliases) |
 
 Capturing an already-started `Promise` via `fromPromise` cannot undo its execution; use
-`ResultTask.tryPromise` or `fromResultAsync(() => tryResultAsync(...))` so each task
-run and retry creates a fresh operation. `fromResult` has no
+`ResultTask.tryPromise` directly for raw Promise work so each task run and retry
+creates a fresh operation. Reserve `fromResultAsync(factory)` for existing typed adapters. `fromResult` has no
 factory overload; defer a Result-producing call inside `ResultTask.gen` as above.
 
 The incoming bridge accepts any `PromiseLike<Result<T, E>>`. Core `Result.gen` and

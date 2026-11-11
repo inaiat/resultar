@@ -5,12 +5,17 @@
  */
 
 export * from "resultar-request";
-export { requestJsonTypeBox } from "./request-json-typebox.js";
+export { requestJsonTypeBox, requestJsonTypeBoxTask } from "./request-json-typebox.js";
 
-/** Package-local alias for `requestJsonTypeBox`. */
-export { requestJsonTypeBox as requestJson } from "./request-json-typebox.js";
+/** Package-local aliases for `requestJsonTypeBox` and `requestJsonTypeBoxTask`. */
+export {
+  requestJsonTypeBox as requestJson,
+  requestJsonTypeBoxTask as requestJsonTask,
+} from "./request-json-typebox.js";
 
 export type {
   RequestJsonTypeBoxInput,
   RequestJsonTypeBoxMappedInput,
+  RequestJsonTypeBoxTaskInput,
+  RequestJsonTypeBoxTaskMappedInput,
 } from "./request-json-typebox.js";

@@ -1,6 +1,6 @@
 {
   "name": "resultar-check",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "description": "Native Resultar diagnostics powered by TypeScript-Go",
   "keywords": [
     "diagnostics",
@@ -47,14 +47,13 @@
     "native:fmt": "gofmt -w native/cmd native/internal",
     "test": "pnpm run native:test && pnpm run schema:test",
     "native:test": "go -C native test ./...",
-    "schema:test": "tsx --test scripts/schema.test.ts",
+    "schema:test": "vpx --test scripts/schema.test.ts",
     "prepare": "vp config || true",
     "prepublishOnly": "vp pack",
-    "smoke:package": "pnpm run build && pnpm run native:build:current && tsx scripts/smoke-package.ts"
+    "smoke:package": "pnpm run build && pnpm run native:build:current && vpx scripts/smoke-package.ts"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "tsx": "catalog:",
     "vite-plus": "catalog:",
     "vscode-json-languageservice": "5.6.1"
   },

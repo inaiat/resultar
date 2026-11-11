@@ -43,6 +43,9 @@ jobs:
       - name: Build
         run: vp run build
 
+      - name: Documentation contracts
+        run: vp run test:docs
+
       - name: Package smoke
         run: vp run smoke:package
 

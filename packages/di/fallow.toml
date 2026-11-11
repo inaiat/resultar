@@ -1,5 +1,6 @@
 entry = ["src/index.ts"]
 publicPackages = ["resultar-di"]
+ignoreDependencies = ["resultar-check"]
 
 [rules]
 circular-dependencies = "error"

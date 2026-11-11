@@ -22,6 +22,7 @@ const expectedExports = [
   "integrationErrorHandler",
   "isHttpResponseError",
   "requestJson",
+  "requestJsonTask",
 ] as const;
 
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>

@@ -194,8 +194,48 @@ Across these APIs:
 For local code, `Result<T, E>` can use strings, enums, or small domain objects as `E`.
 
 At synchronous application boundaries, `StrictResult<T, E extends Error>` constrains
-failures to real Error instances. For new async boundaries, return `ResultTask<T, DomainError>`
+failures to real Error instances. For new async application methods, return `ResultTask<T, DomainError>`
 with a concrete Error union; `task.runResult()` returns `StrictResultAsync<T, DomainError>`.
+
+## Promise boundaries and application contracts
+
+Choose the adapter from the **input** type, and keep the application's **output**
+contract explicit. A callback accepting a Promise-returning driver does not make
+its enclosing function Promise-returning.
+
+| Role / input | Recommended output or adaptation |
+| --- | --- |
+| Synchronous domain computation | `Result<T, E>` |
+| New asynchronous repository, service, or use case | `ResultTask<T, E, R>`; the factory itself is not `async` |
+| Outbound HTTP JSON in a lazy workflow | `requestJsonTask` / `requestJsonZodTask` / `requestJsonTypeBoxTask` returns `ResultTask<T, E>` directly |
+| External driver / SDK returning `Promise<T>` | `ResultTask.tryPromise({ try: signal => driver(signal), catch: mapError })` returns a Task |
+| Existing typed adapter returning `ResultAsync<T, E>` or `PromiseLike<Result<T, E>>` | `ResultTask.fromResultAsync(signal => existingAdapter(signal))` preserves the typed channel |
+| Existing eager public application API | Preserve `ResultAsync<T, E>` / `StrictResultAsync<T, E>` during migration |
+| Native route, SDK callback, CLI entrypoint, or test runner | Execute at that boundary; a native Promise is appropriate when required by the host |
+
+Do not add `async` to a Result or Task factory: `Promise<ResultTask<T, E, R>>` awaits only
+construction without executing the Task (replace with a direct `ResultTask<T, E, R>`), while
+`Promise<Result<T, E>>` / `Promise<StrictResult<T, E>>` wraps an eager Result in an outer Promise
+(replace with a direct `ResultAsync<T, E>` / `StrictResultAsync<T, E>` without `async`). Enable
+`"noPromiseResultar": "error"` in `resultar-check` to reject both shapes—including when
+`"preferResultAsync": "off"`. Do not call a runner inside a reusable repository method just to
+obtain a Promise. `runPromise` returns `Promise<T>` and can reject; `runExit` returns
+`Promise<Exit<T, E>>`; `runResult` returns `ResultAsync<T, E>`. Existing Async
+instance terminals such as `match` also return native Promises at consumption.
+
+For new raw Promise adapters, use `tryPromise` directly, and for new lazy HTTP calls use
+`requestJsonTask` (or `requestJsonZodTask` / `requestJsonTypeBoxTask`). Constructing
+`ResultAsync.try(...)` solely to wrap it with `fromResultAsync` adds an unnecessary
+conversion. `fromResultAsync` remains the right bridge for existing typed `ResultAsync`
+operations; it does not accept a raw `Promise<T>` in place of a Result.
+Both factories defer work until each Task run; capturing an already-started Promise
+cannot defer or replay the underlying operation.
+
+The [compiled recipes](docs/recipes.md) show both adapters with explicit return
+types. Promise driver stubs and native execution boundaries are labeled there.
+The [checker contracts fixture](examples/check/src/contracts.ts) deliberately
+contains invalid Promise repositories alongside valid Task/eager contracts;
+it is diagnostic test data, not a template for a new repository.
 
 ## Lazy tasks and service requirements
 
@@ -405,7 +445,7 @@ before the next task continues.
 `task.runResult()` / `ResultTask.runResult(task)` and async `Result` chains. `fromResultAsync(existing)`
 reuses an already-started execution; `fromResultAsync(factory)` invokes the factory on each Task run.
 The bridge is structural: it accepts `PromiseLike<Result<T, E>>` without requiring an instance of
-`ResultAsync`. Static and instance `ResultTask.toResultAsync` and `ResultAsync.fromTask(task)` remain
+`ResultAsync`. For a raw `Promise<T>`, use `ResultTask.tryPromise` directly. Static and instance `ResultTask.toResultAsync` and `ResultAsync.fromTask(task)` remain
 supported as deprecated aliases of `runResult()`.
 
 Scope-owned fibers, task `race` / `raceFirst` / `timeout`, bounded collections and
@@ -509,7 +549,7 @@ have matching, self-contained layouts:
 `requires: { cache: Cache }`. These existing examples retain eager `StrictResultAsync`
 methods and `Result.gen` to compose repository results; they demonstrate compatibility,
 not the preferred return type for new async code. A new service can return `ResultTask` and
-adapt an existing repository with `ResultTask.fromResultAsync(signal => repository.load(signal))`. The cache and repository are singletons; users and health are scoped.
+adapt an existing `StrictResultAsync` repository with `ResultTask.fromResultAsync(signal => repository.load(signal))`. A raw Promise driver instead uses `ResultTask.tryPromise`. The cache and repository are singletons; users and health are scoped.
 Declaring `requires` does not register a provider: `createServices` registers each service explicitly.
 
 Both applications omit `bindings`, so the cache, repository, users and health services are
@@ -757,28 +797,28 @@ or `runExit` to inspect all causes as values. Task has no `.then` method, includ
 
 ### Adapt request helpers and existing Async operations
 
-`resultar-request`, its schema adapters and async `Result.gen` return eager
-`ResultAsync`. Keep those contracts and use a factory bridge for new Task composition:
+For new lazy HTTP JSON calls, `resultar-request` and its schema adapters expose Task-native
+entrypoints (`requestJsonTask`, `requestJsonZodTask`, `requestJsonTypeBoxTask`) that return
+`ResultTask<T, E>` directly without an `async` wrapper or manual bridge:
 
 ```ts
-import { ResultTask } from "resultar";
-import { requestJson } from "resultar-request";
+import { requestJsonTask } from "resultar-request";
 
 const loadUser = (id: string) =>
-  ResultTask.fromResultAsync((signal) =>
-    requestJson({
-      request: () => fetch(`/users/${id}`, { signal }),
-      validator: (value): value is { readonly id: string } =>
-        typeof value === "object" &&
-        value !== null &&
-        "id" in value &&
-        typeof value.id === "string",
-    }),
-  );
+  requestJsonTask({
+    request: (signal) => fetch(`/users/${id}`, { signal }),
+    validator: (value): value is { readonly id: string } =>
+      typeof value === "object" &&
+      value !== null &&
+      "id" in value &&
+      typeof value.id === "string",
+  });
 
 const result = await loadUser("usr_123").runResult();
 ```
 
+When composing an existing helper that already returns eager `ResultAsync` (such as `requestJson`
+or async `Result.gen`), preserve its contract and bridge it inside `ResultTask.fromResultAsync((signal) => existingOperation(signal))`.
 `fromResultAsync(existing)` instead captures one already-started execution and reuses
 it on every Task run. `task.runResult()` starts a requirement-free Task execution and returns
 `ResultAsync` (`ResultAsync.fromTask(task)` and `task.toResultAsync()` remain deprecated aliases).
@@ -1649,14 +1689,7 @@ type AiReason = TaggedEnum<{
 class AiError extends createTaggedError({
   name: "AiError",
   message: "AI request failed",
-}) {
-  public readonly reason: AiReason;
-
-  public constructor(props: { readonly cause?: unknown; readonly reason: AiReason }) {
-    super({ cause: props.cause });
-    this.reason = props.reason;
-  }
-}
+}).withProps<{ readonly reason: AiReason }>() {}
 
 const completePrompt = (): StrictResult<string, AiError> =>
   err(new AiError({ reason: AiReason.RateLimitError({ retryAfterMs: 1_000 }) }));
@@ -2815,17 +2848,7 @@ type ValidationIssue = {
 class ValidationError extends createTaggedError({
   name: "ValidationError",
   message: "Invalid input",
-}) {
-  public readonly issues: readonly ValidationIssue[];
-
-  public constructor(props: {
-    readonly cause?: unknown;
-    readonly issues: readonly ValidationIssue[];
-  }) {
-    super({ cause: props.cause });
-    this.issues = props.issues;
-  }
-}
+}).withProps<{ readonly issues: readonly ValidationIssue[] }>() {}
 ```
 
 Use a tiny path normalizer at the adapter boundary:
@@ -2893,20 +2916,18 @@ const parsed = tryResult(
   (cause) => new ParseConfigError({ cause }),
 );
 
-const loaded = ResultTask.tryPromise({
-  try: (signal) => fetch(url, { signal }),
-  catch: (cause) => new FetchPayloadError({ cause, url }),
-})
-  .andThen((response) =>
-    response.ok ? ok(response) : FetchPayloadStatusError.err({ status: response.status, url }),
-  )
-  .andThen((response) =>
-    ResultTask.tryPromise({
-      try: () => response.json() as Promise<Payload>,
-      catch: (cause) => new ParsePayloadError({ cause, url }),
-    }),
-  );
+// Lazy Task HTTP adapter: requestJsonTask returns ResultTask<Payload, RequestError> directly.
+const loaded = requestJsonTask({
+  request: (signal) => fetch(url, { signal }),
+  validator: isPayload,
+});
 ```
+
+For the HTTP example, import `requestJsonTask` (or eager `requestJson`) from `resultar-request` and provide
+`isPayload: (value: unknown) => value is Payload` with real runtime validation.
+The helper maps transport, HTTP, JSON, and validation failures to `RequestError`.
+Do not assert `response.json()` to `Promise<Payload>`: a type assertion does not
+validate the response.
 
 For unrecoverable failures, throw normally:
 
@@ -3188,7 +3209,7 @@ editor actions.
 Both commands accept `--file`, `--format human|json`, and `--json`, and leave files unchanged.
 They exit `0` after valid analysis even when fixes exist; configuration/compiler failures exit `1`.
 Use the default `pnpm exec resultar-check --project tsconfig.json` command for the CI diagnostic gate.
-See the [checker reference](packages/check/README.md#command-line) for configuration and exit policy.
+See the [checker reference](packages/check/README.md#command-line) for configuration and exit policy, and the [Anti-Patterns & `resultar-check` Elimination Guide](skills/resultar/references/anti-patterns.md) for configuration, severity thresholds, and repair guidance linked to all 41 rules.
 
 ## Testing Resultar Code
 
@@ -3262,8 +3283,8 @@ Use this as the first stop when choosing an operation:
 | Continue with sync fallible work                     | `andThen(fn)`                                                       |
 | Continue from sync to async fallible work            | `ResultTask.gen` / `ResultTask.fromResult(result).andThen(fn)`      |
 | Recover from an error                                | `orElse(fn)`                                                        |
-| Replace an error with another error                  | `mapErr(fn)` or `orElse(() => err(newError))`                       |
-| Replace an error with success                        | `orElse(() => ok(defaultValue))`                                    |
+| Replace an error with another error                  | `mapErr(fn)`                                                        |
+| Replace an error with success                        | `orElseSucceed(() => defaultValue)`                                 |
 | Recover one tagged error locally                     | `catchTag(tag, fn)`                                                 |
 | Recover several tagged errors locally                | `catchTags(handlers)`                                               |
 | Recover one nested tagged reason                     | `catchReason(parentTag, reasonTag, fn)`                             |
@@ -3770,6 +3791,12 @@ where an existing eager contract requires them.
 
 ## API Map
 
+The [generated public inventory](docs/api-inventory.md) lists every exported value/type
+and public member across the library packages. The checker uses a CLI/LSP surface;
+its [diagnostic table](packages/check/README.md#diagnostics) covers all 41 rules.
+[Executable recipes](docs/recipes.md) are compiled and tested by `vp run test:docs`.
+Run `vp run docs:generate` after building when the public surface changes.
+
 ### Function helpers
 
 - `pipe(value, ...transforms)`
@@ -4115,8 +4142,8 @@ pnpm run bench
 
 ### Workspace toolchain and validation
 
-The workspace uses Vite+ `1.1.0` with Vitest, UI, and V8 coverage aligned at its bundled version,
-`5.0.3`. Validation on October 7, 2026 passed `check:full` with 832 tests (629 in the core), build,
+Keep Vite+, Vitest, UI, and coverage versions aligned with the workspace catalog.
+Historical validation on October 7, 2026 passed `check:full` with 832 tests (629 in the core), build,
 package smoke tests, all example suites, and the agent evaluation graders.
 
 `check:full` also runs `test:release`, which exercises JSR version synchronization with the
@@ -4124,15 +4151,14 @@ package formatter configurations and checks that repeated runs preserve the outp
 `sync:jsr-version` command formats each manifest from its owning package directory so generated
 release commits follow the same configuration as package validation.
 
-Mutation testing keeps `coverageAnalysis: "perTest"` and uses a tracked pnpm patch for Stryker 10's
-Vitest runner. Vitest 5 joins suite and test names with `>`; both the runner's filters and its
-bundled coverage setup must use that separator. Without the patch, covered mutants can be reported
-as survivors with zero completed tests. Keep the patch until the upstream runner supports these
-names. Keep Vitest and its coverage/UI packages aligned with Vite+'s bundled version (5.0.3 for
-Vite+ 1.1.0). After changing the runner or its configuration, regenerate the report and incremental cache
-with `pnpm --filter resultar run test:mutation --force`. The JSON report is written to
+Mutation testing uses the installed Stryker runner and `coverageAnalysis: "perTest"`.
+Read `packages/resultar/stryker.conf.json` and the workspace catalog for current settings;
+there is no tracked Stryker patch. After changing the runner or its configuration,
+regenerate the report and incremental cache with
+`pnpm --filter resultar run test:mutation --force`. The JSON report is written to
 `packages/resultar/reports/mutation/mutation.json`.
 
+The following mutation results are historical, not a claim about the current checkout.
 The previous report contained 52 survivors with zero completed tests. After fixing test selection,
 strengthening the pipeline/service-resolver tests, and forcing a fresh run on October 7, 2026, the
 report recorded 2,052 killed mutants, 61 detected by timeout, zero survivors, and zero uncovered

@@ -1,9 +1,15 @@
 import { strict as assert } from "node:assert";
-import type { ResultAsync } from "resultar";
+import { Cause, Match, type ResultAsync, type ResultTask } from "resultar";
 import { Type, type Static } from "typebox";
 import { describe, it } from "vite-plus/test";
 
-import { requestJson, requestJsonTypeBox, RequestError } from "../src/index.js";
+import {
+  requestJson,
+  requestJsonTask,
+  requestJsonTypeBox,
+  requestJsonTypeBoxTask,
+  RequestError,
+} from "../src/index.js";
 
 const userSchema = Type.Object({ email: Type.String(), name: Type.String() });
 
@@ -89,5 +95,63 @@ describe("requestJsonTypeBox", () => {
       message: "must be string",
       path: "/email",
     });
+  });
+
+  it("propagates signal cancellation through requestJsonTypeBox retries", async () => {
+    const controller = new AbortController();
+    const customReason = new Error("typebox request cancelled");
+    controller.abort(customReason);
+    let attempts = 0;
+
+    const result = await requestJsonTypeBox({
+      request: async () => {
+        attempts += 1;
+        return createFetchResponse(userSample);
+      },
+      retry: { delayMs: 10, times: 2 },
+      schema: userSchema,
+      signal: controller.signal,
+    });
+
+    assert.equal(attempts, 0);
+    assert.ok(result.isErr());
+    const error = expectRequestError(result.error);
+    assert.equal(error.cause, customReason);
+  });
+
+  it("supports lazy, repeatable requestJsonTypeBoxTask and requestJsonTask", async () => {
+    let calls = 0;
+    const task = requestJsonTypeBoxTask({
+      request: async (signal) => {
+        assert.equal(signal.aborted, false);
+        calls += 1;
+        return createFetchResponse({ ...userSample, name: `Run ${calls}` });
+      },
+      schema: userSchema,
+    });
+
+    expectType<ResultTask<UserSample, RequestError>>(task);
+    assert.equal(calls, 0);
+
+    const first = await task.runPromise();
+    const second = await task.runPromise();
+    assert.equal(first.name, "Run 1");
+    assert.equal(second.name, "Run 2");
+    assert.equal(calls, 2);
+
+    const aliasTask = requestJsonTask({
+      request: async () => createFetchResponse(userSample),
+      schema: userSchema,
+    });
+    expectType<ResultTask<UserSample, RequestError>>(aliasTask);
+
+    const controller = new AbortController();
+    controller.abort();
+    const exit = await aliasTask.runExit({ signal: controller.signal });
+    const wasInterrupted = Match.valueTags(exit, {
+      Failure: ({ cause }) => Cause.hasInterrupts(cause),
+      Success: () => false,
+    });
+    assert.equal(wasInterrupted, true);
   });
 });

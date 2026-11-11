@@ -132,7 +132,12 @@ flowchart LR
 - **Stage 3 — `ResultTask<T, E, R>`**: Add typed service dependencies or owned resources when needed. Providing requirements leaves a Task that still needs an explicit runner.
 - **In-flight Result — `ResultAsync<T, E>`**: Returned by `task.runResult()` / `ResultTask.runResult(task)` (and in-flight constructors `okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`). Await it directly for `Result<T, E>` or chain `.map()`, `.andThen()`, `.catchTag()`, `.match()`, `.unwrapOr()`, and `.unwrapOrThrow()`. Eager `ResultAsync` orchestration helpers remain deprecated for existing API compatibility; see the [migration table](docs/migrations/v4.md).
 
-Prefer `task.runResult()`, `task.runPromise()`, `task.runExit()`, and `task.runFork()` in new code.
+New async repositories and use cases return `ResultTask`, without declaring their factories
+`async`. Wrap external `Promise<T>` drivers directly with `ResultTask.tryPromise`; reserve
+`fromResultAsync` for existing typed Async adapters. Framework callbacks and runners retain
+their native Promise contracts. See [Promise boundaries](DOCUMENTATION.md#promise-boundaries-and-application-contracts).
+
+Prefer `task.runResult()`, `task.runPromise()`, `task.runExit()`, and `task.runFork()` at execution boundaries.
 The static forms, such as `ResultTask.runResult(task, options)`, remain equivalent and supported.
 Both forms enforce service requirements and accept the same execution options. `runResult` returns a `ResultAsync`
 that resolves typed errors as `Err` (and rejects defects, interruption, and composite causes); `runPromise` resolves
@@ -283,20 +288,19 @@ pnpm add -D resultar-check
     "plugins": [
       {
         "name": "resultar-check",
-        "noDiscard": "error",
-        "resultTaskRequirementsSafety": "error",
-        "matchExhaustive": "error",
-        "taggedErrorPropsMismatch": "error",
-        "noThrow": "warn",
-        "noTryCatch": "warn"
+        "diagnosticSeverity": "error",
+        "noDiscardMode": "must-use",
+        "noUnsafeAwaitMode": "all",
+        "failOn": "error",
+        "ignoreFilePatterns": ["tests/**", "vite.config.ts"]
       }
     ]
   }
 }
 ```
 
-- **Catches silent bugs at compile time**: Forbids ignored `Result` / `ResultAsync` / `ResultTask` return values (`noDiscard`), `any`-typed service requirements leaking into `ResultTask` (`resultTaskRequirementsSafety`), non-exhaustive `Match` chains (`matchExhaustive`), and invalid `createTaggedError` prop types.
-- **CI & Editor ready**: Emits human, JSONL, SARIF 2.1.0, and JUnit formats, plus a fast `resultar-check lsp` server with hover inspection, quick fixes, and `overview` / `quickfixes` CLI inventories.
+- **41 native static analysis rules (`RESULTAR001`–`RESULTAR041`)**: Forbids ignored `Result` / `ResultAsync` / `ResultTask` / `MatchMatcher` / `Fiber` values (`noDiscard`), `unknown` / `any` error or service channels (`noUnknownResultError`, `noUnknownTaskRequirements`), generator mistakes (`yieldStarInResultTaskGen`, `noAwaitInResultTaskGen`, `requireReturnYieldStar`, `noResultInTaskGen`, `noRunInsideGen`), unscoped resources (`noUnscopedAcquireRelease`), invalid DI lifetimes (`noInvalidLifetime`), and non-idiomatic combinator chains.
+- **CI, Editor & AI Agent ready**: Emits human, JSON (`--json`), and structured quickfix (`quickfixes --json`) / codebase topology (`overview --json`) inventories, plus a native `resultar-check lsp` server. See the [Anti-Patterns & `resultar-check` Guide](skills/resultar/references/anti-patterns.md) for repair guidance and the complete diagnostic reference.
 
 ---
 
@@ -352,10 +356,16 @@ export const app = createHonoApp({ services }, (router) => {
 
 ## First-Class Coding Agent Support
 
-Every release of `resultar` bundles version-matched coding-agent instructions directly inside `node_modules/resultar/dist/agent/`:
+Every release of `resultar` bundles version-matched coding-agent instructions directly inside `node_modules/resultar/dist/agent/` (built from [`skills/resultar/`](skills/resultar/SKILL.md)):
 
-- **`node_modules/resultar/dist/agent/SKILL.md`**: Concise rules and idioms for Claude Code, Cursor, Codex, and Antigravity.
-- **`node_modules/resultar/dist/llms.txt`**: Structured index of the public surface and reference guides.
+- **[`SKILL.md`](skills/resultar/SKILL.md)**: Execution contracts and routing to the relevant manual for Claude Code, Cursor, Codex, and Antigravity.
+- **[`references/api.md`](skills/resultar/references/api.md)**: Feature map and semantic constraints across `Result`, `ResultAsync`, `ResultTask`, `createTaggedError`, `taggedEnum`, `redact`, `Match`, `Cause`, `Fiber`, `Semaphore`, `Retry`, `Clock`, and `Scheduler`.
+- **[`references/anti-patterns.md`](skills/resultar/references/anti-patterns.md)**: Native checker configuration, repair patterns, and links to all 41 rules and their verified defaults.
+- **[`references/patterns.md`](skills/resultar/references/patterns.md)**: Production recipes (`ResultTask.memoize`, `onExit`, background workers with `runFork`, uncooperative Promise timeouts with `interruption: 'detach'`, bounded concurrency, and `VirtualClock` testing).
+- **[`references/services.md`](skills/resultar/references/services.md)**: `serviceTag`, `resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, and `resultar-request` (`zod` and `typebox`).
+- **[`references/integrations.md`](skills/resultar/references/integrations.md)** & **[`references/review-checklist.md`](skills/resultar/references/review-checklist.md)**: Boundary adapters and pre-commit review checklist.
+- **[Public API inventory](docs/api-inventory.md) and [executable recipes](docs/recipes.md)**: Generated from declarations and compiled recipe sources; checked by `vp run test:docs`. The full guide and companion READMEs are also bundled under `dist/agent/manual/`.
+- **`node_modules/resultar/dist/llms.txt`**: Structured index of the public surface and bundled reference guides.
 - **Executable agent evaluation suite**: Run `pnpm test:agents` in this workspace to verify coding-agent contracts and grading harnesses (see [`skills/resultar/evals/README.md`](skills/resultar/evals/README.md)).
 
 ---
@@ -409,7 +419,7 @@ pnpm test:examples    # Run smoke tests across all example projects
 pnpm test:agents      # Validate coding-agent skill contracts
 ```
 
-Reproducible benchmarks live in [`benchmarks/`](benchmarks/README.md) (`pnpm --filter resultar run bench:effect`, `bench:neverthrow`, `bench:task`). Releases are managed with Changesets (`pnpm changeset`).
+Reproducible benchmarks live in [`benchmarks/`](benchmarks/README.md) (`pnpm --filter resultar-benchmarks run bench:effect`, `bench:neverthrow`, `bench:task`). Releases are managed with Changesets (`pnpm changeset`).
 
 ## License
 

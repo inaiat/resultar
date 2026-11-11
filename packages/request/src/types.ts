@@ -23,10 +23,15 @@ export type UndiciJsonResponseData = {
 /** Fetch-compatible or Undici-compatible response accepted by `requestJson`. */
 export type RequestJsonResponseData = FetchJsonResponseData | UndiciJsonResponseData;
 
+/** Retryable promise factory that produces a JSON response and cooperates with cancellation. */
+export type RequestJsonFactory<R extends RequestJsonResponseData = RequestJsonResponseData> = (
+  signal: AbortSignal,
+) => Promise<R>;
+
 /** Promise or retryable promise factory that produces a JSON response. */
 export type RequestJsonSource<R extends RequestJsonResponseData = RequestJsonResponseData> =
   | Promise<R>
-  | (() => Promise<R>);
+  | RequestJsonFactory<R>;
 
 /** Type guard used to validate a decoded JSON value. */
 export type RequestJsonValidator<T> = (value: unknown) => value is T;
@@ -104,12 +109,17 @@ export type RequestJsonRetryContext =
 
 /** Retry policy for a request factory. */
 export type RequestJsonRetry = {
+  readonly backoff?: number;
   readonly delayMs?: number | ((context: ResultAsyncRetryContext) => number);
   readonly jittered?: number;
   readonly onRetry?: (context: RequestJsonRetryContext) => Promise<void> | void;
+  readonly signal?: AbortSignal;
   readonly times: number;
   readonly when?: (context: RequestJsonRetryContext) => boolean | Promise<boolean>;
 };
+
+/** Retry policy for a lazy `ResultTask` request factory. */
+export type RequestJsonTaskRetry = Omit<RequestJsonRetry, "signal">;
 
 /** Maps each request failure category, and optionally HTTP statuses, to domain errors. */
 export type RequestJsonMapError = Partial<
@@ -143,8 +153,18 @@ export type RequestJsonBaseInput<R extends RequestJsonResponseData = RequestJson
   readonly mapError?: RequestJsonMapError;
   readonly request: RequestJsonSource<R>;
   readonly retry?: RequestJsonRetry;
+  readonly signal?: AbortSignal;
   readonly validationError?: RequestJsonValidationError;
 };
+
+/** Options shared by lazy `ResultTask` validator, decoder, and schema-adapter requests. */
+export type RequestJsonTaskBaseInput<R extends RequestJsonResponseData = RequestJsonResponseData> =
+  {
+    readonly mapError?: RequestJsonMapError;
+    readonly request: RequestJsonFactory<R>;
+    readonly retry?: RequestJsonTaskRetry;
+    readonly validationError?: RequestJsonValidationError;
+  };
 
 /** Request input that validates JSON with a decoder. */
 export type RequestJsonDecodeInput<
@@ -189,3 +209,47 @@ export type RequestJsonMappedInput<
   M extends RequestJsonMapError,
   R extends RequestJsonResponseData = RequestJsonResponseData,
 > = RequestJsonMappedDecodeInput<T, M, R> | RequestJsonMappedValidatorInput<T, M, R>;
+
+/** Lazy request input that validates JSON with a decoder. */
+export type RequestJsonTaskDecodeInput<
+  T,
+  R extends RequestJsonResponseData = RequestJsonResponseData,
+> = RequestJsonTaskBaseInput<R> & {
+  readonly decode: RequestJsonDecoder<T>;
+  readonly validator?: never;
+};
+
+/** Lazy request input that validates JSON with a type guard. */
+export type RequestJsonTaskValidatorInput<
+  T,
+  R extends RequestJsonResponseData = RequestJsonResponseData,
+> = RequestJsonTaskBaseInput<R> & {
+  readonly decode?: never;
+  readonly validator: RequestJsonValidator<T>;
+};
+
+/** Validator-based or decoder-based input accepted by `requestJsonTask`. */
+export type RequestJsonTaskInput<T, R extends RequestJsonResponseData = RequestJsonResponseData> =
+  | RequestJsonTaskDecodeInput<T, R>
+  | RequestJsonTaskValidatorInput<T, R>;
+
+/** Lazy decoder input with an explicit domain-error mapping. */
+export type RequestJsonTaskMappedDecodeInput<
+  T,
+  M extends RequestJsonMapError,
+  R extends RequestJsonResponseData = RequestJsonResponseData,
+> = RequestJsonTaskDecodeInput<T, R> & { readonly mapError: M };
+
+/** Lazy validator input with an explicit domain-error mapping. */
+export type RequestJsonTaskMappedValidatorInput<
+  T,
+  M extends RequestJsonMapError,
+  R extends RequestJsonResponseData = RequestJsonResponseData,
+> = RequestJsonTaskValidatorInput<T, R> & { readonly mapError: M };
+
+/** Mapped decoder or validator input accepted by `requestJsonTask`. */
+export type RequestJsonTaskMappedInput<
+  T,
+  M extends RequestJsonMapError,
+  R extends RequestJsonResponseData = RequestJsonResponseData,
+> = RequestJsonTaskMappedDecodeInput<T, M, R> | RequestJsonTaskMappedValidatorInput<T, M, R>;

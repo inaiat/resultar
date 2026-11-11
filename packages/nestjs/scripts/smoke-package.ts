@@ -239,9 +239,9 @@ try {
     ],
     { stdio: "pipe" },
   );
-  execFileSync(process.execPath, ["--import", "tsx", file], {
+  execFileSync(process.execPath, ["--import", import.meta.resolve("vite-plus/register"), file], {
     stdio: "pipe",
-    env: { ...process.env, TSX_TSCONFIG_PATH: tsconfigFile },
+    cwd: directory,
   });
   process.stdout.write("Packed NestJS, DI and Resultar consumer passed types and execution.\n");
 } finally {

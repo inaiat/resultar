@@ -18,8 +18,17 @@ const requiredFiles = [
   'dist/agent/SKILL.md',
   'dist/agent/versions.json',
   'dist/agent/references/api.md',
+  'dist/agent/references/anti-patterns.md',
+  'dist/agent/references/patterns.md',
   'dist/agent/references/services.md',
+  'dist/agent/references/integrations.md',
+  'dist/agent/references/review-checklist.md',
   'dist/agent/examples/workflow.mjs',
+  'dist/agent/examples/contracts.mjs',
+  'dist/agent/manual/DOCUMENTATION.md',
+  'dist/agent/manual/docs/api-inventory.md',
+  'dist/agent/manual/docs/recipes.md',
+  'dist/agent/manual/packages/di/README.md',
   'package.json',
 ] as const
 
@@ -146,7 +155,7 @@ for (const file of requiredFiles) {
 }
 
 const allowedPackedFile =
-  /^(?:LICENSE|README\.md|package\.json|dist\/[^/]+\.(?:js|d\.ts|js\.map|txt)|dist\/agent\/(?:SKILL\.md|versions\.json|agents\/openai\.yaml|references\/[a-z-]+\.md|examples\/workflow\.(?:mts|mjs)))$/u
+  /^(?:LICENSE|README\.md|package\.json|dist\/[^/]+\.(?:js|d\.ts|js\.map|txt)|dist\/agent\/(?:SKILL\.md|versions\.json|agents\/openai\.yaml|references\/[a-z-]+\.md|examples\/(?:workflow|contracts)\.(?:mts|mjs)|manual\/[a-zA-Z0-9_./-]+\.md))$/u
 const unexpectedFiles = packedFiles.filter((file) => !allowedPackedFile.test(file))
 
 if (unexpectedFiles.length > 0) {

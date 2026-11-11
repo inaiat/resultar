@@ -29,11 +29,21 @@ export interface ResultAsync<T, E> extends PromiseLike<Result<T, E>> {
   map<U>(fn: (value: T) => U): ResultAsync<U, E>
 }
 export type StrictResultAsync<T, E extends Error> = ResultAsync<T, E>
-export interface ResultTask<T, E> {
+export interface ResultTask<T, E = never, R = never> {
   readonly task: () => Result<T, E>
+  readonly requirements: R
   runResult(): ResultAsync<T, E>
 }
+export declare const ResultTask: {
+  ok<T>(value: T): ResultTask<T, never, never>
+}
+export interface Exit<A, E = never> {
+  readonly _tag: "Success" | "Failure"
+  readonly value: A
+  readonly error: E
+}
 export declare function ok<T>(value: T): Result<T, never>
+export declare function okAsync<T>(value: T): ResultAsync<T, never>
 export declare function fromPromise<T, E>(value: Promise<T>, mapError: (cause: unknown) => E): ResultAsync<T, E>
 export declare function identity<A>(value: A): A
 export declare function flow<A, B, C>(ab: (a: A) => B, bc: (b: B) => C): (a: A) => C
@@ -100,6 +110,7 @@ export type External = Foreign.Promise<Result<number, Error>>`, nil},
 			options := config.Defaults()
 			options.NoDiscard = config.SeverityOff
 			options.NoUnknownResultError = config.SeverityOff
+			options.NoPromiseResultar = config.SeverityOff
 			findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
 			if err != nil {
 				t.Fatal(err)
@@ -193,6 +204,7 @@ export type Callback = () => Promise<void> // resultar-check-disable-line prefer
 			options := config.Defaults()
 			options.NoDiscard = config.SeverityOff
 			options.NoUnknownResultError = config.SeverityOff
+			options.NoPromiseResultar = config.SeverityOff
 			options.PreferResultAsync = config.SeverityError
 			options.PreferResultAsyncMode = "all"
 			findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
@@ -1317,3 +1329,238 @@ export interface ResultTask<T, E> {
 	})
 }
 
+func TestNoPromiseResultarContractsAndInference(t *testing.T) {
+	type expected struct {
+		location string
+		contains string
+	}
+	cases := []struct {
+		name, source string
+		want         []expected
+	}{
+		{"reproduced async ResultTask factory", `import {ResultTask} from "resultar"
+export const load = async () => ResultTask.ok(42)`, []expected{
+			{"load", "ResultTask<number>"},
+		}},
+		{"explicit ResultTask contract with error and requirements", `import type {ResultTask} from "resultar"
+export interface ClockService { readonly now: () => number }
+export interface UsersRepository {
+  readonly findById: (id: string) => Promise<ResultTask<string, TypeError, ClockService>>
+}`, []expected{
+			{"Promise<ResultTask<string, TypeError, ClockService>>", "ResultTask<string, TypeError, ClockService>"},
+		}},
+		{"explicit Result and StrictResult contracts", `import type {Result, StrictResult} from "resultar"
+export interface UsersService {
+  readonly read: () => Promise<Result<number, string>>
+  readonly find: () => Promise<StrictResult<string, Error>>
+}`, []expected{
+			{"Promise<Result<number, string>>", "ResultAsync<number, string>"},
+			{"Promise<StrictResult<string, Error>>", "StrictResultAsync<string, Error>"},
+		}},
+		{"inferred async wrappers over ok and okAsync", `import {ok, okAsync, ResultTask} from "resultar"
+export const syncWrapped = async () => ok(42)
+export const asyncWrapped = async () => okAsync("ready")
+export class Service {
+  async loadTask() { return ResultTask.ok(true) }
+}
+export const literal = {
+  async fetchTask() { return ResultTask.ok(1) },
+}`, []expected{
+			{"syncWrapped", "ResultAsync<number, never>"},
+			{"asyncWrapped", "ResultAsync<string, never>"},
+			{"loadTask", "ResultTask<boolean>"},
+			{"fetchTask", "ResultTask<number>"},
+		}},
+		{"aliases, reexports, partial type aliases, and union payloads", `import type {Result as Outcome, ResultTask} from "resultar"
+import type {DomainResult} from "./barrel.js"
+interface DbService { readonly query: () => void }
+type Pending<T> = Promise<T>
+type ExternalTask<A> = ResultTask<A, Error, DbService>
+export type AliasedResult = Pending<Outcome<number, string>>
+export type BarrelStrict = Promise<DomainResult<string, TypeError>>
+export type PartialTask = Promise<ExternalTask<number>>
+export type UnionResult = Promise<Outcome<number, Error> | undefined>
+export type UnionTask = Promise<ResultTask<string, Error> | undefined>
+export type MaybePromiseTask = Promise<ResultTask<number, Error>> | undefined`, []expected{
+			{"Pending<Outcome<number, string>>", "ResultAsync<number, string>"},
+			{"Promise<DomainResult<string, TypeError>>", "StrictResultAsync<string, TypeError>"},
+			{"Promise<ExternalTask<number>>", "ResultTask<number, Error, DbService>"},
+			{"Promise<Outcome<number, Error> | undefined>", "ResultAsync<number | undefined, Error>"},
+			{"Promise<ResultTask<string, Error> | undefined>", "ResultTask<string | undefined, Error>"},
+			{"Promise<ResultTask<number, Error>>", "ResultTask<number, Error>"},
+		}},
+		{"constrained generic wrappers over Result and ResultTask", `import type {Result, ResultTask, StrictResult} from "resultar"
+export interface ClockService { readonly now: () => number }
+export async function wrapResult<T extends Result<number, Error>>(value: T): Promise<T> {
+  return value
+}
+export async function wrapStrict<T extends StrictResult<string, TypeError>>(value: T): Promise<T> {
+  return value
+}
+export async function wrapTask<T extends ResultTask<string, TypeError, ClockService>>(value: T): Promise<T> {
+  return value
+}
+export async function wrapChained<A extends Result<number, Error>, B extends A>(value: B): Promise<B> {
+  return value
+}
+export const inferredGenericResult = async <T extends Result<boolean, Error>>(value: T) => value
+export const inferredGenericTask = async <T extends ResultTask<number, Error>>(value: T) => value`, []expected{
+			{"Promise<T>", "ResultAsync<number, Error>"},
+			{"Promise<T>", "StrictResultAsync<string, TypeError>"},
+			{"Promise<T>", "ResultTask<string, TypeError, ClockService>"},
+			{"Promise<B>", "ResultAsync<number, Error>"},
+			{"inferredGenericResult", "ResultAsync<boolean, Error>"},
+			{"inferredGenericTask", "ResultTask<number, Error>"},
+		}},
+		{"heterogeneous Result and ResultTask union contracts preserve all channels", `import {ok, ResultTask, type Result} from "resultar"
+export interface ClockService { readonly now: () => number }
+export type MixedContract = Promise<Result<number, Error> | ResultTask<string>>
+export type MixedWithRequirements = Promise<Result<number, Error> | ResultTask<string, TypeError, ClockService>>
+export const mixedInferred = async (useTask: boolean) => (useTask ? ResultTask.ok("ready") : ok(42))`, []expected{
+			{"Promise<Result<number, Error> | ResultTask<string>>", "ResultTask<number | string, Error> (or ResultAsync<number | string, Error> for eager boundaries)"},
+			{"Promise<Result<number, Error> | ResultTask<string, TypeError, ClockService>>", "ResultTask<number | string, Error | TypeError, ClockService>"},
+			{"mixedInferred", "ResultTask<number | string, never> (or ResultAsync<number | string, never> for eager boundaries)"},
+		}},
+		{"line suppression", `import {ResultTask, type Result} from "resultar"
+// resultar-check-disable-next-line no-promise-resultar
+export type BoundaryResult = Promise<Result<number, Error>>
+// resultar-check-disable-next-line resultar/no-promise-resultar
+export const boundaryTask = async () => ResultTask.ok(1)`, nil},
+		{"clean Task, ResultAsync, raw SDK Promises, unconstrained generics, and Exit runner boundaries", `import {okAsync, ResultTask, type Exit, type Result, type ResultAsync, type StrictResultAsync} from "resultar"
+export interface Services {
+  find(): StrictResultAsync<number, Error>
+  read(): ResultAsync<number, string>
+  pure(): Result<number, Error>
+  lazy(): ResultTask<number, Error>
+  rawSdk(): Promise<number>
+  exitBoundary(): Promise<Exit<number, Error>>
+  thenable(): PromiseLike<Result<number, Error>>
+}
+export async function genericIdentity<T>(value: T): Promise<T> {
+  return value
+}
+export async function genericRecord<T extends { readonly ok: boolean }>(value: T): Promise<T> {
+  return value
+}
+export function syncGenericResult<T extends Result<number, Error>>(value: T): T {
+  return value
+}
+export const directAsync = () => okAsync(42)
+export const directTask = () => ResultTask.ok(42)
+export const rawAsync = async () => 42`, nil},
+		{"unrelated Result, ResultTask, and Promise names", `import type {ResultTask as RealTask} from "resultar"
+interface Result<T, E> { readonly value: T; readonly error: E }
+interface ResultTask<T, E> { readonly run: () => Result<T, E> }
+declare namespace Foreign {
+  interface Promise<T> { readonly value: T }
+}
+export type ExternalResult = Promise<Result<number, Error>>
+export type ExternalTask = Promise<ResultTask<number, Error>>
+export type ForeignPromise = Foreign.Promise<RealTask<number, Error>>`, nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			directory := writeResultAsyncFixture(t, tc.source)
+			opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+			if err != nil || len(diagnostics) != 0 {
+				t.Fatalf("open: %v, compiler diagnostics: %v", err, diagnostics)
+			}
+			// Documented Task-oriented application configuration: preferResultAsync off, noPromiseResultar error.
+			options := config.Defaults()
+			options.NoDiscard = config.SeverityOff
+			options.NoUnknownResultError = config.SeverityOff
+			options.NoUnsafeAwait = config.SeverityOff
+			options.PreferResultAsync = config.SeverityOff
+			options.NoPromiseResultar = config.SeverityError
+			findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(findings) != len(tc.want) {
+				t.Fatalf("got %#v, want %v", findings, tc.want)
+			}
+			for index, finding := range findings {
+				if finding.Rule != "no-promise-resultar" || finding.Severity != config.SeverityError {
+					t.Errorf("unexpected finding: %#v", finding)
+				}
+				location := tc.source[finding.Start : finding.Start+finding.Length]
+				if location != tc.want[index].location {
+					t.Errorf("location = %q, want %q", location, tc.want[index].location)
+				}
+				if !strings.Contains(finding.Message, tc.want[index].contains) || !strings.Contains(finding.Message, "without an async wrapper") {
+					t.Errorf("message = %q, want substring %q and async wrapper guidance", finding.Message, tc.want[index].contains)
+				}
+				if len(finding.Fixes) != 0 {
+					t.Errorf("expected no unsafe autofix on %#v", finding)
+				}
+			}
+
+			options.NoPromiseResultar = config.SeverityOff
+			findings, err = Run(context.Background(), opened.Program, opened.Directory, options)
+			if err != nil || len(findings) != 0 {
+				t.Fatalf("disabled rule: %v, findings: %#v", err, findings)
+			}
+		})
+	}
+}
+
+func TestNoPromiseResultarOverlapWithPreferResultAsync(t *testing.T) {
+	source := `import {ok, ResultTask, type Result, type StrictResult} from "resultar"
+export type SyncResultContract = Promise<Result<number, Error>>
+export type StrictContract = Promise<StrictResult<string, Error>>
+export type TaskContract = Promise<ResultTask<number, Error>>
+export const inferredSync = async () => ok(1)
+export const inferredTask = async () => ResultTask.ok(2)
+// resultar-check-disable-next-line no-promise-resultar prefer-result-async
+export type SuppressedBoth = Promise<Result<number, Error>>
+`
+	directory := writeResultAsyncFixture(t, source)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil || len(diagnostics) != 0 {
+		t.Fatalf("open: %v, compiler diagnostics: %v", err, diagnostics)
+	}
+
+	// Default error severity takes precedence over the legacy warning without duplicate findings.
+	options := config.Defaults()
+	options.NoDiscard = config.SeverityOff
+	options.NoUnknownResultError = config.SeverityOff
+	options.NoUnsafeAwait = config.SeverityOff
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 5 {
+		t.Fatalf("expected 5 deduplicated findings (no unused-suppression or duplicates), got %d: %#v", len(findings), findings)
+	}
+	for _, finding := range findings {
+		if finding.Rule != "no-promise-resultar" || finding.Severity != config.SeverityError {
+			t.Fatalf("expected default error-severity contract diagnostic, got %#v", finding)
+		}
+	}
+
+	// Even with preferResultAsyncMode = "all", Task contracts still emit no-promise-resultar recommending ResultTask.
+	options.PreferResultAsync = config.SeverityError
+	options.PreferResultAsyncMode = "all"
+	options.NoPromiseResultar = config.SeverityError
+	findings, err = Run(context.Background(), opened.Program, opened.Directory, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 5 {
+		t.Fatalf("expected 5 deduplicated findings in all mode, got %d: %#v", len(findings), findings)
+	}
+	taskFindings := 0
+	for _, finding := range findings {
+		location := source[finding.Start : finding.Start+finding.Length]
+		if location == "Promise<ResultTask<number, Error>>" || location == "inferredTask" {
+			taskFindings++
+			if finding.Rule != "no-promise-resultar" || !strings.Contains(finding.Message, "ResultTask<") {
+				t.Fatalf("expected Task guidance from no-promise-resultar at %q, got %#v", location, finding)
+			}
+		}
+	}
+	if taskFindings != 2 {
+		t.Fatalf("expected 2 Task findings, got %d", taskFindings)
+	}
+}

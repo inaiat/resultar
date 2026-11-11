@@ -5,7 +5,7 @@ This directory centralizes the architectural proposals, design decisions, and te
 These records preserve design history, including earlier recommendations for eager
 `ResultAsync` workflows. For v4 usage, start with the [gradual adoption guide](../gradual-adoption.md)
 and [migration reference](../migrations/v4.md): `ResultTask` is the default for new async work;
-`ResultAsync` and `StrictResultAsync` are the active in-flight `Result` types returned by `task.runResult()` (and exported from both `resultar` and `resultar/async`), while deprecated eager orchestration helpers live in the `resultar/async` compatibility subpath.
+`ResultAsync` and `StrictResultAsync` are the active in-flight `Result` types returned by `task.runResult()` (exported from `resultar`), alongside supported deprecated eager orchestration helpers.
 
 ---
 
@@ -17,6 +17,7 @@ and [migration reference](../migrations/v4.md): `ResultTask` is the default for 
 | [**RFC 0002**](./rfc-0002-di-lifetimes-scopes.md) | **Explicit lifetimes and request scopes** | `resultar-di` | **Implemented** | 2026-09-05 |
 | [**RFC 0003**](./rfc-0003-phase-3-remainder-and-validation.md) | **Phase 3 remainder, live lifecycle validation, and dependency health** | `resultar` | **Partially Implemented (§§2–4 Done; §1 Live Pilot Pending)** | 2026-09-07 |
 | [**RFC 0004**](./rfc-0004-effect-v4-ergonomics-and-tooling.md) | **Functional ergonomics and developer tooling** | `resultar`, `resultar-check` | **Implemented (Awaiting Release)** | 2026-10-06 |
+| [**RFC 0005**](./rfc-0005-contract-safety-http-and-ai-validation.md) | **Contract safety, HTTP cancellation, and AI validation** | `resultar-check`, `resultar-request*` | **Draft** | 2026-11-11 |
 
 ---
 

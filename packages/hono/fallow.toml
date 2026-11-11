@@ -1,0 +1,15 @@
+entry = ["src/index.ts"]
+publicPackages = ["resultar-hono"]
+ignoreDependencies = ["resultar-check"]
+
+[rules]
+circular-dependencies = "error"
+boundary-violation = "error"
+unused-class-members = "off"
+
+[duplicates]
+minLines = 18
+ignore = ["tests/**"]
+
+[health]
+ignore = ["tests/**"]
