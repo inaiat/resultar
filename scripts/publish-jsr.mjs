@@ -64,7 +64,7 @@ for (const packageDir of packages) {
 
     const output = `${result.stdout}\n${result.stderr}`;
     const transient =
-      /connection reset|ECONNRESET|ETIMEDOUT|connection timed out|HTTP (502|503|504)\b/iu.test(
+      /connection reset|ECONNRESET|ETIMEDOUT|connection timed out|Internal Server Error|HTTP (500|502|503|504)\b/iu.test(
         output,
       );
     if (result.error || dryRun || !transient || attempt === 3) {

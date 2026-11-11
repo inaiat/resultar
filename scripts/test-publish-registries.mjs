@@ -53,6 +53,8 @@ childProcess.spawnSync = (command, args, options) => {
   if (scenario === "staged" || scenario === "pending")
     return failure('HTTP 409: Cannot publish over previously staged version "5.0.0".');
   if (scenario === "auth") return failure("E401 Unauthorized");
+  if (scenario === "server-error" && uploads === 1)
+    return failure("Internal Server Error (internalServerError)[x-deno-ray: example]");
   if (scenario === "network" || scenario === "accepted" || (scenario === "retry" && uploads === 1))
     return failure("error sending request: connection error: connection reset");
   return success();
@@ -131,11 +133,13 @@ test("npm lookup authentication errors are not treated as absent versions", (con
   assert.equal(result.uploads.length, 0);
 });
 
-test("JSR retries a transient connection failure", (context) => {
-  const result = publish(context, "jsr", "retry");
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.uploads.length, 2);
-});
+for (const scenario of ["retry", "server-error"]) {
+  test(`JSR retries transient ${scenario} failures`, (context) => {
+    const result = publish(context, "jsr", scenario);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.uploads.length, 2);
+  });
+}
 
 test("JSR does not upload again after a partially successful publish", (context) => {
   const result = publish(context, "jsr", "accepted");
