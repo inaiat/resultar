@@ -66,6 +66,17 @@ export const limited = (values: number[]) => {
   })
 }
 
+// Lazy subscription: each run owns its listeners; cancellation comes from the runner.
+export const waitForReadyTask = (emitter: EventEmitter) =>
+  ResultTask.fromCallback<number, LoadError>({
+    subscribe: ({ resolve, reject }) => {
+      const onError = (cause: unknown) => reject(new LoadError({ operation: 'ready', retryable: false, cause }))
+      emitter.once('ready', resolve)
+      emitter.once('error', onError)
+      return () => { emitter.off('ready', resolve); emitter.off('error', onError) }
+    },
+  })
+
 // Legacy callback bridge: options object, explicit cleanup, AbortError in E.
 export const waitForReady = (emitter: EventEmitter, signal?: AbortSignal) =>
   ResultAsync.fromCallback<number, LoadError>({

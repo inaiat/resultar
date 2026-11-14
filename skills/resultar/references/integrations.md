@@ -47,6 +47,15 @@ the application's acknowledgement policy requires it. Use a closure or
 `ResultTask.gen(this, generator)` and `Result.gen(this, generator)` are not overloads.
 Stop workers and await their finalizers before releasing shared services.
 
+## Lazy callback APIs
+
+Use `ResultTask.fromCallback<T, E>({ subscribe })` for new one-shot callback subscriptions.
+`subscribe({ resolve, reject, signal })` runs afresh on each execution and may return a synchronous
+unsubscribe function. Pass already-typed errors to `reject`. Cleanup finishes before task completion,
+including synchronous callbacks and cancellation. Subscription/cleanup throws are defects; cleanup
+failures preserve prior causes. Pass cancellation through runner options, not constructor options.
+Use `acquireRelease` when release itself needs asynchronous work.
+
 ## Existing callback APIs
 
 `ResultAsync.fromCallback` is a supported deprecated eager adapter. It takes an
@@ -55,5 +64,4 @@ external `signal`, and returns `ResultAsync<T, E | AbortError>`.
 Return a synchronous unsubscribe function from `subscribe`; it runs once on
 completion, failure, cancellation, or synchronous subscription failure. Cleanup
 throws are ignored by this compatibility API. Use a Task resource scope when cleanup
-failure must remain observable. New Task workflows can bridge this adapter with a
-factory instead of changing existing callback behavior.
+failure must remain observable. Prefer `ResultTask.fromCallback` for new subscriptions; retain this adapter for eager contracts.

@@ -1,6 +1,7 @@
 // Lifecycle sessions retain their eager ResultAsync compatibility boundary.
 /* eslint-disable typescript/no-deprecated */
-import { Hono } from "hono";
+import { Hono, type TypedResponse } from "hono";
+import type { StatusCode } from "hono/utils/http-status";
 import type { HonoOptions } from "hono/hono-base";
 import {
   AbortError,
@@ -15,6 +16,7 @@ import {
   type Exit,
   type Result,
   type ResultAsync,
+  type ResultTaskScope,
 } from "resultar";
 import {
   inspectModule,
@@ -40,6 +42,32 @@ export type { HonoOptions } from "hono/hono-base";
 
 export { createHonoServices } from "./middleware.js";
 export type { HonoServices } from "./middleware.js";
+
+/**
+ * Runs a task with the request signal and maps its result to materialized JSON responses.
+ * Services must already be provided. Task resources close before the response mapper runs;
+ * streaming responses must use an explicit response-lifetime owner instead.
+ * Defects, interruption and composite failures reject into Hono's onError boundary.
+ */
+export async function runTaskJson<
+  A,
+  E,
+  ReleaseError = never,
+  Ok extends Response & TypedResponse<unknown, StatusCode, "json"> = Response &
+    TypedResponse<unknown, StatusCode, "json">,
+  Err extends Response & TypedResponse<unknown, StatusCode, "json"> = Response &
+    TypedResponse<unknown, StatusCode, "json">,
+>(
+  context: { readonly req: { readonly raw: Request } },
+  task: ResultTask<A, E, ResultTaskScope<ReleaseError>>,
+  handlers: {
+    readonly ok: (value: A) => Ok | Promise<Ok>;
+    readonly error: (error: E | ReleaseError) => Err | Promise<Err>;
+  },
+): Promise<Ok | Err> {
+  const result = await task.runResult({ signal: context.req.raw.signal });
+  return result.isOk() ? handlers.ok(result.value) : handlers.error(result.error);
+}
 
 export interface HonoApplication<CloseError = never, RequestServices extends object = object> {
   /** Inference only; no runtime metadata is installed. */

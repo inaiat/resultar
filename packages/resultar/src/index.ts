@@ -105,7 +105,9 @@ export {
 export type {
   Exit,
   ResultTaskAcquireReleaseOptions,
+  ResultTaskCallbackContext,
   ResultTaskConcurrencyOptions,
+  ResultTaskFromCallbackOptions,
   ResultTaskGenerator,
   ResultTaskIfBranches,
   ResultTaskIterateBooleanOptions,

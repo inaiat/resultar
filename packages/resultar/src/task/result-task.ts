@@ -221,6 +221,18 @@ export interface ResultTaskTryPromiseOptions<A, E> {
   readonly interruption?: 'wait' | 'detach'
 }
 
+/** One execution's callback subscription. Failures passed to reject are already typed. */
+export interface ResultTaskCallbackContext<A, E> {
+  readonly resolve: (value: A) => void
+  readonly reject: (error: E) => void
+  readonly signal: AbortSignal
+}
+
+/** Subscribes synchronously and optionally returns a synchronous unsubscribe function. */
+export interface ResultTaskFromCallbackOptions<A, E> {
+  readonly subscribe: (context: ResultTaskCallbackContext<A, E>) => (() => void) | void
+}
+
 /** Branches for `ResultTask.if`. */
 export interface ResultTaskIfBranches<
   TrueTask extends ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>,
@@ -1316,6 +1328,66 @@ export class ResultTask<out A, out E = never, out R = never> {
       }
     })
     return acquired
+  }
+
+  /**
+   * Subscribes afresh on every run and unsubscribes before completing, including on interruption.
+   * The first callback wins; subscription throws and cleanup throws are defects. Cleanup defects
+   * are combined with an existing failure. Synchronous completion waits for subscribe to return.
+   */
+  public static fromCallback<A, E = never>(
+    options: ResultTaskFromCallbackOptions<A, E>,
+  ): ResultTask<A, E> {
+    return new ResultTask<A, E>((context) => {
+      const signal = toNativeAbortSignal(context.signal)
+      if (signal.aborted) return interrupted(signal)
+      return new Promise<Exit<A, E>>((resolve) => {
+        let subscribing = true
+        let completed = false
+        let outcome: Exit<A, E> | undefined = undefined
+        let cleanup: (() => void) | void = undefined
+        const finish = (): void => {
+          if (subscribing || completed || outcome === undefined) return
+          completed = true
+          signal.removeEventListener('abort', onAbort)
+          try {
+            cleanup?.()
+          } catch (error) {
+            const cleanupExit = died(error)
+            if (cleanupExit._tag === 'Failure') markCleanupCause(cleanupExit.cause)
+            outcome = combineExits(outcome, cleanupExit, 'Sequential') as Exit<A, E>
+          }
+          resolve(outcome)
+        }
+        const settle = (exit: Exit<A, E>): void => {
+          if (outcome !== undefined) return
+          outcome = exit
+          finish()
+        }
+        const onAbort = (): void => {
+          settle(interrupted(signal))
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+        try {
+          cleanup = options.subscribe({
+            resolve: (value) => {
+              settle(success(value))
+            },
+            reject: (error) => {
+              settle(failed(error))
+            },
+            signal,
+          })
+        } catch (error) {
+          outcome =
+            outcome === undefined
+              ? died(error)
+              : (combineExits(outcome, died(error), 'Sequential') as Exit<A, E>)
+        }
+        subscribing = false
+        finish()
+      })
+    })
   }
 
   /**

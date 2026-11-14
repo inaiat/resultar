@@ -939,3 +939,27 @@ Every npm release bundles `dist/llms.txt`, `dist/agent/SKILL.md`, focused API an
 ## License
 
 MIT
+
+### Lazy callback subscriptions
+
+`ResultTask.fromCallback` adapts one completion from a callback/event source. Each run subscribes
+independently; a pre-aborted runner signal skips subscription. Supply already-typed failures to
+`reject`; unexpected throws from subscription or cleanup become defects. Cancellation is an
+interruption, not a member of the typed error channel.
+
+```ts
+const restoredUser = ResultTask.fromCallback<User | null, AuthError>({
+  subscribe: ({ resolve, reject }) =>
+    onAuthStateChanged(auth, resolve, (error) => reject(new AuthError(error))),
+})
+const result = await restoredUser.runResult({ signal })
+```
+
+The subscription may return a synchronous unsubscribe function. It runs exactly once before the
+task completes, on success, typed failure or cancellation, even if the callback fires before
+subscription returns. Repeated/late callbacks are ignored. Cleanup defects preserve an existing
+failure as a sequential cause. A subscription throw after a synchronous callback is also retained
+as a defect. If subscription throws before returning cleanup, the adapter cannot recover that
+cleanup; the subscription must release any partially acquired resources itself. Async cleanup is
+not supported by this constructor; use `acquireRelease` for asynchronous resource release.
+`ResultAsync.fromCallback` retains its legacy eager behavior and cleanup policy.

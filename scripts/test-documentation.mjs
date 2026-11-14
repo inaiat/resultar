@@ -211,3 +211,22 @@ test("bundled guide links resolve locally, including companion manuals", () => {
   }
   assert.ok(localLinks > 100);
 });
+
+test("published lazy callback recipe repeats subscriptions and releases on interruption", async () => {
+  const emitter = new EventEmitter();
+  const task = recipes.waitForReadyTask(emitter);
+  assert.equal(emitter.listenerCount("ready"), 0);
+  for (const value of [1, 2]) {
+    const pending = task.runPromise();
+    emitter.emit("ready", value);
+    assert.equal(await pending, value);
+    assert.equal(emitter.listenerCount("ready"), 0);
+    assert.equal(emitter.listenerCount("error"), 0);
+  }
+  const controller = new AbortController();
+  const pending = task.runExit({ signal: controller.signal });
+  controller.abort("stop");
+  assert.deepEqual(await pending, { _tag: "Failure", cause: { _tag: "Interrupt", reason: "stop" } });
+  assert.equal(emitter.listenerCount("ready"), 0);
+  assert.equal(emitter.listenerCount("error"), 0);
+});

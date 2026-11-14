@@ -352,9 +352,7 @@ export const invalidLifetimeModule = createModule()
   .scoped("request", ["operation"], ({ operation }) => ({ id: operation.id }))
   .singleton("server", ["request"], ({ request }) => ({ id: request.id }));
 
-// resultar/no-unscoped-acquire-release: acquireRelease registers its release in
-// the current scope. Wrap the workflow in ResultTask.scoped so releases run
-// before the scope closes.
+// Valid: the inferred ResultTaskScope delegates resource ownership to the caller.
 export const unscopedAcquireReleaseExample = () =>
   ResultTask.gen(function* () {
     yield* ResultTask.acquireRelease({
@@ -463,7 +461,7 @@ export const awaitInResultTaskFnExample = ResultTask.fn(async function* (id: str
   return yield* loadUserTask(id);
 });
 
-// resultar/no-unscoped-acquire-release also covers native disposal in fn bodies.
+// Valid: fn preserves the native disposal scope requirement for its caller.
 export const unscopedDisposableFnExample = ResultTask.fn(function* () {
   const session = yield* ResultTask.acquireDisposable(
     ResultTask.sync(() => ({ id: "session", [Symbol.dispose]: (): void => {} })),

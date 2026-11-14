@@ -51,6 +51,7 @@
     "resultar-di": "workspace:^"
   },
   "devDependencies": {
+    "@hono/zod-openapi": "^1.6.3",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "@vitest/ui": "catalog:",
@@ -58,7 +59,8 @@
     "hono": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "zod": "catalog:"
   },
   "peerDependencies": {
     "hono": "^4.12.30"

@@ -95,7 +95,6 @@ export const runManualScopeOwnerExample = async () => {
     .use(
       ResultTask.gen(function* () {
         // Closed explicitly by owner.close() below.
-        // resultar-check-disable-next-line no-unscoped-acquire-release
         const resource = yield* ResultTask.acquireRelease({
           acquire: ResultTask.sync(() => {
             events.push('acquire:worker')

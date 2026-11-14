@@ -6286,6 +6286,18 @@ func (a *Analyzer) noUnscopedAcquireRelease(file *ast.SourceFile) []Finding {
 		if body == nil {
 			return
 		}
+		// A lazy factory can delegate ownership to its caller. R carries the scope
+		// across files and composition; runners themselves own and close root scopes.
+		taskType := a.checker.GetTypeAtLocation(node)
+		if a.isResultTaskStaticCall(node.AsCallExpression().Expression, "fn") {
+			for _, signature := range a.checker.GetCallSignatures(taskType) {
+				if a.carriesTaskScope(a.checker.GetReturnTypeOfSignature(signature)) {
+					return
+				}
+			}
+		} else if a.carriesTaskScope(taskType) {
+			return
+		}
 		visitFunctionBody(body, func(bodyNode *ast.Node) {
 			if bodyNode.Kind != ast.KindYieldExpression || bodyNode.AsYieldExpression().AsteriskToken == nil {
 				return
@@ -6306,6 +6318,21 @@ func (a *Analyzer) noUnscopedAcquireRelease(file *ast.SourceFile) []Finding {
 		})
 	})
 	return findings
+}
+
+func (a *Analyzer) carriesTaskScope(taskType *checker.Type) bool {
+	for _, requirement := range taskRequirementTypes(a.checker, taskType) {
+		parts := []*checker.Type{requirement}
+		if requirement.Flags()&checker.TypeFlagsUnionOrIntersection != 0 {
+			parts = requirement.Types()
+		}
+		for _, part := range parts {
+			if typeSymbolName(part) == "ResultTaskScope" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (a *Analyzer) noResultInTaskGen(file *ast.SourceFile) []Finding {
