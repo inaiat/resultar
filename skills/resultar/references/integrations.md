@@ -38,6 +38,14 @@ the driver's retry and commit-uncertainty semantics. Model those separately.
 Do not swallow release errors or use detachment as a guarantee against leaked
 sessions. Foreign work can continue after detachment and race with session release.
 
+Register ownership before composing transformations: use
+`ResultTask.acquireRelease({ acquire: base, release }).map(transform)`, not
+`ResultTask.acquireRelease({ acquire: base.map(transform), release })`. The latter can lose a late
+resource at a cancellation checkpoint. Direct waiting acquisitions register late success before
+interruption and await release. Use fresh factories for exclusive resources; replaying an eager
+success in two owners releases the same resource twice. Pending foreign work may delay cancellation
+forever; detached work needs its own cleanup protocol.
+
 ## Events and worker callbacks
 
 For an SDK callback requiring `Promise<void>`, call `.runPromise()` at that callback's
@@ -65,3 +73,7 @@ Return a synchronous unsubscribe function from `subscribe`; it runs once on
 completion, failure, cancellation, or synchronous subscription failure. Cleanup
 throws are ignored by this compatibility API. Use a Task resource scope when cleanup
 failure must remain observable. Prefer `ResultTask.fromCallback` for new subscriptions; retain this adapter for eager contracts.
+
+Use `ResultTask.never()` after initialization to keep a scope alive until interruption. It allocates
+no timer and adds no success/error/requirement types. Always arrange a signal or fiber interruption
+for standalone waits. `race(never(), err(...))` waits for success; `raceFirst` returns the failure.

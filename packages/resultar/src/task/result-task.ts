@@ -1390,6 +1390,11 @@ export class ResultTask<out A, out E = never, out R = never> {
     })
   }
 
+  /** Waits independently on each run until interrupted, without timers or polling. */
+  public static never(): ResultTask<never, never, never> {
+    return ResultTask.fromCallback<never>({ subscribe: () => undefined })
+  }
+
   /**
    * Acquires lazily and registers release in the current scope. Release failures remain in the
    * scope requirement until `scoped` or a run boundary closes it; `orElse` / `catchAll` cannot erase them early.
@@ -5291,11 +5296,10 @@ export class ResultTask<out A, out E = never, out R = never> {
             : asyncResultOrFactory
         const result = await asyncResult
 
-        if (context.signal.aborted) {
-          return interrupted(context.signal)
-        }
-
-        return result.isOk() ? success(result.value) : failed(result.error)
+        // Let a direct acquireRelease register ownership of late success before the
+        // runner/composition checkpoint interrupts. Preserve interruption over typed Err.
+        if (result.isOk()) return success(result.value)
+        return context.signal.aborted ? interrupted(context.signal) : failed(result.error)
       } catch (error) {
         return died(error)
       }

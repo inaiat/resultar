@@ -477,3 +477,8 @@ scope), or an explicit scope owner. The scope requirement also tracks pending re
 its presence alone does not imply a leak. `no-unscoped-acquire-release` retains its syntactic
 fallback when a generator's type does not expose a scope requirement. Requirement-erasing
 assertions remain covered by `unsafe-result-type-assertion`.
+
+`no-useless-recovery` uses the typed failure channel for typed-only recovery methods.
+It does not flag `catchCause` merely because `E` is `never`: runtime defects can still reach cause
+recovery. This applies to instance, static and curried calls. External interruption keeps its
+runtime semantics and cannot be swallowed by this diagnostic correction.

@@ -939,6 +939,10 @@ func (a *Analyzer) noUselessRecovery(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
 		method, receiverType, nameNode, _, _ := a.operatorCall(node)
+		// E = never excludes typed failures, not defects handled by catchCause.
+		if method == "catchCause" {
+			return
+		}
 		_, isRecovery := recoveryMethods[method]
 		if !isRecovery && method != "unwrapOr" {
 			return

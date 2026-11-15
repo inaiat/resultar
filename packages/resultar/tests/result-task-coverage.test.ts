@@ -1506,7 +1506,7 @@ describe('ResultTask Stryker Mutant Killers', () => {
     await ResultTask.runExit(owner.close())
   })
 
-  it('returns an interruption from the fromResultAsync executor after an in-flight abort', async () => {
+  it('preserves late success in the fromResultAsync executor for ownership registration', async () => {
     const controller = new AbortController()
     let resolveResult: ((result: unknown) => void) | undefined = undefined
     const task = ResultTask.fromResultAsync(
@@ -1525,9 +1525,9 @@ describe('ResultTask Stryker Mutant Killers', () => {
     })
     controller.abort('executor-aborted')
     ;(resolveResult as ((result: unknown) => void) | undefined)?.(okAsync('value'))
-    const exit = (await pending) as { _tag: string; cause?: { _tag: string; reason?: unknown } }
-    equal(exit._tag, 'Failure')
-    if (exit.cause?._tag === 'Interrupt') equal(exit.cause.reason, 'executor-aborted')
+    const exit = (await pending) as { _tag: string; value?: unknown }
+    equal(exit._tag, 'Success')
+    equal(exit.value, 'value')
   })
 
   it('short-circuits the fromResultAsync executor before invoking a pre-aborted factory', async () => {

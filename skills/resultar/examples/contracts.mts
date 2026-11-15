@@ -115,3 +115,11 @@ export const runDefectInspection = async (): Promise<boolean> => {
   const exit = await ResultTask.sync(() => { throw new Error('defect') }).runExit()
   return exit._tag === 'Failure' && Cause.hasDies(exit.cause)
 }
+
+// A resource-owning service stays alive until its runner signal or fiber is interrupted.
+export const holdResource = (events: string[]) => ResultTask.scoped(
+  ResultTask.acquireRelease({
+    acquire: ResultTask.sync(() => { events.push('open'); return 'resource' }),
+    release: () => ResultTask.sync(() => { events.push('close') }),
+  }).andThen(() => ResultTask.never()),
+)

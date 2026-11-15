@@ -439,6 +439,20 @@ Disposal throws/rejections become `Die`; body and disposal failures preserve the
 tree. The helper adds a scope requirement to `R`, like `acquireRelease`. `scoped` closes a child scope
 before the next task continues.
 
+### Ownership before composition
+
+For cancellation-safe resource acquisition, wrap the operation that creates the resource directly
+in `ResultTask.acquireRelease({ acquire: base, release })`, then compose `.map` / `.andThen` on the
+owned task. Direct waiting `tryPromise` and `fromResultAsync` acquisitions retain late success long
+enough to register cleanup, and report interruption only after release. Composition inside `acquire`
+can interrupt before ownership registration; partial acquisitions must manage their own cleanup.
+See [acquisition cancellation and sharing limits](packages/resultar/README.md#cancellation-during-acquisition).
+
+`ResultTask.never()` is a lazy, timer-free wait until interruption. It has no success or typed error
+channel, and each execution has an independent lifetime. It works with scopes, runner signals and
+fiber interruption; races still distinguish first-success from first-completion. See
+[wait until interrupted](packages/resultar/README.md#wait-until-interrupted).
+
 ### Execution compatibility
 
 `ResultAsync<T, E>` represents an in-flight `Result` (`PromiseLike<Result<T, E>>`), returned by

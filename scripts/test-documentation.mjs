@@ -230,3 +230,15 @@ test("published lazy callback recipe repeats subscriptions and releases on inter
   assert.equal(emitter.listenerCount("ready"), 0);
   assert.equal(emitter.listenerCount("error"), 0);
 });
+
+test("published never recipe keeps resources alive until interruption", async () => {
+  const events = [];
+  const task = recipes.holdResource(events);
+  assert.deepEqual(events, []);
+  const controller = new AbortController();
+  const running = task.runExit({ signal: controller.signal });
+  assert.deepEqual(events, ["open"]);
+  controller.abort("shutdown");
+  assert.deepEqual(await running, { _tag: "Failure", cause: { _tag: "Interrupt", reason: "shutdown" } });
+  assert.deepEqual(events, ["open", "close"]);
+});

@@ -1,6 +1,6 @@
 # RFC 0006: Task cancellation, resource cleanup, and recovery diagnostics
 
-- Status: Draft
+- Status: Implemented (validated; awaiting release)
 - Date: 2026-11-14
 - Target packages: `resultar`, `resultar-check`
 - References: [RFC 0001](./rfc-0001-result-task-core.md), [RFC 0004](./rfc-0004-effect-v4-ergonomics-and-tooling.md)
@@ -179,21 +179,21 @@ must run under the existing cleanup context despite the aborted caller signal.
 
 ### Acceptance
 
-- [ ] Convert the six adapter/composition reproductions into regression coverage;
+- [x] Convert the six adapter/composition reproductions into regression coverage;
   record the supported composition boundary and any required migration example.
-- [ ] For a supported late acquisition, assert one release, zero use callbacks,
+- [x] For a supported late acquisition, assert one release, zero use callbacks,
   and interruption only after an asynchronous release barrier settles.
-- [ ] Cover typed release failure, thrown release defects, and preservation of
+- [x] Cover typed release failure, thrown release defects, and preservation of
   both interruption and cleanup failure.
-- [ ] Verify the failure-precedence table and synchronous factory throws, both
+- [x] Verify the failure-precedence table and synchronous factory throws, both
   inside acquisition and for ordinary runners where applicable.
-- [ ] Cover cancellation before execution, while acquisition is pending, and
+- [x] Cover cancellation before execution, while acquisition is pending, and
   after ownership registration. Preserve the abort reason.
-- [ ] Cover eager and factory adapter forms, repeated runs, and two concurrent
+- [x] Cover eager and factory adapter forms, repeated runs, and two concurrent
   factory runs with distinct resources and independent cancellation.
-- [ ] Verify that the recommended ownership-before-composition pattern releases
+- [x] Verify that the recommended ownership-before-composition pattern releases
   resources even when downstream work is skipped or fails.
-- [ ] Document eager sharing and permanently pending/detached operation limits.
+- [x] Document eager sharing and permanently pending/detached operation limits.
 
 Use Promise barriers rather than timing sleeps to establish ordering. Prefer a
 small bridge correction if it meets the agreed contract; an acquisition-specific
@@ -285,6 +285,36 @@ additional lifecycle abstraction is required by this proposal.
 
 Every behavior change needs a changeset and the validation required by
 `AGENTS.md`. After public API or recipe changes, build and regenerate the docs.
-This draft update changes no runtime behavior and needs only documentation
-validation. Track implementation, validation, and release separately; existing
-callback, scope-checking, and Hono APIs are not pending deliverables of this RFC.
+Track implementation, validation, and release separately; existing callback, scope-checking,
+and Hono APIs are not pending deliverables of this RFC.
+
+## Implementation decision and evidence (2026-11-14)
+
+Ownership must be registered directly around the operation producing the resource, before
+`map`, `andThen`, or generator composition. Arbitrary acquisition composition is not masked from
+interruption. The six adapter/shape regressions explicitly retain the unsupported inner identity
+composition cases (zero releases), and verify direct acquisition plus the ownership-before-composition
+migration. This deliberately does not claim to repair every acquisition leak.
+
+The bridge returns late success to the owner and leaves interruption to the next composition/runner
+boundary; late typed errors still become interruption and thrown/rejected defects retain precedence.
+No new runtime context, scheduler, deduplication or detach behavior was introduced.
+
+`never()` delegates to the existing empty `fromCallback` subscription. `catchCause` is excluded from
+`no-useless-recovery`'s typed-channel reachability inference; other recovery methods retain the check.
+
+- Runtime/type regressions: [rfc-0006.test.ts](../../packages/resultar/tests/rfc-0006.test.ts),
+  plus the updated internal bridge assertion in [coverage tests](../../packages/resultar/tests/result-task-coverage.test.ts).
+- Native checker regression: `TestCauseRecoveryDoesNotRequireTypedFailures` in
+  [rfc0004_test.go](../../packages/check/native/internal/analyzer/rfc0004_test.go) covers instance,
+  static, standalone pipe and instance pipe calls, with eight typed-only controls.
+- Public usage and limits: [core guide](../../packages/resultar/README.md#cancellation-during-acquisition).
+- Executable lifecycle recipe: `holdResource` in [contracts.mts](../../skills/resultar/examples/contracts.mts).
+- Release tracking: separate changesets for late acquisition cleanup, cause recovery diagnostics,
+  and `never()`. Publication remains pending.
+
+Validation passed: `pnpm run check:full`, `pnpm run build`, `pnpm run smoke:package`,
+`pnpm run test:examples`, `pnpm run test:docs`, and `pnpm run test:agents`.
+Generated API inventory and recipes were refreshed after build. Core coverage includes 1,103
+passing tests (29 new RFC 0006 regressions); the native checker regression and 11 executable
+documentation tests passed. Agent checks validate graders only, not model performance.

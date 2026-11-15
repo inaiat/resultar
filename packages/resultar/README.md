@@ -963,3 +963,48 @@ as a defect. If subscription throws before returning cleanup, the adapter cannot
 cleanup; the subscription must release any partially acquired resources itself. Async cleanup is
 not supported by this constructor; use `acquireRelease` for asynchronous resource release.
 `ResultAsync.fromCallback` retains its legacy eager behavior and cleanup policy.
+
+### Cancellation during acquisition
+
+Register ownership at the operation that produces the resource:
+
+```ts
+const owned = ResultTask.acquireRelease({ acquire: base, release })
+const workflow = ResultTask.scoped(owned.map(transform).andThen(use))
+```
+
+`base`, `release`, `transform`, and `use` are application-supplied. Direct waiting acquisitions
+through `tryPromise` or `fromResultAsync` register late success before reporting interruption,
+then await release exactly once. Downstream transformations/use are skipped on cancellation.
+Cleanup failures retain the interruption followed by the release failure in a sequential cause.
+
+Do not put transformations or further work between creation of an exclusive resource and
+`acquireRelease`. In particular, `acquire: base.map(identity)` or
+`acquire: base.andThen(ResultTask.ok)` can hit a cancellation checkpoint before the outer owner
+receives the resource. These composed acquisition shapes are not cancellation-safe. Move ownership
+inward as above. Partial acquisitions that fail or throw must release their intermediate resources
+or register each one immediately; an outer owner cannot release a value it never receives.
+
+The `fromResultAsync` bridge retains its failure precedence after abort: late `Ok` becomes
+interruption (after cleanup when directly owned), late `Err` becomes interruption, and Promise
+rejection or a synchronous factory throw becomes a defect. A pre-aborted run never invokes a lazy
+factory. An already-started eager operation may continue, but a skipped acquisition cannot claim
+its eventual resource. Reusing an eager success in two owners releases the same resource twice;
+use a fresh factory per run for exclusive resources and an explicit protocol for shared resources.
+Waiting adapters may stay pending forever when the foreign operation never settles. Detached
+operations need their own cleanup protocol; cancellation is not a hard deadline.
+
+### Wait until interrupted
+
+`ResultTask.never(): ResultTask<never, never, never>` creates a lazy wait with no timers or polling.
+Every run waits independently, removes its listener on interruption, and lets its enclosing scope
+finish cleanup. A pre-aborted run interrupts immediately. With no cancellation source it stays pending.
+
+| Expression | Behavior |
+| --- | --- |
+| `ResultTask.race(ResultTask.never(), ResultTask.ok(42))` | Returns 42 after loser cleanup |
+| `ResultTask.race(ResultTask.never(), ResultTask.err('failed'))` | Waits for success until external interruption; preserves combined causes |
+| `ResultTask.raceFirst(ResultTask.never(), ResultTask.err('failed'))` | Returns the failure after loser cleanup |
+
+Use a runner signal or `Fiber.interrupt` to stop a standalone wait. The executable `holdResource`
+recipe demonstrates a resource whose lifetime ends with interruption.

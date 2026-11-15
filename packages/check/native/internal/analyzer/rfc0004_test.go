@@ -305,3 +305,47 @@ export const factory = ResultTask.fn(function* () {
 		}
 	}
 }
+
+func TestCauseRecoveryDoesNotRequireTypedFailures(t *testing.T) {
+	library, err := filepath.Abs("../../../../resultar/dist/index.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := `
+import { ResultTask, pipe } from "` + filepath.ToSlash(library) + `"
+const defect = ResultTask.sync(() => { throw new Error('SDK') })
+export const instance = defect.catchCause(() => ResultTask.ok('recovered'))
+export const staticCall = ResultTask.catchCause(defect, () => ResultTask.ok('recovered'))
+export const curried = pipe(defect, ResultTask.catchCause(() => ResultTask.ok('recovered')))
+export const instancePipe = defect.pipe(ResultTask.catchCause(() => ResultTask.ok('recovered')))
+export const control1 = defect.orElse(() => ResultTask.ok('recovered'))
+export const control2 = ResultTask.orElse(defect, () => ResultTask.ok('recovered'))
+export const control3 = pipe(defect, ResultTask.orElse(() => ResultTask.ok('recovered')))
+export const control4 = defect.catchAll(() => ResultTask.ok('recovered'))
+export const control5 = defect.orElseSucceed(() => 'recovered')
+export const control6 = defect.mapErr(() => 'error')
+export const control7 = defect.mapError(() => 'error')
+export const control8 = defect.unwrapOr('fallback')
+`
+	directory := writeFixture(t, source)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil || len(diagnostics) > 0 {
+		t.Fatalf("open: %v %v", err, diagnostics)
+	}
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, config.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, finding := range findings {
+		if finding.Rule == "no-useless-recovery" {
+			count++
+			if strings.Contains(finding.Message, "catchCause") {
+				t.Fatalf("defect recovery is reachable: %#v", finding)
+			}
+		}
+	}
+	if count != 8 {
+		t.Fatalf("expected eight typed-only diagnostics, got %d: %#v", count, findings)
+	}
+}
