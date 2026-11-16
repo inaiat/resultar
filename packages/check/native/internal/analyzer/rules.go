@@ -6130,6 +6130,7 @@ var diLifetimeRank = map[string]int{
 }
 
 type diRegistration struct {
+	node     *ast.Node
 	name     string
 	lifetime string
 	deps     []*ast.Node
@@ -6174,9 +6175,12 @@ func diLifetimeOption(args []*ast.Node, index int) string {
 	}
 	options := unwrapExpression(args[index])
 	if options == nil || options.Kind != ast.KindObjectLiteralExpression {
-		return "scoped"
+		return ""
 	}
 	for _, property := range options.AsObjectLiteralExpression().Properties.Nodes {
+		if property.Kind == ast.KindSpreadAssignment {
+			return ""
+		}
 		if property.Kind != ast.KindPropertyAssignment || property.Name() == nil || property.Name().Text() != "lifetime" {
 			continue
 		}
@@ -6185,72 +6189,187 @@ func diLifetimeOption(args []*ast.Node, index int) string {
 				return value
 			}
 		}
+		return ""
 	}
 	return "scoped"
 }
 
+// Resolve only immutable, statically composed modules. Unknown factories are boundaries.
 func (a *Analyzer) noInvalidLifetime(file *ast.SourceFile) []Finding {
-	lifetimes := make(map[string]string)
-	registrations := make([]diRegistration, 0)
+	type graph map[string]diRegistration
+	cache := make(map[*ast.Node]graph)
+	visiting := make(map[*ast.Node]bool)
+	tokenName := func(node *ast.Node) string {
+		t := a.checker.GetTypeAtLocation(node)
+		if t == nil {
+			return ""
+		}
+		id := propertyType(a.checker, t, "identifier", node)
+		if id != nil && id.IsStringLiteral() {
+			if name, ok := id.AsLiteralType().Value().(string); ok {
+				return name
+			}
+		}
+		return ""
+	}
+	var resolve func(*ast.Node) graph
+	resolve = func(node *ast.Node) graph {
+		node = unwrapExpression(node)
+		if node == nil || visiting[node] {
+			return nil
+		}
+		if result, ok := cache[node]; ok {
+			return result
+		}
+		visiting[node] = true
+		defer delete(visiting, node)
+		if node.Kind == ast.KindIdentifier {
+			if symbol := a.resolveSymbolAtNode(node); symbol != nil {
+				for _, decl := range symbol.Declarations() {
+					if decl.Kind == ast.KindVariableDeclaration && decl.Parent != nil && decl.Parent.Flags&ast.NodeFlagsConst != 0 {
+						result := resolve(decl.AsVariableDeclaration().Initializer)
+						cache[node] = result
+						return result
+					}
+				}
+			}
+			return nil
+		}
+		if node.Kind != ast.KindCallExpression {
+			return nil
+		}
+		call := node.AsCallExpression()
+		args := call.Arguments.Nodes
+		if a.canonicalExpressionName(call.Expression) == "createModule" {
+			result := graph{}
+			cache[node] = result
+			return result
+		}
+		method, receiver, _ := methodCall(node)
+		base := resolve(receiver)
+		if base == nil {
+			return nil
+		}
+		result := graph{}
+		for name, registration := range base {
+			result[name] = registration
+		}
+		switch method {
+		case "merge":
+			for _, arg := range args {
+				other := resolve(arg)
+				if other == nil {
+					return nil
+				}
+				for name, registration := range other {
+					result[name] = registration
+				}
+			}
+		case "singleton", "scoped", "transient", "task", "resource", "value", "override":
+			if len(args) == 0 {
+				return nil
+			}
+			name, named := diStringArgument(args, 0)
+			if !named {
+				name = tokenName(args[0])
+			}
+			if name == "" {
+				return nil
+			}
+			lifetime := method
+			var nodes []*ast.Node
+			var names []string
+			if method == "value" || method == "override" {
+				lifetime = "value"
+			} else if named {
+				nodes, names = diDependencyLiterals(args, 1)
+				if method == "task" {
+					lifetime = diLifetimeOption(args, 3)
+				}
+				if method == "resource" {
+					lifetime = diLifetimeOption(args, 2)
+				}
+			} else {
+				// Token and class dependencies are carried by make's ResultTask requirements.
+				makeType := propertyType(a.checker, a.checker.GetTypeAtLocation(args[0]), "make", args[0])
+				if makeType != nil {
+					channels := typeArguments(a.checker, makeType)
+					if len(channels) >= 3 {
+						var collect func(*checker.Type)
+						collect = func(t *checker.Type) {
+							if t.Flags()&checker.TypeFlagsUnion != 0 {
+								for _, part := range t.Types() {
+									collect(part)
+								}
+								return
+							}
+							id := propertyType(a.checker, t, "identifier", args[0])
+							if id != nil && id.IsStringLiteral() {
+								if dep, ok := id.AsLiteralType().Value().(string); ok {
+									names = append(names, dep)
+									nodes = append(nodes, args[0])
+								}
+							}
+						}
+						collect(channels[2])
+					}
+				}
+			}
+			result[name] = diRegistration{node: args[0], name: name, lifetime: lifetime, deps: nodes, depNames: names}
+		default:
+			return nil
+		}
+		cache[node] = result
+		return result
+	}
+	findings := make([]Finding, 0)
+	seen := make(map[string]bool)
 	visit(file.AsNode(), func(node *ast.Node) {
-		method, _, _ := methodCall(node)
-		if method == "" {
+		if node.Kind != ast.KindCallExpression {
 			return
 		}
-		args := node.AsCallExpression().Arguments.Nodes
-		switch method {
-		case "singleton", "scoped", "transient":
-			name, ok := diStringArgument(args, 0)
-			if !ok {
+		// A chained receiver is an intermediate graph; inspect the composed result.
+		if node.Parent != nil && node.Parent.Kind == ast.KindPropertyAccessExpression && node.Parent.Parent != nil {
+			parentMethod, _, _ := methodCall(node.Parent.Parent)
+			switch parentMethod {
+			case "singleton", "scoped", "transient", "task", "resource", "value", "override", "merge":
 				return
 			}
-			nodes, names := diDependencyLiterals(args, 1)
-			lifetimes[name] = method
-			registrations = append(registrations, diRegistration{name: name, lifetime: method, deps: nodes, depNames: names})
-		case "task":
-			name, ok := diStringArgument(args, 0)
-			if !ok {
-				return
+		}
+		registrations := resolve(node)
+		// Iterate dependencies in source traversal order; final sorting is shared by Run.
+		for _, registration := range registrations {
+			requesterRank, known := diLifetimeRank[registration.lifetime]
+			if !known {
+				continue
 			}
-			lifetime := diLifetimeOption(args, 3)
-			nodes, names := diDependencyLiterals(args, 1)
-			lifetimes[name] = lifetime
-			registrations = append(registrations, diRegistration{name: name, lifetime: lifetime, deps: nodes, depNames: names})
-		case "resource":
-			name, ok := diStringArgument(args, 0)
-			if !ok {
-				return
+			for index, depName := range registration.depNames {
+				dependency, known := registrations[depName]
+				if !known || dependency.lifetime == "value" {
+					continue
+				}
+				rank, known := diLifetimeRank[dependency.lifetime]
+				if !known || requesterRank <= rank {
+					continue
+				}
+				depNode := registration.deps[index]
+				depFile := ast.GetSourceFileOfNode(depNode)
+				// Each file reports its own registrations, even for imported compositions.
+				if depFile != file {
+					continue
+				}
+				key := fmt.Sprintf("%d:%s:%s", depNode.Pos(), depName, dependency.lifetime)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				location := newFinding(ast.GetSourceFileOfNode(dependency.node), dependency.node, "", "", "", "")
+				consumer := newFinding(file, registration.node, "", "", "", "")
+				findings = append(findings, newFinding(file, depNode, "no-invalid-lifetime", a.options.NoInvalidLifetime,
+					fmt.Sprintf("Lifetime violation: %s (%s) -> %s (%s). Consumer at %s:%d:%d; dependency at %s:%d:%d. Shorten the consumer lifetime, make a truly application-owned dependency singleton, or pass request data to a service method.", registration.name, registration.lifetime, depName, dependency.lifetime, consumer.File, consumer.Line, consumer.Column, location.File, location.Line, location.Column), ""))
 			}
-			lifetime := diLifetimeOption(args, 2)
-			nodes, names := diDependencyLiterals(args, 1)
-			lifetimes[name] = lifetime
-			registrations = append(registrations, diRegistration{name: name, lifetime: lifetime, deps: nodes, depNames: names})
-		case "value":
-			name, ok := diStringArgument(args, 0)
-			if !ok {
-				return
-			}
-			lifetimes[name] = "value"
 		}
 	})
-	findings := make([]Finding, 0)
-	for _, registration := range registrations {
-		requesterRank, ok := diLifetimeRank[registration.lifetime]
-		if !ok {
-			continue
-		}
-		for index, depName := range registration.depNames {
-			depLifetime, known := lifetimes[depName]
-			if !known || depLifetime == "value" {
-				continue
-			}
-			if depRank, ok := diLifetimeRank[depLifetime]; !ok || requesterRank <= depRank {
-				continue
-			}
-			findings = append(findings, newFinding(file, registration.deps[index], "no-invalid-lifetime", a.options.NoInvalidLifetime,
-				fmt.Sprintf("Lifetime violation: %s %q cannot depend on shorter-lived %s %q. Align their lifetimes or pass request data to a service method.", registration.lifetime, registration.name, depLifetime, depName), ""))
-		}
-	}
 	return findings
 }
 

@@ -208,7 +208,8 @@ its enclosing function Promise-returning.
 | Synchronous domain computation | `Result<T, E>` |
 | New asynchronous repository, service, or use case | `ResultTask<T, E, R>`; the factory itself is not `async` |
 | Outbound HTTP JSON in a lazy workflow | `requestJsonTask` / `requestJsonZodTask` / `requestJsonTypeBoxTask` returns `ResultTask<T, E>` directly |
-| External driver / SDK returning `Promise<T>` | `ResultTask.tryPromise({ try: signal => driver(signal), catch: mapError })` returns a Task |
+| External driver / SDK returning `Promise<T>` with expected failures | `ResultTask.tryPromise({ try: signal => driver(signal), catch: mapError })` returns a Task |
+| Raw Promise factory whose unexpected failures are defects | `ResultTask.fromPromise(signal => driver(signal))` returns `ResultTask<T, never>`; rejection becomes `Die` |
 | Existing typed adapter returning `ResultAsync<T, E>` or `PromiseLike<Result<T, E>>` | `ResultTask.fromResultAsync(signal => existingAdapter(signal))` preserves the typed channel |
 | Existing eager public application API | Preserve `ResultAsync<T, E>` / `StrictResultAsync<T, E>` during migration |
 | Native route, SDK callback, CLI entrypoint, or test runner | Execute at that boundary; a native Promise is appropriate when required by the host |
@@ -223,12 +224,13 @@ obtain a Promise. `runPromise` returns `Promise<T>` and can reject; `runExit` re
 `Promise<Exit<T, E>>`; `runResult` returns `ResultAsync<T, E>`. Existing Async
 instance terminals such as `match` also return native Promises at consumption.
 
-For new raw Promise adapters, use `tryPromise` directly, and for new lazy HTTP calls use
+For new raw Promise adapters, use `tryPromise` for expected failures or `fromPromise`
+when rejection is deliberately a defect. For new lazy HTTP calls use
 `requestJsonTask` (or `requestJsonZodTask` / `requestJsonTypeBoxTask`). Constructing
 `ResultAsync.try(...)` solely to wrap it with `fromResultAsync` adds an unnecessary
 conversion. `fromResultAsync` remains the right bridge for existing typed `ResultAsync`
 operations; it does not accept a raw `Promise<T>` in place of a Result.
-Both factories defer work until each Task run; capturing an already-started Promise
+These factories defer work until each Task run; capturing an already-started Promise
 cannot defer or replay the underlying operation.
 
 The [compiled recipes](docs/recipes.md) show both adapters with explicit return
@@ -1867,6 +1869,7 @@ Use this section as the decision map.
 | Error source or goal                                     | API                                          | What it catches or handles                                                               |
 | -------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | New asynchronous work may throw or reject                | `ResultTask.tryPromise({ try, catch })`      | Defers work to each run and maps expected failures.                                      |
+| Raw Promise factory may fail unexpectedly | `ResultTask.fromPromise(factory)` | Preserves throws and rejections as `Die`; no typed error mapper. |
 | Synchronous code may throw now                           | `tryResult(fn, toError?)`                    | Runs `fn` immediately and catches thrown values into `Err`.                              |
 | Synchronous code should be wrapped for later calls       | `fromThrowable(fn, toError?)`                | Returns a reusable function that catches thrown values.                                  |
 | Existing eager Promise may reject (compatibility)        | `fromPromise(promise, toError)`              | Converts rejection into a typed `Err`.                                                   |
@@ -3288,6 +3291,7 @@ Use this as the first stop when choosing an operation:
 | Preserve an existing eager Async boundary            | `fromPromise(promise, toError)` (compatibility)                     |
 | Preserve an infallible eager Promise boundary        | `fromSafePromise(promise)` (compatibility)                          |
 | Convert a Promise factory that may throw             | `ResultTask.tryPromise({ try, catch })`                             |
+| Convert a Promise factory with defect semantics | `ResultTask.fromPromise(factory)` |
 | Convert a reusable async function                    | Return `ResultTask.tryPromise({ try, catch })` from a function      |
 | Reject a Task failure at an edge                     | `task.runPromise()`                                                 |
 | Transform an `Ok` value                              | `map(fn)`                                                           |
@@ -4197,3 +4201,21 @@ Cancellation waits for settlement. Register resource ownership directly with
 `acquireRelease` before composing transformations so late acquisitions are released.
 The checker recognizes async factories as explicit defect boundaries for
 `no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.
+
+
+## Node configuration and explicit lifetime ownership
+
+[`resultar-config`](packages/config/README.md) defines a lazy singleton `appConfig`
+from TypeBox properties. Explicit source maps replace the environment; precise DI
+graphs propagate `ConfigError` only to selected dependents. Startup resources must
+depend on configuration before opening connections or listeners.
+
+`ResultTask.makeScope<CloseError>()` creates an invariant owner with a declared
+cleanup error bound. Both direct finalizers and acquired/nested scope requirements
+must fit it. `use` includes failures from cleaning a failed attempt; `close(exit?)`
+reports cleanup errors and uses the supplied exit only as finalizer context. An
+omitted type argument retains `unknown`. Defects and interruption remain possible.
+
+The [Node recipe](examples/cookbook/src/node-lifecycle.ts) keeps the scope open for
+the serving lifetime, shares shutdown across signals, and drains HTTP/SSE before
+releasing dependencies. Its deadline applies to HTTP work, not arbitrary finalizers.

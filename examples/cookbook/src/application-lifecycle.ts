@@ -6,7 +6,7 @@
  * acquired resources are released in reverse acquisition order:
  * HTTP server -> session store -> database connection.
  */
-import { ResultTask, createTaggedError } from 'resultar'
+import { ResultTask, createTaggedError, type ResultTaskScope } from 'resultar'
 
 export class DatabaseLifecycleError extends createTaggedError({
   name: 'DatabaseLifecycleError',
@@ -45,7 +45,7 @@ export interface ApplicationFactories {
   readonly serve: (services: {
     readonly database: DatabaseConnection
     readonly session: SessionConnection
-  }) => ResultTask<HttpServer, HttpLifecycleError>
+  }) => ResultTask<HttpServer, HttpLifecycleError, ResultTaskScope<HttpLifecycleError>>
   readonly waitForShutdown: () => ResultTask<void, HttpLifecycleError>
 }
 
@@ -112,8 +112,5 @@ export const runManualScopeOwnerExample = async () => {
 
   await owner.close().runPromise()
 
-  return {
-    events,
-    value,
-  }
+  return { events, value }
 }

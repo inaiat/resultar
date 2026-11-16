@@ -1022,3 +1022,23 @@ Cancellation waits for settlement. Register resource ownership directly with
 `acquireRelease` before composing transformations so late acquisitions are released.
 The checker recognizes async factories as explicit defect boundaries for
 `no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.
+
+### Typed long-lived scope closure
+
+`ResultTask.makeScope<CloseError>()` declares the allowed cleanup error union before
+resources enter the owner. `addFinalizer` and `use` enforce that bound, including
+nested resource cleanup; opaque `unknown` requirements cannot establish a narrow
+bound. Owners are invariant so another reference cannot widen their mutable contract.
+`use(task)` preserves requirements and includes cleanup errors from a failed attempt.
+`close(exit?)` returns `ResultTask<void, CloseError>` and shares one closure across
+callers. Its argument is finalizer context, not a replayed body failure. Calls without
+a type argument retain `unknown`. Defects and interruptions remain possible even
+with `never`; pending acquisition and all finalizers are still awaited.
+
+`Result.try` / `tryResult` preserve generic indexed synchronous returns such as
+`ModelMap[Key]`, including callback and object forms. Native Promises, async callbacks
+and mixed Promise unions remain rejected. Structural thenable compatibility and
+immediate, single invocation behavior are unchanged.
+
+See the [Node lifecycle recipe](../../examples/cookbook/src/node-lifecycle.ts) for
+signal handling and bounded HTTP draining at an explicit execution boundary.

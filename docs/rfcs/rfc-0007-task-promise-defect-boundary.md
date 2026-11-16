@@ -1,6 +1,6 @@
 # RFC 0007: Direct Promise adaptation with defect semantics
 
-- Status: Implemented (awaiting release)
+- Status: Implemented (Validated; Awaiting Release)
 - Date: 2026-11-15
 - Target packages: `resultar`, `resultar-check`
 - References: [RFC 0005](./rfc-0005-contract-safety-http-and-ai-validation.md), [RFC 0006](./rfc-0006-task-cancellation-and-recovery.md)
@@ -196,19 +196,19 @@ from the consumer's installed declarations.
 
 ### Checker acceptance
 
-- [ ] Add native fixtures using declarations matching the proposed public API.
-- [ ] Accept async factories with await; retain `no-unsafe-await` controls for
+- [x] Add native fixtures using declarations matching the proposed public API.
+- [x] Accept async factories with await; retain `no-unsafe-await` controls for
   unrelated same-name APIs and nested async functions outside the direct boundary.
-- [ ] Cover direct imports, supported import aliases, and namespace imports.
-- [ ] Confirm no mapper/unknown-error finding for `fromPromise`, with positive
+- [x] Cover direct imports, supported import aliases, and namespace imports.
+- [x] Confirm no mapper/unknown-error finding for `fromPromise`, with positive
   controls for mapper-free `tryPromise` under the corresponding enabled rules.
-- [ ] Cover `catchCause` in instance, static, and pipe forms, plus typed-only
+- [x] Cover `catchCause` in instance, static, and pipe forms, plus typed-only
   recovery controls that still report findings.
-- [ ] Report discarded Tasks and invalid `map`/Promise-wrapped Task contracts;
+- [x] Report discarded Tasks and invalid `map`/Promise-wrapped Task contracts;
   accept returned, yielded, and appropriately consumed Tasks.
-- [ ] Cover disposable factories, additional-work negative controls, scope
+- [x] Cover disposable factories, additional-work negative controls, scope
   propagation, and unrelated `fromPromise` methods.
-- [ ] Keep diagnostic configuration/schema unchanged. Review any repair wording
+- [x] Keep diagnostic configuration/schema unchanged. Review any repair wording
   against older installed versions; do not add an unconditional autofix.
 
 ## 4. Implementation and runtime acceptance
@@ -219,20 +219,20 @@ late success until a direct owner registers release. Avoid a nested runner,
 new scheduler, new scope abstraction, or cancellation check that discards a
 success before ownership registration.
 
-- [ ] Assert no execution at construction, fresh repeated execution, and
+- [x] Assert no execution at construction, fresh repeated execution, and
   independent concurrent runs/signals.
-- [ ] Verify native Promise and structural thenable fulfillment, synchronous
+- [x] Verify native Promise and structural thenable fulfillment, synchronous
   throws, rejection, and throwing/multiple-settlement thenables.
-- [ ] Assert original defect identity, runner outcomes, and `catchCause` recovery.
-- [ ] Verify every cancellation-table row, including rejection named `AbortError`.
-- [ ] Verify direct late acquisition releases once, skips use, and waits for an
+- [x] Assert original defect identity, runner outcomes, and `catchCause` recovery.
+- [x] Verify every cancellation-table row, including rejection named `AbortError`.
+- [x] Verify direct late acquisition releases once, skips use, and waits for an
   asynchronous cleanup barrier. Cover typed release failure and release defects.
-- [ ] Preserve the documented unsupported inner composition cases from RFC 0006
+- [x] Preserve the documented unsupported inner composition cases from RFC 0006
   and verify the ownership-before-composition alternative.
-- [ ] Add compile-time assertions for `A`, `E = never`, `R = never`, generic/union
+- [x] Add compile-time assertions for `A`, `E = never`, `R = never`, generic/union
   inference, ignored signal parameters, and `PromiseLike` input. Reject eager
   Promise input and catch-mapper/options arguments.
-- [ ] Compare the adapter with the existing
+- [x] Compare the adapter with the existing
   `fromResultAsync(signal => ResultAsync.fromSafePromise(factory(signal)))`
   bridge for success, defects, cancellation, and direct late acquisition.
 
@@ -267,9 +267,8 @@ regressions and are not bundled into this Promise boundary proposal.
    by `AGENTS.md`, including documentation and agent checks. Record validation
    and publication separately before marking this RFC implemented.
 
-Until implementation, published usage guides and generated API inventories must
-continue to describe the available API. This draft and its index entry are the
-only documentation changes required to record the proposal.
+Published usage guides and generated inventories now describe the available API;
+the original proposal sections above remain as design history.
 
 ## Implementation evidence (2026-11-15)
 
@@ -286,7 +285,35 @@ The native `TestFromPromiseDefectAwaitBoundary` regression preserves the unrelat
 method control. The compiled `promiseDefectBoundary` recipe has an execution test.
 
 Validation includes workspace `check:full`, build, package smoke, examples,
-documentation and agent checks. Core tests pass with 1,113 cases. The original
-acceptance lists above retain the detailed design review matrix; this evidence
-records the concrete automated coverage rather than asserting a separate fixture
-for every combination in that matrix.
+documentation and agent checks. That validation passed 1,113 core cases. Remaining
+acceptance coverage was completed in the follow-up below.
+
+## Acceptance completion (2026-11-16)
+
+All implementation checklists above are now backed by executable coverage. No
+additional production behavior was necessary for this follow-up.
+
+- `packages/resultar/tests/rfc-0007.test.ts` now includes generic/union and nested
+  Result inference, rejected eager/catch/options inputs, captured Promise reuse,
+  native multiple-settlement/throwing thenables, runner outcomes, and parity with
+  the existing defect bridge before/after cancellation. Both adapters await late
+  resource cleanup and retain interruption followed by typed or defect release
+  failures. The inner-generator ownership limit is explicit, alongside the
+  existing RFC 0006 map/andThen matrix and direct-ownership tests.
+- `packages/check/native/internal/analyzer/rfc0007_test.go` compiles 44 scenarios
+  against actual built declarations: direct, aliased, namespace and reexported
+  imports, direct versus nested/foreign await boundaries, mapper/unknown-error
+  controls, cause versus typed-only recovery, discard, returned/yielded/consumed
+  tasks, Promise success/outer-contract violations, propagated scopes and
+  disposable callbacks with additional-work/foreign-method negative controls.
+  Diagnostic IDs, configuration, schema and repair behavior are unchanged.
+- `DOCUMENTATION.md` now includes the defect boundary in the Promise decision map,
+  error-handling table and operation index. The existing compiled contract recipes
+  demonstrate both expected-error and defect boundaries; their execution tests
+  verify rejection identity and lazy execution.
+- Core and checker changesets record the expanded coverage. The acceptance checks
+  pass with 60 targeted RFC 0006/0007 runtime tests and the 44 checker scenarios.
+  Publication remains pending; this record does not claim a registry release.
+
+Workspace validation completed: `check:full` (1,139 core tests), `build`,
+`smoke:package`, `test:examples`, `test:docs`, and `test:agents` all passed.

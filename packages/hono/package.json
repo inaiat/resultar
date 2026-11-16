@@ -57,6 +57,7 @@
     "@vitest/ui": "catalog:",
     "fallow": "catalog:",
     "hono": "catalog:",
+    "resultar-config": "workspace:*",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
     "vitest": "catalog:",

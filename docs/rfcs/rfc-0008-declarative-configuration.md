@@ -1,8 +1,8 @@
 # RFC 0008: Declarative configuration and dependency injection
 
-- Status: Draft
+- Status: Implemented (Awaiting Publication)
 - Date: 2026-11-16
-- Target package: `resultar-config` (proposed), integrating existing `resultar` and `resultar-di` APIs
+- Target package: `resultar-config`, integrating existing `resultar` and `resultar-di` APIs
 - References: [RFC 0002](./rfc-0002-di-lifetimes-scopes.md)
 
 ## Summary
@@ -17,8 +17,29 @@ Validate the contract with a small prototype before publishing a configuration
 package. The package must provide reusable validation, safe typed errors, and
 module composition beyond wrapping one validator call.
 
-All new signatures below are design sketches, not available APIs. This draft
-adds no runtime behavior, dependencies, generated recipes, or release changesets.
+The proposal below is preserved as design history. The delivered API and validator
+contract are documented in [resultar-config](../../packages/config/README.md).
+
+## Implementation record — 2026-11-16
+
+- Phases 0–4 implemented in `packages/config`; publication has not been performed.
+- The prototype established reusable value in safe aggregated errors, exact DI
+  graph inference, isolated lazy snapshots, and finite-number validation. The
+  package owns these policies rather than adding per-variable getters.
+- AJV coercion with `strictNumbers` alone accepts `"1e309"` as infinity. The chosen
+  implementation normalizes a copied input with AJV, then runs non-coercing
+  `env-schema`/AJV validation against the same TypeBox schema. The second pass runs
+  even after normalization failures, so overflow and unrelated missing fields are
+  reported together. Schema compilation and unexpected faults remain defects.
+- `tests/config.test.ts` covers types, aggregation, sanitization, input isolation,
+  caching, retries, defaults, coercion, overflow and startup rollback.
+  `scripts/config-example.ts` compiles against built declarations and executes
+  factory injection, startup ordering and reverse resource release.
+- `AppConfigModule.load()` provides direct typed loading as a lazy `ResultTask`.
+  Each execution uses a fresh root; the Hono example injects the validated snapshot
+  into its application root before listening.
+- Package smoke checks exports and packed files; the npm release list and changeset
+  include the package. No Zod subpath, reload system or application builder was added.
 
 ## 1. Motivation and baseline
 

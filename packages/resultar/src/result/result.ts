@@ -2186,6 +2186,15 @@ export const fromThrowable: typeof Result.fromThrowable = Result.fromThrowable
  * )
  * ```
  */
+/* eslint-disable typescript/unified-signatures -- Separate inference path for indexed synchronous returns; retain the legacy Promise exclusion fallback. */
+export function tryResult<T, E>(
+  fn: () => T & { readonly then?: never },
+  errorFn: (e: unknown) => E,
+): Result<T, E>
+export function tryResult<T, E>(options: {
+  readonly try: () => T & { readonly then?: never }
+  readonly catch: (e: unknown) => E
+}): Result<T, E>
 export function tryResult<T, E>(
   fn: () => Exclude<T, Promise<unknown>>,
   errorFn: (e: unknown) => E,
@@ -2208,6 +2217,12 @@ export function tryResult<T, E>(
 export function tryResult<T>(
   input: (() => Exclude<T, Promise<unknown>>) | TryResultOptions<T>,
 ): Result<T, unknown>
+export function tryResult<T>(
+  input:
+    | (() => T & { readonly then?: never })
+    | { readonly try: () => T & { readonly then?: never } },
+): Result<T, unknown>
+/* eslint-enable typescript/unified-signatures */
 export function tryResult<T, E = unknown>(
   input: (() => Exclude<T, Promise<unknown>>) | TryResultOptions<T, E>,
   errorFn?: (e: unknown) => E,

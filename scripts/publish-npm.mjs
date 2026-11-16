@@ -15,6 +15,7 @@ const packages = [
   "packages/check/native-packages/win32-x64",
   "packages/resultar",
   "packages/di",
+  "packages/config",
   "packages/hono",
   "packages/fastify",
   "packages/nestjs",

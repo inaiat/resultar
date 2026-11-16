@@ -186,13 +186,22 @@ interface TaskRetryState {
 type TaskRetryStep = Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> | undefined
 
 /** Owns resources across executions. Close it after its consumers have finished. */
-export interface ResultTaskScopeOwner {
-  readonly use: <A, E, R>(task: ResultTask<A, E, R>) => ResultTask<A, E, R>
+export interface ResultTaskScopeOwner<in out CloseError = unknown> {
+  readonly use: <A, E, R>(
+    task: ResultTask<A, E, R> &
+      (unknown extends R
+        ? unknown extends CloseError
+          ? unknown
+          : never
+        : [ScopeError<R>] extends [CloseError]
+          ? unknown
+          : never),
+  ) => ResultTask<A, E | (unknown extends R ? unknown : ScopeError<R>), R>
   /** Registers an already-acquired resource's release synchronously, in registration order. */
   readonly addFinalizer: (
-    release: (exit: Exit<unknown, unknown>) => ResultTask<void, unknown>,
+    release: (exit: Exit<unknown, unknown>) => ResultTask<void, CloseError>,
   ) => void
-  readonly close: (exit?: Exit<unknown, unknown>) => ResultTask<void, unknown>
+  readonly close: (exit?: Exit<unknown, unknown>) => ResultTask<void, CloseError>
 }
 
 /** Options for running a `ResultTask` with an optional signal and its required services. */
@@ -3592,12 +3601,12 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
 
   /** Creates an explicit resource owner for adapters that manage long-lived scopes. */
-  public static makeScope(): ResultTaskScopeOwner {
+  public static makeScope<CloseError = unknown>(): ResultTaskScopeOwner<CloseError> {
     const scope = new TaskScope()
     const controller = new AbortController()
     const pending = new Set<Promise<Exit<unknown, unknown>>>()
     let closing: Promise<Exit<unknown, unknown>> | undefined = undefined
-    const owner: ResultTaskScopeOwner = {
+    const owner: ResultTaskScopeOwner<CloseError> = {
       addFinalizer: (release) => {
         if (closing !== undefined) throw new Error('Cannot acquire into a closing ResultTask scope')
         scope.add((exit) =>

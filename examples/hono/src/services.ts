@@ -1,5 +1,6 @@
 import { createTaggedError, okAsync, Result, ResultTask, type StrictResultAsync } from "resultar";
 import { createModule, Service, service } from "resultar-hono";
+import { appConfig } from "./app-config.ts";
 
 export type User = { readonly id: string; readonly name: string };
 
@@ -54,5 +55,10 @@ export const Health = service("health", { cache: Cache }, ({ cache }) => ({
   },
 }));
 
-export const createServices = () =>
-  createModule().singleton(Cache).singleton(UsersRepository).scoped(Users).scoped(Health);
+export const createServices = (config = appConfig) =>
+  createModule()
+    .merge(config)
+    .singleton(Cache)
+    .singleton(UsersRepository)
+    .scoped(Users)
+    .scoped(Health);

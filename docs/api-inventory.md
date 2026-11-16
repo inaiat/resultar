@@ -12,6 +12,17 @@ are described in the declarations. A deprecated export remains supported.
 The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 [configuration schema](../packages/check/schema.json), not a JavaScript API.
 
+## resultar-config
+
+[Package manual](../packages/config/README.md)
+
+| Export | Kind | Public members |
+| --- | --- | --- |
+| `AppConfigModule` | Type | — |
+| `ConfigError` | Class | Static: `errAsync`, `err`, `is`, `tag`, `taskErr`, `withProps`<br>Instance: `_tag`, `cause`, `findCause`, `fingerprint`, `issues`, `messageTemplate`, `message`, `name`, `stack`, `toJSON` |
+| `ConfigIssue` | Type | `category`, `message`, `path` |
+| `defineAppConfig` | Value | — |
+
 ## resultar-di
 
 [Package manual](../packages/di/README.md)

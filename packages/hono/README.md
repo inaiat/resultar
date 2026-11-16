@@ -134,13 +134,17 @@ are retained together; an SDK that ignores cancellation can still delay shutdown
 
 The [runnable example](../../examples/hono/README.md) keeps service definitions and
 `createServices` in `services.ts`, native routes in `routes.ts`, and application creation,
-the exported `AppHono` type and Node startup in `main.ts`:
+the exported `AppHono` type and Node startup in `main.ts`. Its
+[`app-config.ts`](../../examples/hono/src/app-config.ts) uses `resultar-config` and
+TypeBox to validate `PORT` before listening. The validated snapshot is then injected
+into the request services:
 
 ```ts
 // main.ts
 import { serve } from "@hono/node-server";
 import type { Hono } from "hono";
 import { createHonoApp, type InferRequestServices } from "resultar-hono";
+import { appConfig } from "./app-config.ts";
 import { healthRoutes, usersRoutes } from "./routes.ts";
 import { createServices } from "./services.ts";
 
@@ -154,10 +158,16 @@ export const createApplication = (services = createServices()) =>
 export type AppHono = Hono<{ Bindings: InferRequestServices<typeof createApplication> }>;
 
 if (import.meta.main) {
-  const app = createApplication();
-  serve({ fetch: app.fetch, port: Number(process.env.PORT ?? 3000) }, (info) => {
-    console.log(`Listening on http://${info.address}:${info.port}/`);
-  });
+  const config = await appConfig.load().runResult();
+  if (config.isErr()) {
+    console.error("Invalid application configuration", config.error.issues);
+    process.exitCode = 1;
+  } else {
+    const app = createApplication(createServices().override("appConfig", config.value));
+    serve({ fetch: app.fetch, port: config.value.PORT }, (info) => {
+      console.log(`Listening on http://${info.address}:${info.port}/`);
+    });
+  }
 }
 ```
 

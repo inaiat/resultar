@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/config"
@@ -758,22 +759,42 @@ ResultTask.runExit(provided)
 
 func TestNoInvalidLifetime(t *testing.T) {
 	directory := writeFixture(t, `
-declare const module: {
-  singleton(name: string, dependencies: readonly string[], create: () => unknown): unknown
-  scoped(name: string, dependencies: readonly string[], create: () => unknown): unknown
-  transient(name: string, dependencies: readonly string[], create: () => unknown): unknown
-  task(name: string, dependencies: readonly string[], create: () => unknown, options?: { readonly lifetime?: string }): unknown
-  resource(name: string, dependencies: readonly string[], options: { readonly lifetime?: string }): unknown
-  value(name: string, value: unknown): unknown
+interface Module {
+ singleton(name: string | Token, dependencies?: readonly string[], create?: () => unknown): Module
+ scoped(name: string | Token, dependencies?: readonly string[], create?: () => unknown): Module
+ transient(name: string, dependencies: readonly string[], create: () => unknown): Module
+ task(name: string, dependencies: readonly string[], create: () => unknown, options?: { lifetime?: string }): Module
+ resource(name: string, dependencies: readonly string[], options: { lifetime?: string }): Module
+ value(name: string, value: unknown): Module
+ override(name: string, value: unknown): Module
+ merge(other: Module): Module
+ use(): void
 }
-void module.value("config", {})
-void module.transient("operation", [], () => 1)
-void module.scoped("request", ["operation"], () => 1)
-void module.singleton("cache", [], () => 1)
-void module.singleton("application", ["cache", "config"], () => 1)
-void module.singleton("server", ["request"], () => 1)
-void module.task("snapshot", ["operation"], () => 1, { lifetime: "singleton" })
-void module.resource("connection", ["cache"], { lifetime: "scoped" })
+interface ResultTask<A, E, R> { readonly a?: A; readonly e?: E; readonly r?: R }
+interface Token { readonly identifier: string; readonly make: object }
+declare function createModule(): Module
+const valid = createModule().scoped("request", []).singleton("cache", [])
+const independent = createModule().singleton("request", []).singleton("server", ["request"])
+const invalid = createModule().transient("operation", [], () => 1)
+ .scoped("request", ["operation"])
+ .singleton("server", ["request"])
+ .task("snapshot", ["operation"], () => 1, { lifetime: "singleton" })
+const db = createModule().resource("database", [], {})
+const merged = createModule().merge(db).singleton("repository", ["database"])
+const overridden = createModule().merge(db).override("database", {}).singleton("repository", ["database"])
+const explicit = createModule().resource("database", [], {lifetime:"singleton"}).singleton("repository", ["database"])
+declare function dynamic(): Module
+const unknown = dynamic().singleton("server", ["request"])
+declare const dynamicOptions: {lifetime?: string}
+const unknownLifetime = createModule().resource("database", [], dynamicOptions).singleton("repository", ["database"])
+createModule().scoped("direct", []).singleton("consumer", ["direct"]).use()
+declare const Database: {readonly identifier: "tokenDB"; readonly make: ResultTask<number, never, never>}
+declare class Repository {
+ static readonly identifier: "tokenRepository"
+ static readonly make: ResultTask<number, never, typeof Database>
+}
+const tokens = createModule().scoped(Database).singleton(Repository)
+void [valid, independent, invalid, merged, overridden, explicit, unknown, tokens]
 `)
 	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
 	if err != nil {
@@ -782,25 +803,16 @@ void module.resource("connection", ["cache"], { lifetime: "scoped" })
 	if len(diagnostics) != 0 {
 		t.Fatalf("unexpected TypeScript diagnostics: %v", diagnostics)
 	}
-
 	findings, err := Run(context.Background(), opened.Program, opened.Directory, config.Defaults())
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []struct {
-		rule string
-		line int
-	}{
-		{"no-invalid-lifetime", 12},
-		{"no-invalid-lifetime", 15},
-		{"no-invalid-lifetime", 16},
+	if len(findings) != 6 {
+		t.Fatalf("got %d findings, want 6: %#v", len(findings), findings)
 	}
-	if len(findings) != len(want) {
-		t.Fatalf("got %d findings, want %d: %#v", len(findings), len(want), findings)
-	}
-	for index, expected := range want {
-		if findings[index].Rule != expected.rule || findings[index].Line != expected.line {
-			t.Errorf("finding %d = %s:%d, want %s:%d", index, findings[index].Rule, findings[index].Line, expected.rule, expected.line)
+	for _, finding := range findings {
+		if finding.Rule != "no-invalid-lifetime" || !strings.Contains(finding.Message, "Consumer at ") || !strings.Contains(finding.Message, "dependency at ") || len(finding.Fixes) != 0 {
+			t.Errorf("unexpected lifetime finding: %#v", finding)
 		}
 	}
 }

@@ -1,6 +1,6 @@
 # RFC 0009: Inference, typed scope closure, and application lifecycle
 
-- Status: Draft
+- Status: Implemented (Phases 0–4; Recipe-only Lifecycle; Awaiting Release)
 - Date: 2026-11-16
 - Target packages: `resultar`, `resultar-di`, `resultar-check`; Node lifecycle documentation first
 - References: [RFC 0002](./rfc-0002-di-lifetimes-scopes.md), [RFC 0006](./rfc-0006-task-cancellation-and-recovery.md), [RFC 0007](./rfc-0007-task-promise-defect-boundary.md), [RFC 0008](./rfc-0008-declarative-configuration.md)
@@ -16,8 +16,33 @@ definition, validation, and injection remain in RFC 0008. No new application
 framework, scheduler, or lifecycle package is approved by this draft. Evaluate a
 Node adapter only after executable recipes demonstrate repeated integration work.
 
-All proposed APIs are design candidates. This document and its index entry do not
-change runtime behavior, public declarations, or generated usage documentation.
+The proposal below is preserved as design history. Public package documentation
+and generated declarations describe the delivered APIs.
+
+## Implementation record — 2026-11-16
+
+| Workstream | Delivered evidence |
+| --- | --- |
+| Synchronous inference | Dedicated non-thenable inference overloads plus the legacy synchronous fallback preserve indexed generics and structural thenable compatibility. `packages/resultar/tests/rfc-0009-inference.test.ts` covers callback/object forms, mapped/unmapped errors, unions, optional/readonly fields, `never`, execution behavior and rejected Promise unions. No runtime boundary changed. |
+| Typed owner | Invariant `ResultTaskScopeOwner<CloseError = unknown>` checks direct and nested cleanup, opaque requirements and variance. Failed `use` includes attempt cleanup errors; `close` remains cleanup-only. `rfc-0009-owner.test.ts` covers bounds and concurrent/late closure without a narrowing assertion on `close`. Runtime ownership code is unchanged. |
+| Lifetime diagnostics | Immutable graph resolution replaces the file-wide name map. Named providers and token/class `make` requirements, const aliases, known merges and value overrides retain module identity. Messages include the direct edge and both locations; JSON/CLI/LSP shapes and rule configuration are unchanged. Native fixtures cover independent roots, direct/transitive conflicts, default/explicit lifetimes, tokens/classes, merges, overrides, immediate use and unknown graphs. |
+| Node lifecycle | `examples/cookbook/src/node-lifecycle.ts` provides lazy HTTP ownership and an explicit runner. Smoke tests exercise ordinary requests, SSE deadline cancellation, repeated shutdown, startup rollback, late connection cancellation, cleanup failure, listeners, and real signals in a child process. |
+
+Static analysis intentionally stops at dynamic factories, mutable aliases, computed
+names/dependency arrays and unknown merge inputs/lifetime options. Runtime DI remains
+authoritative; no lifetime is automatically promoted. Imported composition preserves
+source identity; each analyzed source reports its own registrations.
+
+The serving and deferred-connection compositions use the same local Node boundary.
+That small amount of reuse does not justify a published adapter yet (phase 5 is
+optional and deferred). Its contract owns the HTTP server and process listeners;
+connections/subscriptions use the existing resource recipe. SIGTERM/SIGINT request
+one shared shutdown. `drainMs` bounds HTTP/SSE only; upgrades are rejected and arbitrary
+finalizers remain awaited. Runtime dependencies are Node built-ins and `resultar`.
+No framework, scheduler, process exit policy or lifecycle package was introduced.
+
+Implementation and publication are separate: changesets and generated documentation
+are included; no registry publication has been performed.
 
 ## 1. Baseline and scope
 

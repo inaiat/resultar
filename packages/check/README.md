@@ -496,3 +496,18 @@ Cancellation waits for settlement. Register resource ownership directly with
 `acquireRelease` before composing transformations so late acquisitions are released.
 The checker recognizes async factories as explicit defect boundaries for
 `no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.
+
+### Static lifetime graph boundaries
+
+`no-invalid-lifetime` follows immutable `createModule()` chains and const aliases,
+known `merge` inputs and value `override` operations. It reads named dependencies
+and token/class `make` task requirements. Each composition has its own graph;
+identically named services in separate roots are unrelated. Findings include the
+direct consumer → dependency edge, both lifetimes, and both registration locations
+in the existing message field. The JSON/CLI/LSP diagnostic schema is unchanged.
+No fix automatically promotes a dependency to singleton.
+
+Dynamic factories, mutable aliases, computed registration names/dependency arrays,
+and unknown merge inputs are analysis boundaries. The rule does not invent edges
+across them. A direct invalid edge explains a longer invalid path; runtime DI
+validation remains authoritative for graphs the static checker cannot establish.
