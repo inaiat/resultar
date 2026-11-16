@@ -1,5 +1,13 @@
-import { createTaggedError, okAsync, Result, ResultTask, type StrictResultAsync } from "resultar";
-import { createModule, Service, service } from "resultar-hono";
+import {
+  createModule,
+  createTaggedError,
+  okAsync,
+  Result,
+  ResultTask,
+  Service,
+  service,
+  type StrictResultAsync,
+} from "resultar-app";
 import { appConfig } from "./app-config.ts";
 
 export type User = { readonly id: string; readonly name: string };

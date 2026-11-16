@@ -51,20 +51,17 @@
     "ajv": "^8.20.0",
     "env-schema": "^8.0.1",
     "resultar": "workspace:^",
-    "resultar-di": "workspace:^"
+    "resultar-di": "workspace:^",
+    "typebox": ">=1.3.4 <2.0.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "@vitest/ui": "catalog:",
     "fallow": "catalog:",
-    "typebox": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
     "vitest": "catalog:"
-  },
-  "peerDependencies": {
-    "typebox": "^1.3.4"
   },
   "engines": {
     "node": ">=24"

@@ -1,12 +1,17 @@
-# Hono + Resultar DI
+# Hono + Resultar App
 
 An example application combining dependency injection with
-[Resultar DI](../../packages/di/README.md) and typed routes with
+[Resultar App](../../packages/app/README.md) and typed routes with
 [resultar-hono](../../packages/hono/README.md), with validated environment configuration
 from [resultar-config](../../packages/config/README.md).
 
+This example declares `resultar-app` and imports workflow, service and configuration
+APIs from it. The Hono adapter remains an explicit dependency. To import directly
+from `resultar`, `resultar-di` or `resultar-config`, first add that component as a
+direct dependency. See [import choices](../../packages/app/README.md#unified-and-direct-imports).
+
 Prefer lazy `ResultTask` workflows and explicit runners for new async code. This runnable fixture
-retains eager `ResultAsync` / `StrictResultAsync` service methods from `resultar`
+retains eager `ResultAsync` / `StrictResultAsync` service methods from `resultar-app`
 for compatibility coverage.
 Both types represent one shared in-flight execution.
 
@@ -64,7 +69,7 @@ curl http://127.0.0.1:3000/health
 
 ## Configuration
 
-`src/app-config.ts` declares `PORT` with TypeBox: an integer between 1 and 65535,
+`src/app-config.ts` declares `PORT` with `t`, the TypeBox reexport from `resultar-app`: an integer between 1 and 65535,
 with a default of 3000. `resultar-config` converts environment strings, applies the
 default and rejects malformed, out-of-range or non-finite values before Node opens
 the listener. For example:
@@ -81,7 +86,7 @@ No server starts when `main.ts` is imported.
 `createServices(config = appConfig)` also accepts an isolated configuration module:
 
 ```ts
-import { defineAppConfig } from "resultar-config";
+import { defineAppConfig } from "resultar-app";
 import { appConfigProperties } from "./src/app-config.ts";
 import { createApplication } from "./src/main.ts";
 import { createServices } from "./src/services.ts";
@@ -103,22 +108,22 @@ caches its own successful value. `c.env.appConfig.PORT` is inferred as `number`.
 
 ## Local services
 
-The example contains its own services and imports the DI API from `resultar-hono`:
+The example contains its own services and imports the DI API from `resultar-app`:
 
 ```ts
-import { Service, service, createModule } from "resultar-hono";
+import { Service, service, createModule } from "resultar-app";
 ```
 
 `Users` declares `requires: { repository: UsersRepository }`; the repository declares
 `requires: { cache: Cache }`. Their existing methods return eager `StrictResultAsync`,
-and the user service composes lookup and removal through `Result.gen` from `resultar`. `Health` uses the
+and the user service composes lookup and removal through `Result.gen` from `resultar-app`. `Health` uses the
 function-based `service` API and reads the same cache. For new methods, return `ResultTask`, use
 `ResultTask.tryPromise` for drivers and `ResultTask.gen` for composition.
 
 To compose the existing service inside a new Task workflow, defer its call until execution:
 
 ```ts
-import { ResultTask } from "resultar";
+import { ResultTask } from "resultar-app";
 
 // Inside a native Hono route handler for /users/:id:
 const task = ResultTask.fromResultAsync(() => c.env.users.findById(c.req.param("id")));

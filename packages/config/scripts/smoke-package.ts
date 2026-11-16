@@ -14,7 +14,7 @@ const requiredFiles = [
   "dist/index.js",
   "package.json",
 ] as const;
-const expectedExports = ["ConfigError", "defineAppConfig"] as const;
+const expectedExports = ["ConfigError", "defineAppConfig", "t"] as const;
 
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
   typeof value === "object" && value !== null;

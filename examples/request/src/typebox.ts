@@ -1,21 +1,19 @@
-import { Type, type Static } from "typebox";
-
 import { createTaggedError, ResultAsync, runPromise } from "resultar";
-import { requestJson as requestJsonTypeBox } from "resultar-request-typebox";
+import { requestJson as requestJsonTypeBox, t } from "resultar-request-typebox";
 
 import { closeServer, startAccountExampleServer } from "./account-server.js";
 
-export const accountTypeBoxSchema = Type.Object(
+export const accountTypeBoxSchema = t.Object(
   {
-    email: Type.String(),
-    id: Type.String(),
-    plan: Type.Union([Type.Literal("free"), Type.Literal("team")]),
-    seats: Type.Number(),
+    email: t.String(),
+    id: t.String(),
+    plan: t.Union([t.Literal("free"), t.Literal("team")]),
+    seats: t.Number(),
   },
   { additionalProperties: false },
 );
 
-export type AccountFromTypeBox = Static<typeof accountTypeBoxSchema>;
+export type AccountFromTypeBox = t.Static<typeof accountTypeBoxSchema>;
 
 export class TypeBoxAccountApiError extends createTaggedError({
   name: "TypeBoxAccountApiError",

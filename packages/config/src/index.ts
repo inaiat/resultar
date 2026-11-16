@@ -4,6 +4,8 @@ import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { createTaggedError, ResultTask, type TaggedErrorClass } from "resultar";
 import { createModule, type ServiceModule } from "resultar-di";
 
+export { Type as t } from "typebox";
+
 export interface ConfigIssue {
   readonly path: string;
   readonly category: "missing" | "type" | "constraint";

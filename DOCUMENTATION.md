@@ -4205,6 +4205,15 @@ The checker recognizes async factories as explicit defect boundaries for
 
 ## Node configuration and explicit lifetime ownership
 
+[`resultar-app`](packages/app/README.md) provides these configuration APIs together with
+Resultar workflows and DI through one package and import. The component packages
+remain available for independent use. With only `resultar-app` installed, import
+`Result`, `ResultTask`, `createModule`, `defineAppConfig` and `t` from `resultar-app`.
+To use `import { Result } from 'resultar'`, declare `resultar` directly in the
+application's dependencies. Apply the same rule to `resultar-di`, `resultar-config`
+and direct TypeBox imports. Both styles may coexist with aligned component versions;
+see [installation and import examples](packages/app/README.md#unified-and-direct-imports).
+
 [`resultar-config`](packages/config/README.md) defines a lazy singleton `appConfig`
 from TypeBox properties. Explicit source maps replace the environment; precise DI
 graphs propagate `ConfigError` only to selected dependents. Startup resources must

@@ -1,21 +1,24 @@
 # resultar-config
 
+For applications combining workflows, services and configuration, use
+[`resultar-app`](../app/README.md) as the unified installation and import entry point.
+This package is also available independently.
+
 Lazy, typed Node environment configuration composed with `resultar-di`.
 
 ```sh
-pnpm add resultar-config resultar resultar-di typebox
+pnpm add resultar-config resultar resultar-di
 ```
 
 ```ts
-import { Type } from 'typebox'
-import { defineAppConfig } from 'resultar-config'
+import { defineAppConfig, t } from 'resultar-config'
 import { createModule } from 'resultar-di'
 import { ResultTask } from 'resultar'
 
 const properties = {
-  PORT: Type.Integer({ default: 8080, minimum: 1, maximum: 65535 }),
-  DATABASE_URL: Type.String({ minLength: 1 }),
-  FEATURE_ENABLED: Type.Boolean({ default: false }),
+  PORT: t.Integer({ default: 8080, minimum: 1, maximum: 65535 }),
+  DATABASE_URL: t.String({ minLength: 1 }),
+  FEATURE_ENABLED: t.Boolean({ default: false }),
 }
 const appConfig = defineAppConfig({ properties })
 const createServices = (config = appConfig) => createModule()
@@ -29,6 +32,13 @@ const exit = await services.use(['httpConfig'], ({ httpConfig }) =>
   ResultTask.ok(httpConfig.port),
 ).runExit()
 ```
+
+`t` is a direct reexport of TypeBox's `Type`, so schema builders and inferred types
+are unchanged. You can also keep importing `Type` from `typebox` and mix those
+schemas with `t` schemas. TypeBox is installed automatically as a dependency
+(`>=1.3.4 <2.0.0`); no separate installation is needed when using `t`. If you import
+from `typebox` directly, declare it in your application's dependencies too.
+The alias adds no framework-specific schema builders or validation behavior.
 
 For direct loading at startup or in scripts, use the module's `load()` helper:
 

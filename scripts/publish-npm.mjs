@@ -17,6 +17,7 @@ const packages = [
   "packages/resultar",
   "packages/di",
   "packages/config",
+  "packages/app",
   "packages/hono",
   "packages/fastify",
   "packages/nestjs",

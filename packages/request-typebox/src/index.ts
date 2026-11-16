@@ -5,6 +5,7 @@
  */
 
 export * from "resultar-request";
+export { Type as t } from "typebox";
 export { requestJsonTypeBox, requestJsonTypeBoxTask } from "./request-json-typebox.js";
 
 /** Package-local aliases for `requestJsonTypeBox` and `requestJsonTypeBoxTask`. */

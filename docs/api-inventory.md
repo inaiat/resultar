@@ -12,6 +12,171 @@ are described in the declarations. A deprecated export remains supported.
 The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 [configuration schema](../packages/check/schema.json), not a JavaScript API.
 
+## resultar-app
+
+[Package manual](../packages/app/README.md)
+
+| Export | Kind | Public members |
+| --- | --- | --- |
+| `AbortError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `cause`, `message`, `name`, `stack` |
+| `AppConfigModule` | Type | — |
+| `AsyncResultGenOptions` | Type | `catch`, `try` |
+| `Cause` | Value | `defects`, `failures`, `findError`, `hasDies`, `hasFails`, `hasInterrupts`, `isCause`, `pretty` |
+| `Clock` | Value | `live`, `virtual` |
+| `ConfigError` | Class | Static: `errAsync`, `err`, `is`, `tag`, `taskErr`, `withProps`<br>Instance: `_tag`, `cause`, `findCause`, `fingerprint`, `issues`, `messageTemplate`, `message`, `name`, `stack`, `toJSON` |
+| `ConfigIssue` | Type | `category`, `message`, `path` |
+| `constant` | Value | — |
+| `createModule` | Value | — |
+| `createTaggedError` | Value | — |
+| `defineAppConfig` | Value | — |
+| `DisposableResult` | Class | Instance: `_unsafeUnwrapErr`, `_unsafeUnwrap`, `error`, `isErr`, `isOk`, `result`, `unwrapOr`, `value` |
+| `DisposableResultAsync` | Class (deprecated) | Instance: `then` |
+| `err` | Value | — |
+| `errAsync` | Value | — |
+| `ErrResult` | Type | `_unsafeUnwrapErr`, `_unsafeUnwrap`, `andThen`, `asVoid`, `as`, `asyncAndThen`, `asyncMap`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `error`, `filterOrElse`, `if`, `inspectBoth`, `inspectError`, `inspect`, `isErr`, `isOk`, `log`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `orElseSucceed`, `orElse`, `pipe`, `safeUnwrap`, `tapError`, `tap`, `toDisposable`, `unless`, `unwrapOrThrow`, `unwrapOr`, `unwrapReason`, `when` |
+| `Exit` | Type | — |
+| `Fiber` | Value | `addObserver`, `await`, `interrupt`, `join`, `poll` |
+| `FiberHandle` | Type | `addObserver`, `id`, `interrupt`, `join`, `poll` |
+| `FiberJoinOptions` | Type | `interruption` |
+| `FiberObserver` | Type | — |
+| `findCause` | Value | — |
+| `flow` | Value | — |
+| `fromCallback` | Value (deprecated) | — |
+| `fromPromise` | Value | — |
+| `fromSafePromise` | Value | — |
+| `fromThrowable` | Value | — |
+| `fromThrowableAsync` | Value (deprecated) | — |
+| `HttpApplication` | Type | `fetch`, `request` |
+| `HttpServiceSelection` | Type | — |
+| `identity` | Value | — |
+| `inspectModule` | Value | — |
+| `isAbortError` | Value | — |
+| `isError` | Value | — |
+| `isRedacted` | Value | — |
+| `isResultTask` | Value | — |
+| `isServiceTag` | Value | — |
+| `Match` | Value | `any`, `bigint`, `boolean`, `context`, `date`, `defined`, `discriminatorStartsWith`, `discriminator`, `discriminatorsExhaustive`, `discriminators`, `exhaustive`, `fn`, `instanceOfUnsafe`, `instanceOf`, `is`, `nonEmptyString`, `not`, `null`, `number`, `option`, `orElseAbsurd`, `orElse`, `record`, `result`, `string`, `symbol`, `tagStartsWith`, `tag`, `tagsExhaustive`, `tags`, `typeTags`, `type`, `valueTags`, `value`, `whenAnd`, `whenOr`, `when`, `withReturnType` |
+| `matchError` | Value | — |
+| `matchErrorPartial` | Value | — |
+| `MatchMatcher` | Type | `exhaustive`, `not`, `option`, `orElseAbsurd`, `orElse`, `pipe`, `result`, `tag`, `tagsExhaustive`, `tags`, `whenAnd`, `whenOr`, `when` |
+| `MatchMissingCases` | Type | `missingCases` |
+| `MatchOption` | Type | — |
+| `MatchPattern` | Type | — |
+| `MatchRefinement` | Type | — |
+| `MissingServiceError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `cause`, `message`, `name`, `serviceIdentifier`, `stack` |
+| `ok` | Value | — |
+| `okAsync` | Value | — |
+| `OkResult` | Type | `_unsafeUnwrapErr`, `_unsafeUnwrap`, `andThen`, `asVoid`, `as`, `asyncAndThen`, `asyncMap`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `filterOrElse`, `if`, `inspectBoth`, `inspectError`, `inspect`, `isErr`, `isOk`, `log`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `orElseSucceed`, `orElse`, `pipe`, `safeUnwrap`, `tapError`, `tap`, `toDisposable`, `unless`, `unwrapOrThrow`, `unwrapOr`, `unwrapReason`, `value`, `when` |
+| `pipe` | Value | — |
+| `redact` | Value | — |
+| `Redacted` | Type | `__resultarRedactedType`, `__resultarRedacted`, `label`, `toJSON`, `toString` |
+| `resource` | Value | — |
+| `Result` | Value | `all`, `andThen`, `asVoid`, `as`, `asyncAndThen`, `asyncMap`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `combineWithAllErrors`, `combine`, `err`, `filterOrElse`, `firstSuccessOf`, `fn`, `forEach`, `fromNullishOr`, `fromThrowable`, `gen`, `if`, `inspectBoth`, `inspectError`, `inspect`, `iterate`, `liftPredicate`, `loop`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `ok`, `orElseSucceed`, `orElse`, `tryCatch`, `try`, `unit`, `unlessResult`, `unless`, `unwrapOr`, `unwrapReason`, `validateAll`, `whenResult`, `when`, `zip` |
+| `ResultAsync` | Class | Static: `all`, `andThen`, `asVoid`, `as`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `combineWithAllErrors`, `combine`, `errAsync`, `err`, `filterOrElse`, `firstSuccessOf`, `forEach`, `fromCallback`, `fromPromise`, `fromSafePromise`, `fromTask`, `fromThrowable`, `if`, `inspectBoth`, `inspectError`, `inspect`, `iterate`, `loop`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `okAsync`, `ok`, `orElseSucceed`, `orElse`, `raceAll`, `raceFirst`, `raceWith`, `race`, `retryOrElse`, `retry`, `timeout`, `tryCatch`, `try`, `unitAsync`, `unit`, `unlessResult`, `unless`, `unwrapOr`, `unwrapReason`, `validateAll`, `whenResult`, `when`, `withResource`, `zip`<br>Instance: `andThen`, `asVoid`, `as`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `filterOrElse`, `if`, `inspectBoth`, `inspectError`, `inspect`, `log`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `orElseSucceed`, `orElse`, `pipe`, `tapError`, `tap`, `then`, `toAsyncDisposable`, `unless`, `unwrapOrThrow`, `unwrapOr`, `unwrapReason`, `when` |
+| `ResultAsyncAbortSignal` | Type | `aborted`, `addEventListener`, `reason`, `removeEventListener` |
+| `ResultAsyncCallbackCleanup` | Type | — |
+| `ResultAsyncCallbackContext` | Type | `reject`, `resolve`, `signal` |
+| `ResultAsyncConcurrency` | Type | — |
+| `ResultAsyncFromCallbackOptions` | Type | `catch`, `signal`, `subscribe` |
+| `ResultAsyncGenerator` | Type | — |
+| `ResultAsyncRaceHandle` | Type | `abort`, `signal`, `wait` |
+| `ResultAsyncRaceTask` | Type | — |
+| `ResultAsyncResourceAcquire` | Type | — |
+| `ResultAsyncResourceEffect` | Type | — |
+| `ResultAsyncResourceRelease` | Type | — |
+| `ResultAsyncResourceReleaseContext` | Type | `result`, `signal` |
+| `ResultAsyncResourceUse` | Type | — |
+| `ResultAsyncRetryContext` | Type | `attempt`, `nextAttempt`, `retriesRemaining` |
+| `ResultAsyncRetryOptions` | Type | `delayMs`, `jittered`, `onRetry`, `signal`, `times`, `while` |
+| `ResultAsyncRetryOrElseOptions` | Type | `delayMs`, `jittered`, `onRetry`, `orElse`, `signal`, `times`, `while` |
+| `ResultAsyncRetryTask` | Type | — |
+| `ResultAsyncTimeoutOptions` | Type | `onTimeout`, `timeoutMs` |
+| `ResultAsyncWithResourceOptions` | Type | `acquire`, `release`, `signal`, `use` |
+| `ResultGenerator` | Type | — |
+| `ResultGenOptions` | Type | `catch`, `try` |
+| `ResultOperations` | Type | `_unsafeUnwrapErr`, `_unsafeUnwrap`, `andThen`, `asVoid`, `as`, `asyncAndThen`, `asyncMap`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `filterOrElse`, `if`, `inspectBoth`, `inspectError`, `inspect`, `isErr`, `isOk`, `log`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `orElseSucceed`, `orElse`, `pipe`, `safeUnwrap`, `tapError`, `tap`, `toDisposable`, `unless`, `unwrapOrThrow`, `unwrapOr`, `unwrapReason`, `when` |
+| `ResultTask` | Class | Static: `acquireDisposable`, `acquireRelease`, `all`, `andThen`, `asVoid`, `as`, `catchAll`, `catchCause`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `delay`, `ensuring`, `err`, `fail`, `filterOrElse`, `firstSuccessOf`, `flatMap`, `fn`, `forEach`, `forkChild`, `fromCallback`, `fromPromise`, `fromResultAsync`, `fromResult`, `gen`, `if`, `inspectBoth`, `inspectCause`, `inspectError`, `inspect`, `iterate`, `loop`, `makeScope`, `makeSemaphore`, `mapErr`, `mapError`, `map`, `matchTagsPartial`, `matchTags`, `match`, `memoize`, `never`, `now`, `ok`, `onExit`, `orElseSucceed`, `orElse`, `provideServiceResolver`, `provideService`, `provideServices`, `raceFirst`, `race`, `retry`, `runExit`, `runFork`, `runPromise`, `runResult`, `sandbox`, `scoped`, `service`, `sleep`, `succeed`, `sync`, `tapBoth`, `tapCause`, `tapError`, `tap`, `timed`, `timeout`, `toResultAsync`, `tryPromise`, `try`, `unless`, `unsandbox`, `unwrapOr`, `unwrapReason`, `validateAll`, `when`, `zip`<br>Instance: `andThen`, `asVoid`, `as`, `catchAll`, `catchCause`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `delay`, `ensuring`, `filterOrElse`, `flatMap`, `if`, `inspectBoth`, `inspectCause`, `inspectError`, `inspect`, `log`, `mapErr`, `mapError`, `map`, `matchTagsPartial`, `matchTags`, `match`, `onExit`, `orElseSucceed`, `orElse`, `pipe`, `provideServiceResolver`, `provideService`, `provideServices`, `retry`, `runExit`, `runFork`, `runPromise`, `runResult`, `sandbox`, `tapBoth`, `tapCause`, `tapError`, `tap`, `timed`, `timeout`, `toResultAsync`, `unless`, `unsandbox`, `unwrapOr`, `unwrapReason`, `when`, `zip` |
+| `ResultTaskAcquireReleaseOptions` | Type | `acquire`, `release` |
+| `ResultTaskCallbackContext` | Type | `reject`, `resolve`, `signal` |
+| `ResultTaskCauseError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `cause`, `message`, `name`, `stack` |
+| `ResultTaskConcurrencyOptions` | Type | `concurrency` |
+| `ResultTaskFromCallbackOptions` | Type | `subscribe` |
+| `ResultTaskGenerator` | Type | — |
+| `ResultTaskIfBranches` | Type | `onFalse`, `onTrue` |
+| `ResultTaskIterateBooleanOptions` | Type | `body`, `while` |
+| `ResultTaskIterateOptions` | Type | `body`, `while` |
+| `ResultTaskLoopBooleanDiscardOptions` | Type | `body`, `discard`, `step`, `while` |
+| `ResultTaskLoopBooleanOptions` | Type | `body`, `discard`, `step`, `while` |
+| `ResultTaskLoopDiscardOptions` | Type | `body`, `discard`, `step`, `while` |
+| `ResultTaskLoopOptions` | Type | `body`, `discard`, `step`, `while` |
+| `ResultTaskMatchOptions` | Type | — |
+| `ResultTaskRunOptions` | Type | — |
+| `ResultTaskScope` | Type | — |
+| `ResultTaskScopeOwner` | Type | `addFinalizer`, `close`, `use` |
+| `ResultTaskServiceResolver` | Type | — |
+| `ResultTaskServices` | Type | — |
+| `ResultTaskTryOptions` | Type | `catch`, `try` |
+| `ResultTaskTryPromiseOptions` | Type | `catch`, `interruption`, `try` |
+| `ResultTaskTypeId` | Value | `description`, `toString`, `valueOf` |
+| `ResultTaskYieldable` | Type | — |
+| `ResultTaskYieldOf` | Type | — |
+| `ResultTaskYieldTypeId` | Value | `description`, `toString`, `valueOf` |
+| `ResultTaskZipOptions` | Type | `concurrent` |
+| `Retry` | Value | `policy` |
+| `RetryContext` | Type | `attempt`, `nextAttempt`, `retriesRemaining` |
+| `RetryPolicy` | Type | `backoff`, `delayMs`, `jittered`, `onRetry`, `times`, `while` |
+| `RetryPolicyOptions` | Type | `backoff`, `delayMs`, `jittered`, `onRetry`, `times`, `while` |
+| `revealRedacted` | Value | — |
+| `runPromise` | Value (deprecated) | — |
+| `runSync` | Value | — |
+| `safeTry` | Value (deprecated) | — |
+| `SafeTryAsyncOptions` | Type | `catch`, `try` |
+| `SafeTryOptions` | Type | `catch`, `try` |
+| `Scheduler` | Value | `live` |
+| `Semaphore` | Value | `make`, `withPermit`, `withPermits` |
+| `service` | Value | — |
+| `Service` | Value | `require` |
+| `ServiceAccess` | Type | `close`, `get`, `has`, `keys`, `use` |
+| `ServiceAccessError` | Class | Static: `errAsync`, `err`, `is`, `tag`, `taskErr`, `withProps`<br>Instance: `_tag`, `cause`, `findCause`, `fingerprint`, `kind`, `messageTemplate`, `message`, `name`, `reason`, `serviceName`, `stack`, `toJSON` |
+| `ServiceClass` | Type | — |
+| `ServiceGraph` | Type | — |
+| `ServiceLifetime` | Type | — |
+| `ServiceModule` | Type | `http`, `merge`, `override`, `resource`, `scope`, `scoped`, `singleton`, `task`, `transient`, `use`, `value` |
+| `ServiceProvider` | Type | — |
+| `ServiceRegistrationOptions` | Type | `lifetime` |
+| `ServiceScope` | Type | `close`, `fetch`, `useSingletons`, `use`, `withServices` |
+| `ServiceScopeError` | Type | — |
+| `serviceTag` | Value | — |
+| `ServiceTag` | Type | `_tag`, `identifier`, `key` |
+| `ServiceTagTypeId` | Value | `description`, `toString`, `valueOf` |
+| `ServiceTaskRequirements` | Type | — |
+| `ServiceTaskSession` | Type | `close`, `ready` |
+| `startServiceTask` | Value | — |
+| `StrictResult` | Type | — |
+| `StrictResultAsync` | Type | — |
+| `t` | Value | `Any`, `Array`, `BigInt`, `Boolean`, `Call`, `Capitalize`, `Codec`, `Conditional`, `ConstructorParameters`, `Constructor`, `Cyclic`, `DecodeBuilder`, `Decode`, `Dependent`, `EncodeBuilder`, `Encode`, `Enum`, `Evaluate`, `Exclude`, `ExtendsResult`, `Extends`, `Extract`, `Function`, `Generic`, `Identifier`, `Immutable`, `Index`, `Infer`, `InstanceType`, `Instantiate`, `Integer`, `Interface`, `Intersect`, `IsAny`, `IsArray`, `IsBigInt`, `IsBoolean`, `IsCall`, `IsCodec`, `IsConstructor`, `IsCyclic`, `IsDependent`, `IsEnumValue`, `IsEnum`, `IsFunction`, `IsGeneric`, `IsIdentifier`, `IsImmutable`, `IsInfer`, `IsInteger`, `IsIntersect`, `IsKind`, `IsLiteral`, `IsNever`, `IsNull`, `IsNumber`, `IsObject`, `IsOptional`, `IsParameter`, `IsReadonly`, `IsRecord`, `IsRef`, `IsRefine`, `IsRest`, `IsSchema`, `IsString`, `IsSymbol`, `IsTemplateLiteral`, `IsThis`, `IsTuple`, `IsUndefined`, `IsUnion`, `IsUnknown`, `IsUnsafe`, `IsVoid`, `KeyOf`, `Literal`, `Lowercase`, `Mapped`, `Module`, `Never`, `NonNullable`, `Null`, `Number`, `Object`, `Omit`, `Optional`, `Parameter`, `Parameters`, `Partial`, `Pick`, `ReadonlyObject`, `ReadonlyType`, `Readonly`, `RecordKey`, `RecordPattern`, `RecordValue`, `Record`, `Ref`, `Refine`, `Required`, `Rest`, `ReturnType`, `Script`, `String`, `Symbol`, `TemplateLiteral`, `This`, `Tuple`, `Uncapitalize`, `Undefined`, `Union`, `Unknown`, `Unsafe`, `Uppercase`, `Void`, `With` |
+| `taggedEnum` | Value | — |
+| `TaggedEnum` | Type | — |
+| `TaggedEnumFactory` | Type | — |
+| `TaggedErrorClass` | Type | — |
+| `TaggedErrorInstance` | Type | — |
+| `TaggedErrorOptions` | Type | `extends`, `message`, `name` |
+| `TaskClock` | Type | `now`, `random`, `sleep` |
+| `TaskScheduler` | Type | `yield` |
+| `try` | Value (deprecated) | — |
+| `tryAsync` | Value (deprecated) | — |
+| `tryCatch` | Value (deprecated) | — |
+| `tryCatchAsync` | Value (deprecated) | — |
+| `tryResult` | Value | — |
+| `tryResultAsync` | Value | — |
+| `TryResultAsyncOptions` | Type | `catch`, `try` |
+| `TryResultOptions` | Type | `catch`, `try` |
+| `unit` | Value | — |
+| `unitAsync` | Value | — |
+| `useServiceAccess` | Value | — |
+| `VirtualClock` | Class | Instance: `advanceBy`, `flush`, `now`, `pending`, `random`, `sleep` |
+| `withProvider` | Value | — |
+
 ## resultar-config
 
 [Package manual](../packages/config/README.md)
@@ -22,6 +187,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `ConfigError` | Class | Static: `errAsync`, `err`, `is`, `tag`, `taskErr`, `withProps`<br>Instance: `_tag`, `cause`, `findCause`, `fingerprint`, `issues`, `messageTemplate`, `message`, `name`, `stack`, `toJSON` |
 | `ConfigIssue` | Type | `category`, `message`, `path` |
 | `defineAppConfig` | Value | — |
+| `t` | Value | `Any`, `Array`, `BigInt`, `Boolean`, `Call`, `Capitalize`, `Codec`, `Conditional`, `ConstructorParameters`, `Constructor`, `Cyclic`, `DecodeBuilder`, `Decode`, `Dependent`, `EncodeBuilder`, `Encode`, `Enum`, `Evaluate`, `Exclude`, `ExtendsResult`, `Extends`, `Extract`, `Function`, `Generic`, `Identifier`, `Immutable`, `Index`, `Infer`, `InstanceType`, `Instantiate`, `Integer`, `Interface`, `Intersect`, `IsAny`, `IsArray`, `IsBigInt`, `IsBoolean`, `IsCall`, `IsCodec`, `IsConstructor`, `IsCyclic`, `IsDependent`, `IsEnumValue`, `IsEnum`, `IsFunction`, `IsGeneric`, `IsIdentifier`, `IsImmutable`, `IsInfer`, `IsInteger`, `IsIntersect`, `IsKind`, `IsLiteral`, `IsNever`, `IsNull`, `IsNumber`, `IsObject`, `IsOptional`, `IsParameter`, `IsReadonly`, `IsRecord`, `IsRef`, `IsRefine`, `IsRest`, `IsSchema`, `IsString`, `IsSymbol`, `IsTemplateLiteral`, `IsThis`, `IsTuple`, `IsUndefined`, `IsUnion`, `IsUnknown`, `IsUnsafe`, `IsVoid`, `KeyOf`, `Literal`, `Lowercase`, `Mapped`, `Module`, `Never`, `NonNullable`, `Null`, `Number`, `Object`, `Omit`, `Optional`, `Parameter`, `Parameters`, `Partial`, `Pick`, `ReadonlyObject`, `ReadonlyType`, `Readonly`, `RecordKey`, `RecordPattern`, `RecordValue`, `Record`, `Ref`, `Refine`, `Required`, `Rest`, `ReturnType`, `Script`, `String`, `Symbol`, `TemplateLiteral`, `This`, `Tuple`, `Uncapitalize`, `Undefined`, `Union`, `Unknown`, `Unsafe`, `Uppercase`, `Void`, `With` |
 
 ## resultar-di
 
@@ -247,6 +413,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `RequestJsonValidationReason` | Type | — |
 | `RequestJsonValidator` | Type | — |
 | `RequestJsonValidatorInput` | Type | — |
+| `t` | Value | `Any`, `Array`, `BigInt`, `Boolean`, `Call`, `Capitalize`, `Codec`, `Conditional`, `ConstructorParameters`, `Constructor`, `Cyclic`, `DecodeBuilder`, `Decode`, `Dependent`, `EncodeBuilder`, `Encode`, `Enum`, `Evaluate`, `Exclude`, `ExtendsResult`, `Extends`, `Extract`, `Function`, `Generic`, `Identifier`, `Immutable`, `Index`, `Infer`, `InstanceType`, `Instantiate`, `Integer`, `Interface`, `Intersect`, `IsAny`, `IsArray`, `IsBigInt`, `IsBoolean`, `IsCall`, `IsCodec`, `IsConstructor`, `IsCyclic`, `IsDependent`, `IsEnumValue`, `IsEnum`, `IsFunction`, `IsGeneric`, `IsIdentifier`, `IsImmutable`, `IsInfer`, `IsInteger`, `IsIntersect`, `IsKind`, `IsLiteral`, `IsNever`, `IsNull`, `IsNumber`, `IsObject`, `IsOptional`, `IsParameter`, `IsReadonly`, `IsRecord`, `IsRef`, `IsRefine`, `IsRest`, `IsSchema`, `IsString`, `IsSymbol`, `IsTemplateLiteral`, `IsThis`, `IsTuple`, `IsUndefined`, `IsUnion`, `IsUnknown`, `IsUnsafe`, `IsVoid`, `KeyOf`, `Literal`, `Lowercase`, `Mapped`, `Module`, `Never`, `NonNullable`, `Null`, `Number`, `Object`, `Omit`, `Optional`, `Parameter`, `Parameters`, `Partial`, `Pick`, `ReadonlyObject`, `ReadonlyType`, `Readonly`, `RecordKey`, `RecordPattern`, `RecordValue`, `Record`, `Ref`, `Refine`, `Required`, `Rest`, `ReturnType`, `Script`, `String`, `Symbol`, `TemplateLiteral`, `This`, `Tuple`, `Uncapitalize`, `Undefined`, `Union`, `Unknown`, `Unsafe`, `Uppercase`, `Void`, `With` |
 | `UndiciJsonResponseData` | Type | — |
 
 ## resultar-request-zod

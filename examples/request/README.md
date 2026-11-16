@@ -61,14 +61,13 @@ For a server that is already running, compose a fresh request per Task execution
 
 ```ts
 import { ResultTask } from 'resultar'
-import { requestJson } from 'resultar-request-typebox'
-import { Type } from 'typebox'
+import { requestJson, t } from 'resultar-request-typebox'
 
-const accountSchema = Type.Object({
-  email: Type.String(),
-  id: Type.String(),
-  plan: Type.Union([Type.Literal('free'), Type.Literal('team')]),
-  seats: Type.Number(),
+const accountSchema = t.Object({
+  email: t.String(),
+  id: t.String(),
+  plan: t.Union([t.Literal('free'), t.Literal('team')]),
+  seats: t.Number(),
 })
 
 const loadAccount = (baseUrl: string) => ResultTask.fromResultAsync(() =>

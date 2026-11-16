@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { Cause, Match, type ResultAsync, type ResultTask } from "resultar";
 import { Type, type Static } from "typebox";
-import { describe, it } from "vite-plus/test";
+import { describe, expectTypeOf, it } from "vite-plus/test";
 
 import {
   requestJson,
@@ -9,6 +9,7 @@ import {
   requestJsonTypeBox,
   requestJsonTypeBoxTask,
   RequestError,
+  t,
 } from "../src/index.js";
 
 const userSchema = Type.Object({ email: Type.String(), name: Type.String() });
@@ -29,6 +30,49 @@ const expectRequestError = (error: Error) => {
 const expectType = <T>(value: T) => value;
 
 describe("requestJsonTypeBox", () => {
+  it("reexports TypeBox as t with exact inference for lazy and eager requests", async () => {
+    assert.equal(t, Type);
+    const schema = t.Object({
+      name: Type.String(),
+      plan: t.Union([t.Literal("free"), t.Literal("team")]),
+      email: t.Optional(t.String()),
+    });
+    type Account = t.Static<typeof schema>;
+    expectTypeOf<Account>().toEqualTypeOf<{
+      name: string;
+      plan: "free" | "team";
+      email?: string;
+    }>();
+    const payload = { name: "Ada", plan: "team" };
+    let calls = 0;
+    const request = async () => {
+      calls += 1;
+      return createFetchResponse(payload);
+    };
+    const task = requestJsonTask({ request, schema });
+    expectTypeOf(task).toEqualTypeOf<ResultTask<Account, RequestError>>();
+    assert.equal(calls, 0);
+    assert.deepEqual(await task.runPromise(), payload);
+    assert.equal(calls, 1);
+    const started = Promise.withResolvers<void>();
+    const result = requestJson({
+      request: () => {
+        const pending = request();
+        started.resolve();
+        return pending;
+      },
+      schema,
+    });
+    expectTypeOf(result).toEqualTypeOf<ResultAsync<Account, RequestError>>();
+    await started.promise;
+    assert.equal(calls, 2);
+    const resolved = await result;
+    assert.ok(resolved.isOk());
+    assert.deepEqual(resolved.value, payload);
+    assert.equal(await result, resolved);
+    assert.equal(calls, 2);
+  });
+
   it("given valid TypeBox payload, then returns Static schema type", async () => {
     const result = requestJson({
       request: async () => createFetchResponse(userSample),

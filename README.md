@@ -306,12 +306,21 @@ pnpm add -D resultar-check
 
 ## Ecosystem Packages
 
-The Resultar monorepo ships focused, zero-bloat companion packages for DI, HTTP clients, schema validation, and web frameworks:
+Use [`resultar-app`](packages/app/README.md) for a unified installation and import
+entry point covering workflows, DI and configuration. The component packages also
+support independent use: install `resultar` for `import { Result } from 'resultar'`,
+or install only `resultar-app` and import `Result` from `'resultar-app'`. Declare each
+package you import directly as an application dependency.
+
+The Resultar monorepo ships companion packages for DI, configuration, HTTP clients,
+schema validation, and web frameworks:
 
 | Package | Description | Docs |
 | --- | --- | --- |
 | [`resultar`](packages/resultar/README.md) | Core `Result<T, E>`, `ResultTask<T, E, R>`, `ResultAsync<T, E>`, `Match`, `Cause`, `Retry`, `Clock`, `Fiber`, `Semaphore`. | [README](packages/resultar/README.md) · [Guide](DOCUMENTATION.md) |
 | [`resultar-check`](packages/check/README.md) | Native TypeScript-Go compiler + Resultar diagnostics CLI & LSP server. | [README](packages/check/README.md) |
+| [`resultar-app`](packages/app/README.md) | Unified entry point for workflows, dependency injection and validated configuration. | [README](packages/app/README.md) |
+| [`resultar-config`](packages/config/README.md) | Lazy, typed Node environment configuration with TypeBox schemas and DI integration. | [README](packages/config/README.md) |
 | [`resultar-di`](packages/di/README.md) | Typed dependency injection, class/function services, request scopes, and test overrides for `ResultTask`. | [README](packages/di/README.md) |
 | [`resultar-hono`](packages/hono/README.md) | Typed Hono middleware & bindings with one DI resource scope per HTTP response and graceful shutdown. | [README](packages/hono/README.md) |
 | [`resultar-fastify`](packages/fastify/README.md) | Native Fastify plugin providing application & request-scoped DI services, cancellation, and cleanup. | [README](packages/fastify/README.md) |

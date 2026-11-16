@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { defineAppConfig } from "resultar-config";
 import { appConfigProperties } from "../src/app-config.ts";
-import { errAsync, okAsync, ResultTask } from "resultar";
+import { defineAppConfig, errAsync, okAsync, ResultTask } from "resultar-app";
 import { createServices, UserReadError } from "../src/services.ts";
 import { createApplication } from "../src/main.ts";
 const testConfig = defineAppConfig({ properties: appConfigProperties, source: {} });
