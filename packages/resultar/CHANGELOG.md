@@ -1,5 +1,34 @@
 # resultar
 
+## 4.1.0
+
+### Minor Changes
+
+- ca8a242: Add lazy `ResultTask.fromCallback` subscriptions with per-execution cancellation, synchronous cleanup and preserved failure causes. Keep the legacy eager adapter unchanged.
+
+  Accept resource factories that propagate `ResultTaskScope` across functions and files, including workflows executed by root runners or explicit scope owners.
+
+  Add `runTaskJson` for materialized Hono JSON responses with request cancellation, typed error mapping and preserved RPC/OpenAPI response inference. Services must be provided before execution; task resources close before response mapping.
+
+- cfb4f9c: Preserve indexed generic returns at synchronous Result.try/tryResult boundaries. Add invariant makeScope<CloseError>() owners that check acquired and direct finalizer error bounds and expose failed-attempt cleanup errors from use(). Existing unparameterized owners retain unknown closure errors.
+
+  Compatibility note: `makeScope().use(task)` now includes the adopted task's cleanup
+  errors in its return type, including when `makeScope()` has no type parameter.
+  Explicit annotations containing only the body error (or `never`) may no longer
+  compile. Prefer inference or include cleanup errors in the annotated error union.
+  Eager/lazy execution semantics are unchanged.
+
+- 6f4712a: Add lazy ResultTask.fromPromise with defect semantics and waiting acquisition cleanup.
+
+  Validate generic and nested-value inference, rejected inputs, native thenable adoption,
+  and direct acquisition cleanup against the existing defect bridge.
+
+- 210f3a3: Add ResultTask.never(), a lazy independent wait until interruption with no timers or polling, compatible with scoped cleanup, fibers and existing race semantics.
+
+### Patch Changes
+
+- 210f3a3: Preserve late successful fromResultAsync acquisitions until acquireRelease registers cleanup, while retaining interruption precedence over typed errors and defects from rejection. Document ownership-before-composition and eager-resource sharing limits.
+
 ## 4.0.2
 
 ### Patch Changes

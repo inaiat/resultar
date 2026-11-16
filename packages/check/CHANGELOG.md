@@ -1,5 +1,23 @@
 # resultar-check
 
+## 5.0.1
+
+### Patch Changes
+
+- ca8a242: Add lazy `ResultTask.fromCallback` subscriptions with per-execution cancellation, synchronous cleanup and preserved failure causes. Keep the legacy eager adapter unchanged.
+
+  Accept resource factories that propagate `ResultTaskScope` across functions and files, including workflows executed by root runners or explicit scope owners.
+
+  Add `runTaskJson` for materialized Hono JSON responses with request cancellation, typed error mapping and preserved RPC/OpenAPI response inference. Services must be provided before execution; task resources close before response mapping.
+
+- 210f3a3: Do not flag catchCause as useless solely because the task's typed failure channel is never. Defects remain recoverable; typed-only recovery diagnostics are unchanged.
+- 6f4712a: Recognize Task Promise defect factories in await and disposable diagnostics.
+
+  Verify direct, aliased, namespace and reexported imports against built declarations,
+  including recovery, disposal, scope propagation and invalid-contract controls.
+
+- cfb4f9c: Keep static lifetime analysis scoped to immutable module compositions, including named and token/class registrations, merges and value overrides. Report direct dependency paths and both registration locations without mixing independent modules with identical service names.
+
 ## 5.0.0
 
 ### Major Changes
