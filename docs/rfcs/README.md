@@ -19,6 +19,9 @@ and [migration reference](../migrations/v4.md): `ResultTask` is the default for 
 | [**RFC 0004**](./rfc-0004-effect-v4-ergonomics-and-tooling.md) | **Functional ergonomics and developer tooling** | `resultar`, `resultar-check` | **Implemented (Awaiting Release)** | 2026-10-06 |
 | [**RFC 0005**](./rfc-0005-contract-safety-http-and-ai-validation.md) | **Contract safety, HTTP cancellation, and AI validation** | `resultar-check`, `resultar-request*` | **Closed (Software Implemented; V1 Deferred; V2 in RFC 0003)** | 2026-11-11 |
 | [**RFC 0006**](./rfc-0006-task-cancellation-and-recovery.md) | **Task cancellation, resource cleanup, and recovery diagnostics** | `resultar`, `resultar-check` | **Implemented (Validated; Awaiting Release)** | 2026-11-14 |
+| [**RFC 0007**](./rfc-0007-task-promise-defect-boundary.md) | **Direct Promise adaptation with defect semantics** | `resultar`, `resultar-check` | **Implemented (Awaiting Release)** | 2026-11-15 |
+| [**RFC 0008**](./rfc-0008-declarative-configuration.md) | **Declarative configuration and dependency injection** | proposed `resultar-config` | **Draft** | 2026-11-16 |
+| [**RFC 0009**](./rfc-0009-inference-scopes-and-application-lifecycle.md) | **Inference, typed scope closure, and application lifecycle** | `resultar`, `resultar-di`, `resultar-check` | **Draft** | 2026-11-16 |
 
 ---
 
