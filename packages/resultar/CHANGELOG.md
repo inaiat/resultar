@@ -1,5 +1,13 @@
 # resultar
 
+## 4.1.1
+
+### Patch Changes
+
+- 72e8b81: Simplify redundant callback settlement and cancellation bookkeeping while preserving
+  lazy execution, first-callback-wins semantics and cleanup defects. Add regression
+  coverage for abort-listener removal and cleanup failures from interrupted race losers.
+
 ## 4.1.0
 
 ### Minor Changes

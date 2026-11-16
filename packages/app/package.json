@@ -1,6 +1,6 @@
 {
   "name": "resultar-app",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Unified application entry point for Resultar workflows, services and configuration.",
   "keywords": [
     "application",
