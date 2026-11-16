@@ -6,9 +6,9 @@ packages:
   - packages/check/native-packages/*
 
 catalog:
-  "@nestjs/common": 12.5.0
-  "@nestjs/core": 12.5.0
-  "@nestjs/platform-fastify": 12.5.0
+  "@nestjs/common": 12.5.1
+  "@nestjs/core": 12.5.1
+  "@nestjs/platform-fastify": 12.5.1
   "@stryker-mutator/core": 10.1.1
   "@stryker-mutator/vitest-runner": 10.1.1
   "@types/node": 26.6.6
