@@ -1,0 +1,16 @@
+entry = ["src/index.ts"]
+publicPackages = ["resultar-app"]
+ignoreDependencies = ["resultar-check"]
+
+[rules]
+circular-dependencies = "error"
+boundary-violation = "error"
+unused-class-members = "off"
+duplicate-export-alias = "off"
+
+[duplicates]
+minLines = 18
+ignore = ["tests/**"]
+
+[health]
+ignore = ["tests/**"]

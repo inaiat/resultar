@@ -335,18 +335,12 @@ importers:
       hono:
         specifier: 'catalog:'
         version: 4.13.19
-      resultar:
+      resultar-app:
         specifier: workspace:*
-        version: link:../../packages/resultar
-      resultar-config:
-        specifier: workspace:*
-        version: link:../../packages/config
+        version: link:../../packages/app
       resultar-hono:
         specifier: workspace:*
         version: link:../../packages/hono
-      typebox:
-        specifier: 'catalog:'
-        version: 1.4.7
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -423,6 +417,40 @@ importers:
         specifier: 'catalog:'
         version: 7.0.2
 
+  packages/app:
+    dependencies:
+      resultar:
+        specifier: workspace:^
+        version: link:../resultar
+      resultar-config:
+        specifier: workspace:^
+        version: link:../config
+      resultar-di:
+        specifier: workspace:^
+        version: link:../di
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 5.1.0(@vitest/browser@5.1.0)(vitest@5.1.0)
+      '@vitest/ui':
+        specifier: 'catalog:'
+        version: 5.1.0(vitest@5.1.0)
+      fallow:
+        specifier: 'catalog:'
+        version: 3.43.1
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vite-plus:
+        specifier: 'catalog:'
+        version: 1.6.0(@types/node@26.6.6)(@vitest/coverage-v8@5.1.0)(@vitest/ui@5.1.0)(esbuild@0.28.2)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)
+      vitest:
+        specifier: 5.1.0
+        version: 5.1.0(@types/node@26.6.6)(@vitest/browser-preview@5.1.0)(@vitest/coverage-v8@5.1.0)(@vitest/ui@5.1.0)(@voidzero-dev/vite-plus-core@1.6.0(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))
+
   packages/check:
     devDependencies:
       '@types/node':
@@ -480,6 +508,9 @@ importers:
       resultar-di:
         specifier: workspace:^
         version: link:../di
+      typebox:
+        specifier: '>=1.3.4 <2.0.0'
+        version: 1.4.7
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -493,9 +524,6 @@ importers:
       fallow:
         specifier: 'catalog:'
         version: 3.43.1
-      typebox:
-        specifier: 'catalog:'
-        version: 1.4.7
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

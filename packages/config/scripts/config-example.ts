@@ -1,12 +1,11 @@
 import { deepEqual } from "node:assert/strict";
-import { Type } from "typebox";
 import { ResultTask } from "resultar";
 import { createModule } from "resultar-di";
-import { defineAppConfig } from "../dist/index.js";
+import { defineAppConfig, t } from "../dist/index.js";
 
 const properties = {
-  PORT: Type.Integer({ default: 8080, minimum: 1, maximum: 65_535 }),
-  DATABASE_URL: Type.String({ minLength: 1 }),
+  PORT: t.Integer({ default: 8080, minimum: 1, maximum: 65_535 }),
+  DATABASE_URL: t.String({ minLength: 1 }),
 };
 const defaultConfig = defineAppConfig({ properties });
 const createServices = (config = defaultConfig) => createModule().merge(config);

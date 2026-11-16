@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:deps": "pnpm --filter resultar build && pnpm --filter resultar-di build && pnpm --filter resultar-config build && pnpm --filter resultar-hono build && pnpm --filter resultar-check build && pnpm --filter resultar-check native:build:current",
+    "build:deps": "pnpm --filter resultar build && pnpm --filter resultar-di build && pnpm --filter resultar-config build && pnpm --filter resultar-app build && pnpm --filter resultar-hono build && pnpm --filter resultar-check build && pnpm --filter resultar-check native:build:current",
     "check": "node ../../packages/check/dist/cli.js",
     "dev": "pnpm run build:deps && node --import vite-plus/register src/main.ts",
     "smoke": "pnpm run build:deps && pnpm run check:types && pnpm run check && node --import vite-plus/register scripts/smoke.ts",
@@ -12,10 +12,8 @@
   "dependencies": {
     "@hono/node-server": "2.1.8",
     "hono": "catalog:",
-    "resultar": "workspace:*",
     "resultar-hono": "workspace:*",
-    "resultar-config": "workspace:*",
-    "typebox": "catalog:"
+    "resultar-app": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

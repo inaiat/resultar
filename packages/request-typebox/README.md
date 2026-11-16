@@ -25,6 +25,11 @@ pnpm add resultar-request-typebox resultar typebox
 npm install resultar-request-typebox resultar typebox
 ```
 
+Import `t` from `resultar-request-typebox` to build schemas alongside the request
+helpers. It is a direct reexport of TypeBox's `Type`, including type utilities such
+as `t.Static`. Direct TypeBox imports remain compatible, and TypeBox remains a peer
+dependency. The alias does not change validation or eager/lazy execution behavior.
+
 ## `requestJsonTypeBoxTask` and `requestJson`
 
 For new lazy `ResultTask` services, return `requestJsonTypeBoxTask` directly without `async` or
@@ -34,20 +39,20 @@ For new lazy `ResultTask` services, return `requestJsonTypeBoxTask` directly wit
 import { createTaggedError, ResultTask } from 'resultar'
 import {
   requestJsonTypeBoxTask,
+  t,
   type RequestJsonMapError,
 } from 'resultar-request-typebox'
-import { Type, type Static } from 'typebox'
 
-const userSchema = Type.Object(
+const userSchema = t.Object(
   {
-    id: Type.String(),
-    email: Type.String(),
-    plan: Type.Union([Type.Literal('free'), Type.Literal('team')]),
+    id: t.String(),
+    email: t.String(),
+    plan: t.Union([t.Literal('free'), t.Literal('team')]),
   },
   { additionalProperties: false },
 )
 
-type User = Static<typeof userSchema>
+type User = t.Static<typeof userSchema>
 
 class UserApiError extends createTaggedError({
   name: 'UserApiError',
@@ -110,7 +115,7 @@ const loadUserLabel = (id: string): StrictResultAsync<string, UserApiError> =>
   })
 ```
 
-`Static<typeof userSchema>` is the success type, while Resultar keeps request, HTTP, invalid-JSON,
+`t.Static<typeof userSchema>` is the success type, while Resultar keeps request, HTTP, invalid-JSON,
 and validation failures in the typed error channel. `requestJsonTypeBox` / `requestJsonTypeBoxTask`
 are exported as named adapter helpers alongside package-local `requestJson` / `requestJsonTask`
 aliases. If an existing helper already returns `ResultAsync`, you can still bridge it lazily with

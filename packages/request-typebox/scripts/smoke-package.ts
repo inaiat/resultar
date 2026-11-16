@@ -25,6 +25,7 @@ const expectedExports = [
   "requestJsonTask",
   "requestJsonTypeBox",
   "requestJsonTypeBoxTask",
+  "t",
 ] as const;
 
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>

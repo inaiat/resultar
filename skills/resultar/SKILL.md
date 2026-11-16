@@ -16,6 +16,14 @@ Help developers write correct code against their installed Resultar version.
 The workspace targets Node.js 24+, TypeScript 7+, and ESM. Read the consumer's
 package versions and configuration before choosing APIs.
 
+For applications combining workflows, DI and configuration, install `resultar-app`
+and import their APIs from that entry point. These are direct component reexports;
+framework adapters such as `resultar-hono` remain separate integrations. Direct
+component imports are also supported: declare every package imported by name as a
+direct application dependency. If only `resultar-app` is declared, import `Result`
+and other application APIs from `resultar-app`, not a transitive package name.
+Keep component versions aligned when mixing unified and direct imports.
+
 ## Choose the execution contract
 
 - Use `Result<T, E>` for synchronous computations.
@@ -27,6 +35,8 @@ package versions and configuration before choosing APIs.
   without `async`; replace `Promise<ResultTask<T, E, R>>` with direct `ResultTask<T, E, R>`.
 - For outbound HTTP JSON in lazy workflows, prefer `requestJsonTask` / `requestJsonZodTask` /
   `requestJsonTypeBoxTask` directly; preserve `requestJson` for eager `ResultAsync` boundaries.
+  `resultar-request-typebox` also reexports TypeBox's `Type` as `t` for schema builders
+  and `t.Static` inference; TypeBox remains a peer dependency.
 - Adapt an external driver's `Promise<T>` directly with `ResultTask.tryPromise({ try, catch })`.
   New repository and use-case methods return `ResultTask<T, E, R>`; do not mark
   those factories `async` or return `Promise<ResultTask<...>>` / `Promise<Result<...>>`.
@@ -122,7 +132,9 @@ The checker recognizes async factories as explicit defect boundaries for
 `no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.
 
 For Node configuration, `resultar-config` exposes `defineAppConfig({ properties,
-source? })` with TypeBox fields and a singleton `appConfig` provider. Merge once per
+source? })` with TypeBox fields and a singleton `appConfig` provider. Import `t`
+from `resultar-config` for the same builders as TypeBox's `Type`; TypeBox is installed
+automatically as a dependency (`>=1.3.4 <2.0.0`). Merge once per
 root; explicit sources replace `process.env`. Dependencies must select `appConfig`
 before acquiring startup resources. Preserve `AppConfigModule<typeof properties>`
 through factories to retain precise error graphs. For direct startup loading, use

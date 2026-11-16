@@ -1,5 +1,9 @@
 # resultar-di
 
+For applications combining workflows, services and configuration, use
+[`resultar-app`](../app/README.md) as the unified installation and import entry point.
+This package is also available independently.
+
 Typed dependency composition and scoped resources for `ResultTask`.
 
 Define services once, select the part of the application you need, and keep its resources alive

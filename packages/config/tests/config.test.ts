@@ -3,7 +3,7 @@ import { expect, expectTypeOf, test } from "vite-plus/test";
 import { Type } from "typebox";
 import { ResultTask } from "resultar";
 import { createModule } from "resultar-di";
-import { ConfigError, defineAppConfig, type AppConfigModule } from "../src/index.js";
+import { ConfigError, defineAppConfig, t, type AppConfigModule } from "../src/index.js";
 
 const properties = {
   PORT: Type.Integer({ default: 8080, minimum: 1, maximum: 65_535 }),
@@ -271,4 +271,24 @@ test("load is lazy and refreshes each execution without changing existing root s
   expect(cached.TOKEN).toBe("first");
   expect(reads).toBe(3);
   await root.close().runPromise();
+});
+
+test("t reexports TypeBox and preserves inference alongside directly imported schemas", async () => {
+  expect(t).toBe(Type);
+  const config = defineAppConfig({
+    properties: {
+      PORT: t.Integer({ default: 3000 }),
+      MODE: t.Union([t.Literal("dev"), t.Literal("prod")]),
+      TOKEN: t.Optional(t.String()),
+      ENABLED: Type.Boolean({ default: false }),
+    },
+    source: { PORT: "9000", MODE: "dev" },
+  });
+  expectTypeOf(config.load()).toEqualTypeOf<
+    ResultTask<
+      { PORT: number; MODE: "dev" | "prod"; TOKEN?: string; ENABLED: boolean },
+      ConfigError
+    >
+  >();
+  expect(await config.load().runPromise()).toEqual({ PORT: 9000, MODE: "dev", ENABLED: false });
 });
