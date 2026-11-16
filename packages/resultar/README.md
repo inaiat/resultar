@@ -939,3 +939,106 @@ Every npm release bundles `dist/llms.txt`, `dist/agent/SKILL.md`, focused API an
 ## License
 
 MIT
+
+### Lazy callback subscriptions
+
+`ResultTask.fromCallback` adapts one completion from a callback/event source. Each run subscribes
+independently; a pre-aborted runner signal skips subscription. Supply already-typed failures to
+`reject`; unexpected throws from subscription or cleanup become defects. Cancellation is an
+interruption, not a member of the typed error channel.
+
+```ts
+const restoredUser = ResultTask.fromCallback<User | null, AuthError>({
+  subscribe: ({ resolve, reject }) =>
+    onAuthStateChanged(auth, resolve, (error) => reject(new AuthError(error))),
+})
+const result = await restoredUser.runResult({ signal })
+```
+
+The subscription may return a synchronous unsubscribe function. It runs exactly once before the
+task completes, on success, typed failure or cancellation, even if the callback fires before
+subscription returns. Repeated/late callbacks are ignored. Cleanup defects preserve an existing
+failure as a sequential cause. A subscription throw after a synchronous callback is also retained
+as a defect. If subscription throws before returning cleanup, the adapter cannot recover that
+cleanup; the subscription must release any partially acquired resources itself. Async cleanup is
+not supported by this constructor; use `acquireRelease` for asynchronous resource release.
+`ResultAsync.fromCallback` retains its legacy eager behavior and cleanup policy.
+
+### Cancellation during acquisition
+
+Register ownership at the operation that produces the resource:
+
+```ts
+const owned = ResultTask.acquireRelease({ acquire: base, release })
+const workflow = ResultTask.scoped(owned.map(transform).andThen(use))
+```
+
+`base`, `release`, `transform`, and `use` are application-supplied. Direct waiting acquisitions
+through `tryPromise` or `fromResultAsync` register late success before reporting interruption,
+then await release exactly once. Downstream transformations/use are skipped on cancellation.
+Cleanup failures retain the interruption followed by the release failure in a sequential cause.
+
+Do not put transformations or further work between creation of an exclusive resource and
+`acquireRelease`. In particular, `acquire: base.map(identity)` or
+`acquire: base.andThen(ResultTask.ok)` can hit a cancellation checkpoint before the outer owner
+receives the resource. These composed acquisition shapes are not cancellation-safe. Move ownership
+inward as above. Partial acquisitions that fail or throw must release their intermediate resources
+or register each one immediately; an outer owner cannot release a value it never receives.
+
+The `fromResultAsync` bridge retains its failure precedence after abort: late `Ok` becomes
+interruption (after cleanup when directly owned), late `Err` becomes interruption, and Promise
+rejection or a synchronous factory throw becomes a defect. A pre-aborted run never invokes a lazy
+factory. An already-started eager operation may continue, but a skipped acquisition cannot claim
+its eventual resource. Reusing an eager success in two owners releases the same resource twice;
+use a fresh factory per run for exclusive resources and an explicit protocol for shared resources.
+Waiting adapters may stay pending forever when the foreign operation never settles. Detached
+operations need their own cleanup protocol; cancellation is not a hard deadline.
+
+### Wait until interrupted
+
+`ResultTask.never(): ResultTask<never, never, never>` creates a lazy wait with no timers or polling.
+Every run waits independently, removes its listener on interruption, and lets its enclosing scope
+finish cleanup. A pre-aborted run interrupts immediately. With no cancellation source it stays pending.
+
+| Expression | Behavior |
+| --- | --- |
+| `ResultTask.race(ResultTask.never(), ResultTask.ok(42))` | Returns 42 after loser cleanup |
+| `ResultTask.race(ResultTask.never(), ResultTask.err('failed'))` | Waits for success until external interruption; preserves combined causes |
+| `ResultTask.raceFirst(ResultTask.never(), ResultTask.err('failed'))` | Returns the failure after loser cleanup |
+
+Use a runner signal or `Fiber.interrupt` to stop a standalone wait. The executable `holdResource`
+recipe demonstrates a resource whose lifetime ends with interruption.
+
+## Promise defect boundaries
+
+`ResultTask.fromPromise(signal => operation(signal))` defers a raw Promise factory
+until each run and returns `ResultTask<A, never, never>`. Throws and rejections
+become runtime defects; `runResult()` rejects for these failures. Use
+`tryPromise({ try, catch })` for expected errors and `fromResultAsync` for existing
+Result-producing operations. Unlike eager `ResultAsync.fromPromise`, this factory
+accepts no error mapper or already-started Promise.
+
+Cancellation waits for settlement. Register resource ownership directly with
+`acquireRelease` before composing transformations so late acquisitions are released.
+The checker recognizes async factories as explicit defect boundaries for
+`no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.
+
+### Typed long-lived scope closure
+
+`ResultTask.makeScope<CloseError>()` declares the allowed cleanup error union before
+resources enter the owner. `addFinalizer` and `use` enforce that bound, including
+nested resource cleanup; opaque `unknown` requirements cannot establish a narrow
+bound. Owners are invariant so another reference cannot widen their mutable contract.
+`use(task)` preserves requirements and includes cleanup errors from a failed attempt.
+`close(exit?)` returns `ResultTask<void, CloseError>` and shares one closure across
+callers. Its argument is finalizer context, not a replayed body failure. Calls without
+a type argument retain `unknown`. Defects and interruptions remain possible even
+with `never`; pending acquisition and all finalizers are still awaited.
+
+`Result.try` / `tryResult` preserve generic indexed synchronous returns such as
+`ModelMap[Key]`, including callback and object forms. Native Promises, async callbacks
+and mixed Promise unions remain rejected. Structural thenable compatibility and
+immediate, single invocation behavior are unchanged.
+
+See the [Node lifecycle recipe](../../examples/cookbook/src/node-lifecycle.ts) for
+signal handling and bounded HTTP draining at an explicit execution boundary.

@@ -25,7 +25,7 @@ Common repairs (apply only when behavior is preserved):
 | `no-unknown-result-error`, `no-unknown-task-requirements`, `unsafe-result-type-assertion` | Preserve inferred concrete unions and requirements; map unknown external causes, never erase obligations with assertions. |
 | `prefer-tagged-error`, `tagged-error-name-match`, `no-tagged-error-constructor-override`, `typed-catch-mapper` | Use stable matching class/tag names and `.withProps`; return a concrete error from boundary mappers. |
 | `no-throw`, `no-try-catch`, `no-try-catch-in-safe-try`, `no-unsafe-await` | Use typed boundaries for expected failures; preserve deliberate native interop under the project's policy. |
-| `no-unscoped-acquire-release`, `prefer-acquire-disposable` | Give resources an explicit Task scope; use native disposal adapters where appropriate. |
+| `no-unscoped-acquire-release`, `prefer-acquire-disposable` | Preserve scope requirements for callers or close an explicit scope; root runners also own scopes. Use native disposal adapters where appropriate. |
 | `no-invalid-lifetime` | A singleton cannot depend on scoped/transient/request locals; a scoped provider cannot depend on transient. |
 | `prefer-map`, `prefer-map-err`, `prefer-and-then`, `prefer-or-else-succeed` | Choose transformation, chaining, error transformation, or infallible recovery according to callback behavior. |
 | `prefer-tap`, `prefer-tap-error`, `prefer-as-void`, `prefer-filter-or-else` | Use the purpose-specific operator while preserving eager/Task callback failure semantics. |
@@ -87,3 +87,17 @@ Resultar diagnostics for that line, not TypeScript diagnostics. Prefer a named r
 Diagnostic fix kinds are `correction` and `intentional-discard`. LSP action kinds
 such as `refactor.rewrite` are a separate protocol field, not additional fix kinds.
 Review changes before applying fixes that alter observation, recovery, or execution.
+
+## Promise defect boundaries
+
+`ResultTask.fromPromise(signal => operation(signal))` defers a raw Promise factory
+until each run and returns `ResultTask<A, never, never>`. Throws and rejections
+become runtime defects; `runResult()` rejects for these failures. Use
+`tryPromise({ try, catch })` for expected errors and `fromResultAsync` for existing
+Result-producing operations. Unlike eager `ResultAsync.fromPromise`, this factory
+accepts no error mapper or already-started Promise.
+
+Cancellation waits for settlement. Register resource ownership directly with
+`acquireRelease` before composing transformations so late acquisitions are released.
+The checker recognizes async factories as explicit defect boundaries for
+`no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.

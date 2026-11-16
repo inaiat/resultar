@@ -164,3 +164,30 @@ typed failure branches and release failures alongside the successful recipes.
 This cookbook covers `Result`/`ResultTask` patterns. DI lifetimes, Hono request scopes,
 and HTTP client validation live in their own packages (`resultar-di`, `resultar-hono`,
 `resultar-request-*`) with their own examples. Stream, STM, cache, cluster and RPC are outside its scope.
+
+## Node process lifecycle
+
+[src/node-lifecycle.ts](src/node-lifecycle.ts) composes the existing connection
+recipe with a real HTTP server. Construction is lazy. The explicit
+`runNodeApplication(options)` boundary installs SIGTERM/SIGINT listeners and returns
+`{ done, shutdown }`; repeated shutdown requests return the same completion Promise.
+`done` carries the structured `runExit` outcome, including interruption and release
+failures, for the executable's logging and exit-code policy.
+
+The server is owned before `listen`. HTTP stops accepting new work, active requests
+and SSE drain for `drainMs`, then `closeAllConnections` cancels remaining HTTP work.
+Upgraded connections are rejected, so this recipe does not support WebSockets.
+The HTTP finalizer finishes before session and database releases. Startup failure
+and cancellation clean up partial and late acquisitions; all remaining finalizers
+run after a failure. Completion removes signal listeners and clears the HTTP timer.
+
+The HTTP deadline does not bound arbitrary SDK finalizers. They remain awaited;
+an uncooperative Promise can prevent completion. Forced process termination belongs
+to an explicit executable/supervisor policy; neither core nor this recipe exits or
+detaches cleanup.
+
+[scripts/node-lifecycle-smoke.ts](scripts/node-lifecycle-smoke.ts) exercises serving,
+SSE forced close, repeated shutdown, late connection cancellation, startup failure,
+cleanup failure, listener removal and real signals in an isolated child. The normal
+serving and deferred-connection compositions share only the small local boundary;
+no separate lifecycle package is justified yet. Run it through the cookbook smoke.

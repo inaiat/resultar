@@ -72,7 +72,7 @@ const expectedCounts = {
   "no-unknown-task-requirements": 2,
   "no-unnecessary-err-wrap-in-gen": 1,
   "no-unsafe-await": 7,
-  "no-unscoped-acquire-release": 2,
+  "no-unscoped-acquire-release": 0,
   "no-useless-recovery": 3,
   "prefer-acquire-disposable": 1,
   "prefer-and-then": 3,

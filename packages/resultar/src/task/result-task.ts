@@ -186,13 +186,22 @@ interface TaskRetryState {
 type TaskRetryStep = Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> | undefined
 
 /** Owns resources across executions. Close it after its consumers have finished. */
-export interface ResultTaskScopeOwner {
-  readonly use: <A, E, R>(task: ResultTask<A, E, R>) => ResultTask<A, E, R>
+export interface ResultTaskScopeOwner<in out CloseError = unknown> {
+  readonly use: <A, E, R>(
+    task: ResultTask<A, E, R> &
+      (unknown extends R
+        ? unknown extends CloseError
+          ? unknown
+          : never
+        : [ScopeError<R>] extends [CloseError]
+          ? unknown
+          : never),
+  ) => ResultTask<A, E | (unknown extends R ? unknown : ScopeError<R>), R>
   /** Registers an already-acquired resource's release synchronously, in registration order. */
   readonly addFinalizer: (
-    release: (exit: Exit<unknown, unknown>) => ResultTask<void, unknown>,
+    release: (exit: Exit<unknown, unknown>) => ResultTask<void, CloseError>,
   ) => void
-  readonly close: (exit?: Exit<unknown, unknown>) => ResultTask<void, unknown>
+  readonly close: (exit?: Exit<unknown, unknown>) => ResultTask<void, CloseError>
 }
 
 /** Options for running a `ResultTask` with an optional signal and its required services. */
@@ -219,6 +228,18 @@ export interface ResultTaskTryPromiseOptions<A, E> {
   readonly catch: (cause: unknown) => E
   /** Wait is the default. Detach interrupts only the wait; foreign work can continue. */
   readonly interruption?: 'wait' | 'detach'
+}
+
+/** One execution's callback subscription. Failures passed to reject are already typed. */
+export interface ResultTaskCallbackContext<A, E> {
+  readonly resolve: (value: A) => void
+  readonly reject: (error: E) => void
+  readonly signal: AbortSignal
+}
+
+/** Subscribes synchronously and optionally returns a synchronous unsubscribe function. */
+export interface ResultTaskFromCallbackOptions<A, E> {
+  readonly subscribe: (context: ResultTaskCallbackContext<A, E>) => (() => void) | void
 }
 
 /** Branches for `ResultTask.if`. */
@@ -1316,6 +1337,71 @@ export class ResultTask<out A, out E = never, out R = never> {
       }
     })
     return acquired
+  }
+
+  /**
+   * Subscribes afresh on every run and unsubscribes before completing, including on interruption.
+   * The first callback wins; subscription throws and cleanup throws are defects. Cleanup defects
+   * are combined with an existing failure. Synchronous completion waits for subscribe to return.
+   */
+  public static fromCallback<A, E = never>(
+    options: ResultTaskFromCallbackOptions<A, E>,
+  ): ResultTask<A, E> {
+    return new ResultTask<A, E>((context) => {
+      const signal = toNativeAbortSignal(context.signal)
+      if (signal.aborted) return interrupted(signal)
+      return new Promise<Exit<A, E>>((resolve) => {
+        let subscribing = true
+        let completed = false
+        let outcome: Exit<A, E> | undefined = undefined
+        let cleanup: (() => void) | void = undefined
+        const finish = (): void => {
+          if (subscribing || completed || outcome === undefined) return
+          completed = true
+          signal.removeEventListener('abort', onAbort)
+          try {
+            cleanup?.()
+          } catch (error) {
+            const cleanupExit = died(error)
+            if (cleanupExit._tag === 'Failure') markCleanupCause(cleanupExit.cause)
+            outcome = combineExits(outcome, cleanupExit, 'Sequential') as Exit<A, E>
+          }
+          resolve(outcome)
+        }
+        const settle = (exit: Exit<A, E>): void => {
+          if (outcome !== undefined) return
+          outcome = exit
+          finish()
+        }
+        const onAbort = (): void => {
+          settle(interrupted(signal))
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+        try {
+          cleanup = options.subscribe({
+            resolve: (value) => {
+              settle(success(value))
+            },
+            reject: (error) => {
+              settle(failed(error))
+            },
+            signal,
+          })
+        } catch (error) {
+          outcome =
+            outcome === undefined
+              ? died(error)
+              : (combineExits(outcome, died(error), 'Sequential') as Exit<A, E>)
+        }
+        subscribing = false
+        finish()
+      })
+    })
+  }
+
+  /** Waits independently on each run until interrupted, without timers or polling. */
+  public static never(): ResultTask<never, never, never> {
+    return ResultTask.fromCallback<never>({ subscribe: () => undefined })
   }
 
   /**
@@ -3515,12 +3601,12 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
 
   /** Creates an explicit resource owner for adapters that manage long-lived scopes. */
-  public static makeScope(): ResultTaskScopeOwner {
+  public static makeScope<CloseError = unknown>(): ResultTaskScopeOwner<CloseError> {
     const scope = new TaskScope()
     const controller = new AbortController()
     const pending = new Set<Promise<Exit<unknown, unknown>>>()
     let closing: Promise<Exit<unknown, unknown>> | undefined = undefined
-    const owner: ResultTaskScopeOwner = {
+    const owner: ResultTaskScopeOwner<CloseError> = {
       addFinalizer: (release) => {
         if (closing !== undefined) throw new Error('Cannot acquire into a closing ResultTask scope')
         scope.add((exit) =>
@@ -5203,6 +5289,23 @@ export class ResultTask<out A, out E = never, out R = never> {
   /* eslint-enable max-params */
 
   /**
+   * Defers a Promise factory until each run. Throws and rejections become defects,
+   * leaving the typed error channel empty. Use tryPromise for expected failures.
+   * Waits for settlement after cancellation so direct acquisitions can register cleanup.
+   */
+  public static fromPromise<A>(
+    factory: (signal: AbortSignal) => PromiseLike<A>,
+  ): ResultTask<A, never, never> {
+    return new ResultTask(async (context) => {
+      try {
+        return success(await factory(toNativeAbortSignal(context.signal)))
+      } catch (error) {
+        return died(error)
+      }
+    })
+  }
+
+  /**
    * Captures an existing Result-producing promise or creates a lazy task from its factory.
    * A factory starts fresh work on every run; an existing promise retains its execution.
    */
@@ -5219,11 +5322,10 @@ export class ResultTask<out A, out E = never, out R = never> {
             : asyncResultOrFactory
         const result = await asyncResult
 
-        if (context.signal.aborted) {
-          return interrupted(context.signal)
-        }
-
-        return result.isOk() ? success(result.value) : failed(result.error)
+        // Let a direct acquireRelease register ownership of late success before the
+        // runner/composition checkpoint interrupts. Preserve interruption over typed Err.
+        if (result.isOk()) return success(result.value)
+        return context.signal.aborted ? interrupted(context.signal) : failed(result.error)
       } catch (error) {
         return died(error)
       }

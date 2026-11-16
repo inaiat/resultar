@@ -91,6 +91,17 @@ export const limited = (values: number[]) => {
   })
 }
 
+// Lazy subscription: each run owns its listeners; cancellation comes from the runner.
+export const waitForReadyTask = (emitter: EventEmitter) =>
+  ResultTask.fromCallback<number, LoadError>({
+    subscribe: ({ resolve, reject }) => {
+      const onError = (cause: unknown) => reject(new LoadError({ operation: 'ready', retryable: false, cause }))
+      emitter.once('ready', resolve)
+      emitter.once('error', onError)
+      return () => { emitter.off('ready', resolve); emitter.off('error', onError) }
+    },
+  })
+
 // Legacy callback bridge: options object, explicit cleanup, AbortError in E.
 export const waitForReady = (emitter: EventEmitter, signal?: AbortSignal) =>
   ResultAsync.fromCallback<number, LoadError>({
@@ -129,4 +140,16 @@ export const runDefectInspection = async (): Promise<boolean> => {
   const exit = await ResultTask.sync(() => { throw new Error('defect') }).runExit()
   return exit._tag === 'Failure' && Cause.hasDies(exit.cause)
 }
+
+// A resource-owning service stays alive until its runner signal or fiber is interrupted.
+export const holdResource = (events: string[]) => ResultTask.scoped(
+  ResultTask.acquireRelease({
+    acquire: ResultTask.sync(() => { events.push('open'); return 'resource' }),
+    release: () => ResultTask.sync(() => { events.push('close') }),
+  }).andThen(() => ResultTask.never()),
+)
+
+// External Promise boundary whose rejection is deliberately a runtime defect.
+export const promiseDefectBoundary = (operation: (signal: AbortSignal) => PromiseLike<number>) =>
+  ResultTask.fromPromise(operation)
 ```

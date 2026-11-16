@@ -331,7 +331,7 @@ The new requirements and suppression rules default to `suggestion`; the default
 | `no-unknown-result-error`              | `noUnknownResultError`             | `suggestion` | Rejects `unknown` or `any` Resultar error channels                                                                                                                         |
 | `no-unknown-task-requirements`         | `noUnknownTaskRequirements`        | `suggestion` | Rejects `unknown` or `any` task requirements, including type aliases                                                                                                       |
 | `unused-suppression`                   | `unusedSuppression`                | `suggestion` | Reports unknown suppression IDs and unused entries for enabled rules                                                                                                       |
-| `no-unscoped-acquire-release`          | `noUnscopedAcquireRelease`         | `warning`    | Requires `acquireRelease` / `acquireDisposable` workflows in `ResultTask.gen` / `ResultTask.fn` to run under `ResultTask.scoped`                                           |
+| `no-unscoped-acquire-release`          | `noUnscopedAcquireRelease`         | `warning`    | Checks ownership of `acquireRelease` / `acquireDisposable`; accepts factories propagating `ResultTaskScope` to callers                                           |
 | `no-useless-recovery`                  | `noUselessRecovery`                | `warning`    | Removes recovery operators from infallible error channels                                                                                                                  |
 | `prefer-acquire-disposable`            | `preferAcquireDisposable`          | `suggestion` | Prefers `ResultTask.acquireDisposable` when `acquireRelease` only calls `[Symbol.dispose]` / `[Symbol.asyncDispose]`                                                       |
 | `prefer-and-then`                      | `preferAndThen`                    | `warning`    | Replaces `map` callbacks that return Resultar values with fallible chaining                                                                                                |
@@ -470,3 +470,44 @@ For backend architecture, local Go commands, and TypeScript-Go revision details,
 ## License
 
 MIT
+
+Resource factories may return a task carrying `ResultTaskScope<E>` and compose across files.
+The caller can use `ResultTask.scoped`, a root `run*` boundary (which creates and closes its own
+scope), or an explicit scope owner. The scope requirement also tracks pending release errors;
+its presence alone does not imply a leak. `no-unscoped-acquire-release` retains its syntactic
+fallback when a generator's type does not expose a scope requirement. Requirement-erasing
+assertions remain covered by `unsafe-result-type-assertion`.
+
+`no-useless-recovery` uses the typed failure channel for typed-only recovery methods.
+It does not flag `catchCause` merely because `E` is `never`: runtime defects can still reach cause
+recovery. This applies to instance, static and curried calls. External interruption keeps its
+runtime semantics and cannot be swallowed by this diagnostic correction.
+
+## Promise defect boundaries
+
+`ResultTask.fromPromise(signal => operation(signal))` defers a raw Promise factory
+until each run and returns `ResultTask<A, never, never>`. Throws and rejections
+become runtime defects; `runResult()` rejects for these failures. Use
+`tryPromise({ try, catch })` for expected errors and `fromResultAsync` for existing
+Result-producing operations. Unlike eager `ResultAsync.fromPromise`, this factory
+accepts no error mapper or already-started Promise.
+
+Cancellation waits for settlement. Register resource ownership directly with
+`acquireRelease` before composing transformations so late acquisitions are released.
+The checker recognizes async factories as explicit defect boundaries for
+`no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.
+
+### Static lifetime graph boundaries
+
+`no-invalid-lifetime` follows immutable `createModule()` chains and const aliases,
+known `merge` inputs and value `override` operations. It reads named dependencies
+and token/class `make` task requirements. Each composition has its own graph;
+identically named services in separate roots are unrelated. Findings include the
+direct consumer → dependency edge, both lifetimes, and both registration locations
+in the existing message field. The JSON/CLI/LSP diagnostic schema is unchanged.
+No fix automatically promotes a dependency to singleton.
+
+Dynamic factories, mutable aliases, computed registration names/dependency arrays,
+and unknown merge inputs are analysis boundaries. The rule does not invent edges
+across them. A direct invalid edge explains a longer invalid path; runtime DI
+validation remains authoritative for graphs the static checker cannot establish.

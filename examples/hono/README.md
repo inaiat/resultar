@@ -2,21 +2,24 @@
 
 An example application combining dependency injection with
 [Resultar DI](../../packages/di/README.md) and typed routes with
-[resultar-hono](../../packages/hono/README.md).
+[resultar-hono](../../packages/hono/README.md), with validated environment configuration
+from [resultar-config](../../packages/config/README.md).
 
 Prefer lazy `ResultTask` workflows and explicit runners for new async code. This runnable fixture
 retains eager `ResultAsync` / `StrictResultAsync` service methods from `resultar`
 for compatibility coverage.
 Both types represent one shared in-flight execution.
 
-The file layout matches the [Fastify example](../fastify/README.md):
+The example keeps the services/routes/application split used by the
+[Fastify example](../fastify/README.md) and adds configuration:
 
+- [Configuration](src/app-config.ts): TypeBox properties and the lazy `appConfig` module.
 - [Services](src/services.ts): `Cache`, `UsersRepository`, `Users`, function-based `Health` and DI registration.
 - [Routes](src/routes.ts): native Hono routes and result-to-response mapping.
 - [Application](src/main.ts): `createApplication()`, optional `bindings`, exported `AppHono`, route registration and Node server startup.
 
 Both examples keep `createServices()` separate from framework integration. The application
-omits `bindings`, exposing cache, repository, users and health in `c.env`. Pass
+omits `bindings`, exposing appConfig, cache, repository, users and health in `c.env`. Pass
 `bindings: ["health", "users"]` to restrict the view, or `bindings: []` to select none.
 All selected services are resolved before the handler, including when a route uses only health.
 
@@ -59,7 +62,42 @@ curl http://127.0.0.1:3000/health
 # {"status":"ok","users":0}
 ```
 
-`PORT` can be configured via an environment variable.
+## Configuration
+
+`src/app-config.ts` declares `PORT` with TypeBox: an integer between 1 and 65535,
+with a default of 3000. `resultar-config` converts environment strings, applies the
+default and rejects malformed, out-of-range or non-finite values before Node opens
+the listener. For example:
+
+```sh
+PORT=9000 pnpm dev
+```
+
+On invalid input, startup prints safe `ConfigError.issues` and exits with code 1.
+The executable injects the validated snapshot with the existing DI `override`, so
+requests use exactly the same configuration without rereading the environment.
+No server starts when `main.ts` is imported.
+
+`createServices(config = appConfig)` also accepts an isolated configuration module:
+
+```ts
+import { defineAppConfig } from "resultar-config";
+import { appConfigProperties } from "./src/app-config.ts";
+import { createApplication } from "./src/main.ts";
+import { createServices } from "./src/services.ts";
+
+const config = defineAppConfig({
+  properties: appConfigProperties,
+  source: { PORT: "9000" },
+});
+const app = createApplication(createServices(config));
+```
+
+An explicit `source`, including `{}`, completely replaces `process.env`. Definition
+and application construction remain lazy. For imported/test applications, the
+singleton is resolved on the first request selecting `appConfig`; `app.ready()`
+alone does not validate it because this example has no startup task. Each root
+caches its own successful value. `c.env.appConfig.PORT` is inferred as `number`.
 
 ---
 
@@ -107,6 +145,7 @@ The application and its router type are defined together in `main.ts`:
 import { serve } from "@hono/node-server";
 import type { Hono } from "hono";
 import { createHonoApp, type InferRequestServices } from "resultar-hono";
+import { appConfig } from "./app-config.ts";
 import { healthRoutes, usersRoutes } from "./routes.ts";
 import { createServices } from "./services.ts";
 
@@ -120,10 +159,16 @@ export const createApplication = (services = createServices()) =>
 export type AppHono = Hono<{ Bindings: InferRequestServices<typeof createApplication> }>;
 
 if (import.meta.main) {
-  const app = createApplication();
-  serve({ fetch: app.fetch, port: Number(process.env.PORT ?? 3000) }, (info) => {
-    console.log(`Listening on http://${info.address}:${info.port}/`);
-  });
+  const config = await appConfig.load().runResult();
+  if (config.isErr()) {
+    console.error("Invalid application configuration", config.error.issues);
+    process.exitCode = 1;
+  } else {
+    const app = createApplication(createServices().override("appConfig", config.value));
+    serve({ fetch: app.fetch, port: config.value.PORT }, (info) => {
+      console.log(`Listening on http://${info.address}:${info.port}/`);
+    });
+  }
 }
 ```
 
@@ -134,6 +179,7 @@ The import is erased at runtime and does not start the server.
 
 ## Composition and lifecycle
 
+- `appConfig` is a **singleton** containing validated configuration.
 - `Cache` is a **singleton** (one shared `Map` instance for the whole application lifetime,
   preloaded with user `1` / `Ada`).
 - `UsersRepository` is a **singleton** backed by that cache.
@@ -142,7 +188,7 @@ The import is erased at runtime and does not start the server.
   current user count. Each application owns its cache, independently of other applications.
 - `createHonoApp` keeps one DI root and opens a child scope per request, holding scoped
   resources until the response body is fully consumed or canceled.
-- `main.ts` passes `app.fetch` directly to `@hono/node-server`; the port comes from `PORT`.
+- `main.ts` passes `app.fetch` directly to `@hono/node-server`; the port comes from validated `appConfig.PORT`.
   The server starts only when the file is executed directly, so tests can import `createApplication()`.
 
 ---
@@ -151,6 +197,7 @@ The import is erased at runtime and does not start the server.
 
 ```sh
 # Type and Resultar Check rules:
+pnpm run check:types
 pnpm run check
 
 # Smoke test (drives the routes via app.request):
@@ -159,7 +206,9 @@ pnpm run smoke
 
 The smoke script (`scripts/smoke.ts`) checks the initial health and user, successful deletion,
 repeated deletion and lookup returning 404, and the updated health, then closes the application.
-It also checks isolation between applications and a failing repository returning 503.
+It also checks isolation between applications, a failing repository returning 503,
+configuration defaults/injection, lazy per-root caching and invalid executable startup
+in isolated child processes (including overflow), without exposing rejected secrets.
 
 ---
 

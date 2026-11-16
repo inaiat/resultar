@@ -234,12 +234,11 @@ describe('ResultAsync racing helpers', () => {
   })
 
   it('raceWith only runs the left handler when left finishes first', async () => {
-    const calls: string[] = []
+    vi.useFakeTimers()
+    try {
+      const calls: string[] = []
 
-    const result = await ResultAsync.raceWith(
-      delayedOk('left-success', 0),
-      delayedOk('right', 10),
-      {
+      const pending = ResultAsync.raceWith(delayedOk('left-success', 0), delayedOk('right', 10), {
         onLeftDone: (left) => {
           calls.push('left')
           return left
@@ -248,25 +247,25 @@ describe('ResultAsync racing helpers', () => {
           calls.push('right')
           return right
         },
-      },
-    )
+      })
 
-    await new Promise((resolve) => {
-      setTimeout(resolve, 20)
-    })
+      await vi.advanceTimersByTimeAsync(20)
+      const result = await pending
 
-    isTrue(result.isOk())
-    equal(result.value, 'left-success')
-    deepEqual(calls, ['left'])
+      isTrue(result.isOk())
+      equal(result.value, 'left-success')
+      deepEqual(calls, ['left'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('raceWith only runs the right handler when right finishes first', async () => {
-    const calls: string[] = []
+    vi.useFakeTimers()
+    try {
+      const calls: string[] = []
 
-    const result = await ResultAsync.raceWith(
-      delayedOk('left', 10),
-      delayedOk('right-success', 0),
-      {
+      const pending = ResultAsync.raceWith(delayedOk('left', 10), delayedOk('right-success', 0), {
         onLeftDone: (left) => {
           calls.push('left')
           return left
@@ -275,16 +274,17 @@ describe('ResultAsync racing helpers', () => {
           calls.push('right')
           return right
         },
-      },
-    )
+      })
 
-    await new Promise((resolve) => {
-      setTimeout(resolve, 20)
-    })
+      await vi.advanceTimersByTimeAsync(20)
+      const result = await pending
 
-    isTrue(result.isOk())
-    equal(result.value, 'right-success')
-    deepEqual(calls, ['right'])
+      isTrue(result.isOk())
+      equal(result.value, 'right-success')
+      deepEqual(calls, ['right'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('timeout returns timeout errors and aborts the task signal', async () => {

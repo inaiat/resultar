@@ -134,13 +134,17 @@ are retained together; an SDK that ignores cancellation can still delay shutdown
 
 The [runnable example](../../examples/hono/README.md) keeps service definitions and
 `createServices` in `services.ts`, native routes in `routes.ts`, and application creation,
-the exported `AppHono` type and Node startup in `main.ts`:
+the exported `AppHono` type and Node startup in `main.ts`. Its
+[`app-config.ts`](../../examples/hono/src/app-config.ts) uses `resultar-config` and
+TypeBox to validate `PORT` before listening. The validated snapshot is then injected
+into the request services:
 
 ```ts
 // main.ts
 import { serve } from "@hono/node-server";
 import type { Hono } from "hono";
 import { createHonoApp, type InferRequestServices } from "resultar-hono";
+import { appConfig } from "./app-config.ts";
 import { healthRoutes, usersRoutes } from "./routes.ts";
 import { createServices } from "./services.ts";
 
@@ -154,10 +158,16 @@ export const createApplication = (services = createServices()) =>
 export type AppHono = Hono<{ Bindings: InferRequestServices<typeof createApplication> }>;
 
 if (import.meta.main) {
-  const app = createApplication();
-  serve({ fetch: app.fetch, port: Number(process.env.PORT ?? 3000) }, (info) => {
-    console.log(`Listening on http://${info.address}:${info.port}/`);
-  });
+  const config = await appConfig.load().runResult();
+  if (config.isErr()) {
+    console.error("Invalid application configuration", config.error.issues);
+    process.exitCode = 1;
+  } else {
+    const app = createApplication(createServices().override("appConfig", config.value));
+    serve({ fetch: app.fetch, port: config.value.PORT }, (info) => {
+      console.log(`Listening on http://${info.address}:${info.port}/`);
+    });
+  }
 }
 ```
 
@@ -250,3 +260,37 @@ Class services reexported by this adapter accept synchronous factories:
 `Service("users", { requires: { repository: Repository }, make: ({ repository }) => ({ find: (id: string) => repository.find(id) }) })`.
 Construction remains lazy and follows the registered lifetime. Factories can also return a
 `ResultTask` for initialization with failures or resources; raw Promises are not accepted.
+
+## Run a task as a JSON route
+
+`runTaskJson(context, task, { ok, error })` is an optional helper for materialized JSON responses.
+It executes the task with `context.req.raw.signal` and leaves status codes and payloads to the
+application. Both mappers may be async and retain their exact typed JSON responses for Hono RPC
+and OpenAPI route contracts. An exhaustive `Match.context(...).tagsExhaustive(...)` handler can
+be used for `error` without introducing another error-dispatch abstraction.
+
+```ts
+import { Hono } from 'hono'
+import { ResultTask } from 'resultar'
+import { runTaskJson } from 'resultar-hono'
+
+const app = new Hono().get('/answer', c =>
+  runTaskJson(c, ResultTask.ok({ answer: 42 }), {
+    ok: value => c.json(value, 200),
+    error: () => c.json({ error: 'unavailable' }, 503),
+  }),
+)
+```
+
+Provide required Task services before calling the helper. Simple typed failures, including typed
+release failures, reach `error`; defects, interruptions and composite causes reject into Hono's
+`onError`. The helper does not choose a cancellation status code. Request cancellation is only as
+prompt as the task's cooperative work and cleanup allow.
+
+Task-owned resources close **before** either response mapper runs. Return detached data from the
+task; do not return a live resource that the mapper still needs. This helper accepts typed JSON
+responses only. Streams require an explicit owner that outlives body consumption; the existing
+services middleware continues to own its DI resources through the response lifecycle.
+
+The [OpenAPI fixture](tests/task-json.test.ts) validates response schemas and RPC inference for
+200/404 responses. `@hono/zod-openapi` is a test dependency, not a runtime requirement of the helper.

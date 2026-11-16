@@ -1,6 +1,6 @@
 {
   "name": "resultar-hono",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Typed Hono bindings and request resource scopes for Resultar DI.",
   "keywords": [
     "dependency-injection",
@@ -51,14 +51,17 @@
     "resultar-di": "workspace:^"
   },
   "devDependencies": {
+    "@hono/zod-openapi": "^1.6.3",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "@vitest/ui": "catalog:",
     "fallow": "catalog:",
     "hono": "catalog:",
+    "resultar-config": "workspace:*",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "zod": "catalog:"
   },
   "peerDependencies": {
     "hono": "^4.12.30"

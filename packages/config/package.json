@@ -1,0 +1,72 @@
+{
+  "name": "resultar-config",
+  "version": "0.2.0",
+  "description": "Lazy typed environment configuration for Resultar DI.",
+  "keywords": [
+    "configuration",
+    "environment",
+    "resultar",
+    "typebox"
+  ],
+  "homepage": "https://github.com/inaiat/resultar",
+  "bugs": {
+    "url": "https://github.com/inaiat/resultar/issues"
+  },
+  "license": "MIT",
+  "author": "inaiat@gmail.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inaiat/resultar.git",
+    "directory": "packages/config"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "type": "module",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "analyze": "fallow",
+    "build": "vp pack",
+    "check": "vp check",
+    "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "prepare": "vp config || true",
+    "prepublishOnly": "vp pack",
+    "smoke:package": "pnpm run build && vpx scripts/smoke-package.ts && vpx scripts/config-example.ts",
+    "test": "vp test",
+    "test:watch": "vp test watch",
+    "test:ui": "vp test --ui --watch",
+    "test:cov": "vp test run --coverage"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "env-schema": "^8.0.1",
+    "resultar": "workspace:^",
+    "resultar-di": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "@vitest/ui": "catalog:",
+    "fallow": "catalog:",
+    "typebox": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "typebox": "^1.3.4"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

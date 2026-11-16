@@ -424,3 +424,5 @@ Reproducible benchmarks live in [`benchmarks/`](benchmarks/README.md) (`pnpm --f
 ## License
 
 [MIT](LICENSE)
+
+Node environment configuration is available through [resultar-config](packages/config/README.md), with typed, sanitized errors and lazy DI startup ordering. The [Node lifecycle recipe](examples/cookbook/src/node-lifecycle.ts) covers signals and HTTP draining.

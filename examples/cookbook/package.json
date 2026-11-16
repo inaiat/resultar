@@ -9,7 +9,7 @@
     "check:json": "node ../../packages/check/dist/cli.js --project tsconfig.json --json",
     "check:types": "tsc --project tsconfig.json",
     "build:deps": "pnpm --filter resultar build && pnpm --filter resultar-check build && pnpm --filter resultar-check native:build:current",
-    "smoke": "pnpm run build:deps && pnpm run check:types && pnpm run check && vpx scripts/smoke.ts && vpx scripts/lifecycle-smoke.ts",
+    "smoke": "pnpm run build:deps && pnpm run check:types && pnpm run check && vpx scripts/smoke.ts && vpx scripts/lifecycle-smoke.ts && vpx scripts/node-lifecycle-smoke.ts",
     "start": "pnpm run build:deps && vpx src/index.ts"
   },
   "dependencies": {

@@ -1,12 +1,14 @@
 # RFC 0005: Contract safety, HTTP cancellation, and AI validation
 
-> Proposal, not current usage guidance. The APIs and checker rule proposed here are
-> not implemented by this document. For supported contracts, see the
+> Closed design record. C1, H1–H3 and A1 are implemented; V1 is deferred and
+> V2 remains tracked by RFC 0003. Findings and proposals below describe the original
+> review baseline. For supported contracts, see the
 > [core guide](../../packages/resultar/README.md),
 > [request guide](../../packages/request/README.md), and
 > [checker guide](../../packages/check/README.md).
 
-- Status: Draft
+- Status: Closed (C1, H1–H3 and A1 implemented; V1 deferred; V2 tracked in RFC 0003)
+- Closed: 2026-11-14
 - Date: 2026-11-11
 - Target packages: `resultar-check`, `resultar-request`, `resultar-request-zod`, and `resultar-request-typebox`
 - Related work: agent evaluations, documentation, and the live lifecycle pilot
@@ -32,17 +34,38 @@ The review inspected the core, DI, HTTP integrations, checker, and tests. Its lo
 reproductions establish the specific findings below; they are not a claim that all
 other behaviors are defect-free. No runtime implementation changed during the review.
 
+## Closure decision (2026-11-14)
+
+Closed at the maintainer's request after reviewing the implementation and passing workspace
+validation. Closure accepts the delivered software scope and explicitly defers the external
+validation work; it does not assert measured model performance or a successful live pilot.
+Publication remains a separate release step.
+
+| Item | Disposition | Evidence / follow-up |
+| --- | --- | --- |
+| C1 | Implemented | [Contract regressions](../../packages/check/native/internal/analyzer/result_async_test.go) and [CLI/editor integration](../../packages/check/native/cmd/resultar-check/rfc0005_test.go) cover `no-promise-resultar`, replacement guidance and suppression. |
+| H1–H3 | Implemented | [HTTP regressions](../../packages/request/tests/request-json.test.ts) cover cancellation, retry scheduling, stage classification and safe error serialization. Eager cancellation stays in `RequestError`, retaining the original cause. |
+| A1 | Implemented | `requestJsonTask`, `requestJsonZodTask` and `requestJsonTypeBoxTask` are public lazy APIs. [Zod tests](../../packages/request-zod/tests/request-json-zod.test.ts), [TypeBox tests](../../packages/request-typebox/tests/request-json-typebox.test.ts) and the [Task example](../../examples/request/src/task.ts) cover their contracts. Existing eager APIs remain available. |
+| V1 | Deferred | Paired real-model runs, model/settings/budget selection and performance reporting remain future work under §7. The [evaluation harness](../../skills/resultar/evals/README.md) is available; deterministic grader tests are not model measurements. |
+| V2 | Tracked separately | The [RFC 0003 §1 live pilot](./rfc-0003-phase-3-remainder-and-validation.md#1-live-lifecycle-validation-p0) remains open, including its production adoption decision. Closure does not waive that gate. |
+
+Validation passed on the current workspace: `pnpm run check:full`, `pnpm run build`,
+`pnpm run smoke:package`, `pnpm run test:examples`, `pnpm run test:docs`, and
+`pnpm run test:agents`. No model-provider run or live database/session pilot was performed.
+The original proposal and acceptance targets below remain as design history; this disposition
+table records what closure includes and what it leaves pending.
+
 ## 1. Priorities and boundaries
 
 | ID | Work | Priority | Evidence/status |
 | --- | --- | --- | --- |
-| C1 | Reject `Promise<Result>` and `Promise<ResultTask>` contracts | High | Task gap reproduced; Result policy explicitly required |
-| H1 | Stop HTTP retries when the operation is cancelled | High | Cancellation gap reproduced |
-| H2 | Preserve the stage of an HTTP failure | Medium | Incorrect mapping reproduced |
-| H3 | Make HTTP error construction safe | Medium | Unexpected rejection reproduced |
-| A1 | Add a Task-native HTTP entrypoint | After H1–H3 | API proposal |
-| V1 | Measure coding-agent performance with real model outputs | After regression coverage | Evaluation proposal |
-| V2 | Complete live database/session validation | Before production adoption covered by RFC 0003 | Existing acceptance gate |
+| C1 | Reject `Promise<Result>` and `Promise<ResultTask>` contracts | High | Implemented; see closure evidence |
+| H1 | Stop HTTP retries when the operation is cancelled | High | Implemented |
+| H2 | Preserve the stage of an HTTP failure | Medium | Implemented |
+| H3 | Make HTTP error construction safe | Medium | Implemented |
+| A1 | Add a Task-native HTTP entrypoint | After H1–H3 | Implemented |
+| V1 | Measure coding-agent performance with real model outputs | After regression coverage | Deferred; see §7 |
+| V2 | Complete live database/session validation | Before production adoption covered by RFC 0003 | Pending in RFC 0003 §1 |
 
 Compatibility requirements:
 
@@ -301,8 +324,10 @@ without blocking C1 or H1–H3.
 
 ## 7. V1 — Evaluate actual AI-generated code
 
+Closure disposition: deferred. The unchecked items below remain future work, not completed validation.
+
 The [agent evaluation suite](../../skills/resultar/evals/README.md) currently checks
-thirteen reference solutions and thirteen broken variants. Its CI self-test validates
+fifteen reference solutions and fifteen broken variants. Its CI self-test validates
 graders and makes no model calls. Passing it is not a measurement of AI usability.
 
 Use the existing generation-adapter interface rather than building another harness.
@@ -328,6 +353,8 @@ semantics and documented API use.
 This RFC authorizes no provider call or spending by itself.
 
 ## 8. V2 — Complete the existing live lifecycle pilot
+
+Closure disposition: tracked separately in RFC 0003 §1; the live acceptance gate remains open.
 
 [RFC 0003 §1](./rfc-0003-phase-3-remainder-and-validation.md#1-live-lifecycle-validation-p0)
 remains the source of truth for this acceptance gate. This RFC does not duplicate or
@@ -363,8 +390,8 @@ After public API or recipe changes, build and run `pnpm run docs:generate`, then
 verify and commit the generated inventory and recipes.
 
 A documentation-only RFC update needs link and diff checks rather than a full
-runtime rebuild. Keep this RFC in Draft until its design is accepted, and track
-implementation and validation completion separately from publication.
+runtime rebuild. The closure decision above supersedes the original Draft status;
+implementation, external validation and publication remain separate.
 
 ## 10. Alternatives and open decisions
 

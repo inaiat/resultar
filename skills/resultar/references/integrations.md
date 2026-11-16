@@ -38,6 +38,14 @@ the driver's retry and commit-uncertainty semantics. Model those separately.
 Do not swallow release errors or use detachment as a guarantee against leaked
 sessions. Foreign work can continue after detachment and race with session release.
 
+Register ownership before composing transformations: use
+`ResultTask.acquireRelease({ acquire: base, release }).map(transform)`, not
+`ResultTask.acquireRelease({ acquire: base.map(transform), release })`. The latter can lose a late
+resource at a cancellation checkpoint. Direct waiting acquisitions register late success before
+interruption and await release. Use fresh factories for exclusive resources; replaying an eager
+success in two owners releases the same resource twice. Pending foreign work may delay cancellation
+forever; detached work needs its own cleanup protocol.
+
 ## Events and worker callbacks
 
 For an SDK callback requiring `Promise<void>`, call `.runPromise()` at that callback's
@@ -47,6 +55,15 @@ the application's acknowledgement policy requires it. Use a closure or
 `ResultTask.gen(this, generator)` and `Result.gen(this, generator)` are not overloads.
 Stop workers and await their finalizers before releasing shared services.
 
+## Lazy callback APIs
+
+Use `ResultTask.fromCallback<T, E>({ subscribe })` for new one-shot callback subscriptions.
+`subscribe({ resolve, reject, signal })` runs afresh on each execution and may return a synchronous
+unsubscribe function. Pass already-typed errors to `reject`. Cleanup finishes before task completion,
+including synchronous callbacks and cancellation. Subscription/cleanup throws are defects; cleanup
+failures preserve prior causes. Pass cancellation through runner options, not constructor options.
+Use `acquireRelease` when release itself needs asynchronous work.
+
 ## Existing callback APIs
 
 `ResultAsync.fromCallback` is a supported deprecated eager adapter. It takes an
@@ -55,5 +72,22 @@ external `signal`, and returns `ResultAsync<T, E | AbortError>`.
 Return a synchronous unsubscribe function from `subscribe`; it runs once on
 completion, failure, cancellation, or synchronous subscription failure. Cleanup
 throws are ignored by this compatibility API. Use a Task resource scope when cleanup
-failure must remain observable. New Task workflows can bridge this adapter with a
-factory instead of changing existing callback behavior.
+failure must remain observable. Prefer `ResultTask.fromCallback` for new subscriptions; retain this adapter for eager contracts.
+
+Use `ResultTask.never()` after initialization to keep a scope alive until interruption. It allocates
+no timer and adds no success/error/requirement types. Always arrange a signal or fiber interruption
+for standalone waits. `race(never(), err(...))` waits for success; `raceFirst` returns the failure.
+
+## Promise defect boundaries
+
+`ResultTask.fromPromise(signal => operation(signal))` defers a raw Promise factory
+until each run and returns `ResultTask<A, never, never>`. Throws and rejections
+become runtime defects; `runResult()` rejects for these failures. Use
+`tryPromise({ try, catch })` for expected errors and `fromResultAsync` for existing
+Result-producing operations. Unlike eager `ResultAsync.fromPromise`, this factory
+accepts no error mapper or already-started Promise.
+
+Cancellation waits for settlement. Register resource ownership directly with
+`acquireRelease` before composing transformations so late acquisitions are released.
+The checker recognizes async factories as explicit defect boundaries for
+`no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.

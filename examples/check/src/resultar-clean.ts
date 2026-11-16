@@ -269,7 +269,7 @@ export const closePendingTaskScope = (
   task: ResultTask<User, never, ResultTaskScope<FetchUserError>>,
 ): ResultTask<User, FetchUserError> => ResultTask.scoped(task);
 
-// no-unscoped-acquire-release: fn acquisition also needs an explicit owning scope.
+// An explicit child scope closes fn resources before the outer workflow continues.
 export const scopedDisposableFn = ResultTask.fn(function* (userId: string) {
   const session = yield* ResultTask.acquireDisposable(
     ResultTask.sync(() => ({ id: userId, [Symbol.dispose]: (): void => {} })),

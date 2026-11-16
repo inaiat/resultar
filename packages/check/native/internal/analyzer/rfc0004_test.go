@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -257,5 +258,94 @@ export const recovered = task.` + method + `((error:Missing|Denied)=>error._tag=
 				}
 			})
 		}
+	}
+}
+
+func TestScopeRequirementsComposeAcrossFiles(t *testing.T) {
+	library, err := filepath.Abs("../../../../resultar/dist/index.d.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := writeFixture(t, `
+import { ResultTask } from "`+filepath.ToSlash(library)+`"
+import { connection, factory } from './connection.js'
+export const scoped = ResultTask.scoped(connection())
+export const composed = ResultTask.gen(function* () { return yield* factory() })
+void scoped.runExit()
+void connection().runExit()
+void ResultTask.runResult(composed)
+const owner = ResultTask.makeScope()
+void owner.use(connection()).runExit()
+void owner.close().runExit()
+`)
+	source := `
+import { ResultTask, type ResultTaskScope } from "` + filepath.ToSlash(library) + `"
+type Scope = ResultTaskScope<'release'>
+export const connection = (): ResultTask<number, never, Scope> => ResultTask.gen(function* () {
+ return yield* ResultTask.acquireRelease({ acquire: ResultTask.ok(42), release: () => ResultTask.fail('release' as const) })
+})
+export const factory = ResultTask.fn(function* () {
+ return yield* ResultTask.acquireDisposable(ResultTask.ok({ [Symbol.dispose]() {} }))
+})
+`
+	if err := os.WriteFile(filepath.Join(directory, "connection.ts"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil || len(diagnostics) > 0 {
+		t.Fatalf("open: %v %v", err, diagnostics)
+	}
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, config.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, finding := range findings {
+		if finding.Rule == "no-unscoped-acquire-release" {
+			t.Fatalf("scope requirement was lost across composition: %#v", finding)
+		}
+	}
+}
+
+func TestCauseRecoveryDoesNotRequireTypedFailures(t *testing.T) {
+	library, err := filepath.Abs("../../../../resultar/dist/index.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := `
+import { ResultTask, pipe } from "` + filepath.ToSlash(library) + `"
+const defect = ResultTask.sync(() => { throw new Error('SDK') })
+export const instance = defect.catchCause(() => ResultTask.ok('recovered'))
+export const staticCall = ResultTask.catchCause(defect, () => ResultTask.ok('recovered'))
+export const curried = pipe(defect, ResultTask.catchCause(() => ResultTask.ok('recovered')))
+export const instancePipe = defect.pipe(ResultTask.catchCause(() => ResultTask.ok('recovered')))
+export const control1 = defect.orElse(() => ResultTask.ok('recovered'))
+export const control2 = ResultTask.orElse(defect, () => ResultTask.ok('recovered'))
+export const control3 = pipe(defect, ResultTask.orElse(() => ResultTask.ok('recovered')))
+export const control4 = defect.catchAll(() => ResultTask.ok('recovered'))
+export const control5 = defect.orElseSucceed(() => 'recovered')
+export const control6 = defect.mapErr(() => 'error')
+export const control7 = defect.mapError(() => 'error')
+export const control8 = defect.unwrapOr('fallback')
+`
+	directory := writeFixture(t, source)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil || len(diagnostics) > 0 {
+		t.Fatalf("open: %v %v", err, diagnostics)
+	}
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, config.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, finding := range findings {
+		if finding.Rule == "no-useless-recovery" {
+			count++
+			if strings.Contains(finding.Message, "catchCause") {
+				t.Fatalf("defect recovery is reachable: %#v", finding)
+			}
+		}
+	}
+	if count != 8 {
+		t.Fatalf("expected eight typed-only diagnostics, got %d: %#v", count, findings)
 	}
 }

@@ -1,16 +1,23 @@
 /* eslint-disable unicorn/no-await-expression-member */
+import { defineAppConfig } from "resultar-config";
+import { appConfigProperties } from "../../../examples/hono/src/app-config.js";
 import { errAsync, okAsync } from "resultar";
 import { expect, expectTypeOf, test } from "vite-plus/test";
 import { createApplication, type AppHono } from "../../../examples/hono/src/main.js";
 import { createServices, UserReadError } from "../../../examples/hono/src/services.js";
 import type { InferRequestServices } from "../src/index.js";
 
+const testConfig = defineAppConfig({ properties: appConfigProperties, source: {} });
+
 test("the actual Hono example infers AppHono and serves lookup, deletion and health", async () => {
   type Services = InferRequestServices<typeof createApplication>;
-  expectTypeOf<keyof Services>().toEqualTypeOf<"cache" | "repository" | "users" | "health">();
+  expectTypeOf<keyof Services>().toEqualTypeOf<
+    "appConfig" | "cache" | "repository" | "users" | "health"
+  >();
+  expectTypeOf<Services["appConfig"]["PORT"]>().toEqualTypeOf<number>();
   expectTypeOf<AppHono>().toHaveProperty("get");
-  const app = createApplication();
-  const independent = createApplication();
+  const app = createApplication(createServices(testConfig));
+  const independent = createApplication(createServices(testConfig));
   expect(await (await app.request("/health")).json()).toEqual({ status: "ok", users: 1 });
   expect(await (await app.request("/users/1")).json()).toEqual({ id: "1", name: "Ada" });
   expect((await app.request("/users/1", { method: "DELETE" })).status).toBe(204);
@@ -31,7 +38,7 @@ test("the Hono example maps an overridden repository failure to 503", async () =
     findById: () => errAsync(new UserReadError({ id: "1" })),
     remove: () => okAsync(false),
   };
-  const app = createApplication(createServices().override("repository", repository));
+  const app = createApplication(createServices(testConfig).override("repository", repository));
   const response = await app.request("/users/1");
   expect(response.status).toBe(503);
   expect(await response.json()).toEqual({ error: "Temporarily unavailable" });

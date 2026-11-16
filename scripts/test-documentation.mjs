@@ -211,3 +211,44 @@ test("bundled guide links resolve locally, including companion manuals", () => {
   }
   assert.ok(localLinks > 100);
 });
+
+test("published lazy callback recipe repeats subscriptions and releases on interruption", async () => {
+  const emitter = new EventEmitter();
+  const task = recipes.waitForReadyTask(emitter);
+  assert.equal(emitter.listenerCount("ready"), 0);
+  for (const value of [1, 2]) {
+    const pending = task.runPromise();
+    emitter.emit("ready", value);
+    assert.equal(await pending, value);
+    assert.equal(emitter.listenerCount("ready"), 0);
+    assert.equal(emitter.listenerCount("error"), 0);
+  }
+  const controller = new AbortController();
+  const pending = task.runExit({ signal: controller.signal });
+  controller.abort("stop");
+  assert.deepEqual(await pending, { _tag: "Failure", cause: { _tag: "Interrupt", reason: "stop" } });
+  assert.equal(emitter.listenerCount("ready"), 0);
+  assert.equal(emitter.listenerCount("error"), 0);
+});
+
+test("published never recipe keeps resources alive until interruption", async () => {
+  const events = [];
+  const task = recipes.holdResource(events);
+  assert.deepEqual(events, []);
+  const controller = new AbortController();
+  const running = task.runExit({ signal: controller.signal });
+  assert.deepEqual(events, ["open"]);
+  controller.abort("shutdown");
+  assert.deepEqual(await running, { _tag: "Failure", cause: { _tag: "Interrupt", reason: "shutdown" } });
+  assert.deepEqual(events, ["open", "close"]);
+});
+
+test("published Promise defect factory preserves rejection and lazy execution", async () => {
+  let calls = 0;
+  const task = recipes.promiseDefectBoundary(async () => ++calls);
+  assert.equal(calls, 0);
+  assert.equal(await task.runPromise(), 1);
+  assert.equal(await task.runPromise(), 2);
+  const defect = new Error("SDK defect");
+  await assert.rejects(Promise.resolve(recipes.promiseDefectBoundary(() => Promise.reject(defect)).runResult()), error => error === defect);
+});
