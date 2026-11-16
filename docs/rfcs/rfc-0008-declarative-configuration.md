@@ -48,7 +48,7 @@ Node signal/shutdown integration are outside this RFC and tracked in
 
 ### Responsibilities
 
-- `env.ts` owns the application properties and exports the module produced by
+- `app-config.ts` owns the application properties and exports the module produced by
   `defineAppConfig`. Its configuration type is inferred from those properties.
 - The composition module merges that configuration module. Validation and singleton
   registration are part of the adapter; consumers do not register schema/source
@@ -67,11 +67,16 @@ existing projection facilities. It need not require unrelated API credentials.
 
 ### Proposed definition and composition API
 
-Evaluate `resultar-config` with an initial TypeBox + `env-schema` integration.
-The tentative public entry point is `resultar-config/typebox`; packaging remains
-subject to the pilot. This adapter depends on `resultar-di` and returns an ordinary
-typed module compatible with its existing `merge`. Keep validator dependencies out
-of the core and DI packages.
+The default public entry point is `resultar-config`, using TypeBox + `env-schema`.
+This adapter depends on `resultar-di` and returns an ordinary typed module compatible
+with its existing `merge`. Keep validator dependencies out of the core and DI packages.
+
+Future validators can use explicit subpaths, such as `resultar-config/zod`, exporting
+their own `defineAppConfig` with schema types appropriate to that validator. TypeBox
+remains the default at the root entry point. Zod support is a future extension, not
+part of this RFC's implementation scope; do not add its dependency or export yet.
+If introduced later, the Zod subpath must not be imported or re-exported by the root
+entry point, so default consumers do not need to install or load Zod.
 
 Use `defineAppConfig` as the public name.
 `defineAppProperties` would describe only the input; the returned value also defines
@@ -79,8 +84,8 @@ validation and registration. `properties` names the TypeBox property map, while
 `appConfig` names both the exported module and its single registered service.
 
 ```ts
-// env.ts — proposed API, not an installed export.
-import { defineAppConfig } from "resultar-config/typebox"
+// app-config.ts — proposed API, not an installed export.
+import { defineAppConfig } from "resultar-config"
 import { Type } from "typebox"
 
 export const appConfigProperties = {
@@ -153,7 +158,7 @@ Application services compose it directly:
 ```ts
 // app-services.ts — merge is an existing resultar-di operation.
 import { createModule } from "resultar-di"
-import { appConfig } from "./env.ts"
+import { appConfig } from "./app-config.ts"
 
 export const appServices = createModule()
   .merge(appConfig)
@@ -236,7 +241,7 @@ Before shipping, specify the adapter's coercion behavior through executable test
 - Unrelated environment keys are excluded from the validated result. The first
   recipe uses a closed object schema and documents the chosen validator options.
 - Case normalization such as trimming/lowercasing `LOG_LEVEL` stays explicit in
-  `env.ts`; passwords and tokens must never be silently trimmed or lowercased.
+  `app-config.ts`; passwords and tokens must never be silently trimmed or lowercased.
 
 First investigate validator configuration for finite-number correctness. A
 schema-aware workaround requires its own tests; do not hard-code `PORT` or
@@ -327,7 +332,7 @@ before resource acquisition. Keep each example small and
 compile it against actual declarations. Examples for proposed APIs remain inside
 this RFC until those APIs exist.
 
-Keeping `env-schema` directly in `env.ts` is a valid outcome. A package is justified
+Keeping `env-schema` directly in `app-config.ts` is a valid outcome. A package is justified
 only if typed, aggregated, sanitized errors and validated integration remove
 repeated consumer code without adding more configuration machinery. A generic
 Standard Schema adapter can be evaluated later; it would still need an explicit
@@ -347,7 +352,8 @@ build and regenerate documentation/inventory and run documentation and agent che
 Existing APIs retain their semantics. Record implementation and publication
 separately in this RFC.
 
-Open review decisions are the configuration package boundary, the exact structured
-error shape, and validator options needed to satisfy the coercion contract. Changes
+Open review decisions are the exact structured error shape and validator options
+needed to satisfy the coercion contract. The root TypeBox entry point and future
+validator-specific subpath convention are settled by this proposal. Changes
 to core inference, scope ownership, DI diagnostics, and process lifecycle remain
 outside this delivery plan and are reviewed independently in RFC 0009.
