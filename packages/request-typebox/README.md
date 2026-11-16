@@ -18,17 +18,19 @@ same request flow with Zod schemas instead of TypeBox.
 ## Install
 
 ```sh
-pnpm add resultar-request-typebox resultar typebox
+pnpm add resultar-request-typebox resultar
 ```
 
 ```sh
-npm install resultar-request-typebox resultar typebox
+npm install resultar-request-typebox resultar
 ```
 
 Import `t` from `resultar-request-typebox` to build schemas alongside the request
 helpers. It is a direct reexport of TypeBox's `Type`, including type utilities such
-as `t.Static`. Direct TypeBox imports remain compatible, and TypeBox remains a peer
-dependency. The alias does not change validation or eager/lazy execution behavior.
+as `t.Static`. TypeBox is installed automatically as a dependency (`>=1.3.4 <2.0.0`);
+no separate installation is needed when using `t`. Direct TypeBox imports remain
+compatible; declare TypeBox in your application dependencies if you import it by name.
+The alias does not change validation or eager/lazy execution behavior.
 
 ## `requestJsonTypeBoxTask` and `requestJson`
 
@@ -145,7 +147,7 @@ Use a request factory whenever `retry` is enabled. A previously created promise 
 
 - Node.js 24+
 - ESM only
-- `typebox` installed as a peer dependency
+- `typebox` installed automatically as a runtime dependency (`>=1.3.4 <2.0.0`)
 
 For a runnable server-backed version of this flow, see the
 [request example](https://github.com/inaiat/resultar/tree/main/examples/request).

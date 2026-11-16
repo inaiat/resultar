@@ -50,20 +50,17 @@
   },
   "dependencies": {
     "resultar": "workspace:^",
-    "resultar-request": "workspace:^"
+    "resultar-request": "workspace:^",
+    "typebox": ">=1.3.4 <2.0.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "@vitest/ui": "catalog:",
     "fallow": "catalog:",
-    "typebox": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
     "vitest": "catalog:"
-  },
-  "peerDependencies": {
-    "typebox": "^1.3.4"
   },
   "engines": {
     "node": ">=24"

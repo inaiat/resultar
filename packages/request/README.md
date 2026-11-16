@@ -127,10 +127,11 @@ Both adapters use this package for transport, JSON parsing, retries, and error m
 re-export the public request API, so you can keep using `RequestError`, retry types, and map-error
 types from the adapter package.
 
-Install the adapter and its peer schema library together:
+The TypeBox adapter installs TypeBox automatically and exports its builders as `t`.
+The Zod adapter requires Zod as a peer dependency:
 
 ```sh
-pnpm add resultar-request-typebox typebox
+pnpm add resultar-request-typebox
 pnpm add resultar-request-zod zod
 ```
 

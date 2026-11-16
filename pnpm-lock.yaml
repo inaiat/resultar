@@ -400,9 +400,6 @@ importers:
       resultar-request-zod:
         specifier: workspace:*
         version: link:../../packages/request-zod
-      typebox:
-        specifier: 'catalog:'
-        version: 1.4.7
       zod:
         specifier: 'catalog:'
         version: 4.6.7
@@ -724,6 +721,9 @@ importers:
       resultar-request:
         specifier: workspace:^
         version: link:../request
+      typebox:
+        specifier: '>=1.3.4 <2.0.0'
+        version: 1.4.7
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -737,9 +737,6 @@ importers:
       fallow:
         specifier: 'catalog:'
         version: 3.43.1
-      typebox:
-        specifier: 'catalog:'
-        version: 1.4.7
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

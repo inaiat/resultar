@@ -17,7 +17,6 @@
     "resultar-request": "workspace:*",
     "resultar-request-typebox": "workspace:*",
     "resultar-request-zod": "workspace:*",
-    "typebox": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

@@ -36,7 +36,8 @@ Keep component versions aligned when mixing unified and direct imports.
 - For outbound HTTP JSON in lazy workflows, prefer `requestJsonTask` / `requestJsonZodTask` /
   `requestJsonTypeBoxTask` directly; preserve `requestJson` for eager `ResultAsync` boundaries.
   `resultar-request-typebox` also reexports TypeBox's `Type` as `t` for schema builders
-  and `t.Static` inference; TypeBox remains a peer dependency.
+  and `t.Static` inference; TypeBox is installed automatically as a runtime dependency
+  (`>=1.3.4 <2.0.0`).
 - Adapt an external driver's `Promise<T>` directly with `ResultTask.tryPromise({ try, catch })`.
   New repository and use-case methods return `ResultTask<T, E, R>`; do not mark
   those factories `async` or return `Promise<ResultTask<...>>` / `Promise<Result<...>>`.
