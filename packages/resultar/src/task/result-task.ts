@@ -5280,6 +5280,23 @@ export class ResultTask<out A, out E = never, out R = never> {
   /* eslint-enable max-params */
 
   /**
+   * Defers a Promise factory until each run. Throws and rejections become defects,
+   * leaving the typed error channel empty. Use tryPromise for expected failures.
+   * Waits for settlement after cancellation so direct acquisitions can register cleanup.
+   */
+  public static fromPromise<A>(
+    factory: (signal: AbortSignal) => PromiseLike<A>,
+  ): ResultTask<A, never, never> {
+    return new ResultTask(async (context) => {
+      try {
+        return success(await factory(toNativeAbortSignal(context.signal)))
+      } catch (error) {
+        return died(error)
+      }
+    })
+  }
+
+  /**
    * Captures an existing Result-producing promise or creates a lazy task from its factory.
    * A factory starts fresh work on every run; an existing promise retains its execution.
    */

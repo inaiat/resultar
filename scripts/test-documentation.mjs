@@ -242,3 +242,13 @@ test("published never recipe keeps resources alive until interruption", async ()
   assert.deepEqual(await running, { _tag: "Failure", cause: { _tag: "Interrupt", reason: "shutdown" } });
   assert.deepEqual(events, ["open", "close"]);
 });
+
+test("published Promise defect factory preserves rejection and lazy execution", async () => {
+  let calls = 0;
+  const task = recipes.promiseDefectBoundary(async () => ++calls);
+  assert.equal(calls, 0);
+  assert.equal(await task.runPromise(), 1);
+  assert.equal(await task.runPromise(), 2);
+  const defect = new Error("SDK defect");
+  await assert.rejects(Promise.resolve(recipes.promiseDefectBoundary(() => Promise.reject(defect)).runResult()), error => error === defect);
+});

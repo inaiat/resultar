@@ -148,4 +148,8 @@ export const holdResource = (events: string[]) => ResultTask.scoped(
     release: () => ResultTask.sync(() => { events.push('close') }),
   }).andThen(() => ResultTask.never()),
 )
+
+// External Promise boundary whose rejection is deliberately a runtime defect.
+export const promiseDefectBoundary = (operation: (signal: AbortSignal) => PromiseLike<number>) =>
+  ResultTask.fromPromise(operation)
 ```

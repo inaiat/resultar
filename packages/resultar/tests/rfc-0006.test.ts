@@ -12,7 +12,7 @@ import {
 
 const interrupted = { _tag: 'Failure', cause: { _tag: 'Interrupt', reason: 'stop' } } as const
 
-for (const adapter of ['promise', 'async'] as const) {
+for (const adapter of ['promise', 'async', 'defect'] as const) {
   for (const shape of ['direct', 'map', 'andThen'] as const) {
     test(`late ${adapter} acquisition with ${shape} records the ownership boundary`, async () => {
       const started = Promise.withResolvers<void>()
@@ -24,10 +24,11 @@ for (const adapter of ['promise', 'async'] as const) {
         started.resolve()
         return pending.promise
       }
-      const base =
-        adapter === 'promise'
-          ? ResultTask.tryPromise(acquire)
-          : ResultTask.fromResultAsync(() => ResultAsync.fromSafePromise(acquire()))
+      const base = {
+        defect: ResultTask.fromPromise(acquire),
+        promise: ResultTask.tryPromise(acquire),
+        async: ResultTask.fromResultAsync(() => ResultAsync.fromSafePromise(acquire())),
+      }[adapter]
       let acquisition = base
       if (shape === 'map') acquisition = base.map((value) => value)
       if (shape === 'andThen') acquisition = base.andThen((value) => ResultTask.ok(value))

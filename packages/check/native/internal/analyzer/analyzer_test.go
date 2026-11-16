@@ -1103,3 +1103,48 @@ void ResultTask.forkChild(child)
 		t.Fatalf("collections and fibers must consume their task inputs: %v %#v", err, findings)
 	}
 }
+
+func TestFromPromiseDefectAwaitBoundary(t *testing.T) {
+	directory := writeFixture(t, `
+declare namespace ResultTask {
+  function fromPromise<T>(factory: () => Promise<T>): ResultTask<T, never>
+}
+interface ResultTask<T, E> { readonly value: T; readonly error: E }
+void ResultTask.fromPromise(async () => { await Promise.resolve(1); return 1 })
+interface Client {
+  fromPromise<T>(options: { try: () => Promise<T>; catch: (error: unknown) => Error }): Promise<T>
+}
+declare const client: Client
+
+void client.fromPromise({
+  try: async () => {
+    await Promise.resolve(1)
+    return 1
+  },
+  catch: () => new Error("failed"),
+})
+`)
+	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("unexpected TypeScript diagnostics: %v", diagnostics)
+	}
+
+	options := config.Defaults()
+	options.NoDiscard = config.SeverityOff
+	options.NoPromiseInResultSuccess = config.SeverityOff
+	options.NoUnknownResultError = config.SeverityOff
+	options.NoUnsafeAwait = config.SeverityWarning
+	options.NoUnsafeAwaitMode = "all"
+	options.PreferTaggedError = config.SeverityOff
+	options.TypedCatchMapper = config.SeverityOff
+	findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].Rule != "no-unsafe-await" {
+		t.Fatalf("unrelated tryPromise findings = %#v", findings)
+	}
+}

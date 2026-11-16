@@ -30,7 +30,7 @@ var recoveryMethods = map[string]struct{}{
 }
 
 var asyncAwaitBoundaryCallNames = map[string]struct{}{
-	"fromThrowableAsync": {}, "try": {}, "tryAsync": {}, "tryCatchAsync": {}, "tryCatch": {}, "tryPromise": {}, "tryResultAsync": {},
+	"fromThrowableAsync": {}, "try": {}, "tryAsync": {}, "tryCatchAsync": {}, "tryCatch": {}, "tryPromise": {}, "fromPromise": {}, "tryResultAsync": {},
 }
 
 var resultTaskStaticConsumerMethods = map[string]struct{}{
@@ -1110,7 +1110,7 @@ func (a *Analyzer) resultarAwaitBoundaryBody(node *ast.Node) *ast.Node {
 	if (name == "try" || name == "tryCatch") && a.staticNamespace(call.Expression, name) != "ResultAsync" {
 		return nil
 	}
-	if name == "tryPromise" && !a.isResultTaskStaticCall(call.Expression, "tryPromise") {
+	if (name == "tryPromise" || name == "fromPromise") && !a.isResultTaskStaticCall(call.Expression, name) {
 		return nil
 	}
 	return inspectableCallbackOrObjectTry(call.Arguments.Nodes[0])
@@ -6774,14 +6774,12 @@ func (a *Analyzer) isSymbolDisposeCall(node *ast.Node, paramName string) bool {
 	call := node.AsCallExpression()
 	if (a.isResultTaskStaticCall(call.Expression, "sync") ||
 		a.isResultTaskStaticCall(call.Expression, "try") ||
-		a.isResultTaskStaticCall(call.Expression, "tryPromise")) && len(call.Arguments.Nodes) >= 1 {
+		a.isResultTaskStaticCall(call.Expression, "tryPromise") ||
+		a.isResultTaskStaticCall(call.Expression, "fromPromise")) && len(call.Arguments.Nodes) >= 1 {
 		innerFn := unwrapExpression(call.Arguments.Nodes[0])
 		if innerFn != nil && (innerFn.Kind == ast.KindArrowFunction || innerFn.Kind == ast.KindFunctionExpression) && len(innerFn.Parameters()) == 0 {
 			return a.isSymbolDisposeCall(innerFn.Body(), paramName)
 		}
-	}
-	if a.isResultTaskStaticCall(call.Expression, "fromPromise") && len(call.Arguments.Nodes) == 1 {
-		return a.isSymbolDisposeCall(call.Arguments.Nodes[0], paramName)
 	}
 	callee := unwrapExpression(call.Expression)
 	if callee == nil || callee.Kind != ast.KindElementAccessExpression {
