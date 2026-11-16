@@ -66,6 +66,8 @@ const config: UserConfig = defineConfig({
       "no-rest-spread-properties": "allow",
       "no-ternary": "allow",
       "no-undefined": "allow",
+      // Keep explicit initialization required by init-declarations.
+      "unicorn/no-useless-undefined": "allow",
       "no-underscore-dangle": ["error", { allow: ["_tag"] }],
       "one-var": "allow",
       "no-use-before-define": "allow",

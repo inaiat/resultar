@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events'
 import { expect, expectTypeOf, test } from 'vite-plus/test'
 import { ResultTask, type ResultTaskCallbackContext } from '../src/index.js'
 
@@ -149,3 +150,73 @@ test('callback completion followed by a subscription throw preserves both failur
     },
   })
 })
+
+for (const mode of ['sync-success', 'async-success', 'failure', 'abort'] as const) {
+  test(`callback ${mode} releases its abort listener before cleanup`, async () => {
+    const controller = new AbortController()
+    const subscribed = Promise.withResolvers<ResultTaskCallbackContext<number, string>>()
+    let cleaned = 0
+    const task = ResultTask.fromCallback<number, string>({
+      subscribe: (context) => {
+        subscribed.resolve(context)
+        if (mode === 'sync-success') context.resolve(42)
+        return () => {
+          cleaned += 1
+          expect(getEventListeners(context.signal, 'abort')).toEqual([])
+        }
+      },
+    })
+    const running = task.runExit({ signal: controller.signal })
+    const context = await subscribed.promise
+    if (mode === 'async-success') context.resolve(42)
+    if (mode === 'failure') context.reject('failed')
+    if (mode === 'abort') controller.abort('stop')
+    const exit = await running
+    if (mode === 'failure') {
+      expect(exit).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'failed' } })
+    } else if (mode === 'abort') {
+      expect(exit).toEqual({ _tag: 'Failure', cause: { _tag: 'Interrupt', reason: 'stop' } })
+    } else {
+      expect(exit).toEqual({ _tag: 'Success', value: 42 })
+    }
+    expect(getEventListeners(context.signal, 'abort')).toEqual([])
+    context.resolve(99)
+    context.reject('late')
+    controller.abort('late')
+    expect(cleaned).toBe(1)
+  })
+}
+
+for (const mode of ['race', 'raceFirst-success', 'raceFirst-failure'] as const) {
+  test(`${mode} retains cleanup defects from the interrupted callback loser`, async () => {
+    const subscribed = Promise.withResolvers<void>()
+    const defect = new Error('unsubscribe')
+    let cleaned = 0
+    const loser = ResultTask.fromCallback<never>({
+      subscribe: () => {
+        subscribed.resolve()
+        return () => {
+          cleaned += 1
+          throw defect
+        }
+      },
+    })
+    const winner = ResultTask.fromPromise(() => subscribed.promise).andThen(() =>
+      mode === 'raceFirst-failure' ? ResultTask.err('winner') : ResultTask.ok(42),
+    )
+    const task =
+      mode === 'race' ? ResultTask.race(loser, winner) : ResultTask.raceFirst(loser, winner)
+    expect(await task.runExit()).toEqual({
+      _tag: 'Failure',
+      cause:
+        mode === 'raceFirst-failure'
+          ? {
+              _tag: 'Sequential',
+              left: { _tag: 'Fail', error: 'winner' },
+              right: { _tag: 'Die', defect },
+            }
+          : { _tag: 'Die', defect },
+    })
+    expect(cleaned).toBe(1)
+  })
+}

@@ -11,6 +11,13 @@
   Add `runTaskJson` for materialized Hono JSON responses with request cancellation, typed error mapping and preserved RPC/OpenAPI response inference. Services must be provided before execution; task resources close before response mapping.
 
 - cfb4f9c: Preserve indexed generic returns at synchronous Result.try/tryResult boundaries. Add invariant makeScope<CloseError>() owners that check acquired and direct finalizer error bounds and expose failed-attempt cleanup errors from use(). Existing unparameterized owners retain unknown closure errors.
+
+  Compatibility note: `makeScope().use(task)` now includes the adopted task's cleanup
+  errors in its return type, including when `makeScope()` has no type parameter.
+  Explicit annotations containing only the body error (or `never`) may no longer
+  compile. Prefer inference or include cleanup errors in the annotated error union.
+  Eager/lazy execution semantics are unchanged.
+
 - 6f4712a: Add lazy ResultTask.fromPromise with defect semantics and waiting acquisition cleanup.
 
   Validate generic and nested-value inference, rejected inputs, native thenable adoption,

@@ -1349,22 +1349,20 @@ export class ResultTask<out A, out E = never, out R = never> {
   ): ResultTask<A, E> {
     return new ResultTask<A, E>((context) => {
       const signal = toNativeAbortSignal(context.signal)
-      if (signal.aborted) return interrupted(signal)
+      // The interpreter checks interruption before entering this executor.
       return new Promise<Exit<A, E>>((resolve) => {
         let subscribing = true
-        let completed = false
         let outcome: Exit<A, E> | undefined = undefined
         let cleanup: (() => void) | void = undefined
         const finish = (): void => {
-          if (subscribing || completed || outcome === undefined) return
-          completed = true
+          if (subscribing || outcome === undefined) return
           signal.removeEventListener('abort', onAbort)
           try {
             cleanup?.()
           } catch (error) {
-            const cleanupExit = died(error)
-            if (cleanupExit._tag === 'Failure') markCleanupCause(cleanupExit.cause)
-            outcome = combineExits(outcome, cleanupExit, 'Sequential') as Exit<A, E>
+            const cleanupCause: Cause<never> = { _tag: 'Die', defect: error }
+            markCleanupCause(cleanupCause)
+            outcome = combineExits(outcome, failure(cleanupCause), 'Sequential') as Exit<A, E>
           }
           resolve(outcome)
         }
@@ -1376,7 +1374,7 @@ export class ResultTask<out A, out E = never, out R = never> {
         const onAbort = (): void => {
           settle(interrupted(signal))
         }
-        signal.addEventListener('abort', onAbort, { once: true })
+        signal.addEventListener('abort', onAbort)
         try {
           cleanup = options.subscribe({
             resolve: (value) => {

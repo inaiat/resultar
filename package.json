@@ -43,5 +43,5 @@
     "@changesets/cli": "^3.0.3",
     "vite-plus": "catalog:"
   },
-  "packageManager": "pnpm@12.9.1"
+  "packageManager": "pnpm@12.21.0"
 }

@@ -408,11 +408,11 @@ Explore complete, runnable projects in [`examples/`](examples):
 
 ## Workspace Development
 
-Requirements: **Node.js 24+**, **pnpm 11+**, ESM-only.
+Requirements: **Node.js 24+**, **pnpm 12**, ESM-only. Use the exact pnpm version pinned in `package.json` (`packageManager`).
 
 ```sh
 pnpm install          # Install workspace dependencies
-pnpm check:full       # Run Biome, typecheck, fallow complexity/dead-code checks, and full test suite
+pnpm check:full       # Run Vite+ formatting/lint/type checks, fallow analysis, and the full test suite
 pnpm build            # Build all workspace packages
 pnpm smoke:package    # Verify packed tarballs, exports, and published artifacts
 pnpm test:examples    # Run smoke tests across all example projects
