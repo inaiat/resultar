@@ -7,7 +7,7 @@
 [![TypeScript 7 Native Checks](https://img.shields.io/badge/resultar--check-TypeScript--Go-3178c6?logo=typescript&logoColor=white)](https://github.com/inaiat/resultar/blob/main/packages/check/README.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/inaiat/resultar/blob/main/LICENSE)
 
-[What's New in v4](#whats-new-in-v4) · [v4 Migration](https://github.com/inaiat/resultar/blob/main/docs/migrations/v4.md) · [Gradual Adoption](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md) · [Full Reference (`DOCUMENTATION.md`)](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md) · [`resultar-check` Compiler CLI/LSP](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) · [Benchmarks](https://github.com/inaiat/resultar/blob/main/benchmarks/README.md) · [API Decision Guide](#api-decision-guide)
+[Coming from Effect](https://github.com/inaiat/resultar/blob/main/docs/coming-from-effect.md) · [What's New in v4](#whats-new-in-v4) · [v4 Migration](https://github.com/inaiat/resultar/blob/main/docs/migrations/v4.md) · [Gradual Adoption](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md) · [Full Reference (`DOCUMENTATION.md`)](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md) · [`resultar-check` Compiler CLI/LSP](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) · [Benchmarks](https://github.com/inaiat/resultar/blob/main/benchmarks/README.md) · [API Decision Guide](#api-decision-guide)
 
 In standard TypeScript, `throw` and rejected promises are invisible in function signatures. Callers have no way of knowing what can fail—or whether they handled every failure case—without reading the implementation.
 
@@ -845,7 +845,7 @@ Add the rule configuration to `tsconfig.json` (use `"diagnosticSeverity": "error
 }
 ```
 
-Run `resultar-check` in CI or `resultar-check lsp` in your editor to catch discarded `Result` / `ResultAsync` / `ResultTask` / `MatchMatcher` / `Fiber` values, `unknown` error or task requirement channels, generator anti-patterns, unscoped resources, raw `throw` statements (`noThrow`), and ad-hoc `try/catch` blocks (`noTryCatch`). See the [`resultar-check` README](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) and the [Anti-Patterns & `resultar-check` Guide](https://github.com/inaiat/resultar/blob/main/skills/resultar/references/anti-patterns.md) for all 41 rules and editor setup.
+Run `resultar-check` in CI, `resultar-check --fix` for safe auto-repairs, or `resultar-check lsp` in your editor to catch discarded `Result` / `ResultAsync` / `ResultTask` / `MatchMatcher` / `Fiber` values, `unknown` error or task requirement channels, generator anti-patterns, unscoped resources, raw `throw` statements (`noThrow`), and ad-hoc `try/catch` blocks (`noTryCatch`). See the [`resultar-check` README](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) and the [Anti-Patterns & `resultar-check` Guide](https://github.com/inaiat/resultar/blob/main/skills/resultar/references/anti-patterns.md) for all 42 rules and editor setup.
 
 ---
 
@@ -904,41 +904,38 @@ const syncAccount = (id: string) =>
 | Recover from specific errors                   | `catchTag`, `catchTags`, `orElse`, `orElseSucceed`, `unwrapOr`                             |
 | Handle results at a boundary                   | `matchTags`, `matchTagsPartial`, `match`                                                   |
 | Combine multiple results                       | Sync: `Result.all`; Task: `ResultTask.all`, `forEach`, `validateAll`, `firstSuccessOf`     |
-| Add async timeout, retry, or race              | `task.timeout`, `task.retry`, `ResultTask.race`, `raceFirst`, `Retry.policy`               |
-| Build lazy, cancelable workflows               | `ResultTask.tryPromise`, `sync`, `try`, `service`, `provideServices`                       |
-| Manage resource lifecycles                     | `ResultTask.acquireRelease`, `acquireDisposable`, `scoped`, `ensuring`                     |
-| Run lazy tasks at an edge                      | `task.runResult()`, `runExit()`, `runPromise()`, `runFork()` (static forms also supported) |
-| Observe without altering the channel           | `inspect`, `inspectError`, `inspectBoth`, `log`                                            |
-| Preserve an existing eager Async boundary      | `tryResultAsync`, `fromPromise`, `fromThrowableAsync`, `okAsync`, `errAsync`               |
-| Adapt eager Async or request helpers into Task | `ResultTask.fromResultAsync(signal => load(signal))`                                       |
+| Add async timeout, retry, repeat, or race      | `task.timeout`, `task.retry`, `task.repeat`, `ResultTask.race`, `raceAll`, `raceFirst`, `raceFirstAll`, `Retry.policy` |
+| Build lazy, cancelable workflows               | `ResultTask.tryPromise`, `sync`, `suspend`, `try`, `service`, `provideServices`                                        |
+| Manage resource lifecycles                     | `ResultTask.acquireRelease`, `acquireDisposable`, `task.scoped()`, `ResultTask.scoped`, `ensuring`                     |
+| Coordinate concurrent tasks & state            | `Ref.make`, `Deferred.make`, `Queue.bounded`, `Queue.unbounded`, `Semaphore.make`, `task.forkChild()`                  |
+| Trace workflows & propagate request context    | `TaskLocal.make`, `Tracer.memory()`, `task.withSpan`, named `ResultTask.fn('span', ...)`                               |
+| Run lazy tasks at an edge                      | `task.runResult()`, `runExit()`, `runPromise()`, `runSync()`, `runSyncExit()`, `runFork()`                             |
+| Test timers and retries deterministically      | `Clock.virtual()` (`advanceBy`, `advanceToNext`, `runToCompletion`)                                                    |
+| Observe without altering the channel           | `inspect`, `inspectError`, `inspectBoth`, `log`                                                                        |
+| Preserve an existing eager Async boundary      | `tryResultAsync`, `fromPromise`, `fromThrowableAsync`, `okAsync`, `errAsync`                                           |
+| Adapt eager Async or request helpers into Task | `ResultTask.fromResultAsync(signal => load(signal))`                                                                   |
 
 See the [Complete API Map](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#api-map) for all overloads, collection helpers, and compatibility aliases.
 
 ---
 
-## Coding Agents
+## Subpath Exports & Tree-Shaking
 
-Every npm release bundles `dist/llms.txt`, `dist/agent/SKILL.md`, focused API and service references, and a compiled workflow example inside `node_modules/resultar/dist/agent/`. Point your coding agent to those installed files so its guidance always matches the exact installed version.
+`resultar` marks `"sideEffects": false` and provides focused subpath entry points alongside the root `"resultar"` barrel:
+
+| Import path | Contents |
+| --- | --- |
+| `resultar` | Full public API (`Result`, `ResultTask`, `ResultAsync`, `Match`, tagged errors, concurrency, observability) |
+| `resultar/result` | Synchronous `Result`, `ok`, `err`, `unit`, `tryResult`, `fromThrowable`, `redact` |
+| `resultar/task` | `ResultTask`, `Cause`, `Exit`, `Fiber`, `Semaphore`, `Ref`, `Deferred`, `Queue`, `TaskLocal`, `Tracer`, `Clock`, `Scheduler`, `serviceTag`, `Retry` |
+| `resultar/match` | Exhaustive `Match` pattern matcher |
+| `resultar/tagged` | `createTaggedError`, `taggedEnum`, `matchError`, `matchErrorPartial`, `findCause`, `redact` |
+| `resultar/retry` | `Retry` policy builder (`maxDelayMs`, `maxElapsedMs`, error-aware `delayMs`) |
+| `resultar/function` | `pipe`, `flow`, `identity`, `constant` |
 
 ---
 
-## More Documentation
-
-- [Gradual Adoption: `Result` to `ResultTask`](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md)
-- [Full Resultar Reference (`DOCUMENTATION.md`)](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md)
-- [v4 Migration & Deprecated API Notes](https://github.com/inaiat/resultar/blob/main/docs/migrations/v4.md)
-- [Runnable Examples (`examples/`)](https://github.com/inaiat/resultar/tree/main/examples)
-- [Type-Safe Error Handling Article (EN)](https://github.com/inaiat/resultar/blob/main/articles/en/type-safe.md) | [Artigo em Português (PT-BR)](https://github.com/inaiat/resultar/blob/main/articles/pt/type-safe.md)
-
-### Scope & Limitations
-
-- **Focused scope**: Resultar is not a full Effect port—it intentionally omits `Stream`, STM, distributed clustering, and a global application runtime.
-- **Cooperative cancellation**: Task timeouts and fiber interruptions abort the `AbortSignal` and await scope finalizers; underlying drivers must respect the signal. `ResultTask.tryPromise` can opt into `interruption: 'detach'`. Legacy Async signal-aware helpers remain cooperative, with best-effort resource release.
-- **Deferred execution vs. already-started Promises**: Task factories defer work until an explicit `run*`. Eager async helpers and async `Result.gen` / `Result.fn` start eagerly and share one execution. Wrapping an already-created Promise cannot defer or replay it.
-
-## License
-
-MIT
+## Advanced Task Contracts
 
 ### Lazy callback subscriptions
 
@@ -1009,7 +1006,7 @@ finish cleanup. A pre-aborted run interrupts immediately. With no cancellation s
 Use a runner signal or `Fiber.interrupt` to stop a standalone wait. The executable `holdResource`
 recipe demonstrates a resource whose lifetime ends with interruption.
 
-## Promise defect boundaries
+### Promise defect boundaries
 
 `ResultTask.fromPromise(signal => operation(signal))` defers a raw Promise factory
 until each run and returns `ResultTask<A, never, never>`. Throws and rejections
@@ -1042,3 +1039,30 @@ immediate, single invocation behavior are unchanged.
 
 See the [Node lifecycle recipe](../../examples/cookbook/src/node-lifecycle.ts) for
 signal handling and bounded HTTP draining at an explicit execution boundary.
+
+---
+
+## Coding Agents
+
+Every npm release bundles `dist/llms.txt`, `dist/agent/SKILL.md`, focused API and service references, and a compiled workflow example inside `node_modules/resultar/dist/agent/`. Point your coding agent to those installed files so its guidance always matches the exact installed version.
+
+---
+
+## More Documentation
+
+- [Coming from Effect](https://github.com/inaiat/resultar/blob/main/docs/coming-from-effect.md)
+- [Gradual Adoption: `Result` to `ResultTask`](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md)
+- [Full Resultar Reference (`DOCUMENTATION.md`)](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md)
+- [v4 Migration & Deprecated API Notes](https://github.com/inaiat/resultar/blob/main/docs/migrations/v4.md)
+- [Runnable Examples (`examples/`)](https://github.com/inaiat/resultar/tree/main/examples)
+- [Type-Safe Error Handling Article (EN)](https://github.com/inaiat/resultar/blob/main/articles/en/type-safe.md) | [Artigo em Português (PT-BR)](https://github.com/inaiat/resultar/blob/main/articles/pt/type-safe.md)
+
+### Scope & Limitations
+
+- **Focused scope**: Resultar is not a full Effect port—it intentionally omits `Stream`, STM, distributed clustering, and a global application runtime.
+- **Cooperative cancellation**: Task timeouts and fiber interruptions abort the `AbortSignal` and await scope finalizers; underlying drivers must respect the signal. `ResultTask.tryPromise` can opt into `interruption: 'detach'`. Legacy Async signal-aware helpers remain cooperative, with best-effort resource release.
+- **Deferred execution vs. already-started Promises**: Task factories defer work until an explicit `run*`. Eager async helpers and async `Result.gen` / `Result.fn` start eagerly and share one execution. Wrapping an already-created Promise cannot defer or replay it.
+
+## License
+
+MIT

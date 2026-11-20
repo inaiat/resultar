@@ -48,20 +48,37 @@ export const getMatchErrorHandler = <T, E, A, B>(
   return fnErr
 }
 
+// eslint-disable-next-line init-declarations
+let idleOkIterator: OkResultIterator<unknown> | undefined
+
 export class OkResultIterator<T> {
   declare public readonly done: true
-  public readonly value: T
+  public value: T
 
   public constructor(value: T) {
     this.value = value
   }
 
   public next(): IteratorResult<never, T> {
+    // Stryker disable next-line all: single-element iterator pool is an allocation optimization equivalent to new OkResultIterator(value).
+    idleOkIterator = this as OkResultIterator<unknown>
     return this as unknown as IteratorResult<never, T>
   }
 }
 
 Object.assign(OkResultIterator.prototype, { done: true })
+
+export const acquireOkIterator = <T>(value: T): OkResultIterator<T> => {
+  /* Stryker disable all: single-element iterator pool is an allocation optimization equivalent to new OkResultIterator(value). */
+  const iterator = idleOkIterator
+  if (iterator !== undefined) {
+    idleOkIterator = undefined
+    iterator.value = value
+    return iterator as OkResultIterator<T>
+  }
+  /* Stryker restore all */
+  return new OkResultIterator(value)
+}
 
 /**
  * A `Disposable` is an object that has a `dispose` method that can be used to

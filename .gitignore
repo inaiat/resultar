@@ -1,5 +1,9 @@
 # compiled output
 /dist
+/editors/vscode/dist
+/editors/vscode/*.vsix
+/website/dist
+/website/src/generated
 /benchmarks/node_modules
 /benchmarks/.tmp
 /examples/*/dist

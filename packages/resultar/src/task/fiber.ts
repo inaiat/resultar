@@ -33,6 +33,8 @@ export interface Fiber<out A, out E = never> {
 export interface FiberHandle<out A, out E = never> extends Fiber<A, E> {
   /** Monotonically increasing numeric identifier unique to this fiber. */
   readonly id: number
+  /** Waits for the fiber to settle and returns its terminal {@link Exit} without replaying failures. */
+  readonly await: () => ResultTask<Exit<A, E>>
   /** Synchronously returns the terminal {@link Exit} after cleanup, or `undefined` while still running. */
   readonly poll: () => Exit<A, E> | undefined
   /** Registers a best-effort completion observer and returns an unsubscribe function. */

@@ -21,13 +21,14 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `AbortError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `cause`, `message`, `name`, `stack` |
 | `AppConfigModule` | Type | — |
 | `AsyncResultGenOptions` | Type | `catch`, `try` |
-| `Cause` | Value | `defects`, `failures`, `findError`, `hasDies`, `hasFails`, `hasInterrupts`, `isCause`, `pretty` |
+| `Cause` | Value | `defects`, `die`, `fail`, `failures`, `findError`, `hasDies`, `hasFails`, `hasInterrupts`, `interrupt`, `isCause`, `isInterruptedOnly`, `parallel`, `pretty`, `sequential`, `spans` |
 | `Clock` | Value | `live`, `virtual` |
 | `ConfigError` | Class | Static: `errAsync`, `err`, `is`, `tag`, `taskErr`, `withProps`<br>Instance: `_tag`, `cause`, `findCause`, `fingerprint`, `issues`, `messageTemplate`, `message`, `name`, `stack`, `toJSON` |
 | `ConfigIssue` | Type | `category`, `message`, `path` |
 | `constant` | Value | — |
 | `createModule` | Value | — |
 | `createTaggedError` | Value | — |
+| `Deferred` | Value | `make` |
 | `defineAppConfig` | Value | — |
 | `DisposableResult` | Class | Instance: `_unsafeUnwrapErr`, `_unsafeUnwrap`, `error`, `isErr`, `isOk`, `result`, `unwrapOr`, `value` |
 | `DisposableResultAsync` | Class (deprecated) | Instance: `then` |
@@ -36,7 +37,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `ErrResult` | Type | `_unsafeUnwrapErr`, `_unsafeUnwrap`, `andThen`, `asVoid`, `as`, `asyncAndThen`, `asyncMap`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `error`, `filterOrElse`, `if`, `inspectBoth`, `inspectError`, `inspect`, `isErr`, `isOk`, `log`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `orElseSucceed`, `orElse`, `pipe`, `safeUnwrap`, `tapError`, `tap`, `toDisposable`, `unless`, `unwrapOrThrow`, `unwrapOr`, `unwrapReason`, `when` |
 | `Exit` | Type | — |
 | `Fiber` | Value | `addObserver`, `await`, `interrupt`, `join`, `poll` |
-| `FiberHandle` | Type | `addObserver`, `id`, `interrupt`, `join`, `poll` |
+| `FiberHandle` | Type | `addObserver`, `await`, `id`, `interrupt`, `join`, `poll` |
 | `FiberJoinOptions` | Type | `interruption` |
 | `FiberObserver` | Type | — |
 | `findCause` | Value | — |
@@ -63,13 +64,17 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `MatchOption` | Type | — |
 | `MatchPattern` | Type | — |
 | `MatchRefinement` | Type | — |
+| `MemoryTracer` | Type | `clear`, `spans`, `startSpan`, `tracer` |
 | `MissingServiceError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `cause`, `message`, `name`, `serviceIdentifier`, `stack` |
 | `ok` | Value | — |
 | `okAsync` | Value | — |
 | `OkResult` | Type | `_unsafeUnwrapErr`, `_unsafeUnwrap`, `andThen`, `asVoid`, `as`, `asyncAndThen`, `asyncMap`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `filterOrElse`, `if`, `inspectBoth`, `inspectError`, `inspect`, `isErr`, `isOk`, `log`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `orElseSucceed`, `orElse`, `pipe`, `safeUnwrap`, `tapError`, `tap`, `toDisposable`, `unless`, `unwrapOrThrow`, `unwrapOr`, `unwrapReason`, `value`, `when` |
 | `pipe` | Value | — |
+| `Queue` | Value | `bounded`, `unbounded` |
+| `RecordedSpan` | Type | `attributes`, `durationMs`, `endTime`, `exit`, `name`, `parentName`, `startTime` |
 | `redact` | Value | — |
 | `Redacted` | Type | `__resultarRedactedType`, `__resultarRedacted`, `label`, `toJSON`, `toString` |
+| `Ref` | Value | `make` |
 | `resource` | Value | — |
 | `Result` | Value | `all`, `andThen`, `asVoid`, `as`, `asyncAndThen`, `asyncMap`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `combineWithAllErrors`, `combine`, `err`, `filterOrElse`, `firstSuccessOf`, `fn`, `forEach`, `fromNullishOr`, `fromThrowable`, `gen`, `if`, `inspectBoth`, `inspectError`, `inspect`, `iterate`, `liftPredicate`, `loop`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `ok`, `orElseSucceed`, `orElse`, `tryCatch`, `try`, `unit`, `unlessResult`, `unless`, `unwrapOr`, `unwrapReason`, `validateAll`, `whenResult`, `when`, `zip` |
 | `ResultAsync` | Class | Static: `all`, `andThen`, `asVoid`, `as`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `combineWithAllErrors`, `combine`, `errAsync`, `err`, `filterOrElse`, `firstSuccessOf`, `forEach`, `fromCallback`, `fromPromise`, `fromSafePromise`, `fromTask`, `fromThrowable`, `if`, `inspectBoth`, `inspectError`, `inspect`, `iterate`, `loop`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `okAsync`, `ok`, `orElseSucceed`, `orElse`, `raceAll`, `raceFirst`, `raceWith`, `race`, `retryOrElse`, `retry`, `timeout`, `tryCatch`, `try`, `unitAsync`, `unit`, `unlessResult`, `unless`, `unwrapOr`, `unwrapReason`, `validateAll`, `whenResult`, `when`, `withResource`, `zip`<br>Instance: `andThen`, `asVoid`, `as`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `filterOrElse`, `if`, `inspectBoth`, `inspectError`, `inspect`, `log`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `orElseSucceed`, `orElse`, `pipe`, `tapError`, `tap`, `then`, `toAsyncDisposable`, `unless`, `unwrapOrThrow`, `unwrapOr`, `unwrapReason`, `when` |
@@ -95,10 +100,10 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `ResultGenerator` | Type | — |
 | `ResultGenOptions` | Type | `catch`, `try` |
 | `ResultOperations` | Type | `_unsafeUnwrapErr`, `_unsafeUnwrap`, `andThen`, `asVoid`, `as`, `asyncAndThen`, `asyncMap`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `filterOrElse`, `if`, `inspectBoth`, `inspectError`, `inspect`, `isErr`, `isOk`, `log`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `orElseSucceed`, `orElse`, `pipe`, `safeUnwrap`, `tapError`, `tap`, `toDisposable`, `unless`, `unwrapOrThrow`, `unwrapOr`, `unwrapReason`, `when` |
-| `ResultTask` | Class | Static: `acquireDisposable`, `acquireRelease`, `all`, `andThen`, `asVoid`, `as`, `catchAll`, `catchCause`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `delay`, `ensuring`, `err`, `fail`, `filterOrElse`, `firstSuccessOf`, `flatMap`, `fn`, `forEach`, `forkChild`, `fromCallback`, `fromPromise`, `fromResultAsync`, `fromResult`, `gen`, `if`, `inspectBoth`, `inspectCause`, `inspectError`, `inspect`, `iterate`, `loop`, `makeScope`, `makeSemaphore`, `mapErr`, `mapError`, `map`, `matchTagsPartial`, `matchTags`, `match`, `memoize`, `never`, `now`, `ok`, `onExit`, `orElseSucceed`, `orElse`, `provideServiceResolver`, `provideService`, `provideServices`, `raceFirst`, `race`, `retry`, `runExit`, `runFork`, `runPromise`, `runResult`, `sandbox`, `scoped`, `service`, `sleep`, `succeed`, `sync`, `tapBoth`, `tapCause`, `tapError`, `tap`, `timed`, `timeout`, `toResultAsync`, `tryPromise`, `try`, `unless`, `unsandbox`, `unwrapOr`, `unwrapReason`, `validateAll`, `when`, `zip`<br>Instance: `andThen`, `asVoid`, `as`, `catchAll`, `catchCause`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `delay`, `ensuring`, `filterOrElse`, `flatMap`, `if`, `inspectBoth`, `inspectCause`, `inspectError`, `inspect`, `log`, `mapErr`, `mapError`, `map`, `matchTagsPartial`, `matchTags`, `match`, `onExit`, `orElseSucceed`, `orElse`, `pipe`, `provideServiceResolver`, `provideService`, `provideServices`, `retry`, `runExit`, `runFork`, `runPromise`, `runResult`, `sandbox`, `tapBoth`, `tapCause`, `tapError`, `tap`, `timed`, `timeout`, `toResultAsync`, `unless`, `unsandbox`, `unwrapOr`, `unwrapReason`, `when`, `zip` |
+| `ResultTask` | Class | Static: `acquireDisposable`, `acquireRelease`, `all`, `andThen`, `asVoid`, `as`, `catchAll`, `catchCause`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `delay`, `ensuring`, `err`, `fail`, `filterOrElse`, `firstSuccessOf`, `flatMap`, `fn`, `forEach`, `forkChild`, `fromCallback`, `fromPromise`, `fromResultAsync`, `fromResult`, `gen`, `if`, `inspectBoth`, `inspectCause`, `inspectError`, `inspect`, `iterate`, `loop`, `makeScope`, `makeSemaphore`, `mapErr`, `mapError`, `map`, `matchTagsPartial`, `matchTags`, `match`, `memoize`, `never`, `now`, `ok`, `onExit`, `orElseSucceed`, `orElse`, `provideServiceResolver`, `provideService`, `provideServices`, `raceAll`, `raceFirstAll`, `raceFirst`, `race`, `repeat`, `retry`, `runExit`, `runFork`, `runPromise`, `runResult`, `runSyncExit`, `runSync`, `sandbox`, `scoped`, `service`, `sleep`, `succeed`, `suspend`, `sync`, `tapBoth`, `tapCause`, `tapError`, `tap`, `timed`, `timeout`, `toResultAsync`, `tryPromise`, `try`, `unless`, `unsandbox`, `unwrapOr`, `unwrapReason`, `validateAll`, `when`, `withSpan`, `zip`<br>Instance: `andThen`, `asVoid`, `as`, `catchAll`, `catchCause`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `delay`, `ensuring`, `filterOrElse`, `flatMap`, `forkChild`, `if`, `inspectBoth`, `inspectCause`, `inspectError`, `inspect`, `log`, `mapErr`, `mapError`, `map`, `matchTagsPartial`, `matchTags`, `match`, `onExit`, `orElseSucceed`, `orElse`, `pipe`, `provideServiceResolver`, `provideService`, `provideServices`, `repeat`, `retry`, `runExit`, `runFork`, `runPromise`, `runResult`, `runSyncExit`, `runSync`, `sandbox`, `scoped`, `tapBoth`, `tapCause`, `tapError`, `tap`, `timed`, `timeout`, `toResultAsync`, `unless`, `unsandbox`, `unwrapOr`, `unwrapReason`, `when`, `withSpan`, `zip` |
 | `ResultTaskAcquireReleaseOptions` | Type | `acquire`, `release` |
 | `ResultTaskCallbackContext` | Type | `reject`, `resolve`, `signal` |
-| `ResultTaskCauseError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `cause`, `message`, `name`, `stack` |
+| `ResultTaskCauseError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `cause`, `message`, `name`, `prettyCause`, `stack` |
 | `ResultTaskConcurrencyOptions` | Type | `concurrency` |
 | `ResultTaskFromCallbackOptions` | Type | `subscribe` |
 | `ResultTaskGenerator` | Type | — |
@@ -110,6 +115,8 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `ResultTaskLoopDiscardOptions` | Type | `body`, `discard`, `step`, `while` |
 | `ResultTaskLoopOptions` | Type | `body`, `discard`, `step`, `while` |
 | `ResultTaskMatchOptions` | Type | — |
+| `ResultTaskRepeatInput` | Type | — |
+| `ResultTaskRepeatOptions` | Type | `backoff`, `delayMs`, `jittered`, `maxDelayMs`, `maxElapsedMs`, `onRepeat`, `times`, `until`, `while` |
 | `ResultTaskRunOptions` | Type | — |
 | `ResultTaskScope` | Type | — |
 | `ResultTaskScopeOwner` | Type | `addFinalizer`, `close`, `use` |
@@ -124,8 +131,8 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `ResultTaskZipOptions` | Type | `concurrent` |
 | `Retry` | Value | `policy` |
 | `RetryContext` | Type | `attempt`, `nextAttempt`, `retriesRemaining` |
-| `RetryPolicy` | Type | `backoff`, `delayMs`, `jittered`, `onRetry`, `times`, `while` |
-| `RetryPolicyOptions` | Type | `backoff`, `delayMs`, `jittered`, `onRetry`, `times`, `while` |
+| `RetryPolicy` | Type | `backoff`, `delayMs`, `jittered`, `maxDelayMs`, `maxElapsedMs`, `onRetry`, `times`, `while` |
+| `RetryPolicyOptions` | Type | `backoff`, `delayMs`, `jittered`, `maxDelayMs`, `maxElapsedMs`, `onRetry`, `times`, `while` |
 | `revealRedacted` | Value | — |
 | `runPromise` | Value (deprecated) | — |
 | `runSync` | Value | — |
@@ -151,6 +158,9 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `ServiceTagTypeId` | Value | `description`, `toString`, `valueOf` |
 | `ServiceTaskRequirements` | Type | — |
 | `ServiceTaskSession` | Type | `close`, `ready` |
+| `SpanAttributes` | Type | — |
+| `SpanAttributeValue` | Type | — |
+| `SpanTraceFrame` | Type | `attributes`, `name` |
 | `startServiceTask` | Value | — |
 | `StrictResult` | Type | — |
 | `StrictResultAsync` | Type | — |
@@ -162,7 +172,12 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `TaggedErrorInstance` | Type | — |
 | `TaggedErrorOptions` | Type | `extends`, `message`, `name` |
 | `TaskClock` | Type | `now`, `random`, `sleep` |
+| `TaskLocal` | Value | `make` |
 | `TaskScheduler` | Type | `yield` |
+| `TaskSpan` | Type | `end`, `name`, `setAttribute` |
+| `TaskTracer` | Type | `startSpan` |
+| `TaskTracerStartOptions` | Type | `attributes`, `parent`, `startTime` |
+| `Tracer` | Value | `memory`, `noop` |
 | `try` | Value (deprecated) | — |
 | `tryAsync` | Value (deprecated) | — |
 | `tryCatch` | Value (deprecated) | — |
@@ -174,7 +189,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `unit` | Value | — |
 | `unitAsync` | Value | — |
 | `useServiceAccess` | Value | — |
-| `VirtualClock` | Class | Instance: `advanceBy`, `flush`, `now`, `pending`, `random`, `sleep` |
+| `VirtualClock` | Class | Instance: `advanceBy`, `advanceToNext`, `flush`, `now`, `pending`, `random`, `runToCompletion`, `sleep` |
 | `withProvider` | Value | — |
 
 ## resultar-config
@@ -483,11 +498,12 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | --- | --- | --- |
 | `AbortError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `cause`, `message`, `name`, `stack` |
 | `AsyncResultGenOptions` | Type | `catch`, `try` |
-| `Cause` | Value | `defects`, `failures`, `findError`, `hasDies`, `hasFails`, `hasInterrupts`, `isCause`, `pretty` |
+| `Cause` | Value | `defects`, `die`, `fail`, `failures`, `findError`, `hasDies`, `hasFails`, `hasInterrupts`, `interrupt`, `isCause`, `isInterruptedOnly`, `parallel`, `pretty`, `sequential`, `spans` |
 | `Clock` | Value | `live`, `virtual` |
 | `constant` | Value | — |
 | `createTaggedError` | Value | — |
 | `default` | Value (deprecated) | — |
+| `Deferred` | Value | `make` |
 | `DisposableResult` | Class | Instance: `_unsafeUnwrapErr`, `_unsafeUnwrap`, `error`, `isErr`, `isOk`, `result`, `unwrapOr`, `value` |
 | `DisposableResultAsync` | Class (deprecated) | Instance: `then` |
 | `err` | Value | — |
@@ -495,7 +511,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `ErrResult` | Type | `_unsafeUnwrapErr`, `_unsafeUnwrap`, `andThen`, `asVoid`, `as`, `asyncAndThen`, `asyncMap`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `error`, `filterOrElse`, `if`, `inspectBoth`, `inspectError`, `inspect`, `isErr`, `isOk`, `log`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `orElseSucceed`, `orElse`, `pipe`, `safeUnwrap`, `tapError`, `tap`, `toDisposable`, `unless`, `unwrapOrThrow`, `unwrapOr`, `unwrapReason`, `when` |
 | `Exit` | Type | — |
 | `Fiber` | Value | `addObserver`, `await`, `interrupt`, `join`, `poll` |
-| `FiberHandle` | Type | `addObserver`, `id`, `interrupt`, `join`, `poll` |
+| `FiberHandle` | Type | `addObserver`, `await`, `id`, `interrupt`, `join`, `poll` |
 | `FiberJoinOptions` | Type | `interruption` |
 | `FiberObserver` | Type | — |
 | `findCause` | Value | — |
@@ -519,13 +535,17 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `MatchOption` | Type | — |
 | `MatchPattern` | Type | — |
 | `MatchRefinement` | Type | — |
+| `MemoryTracer` | Type | `clear`, `spans`, `startSpan`, `tracer` |
 | `MissingServiceError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `cause`, `message`, `name`, `serviceIdentifier`, `stack` |
 | `ok` | Value | — |
 | `okAsync` | Value | — |
 | `OkResult` | Type | `_unsafeUnwrapErr`, `_unsafeUnwrap`, `andThen`, `asVoid`, `as`, `asyncAndThen`, `asyncMap`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `filterOrElse`, `if`, `inspectBoth`, `inspectError`, `inspect`, `isErr`, `isOk`, `log`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `orElseSucceed`, `orElse`, `pipe`, `safeUnwrap`, `tapError`, `tap`, `toDisposable`, `unless`, `unwrapOrThrow`, `unwrapOr`, `unwrapReason`, `value`, `when` |
 | `pipe` | Value | — |
+| `Queue` | Value | `bounded`, `unbounded` |
+| `RecordedSpan` | Type | `attributes`, `durationMs`, `endTime`, `exit`, `name`, `parentName`, `startTime` |
 | `redact` | Value | — |
 | `Redacted` | Type | `__resultarRedactedType`, `__resultarRedacted`, `label`, `toJSON`, `toString` |
+| `Ref` | Value | `make` |
 | `Result` | Value | `all`, `andThen`, `asVoid`, `as`, `asyncAndThen`, `asyncMap`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `combineWithAllErrors`, `combine`, `err`, `filterOrElse`, `firstSuccessOf`, `fn`, `forEach`, `fromNullishOr`, `fromThrowable`, `gen`, `if`, `inspectBoth`, `inspectError`, `inspect`, `iterate`, `liftPredicate`, `loop`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `ok`, `orElseSucceed`, `orElse`, `tryCatch`, `try`, `unit`, `unlessResult`, `unless`, `unwrapOr`, `unwrapReason`, `validateAll`, `whenResult`, `when`, `zip` |
 | `ResultAsync` | Class | Static: `all`, `andThen`, `asVoid`, `as`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `combineWithAllErrors`, `combine`, `errAsync`, `err`, `filterOrElse`, `firstSuccessOf`, `forEach`, `fromCallback`, `fromPromise`, `fromSafePromise`, `fromTask`, `fromThrowable`, `if`, `inspectBoth`, `inspectError`, `inspect`, `iterate`, `loop`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `okAsync`, `ok`, `orElseSucceed`, `orElse`, `raceAll`, `raceFirst`, `raceWith`, `race`, `retryOrElse`, `retry`, `timeout`, `tryCatch`, `try`, `unitAsync`, `unit`, `unlessResult`, `unless`, `unwrapOr`, `unwrapReason`, `validateAll`, `whenResult`, `when`, `withResource`, `zip`<br>Instance: `andThen`, `asVoid`, `as`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `filterOrElse`, `if`, `inspectBoth`, `inspectError`, `inspect`, `log`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `orElseSucceed`, `orElse`, `pipe`, `tapError`, `tap`, `then`, `toAsyncDisposable`, `unless`, `unwrapOrThrow`, `unwrapOr`, `unwrapReason`, `when` |
 | `ResultAsyncAbortSignal` | Type | `aborted`, `addEventListener`, `reason`, `removeEventListener` |
@@ -550,10 +570,10 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `ResultGenerator` | Type | — |
 | `ResultGenOptions` | Type | `catch`, `try` |
 | `ResultOperations` | Type | `_unsafeUnwrapErr`, `_unsafeUnwrap`, `andThen`, `asVoid`, `as`, `asyncAndThen`, `asyncMap`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `filterOrElse`, `if`, `inspectBoth`, `inspectError`, `inspect`, `isErr`, `isOk`, `log`, `mapErr`, `map`, `matchTagsPartial`, `matchTags`, `match`, `orElseSucceed`, `orElse`, `pipe`, `safeUnwrap`, `tapError`, `tap`, `toDisposable`, `unless`, `unwrapOrThrow`, `unwrapOr`, `unwrapReason`, `when` |
-| `ResultTask` | Class | Static: `acquireDisposable`, `acquireRelease`, `all`, `andThen`, `asVoid`, `as`, `catchAll`, `catchCause`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `delay`, `ensuring`, `err`, `fail`, `filterOrElse`, `firstSuccessOf`, `flatMap`, `fn`, `forEach`, `forkChild`, `fromCallback`, `fromPromise`, `fromResultAsync`, `fromResult`, `gen`, `if`, `inspectBoth`, `inspectCause`, `inspectError`, `inspect`, `iterate`, `loop`, `makeScope`, `makeSemaphore`, `mapErr`, `mapError`, `map`, `matchTagsPartial`, `matchTags`, `match`, `memoize`, `never`, `now`, `ok`, `onExit`, `orElseSucceed`, `orElse`, `provideServiceResolver`, `provideService`, `provideServices`, `raceFirst`, `race`, `retry`, `runExit`, `runFork`, `runPromise`, `runResult`, `sandbox`, `scoped`, `service`, `sleep`, `succeed`, `sync`, `tapBoth`, `tapCause`, `tapError`, `tap`, `timed`, `timeout`, `toResultAsync`, `tryPromise`, `try`, `unless`, `unsandbox`, `unwrapOr`, `unwrapReason`, `validateAll`, `when`, `zip`<br>Instance: `andThen`, `asVoid`, `as`, `catchAll`, `catchCause`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `delay`, `ensuring`, `filterOrElse`, `flatMap`, `if`, `inspectBoth`, `inspectCause`, `inspectError`, `inspect`, `log`, `mapErr`, `mapError`, `map`, `matchTagsPartial`, `matchTags`, `match`, `onExit`, `orElseSucceed`, `orElse`, `pipe`, `provideServiceResolver`, `provideService`, `provideServices`, `retry`, `runExit`, `runFork`, `runPromise`, `runResult`, `sandbox`, `tapBoth`, `tapCause`, `tapError`, `tap`, `timed`, `timeout`, `toResultAsync`, `unless`, `unsandbox`, `unwrapOr`, `unwrapReason`, `when`, `zip` |
+| `ResultTask` | Class | Static: `acquireDisposable`, `acquireRelease`, `all`, `andThen`, `asVoid`, `as`, `catchAll`, `catchCause`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `delay`, `ensuring`, `err`, `fail`, `filterOrElse`, `firstSuccessOf`, `flatMap`, `fn`, `forEach`, `forkChild`, `fromCallback`, `fromPromise`, `fromResultAsync`, `fromResult`, `gen`, `if`, `inspectBoth`, `inspectCause`, `inspectError`, `inspect`, `iterate`, `loop`, `makeScope`, `makeSemaphore`, `mapErr`, `mapError`, `map`, `matchTagsPartial`, `matchTags`, `match`, `memoize`, `never`, `now`, `ok`, `onExit`, `orElseSucceed`, `orElse`, `provideServiceResolver`, `provideService`, `provideServices`, `raceAll`, `raceFirstAll`, `raceFirst`, `race`, `repeat`, `retry`, `runExit`, `runFork`, `runPromise`, `runResult`, `runSyncExit`, `runSync`, `sandbox`, `scoped`, `service`, `sleep`, `succeed`, `suspend`, `sync`, `tapBoth`, `tapCause`, `tapError`, `tap`, `timed`, `timeout`, `toResultAsync`, `tryPromise`, `try`, `unless`, `unsandbox`, `unwrapOr`, `unwrapReason`, `validateAll`, `when`, `withSpan`, `zip`<br>Instance: `andThen`, `asVoid`, `as`, `catchAll`, `catchCause`, `catchReason`, `catchReasons`, `catchTag`, `catchTags`, `delay`, `ensuring`, `filterOrElse`, `flatMap`, `forkChild`, `if`, `inspectBoth`, `inspectCause`, `inspectError`, `inspect`, `log`, `mapErr`, `mapError`, `map`, `matchTagsPartial`, `matchTags`, `match`, `onExit`, `orElseSucceed`, `orElse`, `pipe`, `provideServiceResolver`, `provideService`, `provideServices`, `repeat`, `retry`, `runExit`, `runFork`, `runPromise`, `runResult`, `runSyncExit`, `runSync`, `sandbox`, `scoped`, `tapBoth`, `tapCause`, `tapError`, `tap`, `timed`, `timeout`, `toResultAsync`, `unless`, `unsandbox`, `unwrapOr`, `unwrapReason`, `when`, `withSpan`, `zip` |
 | `ResultTaskAcquireReleaseOptions` | Type | `acquire`, `release` |
 | `ResultTaskCallbackContext` | Type | `reject`, `resolve`, `signal` |
-| `ResultTaskCauseError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `cause`, `message`, `name`, `stack` |
+| `ResultTaskCauseError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `cause`, `message`, `name`, `prettyCause`, `stack` |
 | `ResultTaskConcurrencyOptions` | Type | `concurrency` |
 | `ResultTaskFromCallbackOptions` | Type | `subscribe` |
 | `ResultTaskGenerator` | Type | — |
@@ -565,6 +585,8 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `ResultTaskLoopDiscardOptions` | Type | `body`, `discard`, `step`, `while` |
 | `ResultTaskLoopOptions` | Type | `body`, `discard`, `step`, `while` |
 | `ResultTaskMatchOptions` | Type | — |
+| `ResultTaskRepeatInput` | Type | — |
+| `ResultTaskRepeatOptions` | Type | `backoff`, `delayMs`, `jittered`, `maxDelayMs`, `maxElapsedMs`, `onRepeat`, `times`, `until`, `while` |
 | `ResultTaskRunOptions` | Type | — |
 | `ResultTaskScope` | Type | — |
 | `ResultTaskScopeOwner` | Type | `addFinalizer`, `close`, `use` |
@@ -579,8 +601,8 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `ResultTaskZipOptions` | Type | `concurrent` |
 | `Retry` | Value | `policy` |
 | `RetryContext` | Type | `attempt`, `nextAttempt`, `retriesRemaining` |
-| `RetryPolicy` | Type | `backoff`, `delayMs`, `jittered`, `onRetry`, `times`, `while` |
-| `RetryPolicyOptions` | Type | `backoff`, `delayMs`, `jittered`, `onRetry`, `times`, `while` |
+| `RetryPolicy` | Type | `backoff`, `delayMs`, `jittered`, `maxDelayMs`, `maxElapsedMs`, `onRetry`, `times`, `while` |
+| `RetryPolicyOptions` | Type | `backoff`, `delayMs`, `jittered`, `maxDelayMs`, `maxElapsedMs`, `onRetry`, `times`, `while` |
 | `revealRedacted` | Value | — |
 | `runPromise` | Value (deprecated) | — |
 | `runSync` | Value | — |
@@ -592,6 +614,9 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `serviceTag` | Value | — |
 | `ServiceTag` | Type | `_tag`, `identifier`, `key` |
 | `ServiceTagTypeId` | Value | `description`, `toString`, `valueOf` |
+| `SpanAttributes` | Type | — |
+| `SpanAttributeValue` | Type | — |
+| `SpanTraceFrame` | Type | `attributes`, `name` |
 | `StrictResult` | Type | — |
 | `StrictResultAsync` | Type | — |
 | `taggedEnum` | Value | — |
@@ -601,7 +626,12 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `TaggedErrorInstance` | Type | — |
 | `TaggedErrorOptions` | Type | `extends`, `message`, `name` |
 | `TaskClock` | Type | `now`, `random`, `sleep` |
+| `TaskLocal` | Value | `make` |
 | `TaskScheduler` | Type | `yield` |
+| `TaskSpan` | Type | `end`, `name`, `setAttribute` |
+| `TaskTracer` | Type | `startSpan` |
+| `TaskTracerStartOptions` | Type | `attributes`, `parent`, `startTime` |
+| `Tracer` | Value | `memory`, `noop` |
 | `try` | Value (deprecated) | — |
 | `tryAsync` | Value (deprecated) | — |
 | `tryCatch` | Value (deprecated) | — |
@@ -612,4 +642,4 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `TryResultOptions` | Type | `catch`, `try` |
 | `unit` | Value | — |
 | `unitAsync` | Value | — |
-| `VirtualClock` | Class | Instance: `advanceBy`, `flush`, `now`, `pending`, `random`, `sleep` |
+| `VirtualClock` | Class | Instance: `advanceBy`, `advanceToNext`, `flush`, `now`, `pending`, `random`, `runToCompletion`, `sleep` |

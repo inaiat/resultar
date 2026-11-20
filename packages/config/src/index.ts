@@ -66,31 +66,43 @@ const configError = (errors: readonly ErrorObject[]): ConfigError =>
     ),
   });
 
+interface CompiledConfigValidators<P extends TProperties> {
+  readonly schema: TObject<P>;
+  readonly normalize: (data: unknown) => boolean;
+  readonly ajv: Ajv;
+}
+
 /** Defines a lazy singleton configuration provider; explicit sources completely replace process.env. */
 export function defineAppConfig<P extends TProperties>(options: {
   readonly properties: P;
   readonly source?: Readonly<Record<string, string | undefined>>;
 }): AppConfigModule<P> {
+  let compiled: CompiledConfigValidators<P> | undefined = undefined;
   const module = createModule().task(
     "appConfig",
     [],
     () =>
       ResultTask.sync(() => {
-        const schema = Type.Object(options.properties, { additionalProperties: false });
-        const coercing = new Ajv({
-          allErrors: true,
-          coerceTypes: true,
-          useDefaults: true,
-          removeAdditional: true,
-          strictNumbers: true,
-          allowUnionTypes: true,
-        });
-        // Schema compilation failures are defects, not invalid environment input.
-        const normalize = coercing.compile(schema);
-        // Revalidate the normalized copy even when coercion reports other errors:
-        // this aggregates overflow and unrelated invalid fields in one failure.
-        const ajv = new Ajv({ allErrors: true, strictNumbers: true, allowUnionTypes: true });
-        ajv.compile(schema);
+        if (compiled === undefined) {
+          const schema = Type.Object(options.properties, { additionalProperties: false });
+          const coercing = new Ajv({
+            allErrors: true,
+            coerceTypes: true,
+            useDefaults: true,
+            removeAdditional: true,
+            strictNumbers: true,
+            allowUnionTypes: true,
+          });
+          // Schema compilation failures are defects, not invalid environment input.
+          const normalize = coercing.compile(schema) as (data: unknown) => boolean;
+          // Revalidate the normalized copy even when coercion reports other errors:
+          // this aggregates overflow and unrelated invalid fields in one failure.
+          const ajv = new Ajv({ allErrors: true, strictNumbers: true, allowUnionTypes: true });
+          ajv.compile(schema);
+          compiled = { schema, normalize, ajv };
+        }
+        const { schema, normalize, ajv } = compiled;
+        ajv.errors = undefined;
         const data = { ...(options.source ?? process.env) };
         normalize(data);
         try {

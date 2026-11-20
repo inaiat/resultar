@@ -617,7 +617,11 @@ describe('ResultTask Stryker Mutant Killers', () => {
       right: { _tag: 'Fail' as const, error: 'right' },
     }
     const causeErr = new ResultTaskCauseError(innerCause)
-    equal(causeErr.message, 'ResultTask execution failed with multiple causes')
+    equal(
+      causeErr.message,
+      'ResultTask execution failed with multiple causes:\nFail: left\nFail: right',
+    )
+    equal(causeErr.prettyCause, 'Fail: left\nFail: right')
     equal(causeErr.name, 'ResultTaskCauseError')
     equal(causeErr.cause, innerCause)
     const causeDescriptor = Object.getOwnPropertyDescriptor(causeErr, 'cause')

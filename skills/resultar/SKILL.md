@@ -77,12 +77,15 @@ compose fallible tasks; thrown callbacks become defects. Do not interchange them
 without checking behavior.
 
 Run Tasks only at application boundaries: `runResult`, `runPromise`, `runExit`,
-`runFork` (instance and static forms). `runResult` returns `ResultAsync`, maps a
-simple typed failure to `Err`, and rejects for defects, interruption, and composite
-causes. Use `runExit` to inspect every cause as a value. Provide required services
-with `provideService`, `provideServices`, `provideServiceResolver`, or runner options.
+`runSync`, `runSyncExit`, `runFork` (instance and static forms). `runResult` returns
+`ResultAsync`, maps a simple typed failure to `Err`, and rejects for defects, interruption,
+and composite causes. `runSync` / `runSyncExit` execute synchronous-only Tasks (`runSync`
+returns `Result<T, E | ScopeError<R>>`, `runSyncExit` returns `Exit<T, E | ScopeError<R>>`;
+both throw if an async step is encountered). Use `runExit` to inspect
+every cause as a value. Provide required services with `provideService`, `provideServices`,
+`provideServiceResolver`, or runner options; pass `{ tracer }` when opting into span tracing.
 
-Give resource-owning work an explicit `ResultTask.scoped` boundary. Roots also
+Give resource-owning work an explicit `task.scoped()` / `ResultTask.scoped(task)` boundary. Roots also
 own scopes; an explicit scope bounds resource lifetime within a larger workflow.
 Await finalizers and worker interruption before releasing dependencies. Default
 Promise interruption is `'wait'`; `'detach'` stops waiting for foreign work, not
@@ -92,7 +95,8 @@ that work itself. Timeouts cannot guarantee a deadline for uncooperative cleanup
 
 | Task | Read |
 | --- | --- |
-| Choose operators, runners, Cause/Fiber/Clock, Match or compatibility APIs | [API semantics](references/api.md) |
+| Choose operators, runners, Cause/Fiber/Clock/Ref/Deferred/Queue/TaskLocal/Tracer, Match or subpaths | [API semantics](references/api.md) |
+| Coming from Effect (API mapping & deliberate omissions) | [Coming from Effect](../../docs/coming-from-effect.md) |
 | Retry, concurrency, resources, testing | [Workflow patterns](references/patterns.md) |
 | DI, Hono, Fastify, NestJS, request/Zod/TypeBox | [Services and packages](references/services.md) |
 | HTTP, database sessions, callbacks and worker boundaries | [Integrations](references/integrations.md) |

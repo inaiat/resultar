@@ -1,0 +1,53 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+  DOC_LOADERS,
+  DOC_SLUGS,
+  NAV_SECTIONS,
+  SEARCH_INDEX,
+  SITE_META,
+} from "../src/generated/site-data.js";
+import { searchDocs } from "../src/search.js";
+
+void test("generated docs cover every nav item and all internal docs links resolve", async () => {
+  assert.ok(SITE_META.pageCount >= 25);
+  assert.equal(SITE_META.ruleCount, 42);
+
+  const slugSet = new Set(DOC_SLUGS);
+
+  for (const section of NAV_SECTIONS) {
+    for (const item of section.items) {
+      const loader = DOC_LOADERS[item.slug];
+      assert.ok(loader !== undefined, `Missing DOC_LOADERS entry for ${item.slug}`);
+      // eslint-disable-next-line no-await-in-loop -- Validate each generated page sequentially for clear diagnostics.
+      const page = await loader();
+      assert.ok(page.html.length > 100, `Expected non-empty HTML for ${item.slug}`);
+      for (const match of page.html.matchAll(/href="#\/docs\/([^"#]+)(?:#[^"]*)?"/gu)) {
+        const targetSlug = match[1];
+        assert.ok(
+          targetSlug !== undefined && slugSet.has(targetSlug),
+          `Page "${item.slug}" contains broken internal link to "#/docs/${String(targetSlug)}"`,
+        );
+      }
+    }
+  }
+});
+
+void test("search index finds guides, public API symbols, and all 42 resultar-check rules", () => {
+  const ruleEntries = SEARCH_INDEX.filter((entry) => entry.kind === "rule");
+  assert.equal(ruleEntries.length, 42);
+
+  const deferredHits = searchDocs(SEARCH_INDEX, "Deferred");
+  assert.ok(deferredHits.length > 0);
+  assert.equal(deferredHits[0]?.entry.title, "Deferred");
+
+  const ruleHits = searchDocs(SEARCH_INDEX, "no-discard");
+  assert.ok(ruleHits.length > 0);
+  assert.equal(ruleHits[0]?.entry.kind, "rule");
+  assert.equal(ruleHits[0]?.entry.title, "no-discard");
+
+  const effectHits = searchDocs(SEARCH_INDEX, "Coming from Effect");
+  assert.ok(effectHits.length > 0);
+  assert.equal(effectHits[0]?.entry.route, "#/docs/coming-from-effect");
+});

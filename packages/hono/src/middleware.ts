@@ -35,30 +35,34 @@ export function createHonoServices<S extends object, E, R, G extends ServiceGrap
   const active = new WeakSet<object>();
   let closing: ResultAsync<void, ServiceScopeError<R>> | undefined = undefined;
   return {
-    middleware: (keys, options) => async (context, next) => {
-      // A native middleware lifecycle violation is reported through Hono's error handler.
-      // resultar-check-disable-next-line prefer-tagged-error
-      if (closing !== undefined) throw new Error("Hono services are closed");
-      if (active.has(context) || context.get("services") !== undefined)
-        throw new TypeError("Only one services middleware may run per request");
-      active.add(context);
+    middleware: (keys, options) => {
       const getLocals = options?.locals;
-      // Hono Context is invariant in its environment; this context only adds the services variable.
-      const locals =
-        getLocals === undefined
-          ? {}
-          : await getLocals(context as unknown as Parameters<typeof getLocals>[0]);
-      // The public selection checks requirements; only the adapter erases dispatch types.
-      const scope = root.withServices(locals);
-      const dispatch = scope.fetch as unknown as (
-        keys: readonly string[],
-        handle: (values: Readonly<Record<string, unknown>>, request: Request) => Promise<Response>,
-      ) => (request: Request) => Promise<Response>;
-      context.res = await dispatch(keys, async (values) => {
-        context.set("services", values as never);
-        await next();
-        return context.res;
-      })(context.req.raw);
+      return async (context, next) => {
+        // A native middleware lifecycle violation is reported through Hono's error handler.
+        // resultar-check-disable-next-line prefer-tagged-error
+        if (closing !== undefined) throw new Error("Hono services are closed");
+        if (active.has(context) || context.get("services") !== undefined)
+          throw new TypeError("Only one services middleware may run per request");
+        active.add(context);
+        // Avoid allocating a child ServiceScope with empty locals when no locals factory is provided.
+        const withLocals = root.withServices as unknown as (values: object) => typeof root;
+        const scope =
+          getLocals === undefined
+            ? root
+            : withLocals(await getLocals(context as unknown as Parameters<typeof getLocals>[0]));
+        const dispatch = scope.fetch as unknown as (
+          keys: readonly string[],
+          handle: (
+            values: Readonly<Record<string, unknown>>,
+            request: Request,
+          ) => Promise<Response>,
+        ) => (request: Request) => Promise<Response>;
+        context.res = await dispatch(keys, async (values) => {
+          context.set("services", values as never);
+          await next();
+          return context.res;
+        })(context.req.raw);
+      };
     },
     close: () => {
       closing ??= ResultTask.runResult(root.close());

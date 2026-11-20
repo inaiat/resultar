@@ -1,3 +1,4 @@
+import type { Exit } from './result-task.js'
 import { hasScheduledTasks } from './task-scheduler.js'
 
 /**
@@ -146,6 +147,67 @@ export class VirtualClock implements TaskClock {
     const advancing = this.advancing.then(() => this.advance(milliseconds))
     this.advancing = advancing.catch(() => undefined)
     return advancing
+  }
+
+  /**
+   * Advances virtual time directly to the earliest pending sleeper deadline, waking all sleepers
+   * due at that instant. Returns `true` if a sleeper was woken or `false` if none are pending.
+   */
+  public advanceToNext(): Promise<boolean> {
+    const advancing = this.advancing.then(() => this.stepNext())
+    this.advancing = advancing.then(
+      () => undefined,
+      () => undefined,
+    )
+    return advancing
+  }
+
+  /**
+   * Runs `task` with this virtual clock and automatically advances through scheduled sleeps until
+   * it settles (or no sleepers remain). Guards against infinite timer loops via `maxSteps`.
+   */
+  public async runToCompletion<A, E>(
+    task: { readonly runExit: (options: { readonly clock: TaskClock }) => Promise<Exit<A, E>> },
+    options?: { readonly maxSteps?: number },
+  ): Promise<Exit<A, E>> {
+    const maxSteps = options?.maxSteps ?? 10_000
+    if (!Number.isSafeInteger(maxSteps) || maxSteps < 0) {
+      throw new RangeError(
+        'VirtualClock.runToCompletion maxSteps must be a non-negative safe integer',
+      )
+    }
+    let settled = false
+    const pending = task.runExit({ clock: this }).finally(() => {
+      settled = true
+    })
+    let steps = 0
+    for (;;) {
+      // eslint-disable-next-line no-await-in-loop
+      await this.flush()
+      if (settled) break
+      if (steps >= maxSteps) {
+        throw new RangeError(
+          `VirtualClock.runToCompletion exceeded ${maxSteps} virtual clock steps`,
+        )
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const advanced = await this.advanceToNext()
+      if (!advanced) break
+      steps += 1
+    }
+    return pending
+  }
+
+  private async stepNext(): Promise<boolean> {
+    await this.flush()
+    const next = this.nextDeadline()
+    if (next === undefined) return false
+    this.time = next
+    for (const sleeper of this.sleepers) {
+      if (sleeper.at <= this.time) sleeper.wake()
+    }
+    await this.flush()
+    return true
   }
 
   private async advance(milliseconds: number): Promise<void> {

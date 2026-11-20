@@ -198,4 +198,55 @@ describe("requestJsonTypeBox", () => {
     });
     assert.equal(wasInterrupted, true);
   });
+
+  it("matches identically across cached JIT and RESULTAR_JIT=0 fallback modes", async () => {
+    const schema = Type.Object({ id: Type.Number(), tags: Type.Array(Type.String()) });
+    const valid = { id: 7, tags: ["fast", "jit"] };
+    const invalid = { id: "bad", tags: [123] };
+
+    const runWithMode = async (mode: "1" | "0") => {
+      const previous = process.env.RESULTAR_JIT;
+      process.env.RESULTAR_JIT = mode;
+      try {
+        const firstValid = await requestJsonTypeBox({
+          request: async () => createFetchResponse(valid),
+          schema,
+        });
+        const secondValid = await requestJsonTypeBox({
+          request: async () => createFetchResponse(valid),
+          schema,
+        });
+        let capturedErrors: readonly unknown[] = [];
+        const invalidRes = await requestJsonTypeBox({
+          request: async () => createFetchResponse(invalid),
+          schema,
+          validationError: ({ errors }) => {
+            capturedErrors = errors;
+            return "invalid";
+          },
+        });
+        return {
+          firstOk: firstValid.isOk() ? firstValid.value : undefined,
+          secondOk: secondValid.isOk() ? secondValid.value : undefined,
+          invalidIsErr: invalidRes.isErr(),
+          capturedErrors,
+        };
+      } finally {
+        if (previous === undefined) {
+          delete process.env.RESULTAR_JIT;
+        } else {
+          process.env.RESULTAR_JIT = previous;
+        }
+      }
+    };
+
+    const jit = await runWithMode("1");
+    const fallback = await runWithMode("0");
+
+    assert.deepEqual(jit, fallback);
+    assert.deepEqual(jit.firstOk, valid);
+    assert.deepEqual(jit.secondOk, valid);
+    assert.equal(jit.invalidIsErr, true);
+    assert.equal(jit.capturedErrors.length, 2);
+  });
 });

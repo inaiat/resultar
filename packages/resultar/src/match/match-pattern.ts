@@ -148,33 +148,3 @@ export type MatchRemaining<Input, Pattern> =
     : Input extends unknown
       ? RemainingMember<Input, Pattern>
       : never
-
-const isObject = (value: unknown): value is Record<PropertyKey, unknown> =>
-  typeof value === 'object' && value !== null
-
-/** Compile once so reusable matchers do not inspect their patterns on every invocation. */
-export const compileMatchPattern = (pattern: unknown): Predicate<unknown> => {
-  if (typeof pattern === 'function') return pattern as Predicate<unknown>
-
-  if (Array.isArray(pattern)) {
-    const elements = (pattern as readonly unknown[]).map(compileMatchPattern)
-    return (value) =>
-      Array.isArray(value) &&
-      value.length >= elements.length &&
-      elements.every((matches, index) => matches(value[index]))
-  }
-
-  if (isObject(pattern)) {
-    const prototype: unknown = Object.getPrototypeOf(pattern)
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new TypeError('Match object patterns must be plain objects')
-    }
-    const entries = Reflect.ownKeys(pattern).map(
-      (key) => [key, compileMatchPattern(pattern[key])] as const,
-    )
-    return (value) =>
-      isObject(value) && entries.every(([key, matches]) => key in value && matches(value[key]))
-  }
-
-  return (value) => value === pattern
-}

@@ -18,10 +18,14 @@ export interface RetryContext {
 export interface RetryPolicyOptions<E = unknown> {
   /** Maximum number of retry attempts after the initial execution (`0` means no retries). */
   readonly times: number
-  /** Base delay in milliseconds (or a function of {@link RetryContext}) before backoff and jitter. */
-  readonly delayMs?: number | ((context: RetryContext) => number)
+  /** Base delay in milliseconds (or a function of `(context, error)`) before backoff, jitter, and capping. */
+  readonly delayMs?: number | ((context: RetryContext, error: E) => number)
   /** Exponential multiplier (`>= 1`) applied per retry (`base * backoff ** attempt`). */
   readonly backoff?: number
+  /** Upper bound in milliseconds on the computed delay after backoff and jitter. */
+  readonly maxDelayMs?: number
+  /** Total elapsed time budget in milliseconds across retries; stops retrying once exhausted. */
+  readonly maxElapsedMs?: number
   /** Symmetric jitter factor (`>= 0`). A factor of `0.5` varies delay within `[0.5 * d, 1.5 * d]`. */
   readonly jittered?: number
   /** Predicate evaluated when retry budget remains; returning `false` stops retrying immediately. */
@@ -55,6 +59,18 @@ export const validateRetryPolicy = <E>(options: RetryPolicyOptions<E>): void => 
   if (typeof options.delayMs === 'number') checkedRetryDelay(options.delayMs)
   if (options.backoff !== undefined && (!Number.isFinite(options.backoff) || options.backoff < 1)) {
     throw new RangeError('Retry backoff must be a finite number at least one')
+  }
+  if (
+    options.maxDelayMs !== undefined &&
+    (!Number.isFinite(options.maxDelayMs) || options.maxDelayMs < 0)
+  ) {
+    throw new RangeError('Retry maxDelayMs must be a finite non-negative number')
+  }
+  if (
+    options.maxElapsedMs !== undefined &&
+    (!Number.isFinite(options.maxElapsedMs) || options.maxElapsedMs < 0)
+  ) {
+    throw new RangeError('Retry maxElapsedMs must be a finite non-negative number')
   }
   if (
     options.jittered !== undefined &&
@@ -116,21 +132,39 @@ export const retryContext = (attempt: number, times: number): RetryContext => ({
 export const retryPolicyDelay = <E>(
   policy: RetryPolicy<E>,
   context: RetryContext,
-  random: () => number,
+  runtime: { readonly random: () => number; readonly error?: E },
 ): number => {
   const base = checkedRetryDelay(
-    typeof policy.delayMs === 'function' ? policy.delayMs(context) : (policy.delayMs ?? 0),
+    typeof policy.delayMs === 'function'
+      ? policy.delayMs(context, runtime.error as E)
+      : (policy.delayMs ?? 0),
   )
-  const delay = checkedRetryDelay(base === 0 ? 0 : base * (policy.backoff ?? 1) ** context.attempt)
+  let delay = checkedRetryDelay(base === 0 ? 0 : base * (policy.backoff ?? 1) ** context.attempt)
+  if (policy.maxDelayMs !== undefined && delay > policy.maxDelayMs) {
+    delay = policy.maxDelayMs
+  }
   const jittered = policy.jittered ?? 0
   if (jittered === 0 || delay === 0) return delay
-  const value = random()
+  const value = runtime.random()
   if (!Number.isFinite(value) || value < 0 || value > 1) {
     throw new RangeError('Retry random must return a finite number between zero and one')
   }
   const minimum = Math.max(0, delay - delay * jittered)
   const maximum = delay + delay * jittered
-  return checkedRetryDelay(minimum + (maximum - minimum) * value)
+  const computed = checkedRetryDelay(minimum + (maximum - minimum) * value)
+  return policy.maxDelayMs !== undefined && computed > policy.maxDelayMs
+    ? policy.maxDelayMs
+    : computed
+}
+
+/** Returns `true` when elapsed retry time plus `nextDelayMs` exceeds `maxElapsedMs`. */
+export const isRetryElapsedExceeded = (
+  maxElapsedMs: number | undefined,
+  timing: { readonly startedAt: number; readonly now: number; readonly nextDelayMs: number },
+): boolean => {
+  if (maxElapsedMs === undefined) return false
+  const elapsed = Math.max(0, timing.now - timing.startedAt)
+  return elapsed >= maxElapsedMs || elapsed + timing.nextDelayMs > maxElapsedMs
 }
 
 /** Internal best-effort hook shared by eager and lazy retry loops. */

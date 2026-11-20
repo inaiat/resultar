@@ -2,6 +2,14 @@
   "name": "@inaiat/resultar",
   "version": "4.1.1",
   "license": "MIT",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./result": "./src/entries/result.ts",
+    "./task": "./src/entries/task.ts",
+    "./match": "./src/entries/match.ts",
+    "./tagged": "./src/entries/tagged.ts",
+    "./retry": "./src/entries/retry.ts",
+    "./function": "./src/entries/function.ts"
+  },
   "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }
 }

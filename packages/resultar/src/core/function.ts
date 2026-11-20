@@ -1,5 +1,5 @@
-/* eslint-disable max-params */
-import { runPipe } from './pipe.js'
+/* eslint-disable max-params, prefer-rest-params, complexity */
+import { runPipe, runPipeArgs } from './pipe.js'
 import type { PipeFn } from './pipe.js'
 
 /**
@@ -97,8 +97,19 @@ export function pipe<A, B, C, D, E, F, G, H, I>(
   f6: PipeFn<G, H>,
   f7: PipeFn<H, I>,
 ): I
-export function pipe(value: unknown, ...functions: readonly PipeFn<never, unknown>[]): unknown {
-  return runPipe(value, functions)
+export function pipe(value: unknown): unknown {
+  return runPipeArgs(value, arguments, 1)
+}
+
+const invokeFirst = (
+  first: (...args: never[]) => unknown,
+  receiver: unknown,
+  args: IArguments,
+): unknown => {
+  if (receiver === undefined && args.length === 1) {
+    return (first as (arg: unknown) => unknown)(args[0])
+  }
+  return first.apply(receiver, args as unknown as never[])
 }
 
 /**
@@ -185,7 +196,54 @@ export function flow(
   first: (...args: never[]) => unknown,
   ...functions: readonly PipeFn<never, unknown>[]
 ): (this: unknown, ...args: readonly unknown[]) => unknown {
-  return function (this: unknown, ...args: readonly unknown[]): unknown {
-    return runPipe(first.apply(this, args as never[]), functions)
+  const length = functions.length
+  /* Stryker disable all: fixed-arity compositions are equivalent to runPipe(first.apply(this, args), functions). */
+  if (length === 0) {
+    return function (this: unknown): unknown {
+      return invokeFirst(first, this, arguments)
+    }
+  }
+  let allDefined = true
+  for (let index = 0; index < length; index += 1) {
+    if (functions[index] === undefined) {
+      allDefined = false
+      break
+    }
+  }
+  if (allDefined) {
+    if (length === 1) {
+      const f1 = functions[0] as PipeFn<unknown, unknown>
+      return function (this: unknown): unknown {
+        return f1(invokeFirst(first, this, arguments))
+      }
+    }
+    if (length === 2) {
+      const f1 = functions[0] as PipeFn<unknown, unknown>
+      const f2 = functions[1] as PipeFn<unknown, unknown>
+      return function (this: unknown): unknown {
+        return f2(f1(invokeFirst(first, this, arguments)))
+      }
+    }
+    if (length === 3) {
+      const f1 = functions[0] as PipeFn<unknown, unknown>
+      const f2 = functions[1] as PipeFn<unknown, unknown>
+      const f3 = functions[2] as PipeFn<unknown, unknown>
+      return function (this: unknown): unknown {
+        return f3(f2(f1(invokeFirst(first, this, arguments))))
+      }
+    }
+    if (length === 4) {
+      const f1 = functions[0] as PipeFn<unknown, unknown>
+      const f2 = functions[1] as PipeFn<unknown, unknown>
+      const f3 = functions[2] as PipeFn<unknown, unknown>
+      const f4 = functions[3] as PipeFn<unknown, unknown>
+      return function (this: unknown): unknown {
+        return f4(f3(f2(f1(invokeFirst(first, this, arguments)))))
+      }
+    }
+  }
+  /* Stryker restore all */
+  return function (this: unknown): unknown {
+    return runPipe(invokeFirst(first, this, arguments), functions)
   }
 }

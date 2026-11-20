@@ -2,12 +2,7 @@ import { dual } from '../core/dual.js'
 import { type ErrorConfig, createResultarError } from '../core/error.js'
 import { type FnPipe, Pipeable, runFnPipe } from '../core/pipe.js'
 import type { InferErrTypes, InferOkTypes } from '../core/utils.js'
-import {
-  callTaggedHandler,
-  hasTag,
-  isTaggedHandlerMatch,
-  matchTaggedOr,
-} from '../tagged/tagged-match.js'
+import { getTaggedHandler, hasTag, matchTaggedOr } from '../tagged/tagged-match.js'
 import type {
   CatchReasonHandlerResult,
   CatchTagHandlerResult,
@@ -37,13 +32,13 @@ import type {
   SafeTryOptions,
 } from '../result-async/generator-types.js'
 import {
+  acquireOkIterator,
   callSyncSideEffect,
   createEmptyResultsCollectionError,
   DisposableResult,
   getMatchErrorHandler,
   getReason,
   isIterable,
-  OkResultIterator,
 } from './result-helpers.js'
 import type {
   CombineResults,
@@ -1404,7 +1399,20 @@ class ResultNamespace {
   }
 }
 
-/** Static helpers for creating, combining, and iterating over Result values. */
+/**
+ * Static helpers for creating, combining, validating, and iterating over synchronous `Result` values.
+ *
+ * @example
+ * ```ts
+ * import { Result, ok, err } from 'resultar'
+ *
+ * const total = Result.gen(function* () {
+ *   const a = yield* ok(10)
+ *   const b = yield* ok(32)
+ *   return a + b
+ * })
+ * ```
+ */
 export const Result: ResultStatic = ResultNamespace
 
 abstract class ResultVariant<T, E> extends Pipeable {
@@ -1671,7 +1679,7 @@ class Ok<T, E> {
   }
 
   public [Symbol.iterator](): Generator<Result<never, E>, T> {
-    return new OkResultIterator(this.value) as unknown as Generator<Result<never, E>, T>
+    return acquireOkIterator(this.value) as unknown as Generator<Result<never, E>, T>
   }
 
   /** @deprecated Use `yield* result` inside Result.gen. */
@@ -1770,10 +1778,10 @@ class Err<T, E> {
     | InferErrTypes<CatchTagHandlerResult<Handlers>>
   > {
     const error = this.error
-    const handled = callTaggedHandler<CatchTagHandlerResult<Handlers>>(error, handlers)
+    const handler = getTaggedHandler<CatchTagHandlerResult<Handlers>>(error, handlers)
 
-    if (isTaggedHandlerMatch(handled)) {
-      return handled.value as Result<
+    if (handler !== undefined) {
+      return handler(error) as Result<
         T | InferOkTypes<CatchTagHandlerResult<Handlers>>,
         | ExcludeTag<E, CoveredHandlerKeys<Handlers> & string>
         | InferErrTypes<CatchTagHandlerResult<Handlers>>
@@ -2146,7 +2154,14 @@ export const safeTry: LegacySafeTry = ((
 ) => runResultGenerator(input, safeTryStep)) as LegacySafeTry
 
 /**
- * Creates an Ok result.
+ * Creates a successful `OkResult<T, E>`.
+ *
+ * @example
+ * ```ts
+ * import { ok } from 'resultar'
+ *
+ * const doubled = ok(21).map((n) => n * 2) // Ok(42)
+ * ```
  */
 export function ok<T, E = never>(value: T): OkResult<T, E>
 export function ok<E = never>(value: void): OkResult<void, E>
@@ -2155,7 +2170,14 @@ export function ok<T, E = never>(value: T): OkResult<T, E> {
 }
 
 /**
- * Creates an Err result.
+ * Creates a failed `ErrResult<T, E>`.
+ *
+ * @example
+ * ```ts
+ * import { err } from 'resultar'
+ *
+ * const failed = err(new Error('invalid input'))
+ * ```
  */
 export function err<T = never, E extends string = string>(err: E): ErrResult<T, E>
 export function err<T = never, E = unknown>(err: E): ErrResult<T, E>

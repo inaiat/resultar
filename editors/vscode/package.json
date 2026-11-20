@@ -1,0 +1,113 @@
+{
+  "name": "resultar-check",
+  "displayName": "Resultar Check",
+  "version": "0.1.0",
+  "description": "Live Resultar diagnostics, T/E/R channel hover, inline quickfixes, and safe autofix powered by the native TypeScript-Go resultar-check LSP.",
+  "categories": [
+    "Linters",
+    "Other",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "cursor",
+    "diagnostics",
+    "lsp",
+    "quickfix",
+    "resultar",
+    "resultar-check",
+    "typescript",
+    "vscode"
+  ],
+  "homepage": "https://github.com/inaiat/resultar/tree/main/editors/vscode",
+  "bugs": {
+    "url": "https://github.com/inaiat/resultar/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/inaiat/resultar.git",
+    "directory": "editors/vscode"
+  },
+  "publisher": "inaiat",
+  "type": "module",
+  "main": "./dist/extension.cjs",
+  "scripts": {
+    "build": "vp pack",
+    "check": "vp check",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "test": "vpx --test tests/extension.test.ts tests/lsp-client.test.ts",
+    "package:vsix": "npx @vscode/vsce package",
+    "publish:ovsx": "npx ovsx publish"
+  },
+  "contributes": {
+    "configuration": {
+      "title": "Resultar Check",
+      "properties": {
+        "resultarCheck.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable live Resultar Check diagnostics, hover, and quickfixes."
+        },
+        "resultarCheck.project": {
+          "type": "string",
+          "default": "tsconfig.json",
+          "description": "Path to the TypeScript project file (relative to workspace root or absolute)."
+        },
+        "resultarCheck.executablePath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to the resultar-check binary. Leave empty to resolve node_modules/.bin/resultar-check or pnpm exec resultar-check automatically."
+        },
+        "resultarCheck.trace": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages"
+          ],
+          "default": "off",
+          "description": "Log JSON-RPC messages exchanged with resultar-check lsp to the Resultar Check output channel."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "resultarCheck.restart",
+        "title": "Resultar Check: Restart Language Server"
+      },
+      {
+        "command": "resultarCheck.fixWorkspace",
+        "title": "Resultar Check: Apply Safe Fixes (Workspace)"
+      },
+      {
+        "command": "resultarCheck.fixFile",
+        "title": "Resultar Check: Apply Safe Fixes (Current File)"
+      },
+      {
+        "command": "resultarCheck.showOverview",
+        "title": "Resultar Check: Show Workflows, Errors & Services Overview"
+      },
+      {
+        "command": "resultarCheck.showOutput",
+        "title": "Resultar Check: Show Output Channel"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "resultarCheck.fixFile",
+          "when": "editorLangId == typescript || editorLangId == typescriptreact",
+          "group": "1_modification@50"
+        }
+      ]
+    }
+  },
+  "activationEvents": [
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "workspaceContains:**/tsconfig.json"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  }
+}

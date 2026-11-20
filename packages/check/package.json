@@ -45,9 +45,10 @@
     "native:build:current": "node scripts/build-native-binaries.ts --current",
     "native:check": "go -C native run ./cmd/resultar-check --project ../tsconfig.json",
     "native:fmt": "gofmt -w native/cmd native/internal",
-    "test": "pnpm run native:test && pnpm run schema:test",
+    "test": "pnpm run native:test && pnpm run schema:test && pnpm run setup:test",
     "native:test": "go -C native test ./...",
     "schema:test": "vpx --test scripts/schema.test.ts",
+    "setup:test": "vpx --test scripts/setup.test.ts",
     "prepare": "vp config || true",
     "prepublishOnly": "vp pack",
     "smoke:package": "pnpm run build && pnpm run native:build:current && vpx scripts/smoke-package.ts"

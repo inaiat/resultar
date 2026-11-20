@@ -1,5 +1,6 @@
 import type { ResultAsync, ResultTask } from "resultar";
 import type { Static, TSchema } from "typebox";
+import { Compile, type Validator } from "typebox/compile";
 import Value from "typebox/value";
 
 import {
@@ -40,6 +41,39 @@ export type RequestJsonTypeBoxTaskMappedInput<
   R extends RequestJsonResponseData = RequestJsonResponseData,
 > = RequestJsonTypeBoxTaskInput<S, R> & { readonly mapError: M };
 
+const compiledValidators = new WeakMap<TSchema, Validator>();
+const uncompilableSchemas = new WeakSet<TSchema>();
+
+const isJitDisabled = (): boolean => {
+  try {
+    const env = (
+      globalThis as { readonly process?: { readonly env?: { readonly RESULTAR_JIT?: string } } }
+    ).process?.env;
+    const flag = env?.RESULTAR_JIT;
+    return flag === "0" || flag === "false";
+  } catch {
+    return false;
+  }
+};
+
+const getCompiledValidator = (schema: TSchema): Validator | undefined => {
+  if (isJitDisabled() || uncompilableSchemas.has(schema)) {
+    return undefined;
+  }
+  const cached = compiledValidators.get(schema);
+  if (cached !== undefined) {
+    return cached;
+  }
+  try {
+    const validator = Compile(schema);
+    compiledValidators.set(schema, validator);
+    return validator;
+  } catch {
+    uncompilableSchemas.add(schema);
+    return undefined;
+  }
+};
+
 const getTypeBoxErrors = (schema: TSchema, value: unknown) =>
   [...Value.Errors(schema, value)].map((error) => ({
     code: error.keyword,
@@ -47,12 +81,15 @@ const getTypeBoxErrors = (schema: TSchema, value: unknown) =>
     path: error.instancePath,
   }));
 
-const decodeWithTypeBoxSchema =
-  <S extends TSchema>(schema: S) =>
-  (value: unknown): RequestJsonDecodeResult<Static<S>> =>
-    Value.Check(schema, value)
-      ? { success: true, value }
+const decodeWithTypeBoxSchema = <S extends TSchema>(schema: S) => {
+  const validator = getCompiledValidator(schema);
+  return (value: unknown): RequestJsonDecodeResult<Static<S>> => {
+    const valid = validator === undefined ? Value.Check(schema, value) : validator.Check(value);
+    return valid
+      ? { success: true, value: value as Static<S> }
       : { errors: getTypeBoxErrors(schema, value), success: false };
+  };
+};
 
 /**
  * Executes a JSON request and validates the decoded value with TypeBox.

@@ -1,13 +1,14 @@
 {
   "name": "resultar",
   "version": "4.1.1",
-  "description": "Result pattern for TypeScript",
+  "description": "Typed error handling, lazy ResultTask workflows, structured concurrency, and opt-in observability for TypeScript.",
   "keywords": [
     "error-handling",
     "functional-programming",
     "result",
     "result-pattern",
-    "resultasync",
+    "result-task",
+    "structured-concurrency",
     "tagged-errors",
     "typescript"
   ],
@@ -33,11 +34,36 @@
     "dist"
   ],
   "type": "module",
+  "sideEffects": false,
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./result": {
+      "types": "./dist/result.d.ts",
+      "import": "./dist/result.js"
+    },
+    "./task": {
+      "types": "./dist/task.d.ts",
+      "import": "./dist/task.js"
+    },
+    "./match": {
+      "types": "./dist/match.d.ts",
+      "import": "./dist/match.js"
+    },
+    "./tagged": {
+      "types": "./dist/tagged.d.ts",
+      "import": "./dist/tagged.js"
+    },
+    "./retry": {
+      "types": "./dist/retry.d.ts",
+      "import": "./dist/retry.js"
+    },
+    "./function": {
+      "types": "./dist/function.d.ts",
+      "import": "./dist/function.js"
     }
   },
   "scripts": {

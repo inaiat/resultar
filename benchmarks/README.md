@@ -23,6 +23,18 @@ pnpm --filter resultar-benchmarks run bench:neverthrow
 pnpm --filter resultar-benchmarks run bench:task
 # (also available via: pnpm --filter resultar run bench:task)
 
+# Reused ResultTask tiered JIT chains vs JIT=0 fallback vs Effect v4
+pnpm --filter resultar-benchmarks run bench:task-hot
+
+# Match & createTaggedError JIT compilation vs fallback vs manual switch
+pnpm --filter resultar-benchmarks run bench:match
+
+# resultar-di + resultar-hono HTTP tiers (Tier 0/1/2) vs raw Hono
+pnpm --filter resultar-benchmarks run bench:di-http
+
+# TypeBox Compile(schema) JIT vs Value.Check and requestJsonTypeBoxTask end-to-end
+pnpm --filter resultar-benchmarks run bench:typebox
+
 # Functional ergonomics (pipe, flow, ResultTask.fn)
 pnpm --filter resultar-benchmarks run bench:function
 # (also available via: pnpm --filter resultar run bench:function)
@@ -142,13 +154,52 @@ Measures `ResultTask` construction and execution at 10, 100, 1,000, and 10,000 s
 Measures root `pipe`, reused `flow`, Task `fn`/`gen` construction, and repeated execution through `ResultTask.runPromise` (500,000 iterations for construction/pipe, 10,000 runs for repeated execution; median of 5 samples after warmup):
 
 ```text
-previous pipe (slice): median 12.20 ms (500,000 iterations)
-root pipe:             median 8.13 ms (500,000 iterations)
-reused flow:           median 8.43 ms (500,000 iterations)
-fn construction:       median 2.52 ms (500,000 iterations)
-manual gen construction: median 4.03 ms (500,000 iterations)
-fn repeated execution: 1.78 ms (10,000 runs)
+previous pipe (slice): median 14.38 ms (500,000 iterations)
+root pipe:             median 8.57 ms (500,000 iterations)
+reused flow:           median 2.29 ms (500,000 iterations)
+fn construction:       median 2.44 ms (500,000 iterations)
+manual gen construction: median 5.18 ms (500,000 iterations)
+fn repeated execution: 1.85 ms (10,000 runs)
 ```
+
+---
+
+## JIT & Specialization Suites (RFC 0011)
+
+Measured on Node.js v26.13.1, Apple Silicon (`darwin/arm64`), median of 5 samples after warmup. Toggle `RESULTAR_JIT=0` to benchmark the CSP/Edge fallback path directly.
+
+### `resultar-match.ts` (`bench:match`)
+
+| Scenario | `RESULTAR_JIT=1` (`op/s`) | `RESULTAR_JIT=0` (`op/s`) | Speedup |
+| :--- | ---: | ---: | ---: |
+| `Match` 8-tag `tagsExhaustive` | `250,388,666 op/s` | `108,521,664 op/s` | **2.31x** |
+| `Match` nested object + array + built-in guards | `264,570,632 op/s` | `18,251,103 op/s` | **14.50x** |
+| `createTaggedError` 3-var template (incl. `Error` stack capture) | `874,439 op/s` | `864,500 op/s` | **1.01x** |
+
+### `resultar-task-hot.ts` (`bench:task-hot`)
+
+| Reused Chain Scenario (100,000 runs) | `Resultar` (`JIT=1`) | `Resultar` (`JIT=0`) | `Effect` v4 | vs `JIT=0` / vs `Effect` |
+| :--- | ---: | ---: | ---: | ---: |
+| 10-step `map + andThen` | `20,111,955 op/s` | `8,012,018 op/s` | `3,199,190 op/s` | **2.51x** / **6.29x** |
+| 50-step `map + andThen` | `5,020,154 op/s` | `2,150,861 op/s` | `898,224 op/s` | **2.33x** / **5.59x** |
+| `catchTag + mapErr` recovery | `22,484,961 op/s` | `8,373,807 op/s` | `3,406,966 op/s` | **2.69x** / **6.60x** |
+
+### `resultar-di-http.ts` (`bench:di-http`)
+
+| HTTP Request Scenario (25,000 reqs) | Throughput (`req/s`) | Comparison |
+| :--- | ---: | :--- |
+| Raw `Hono` (no DI) | `1,061,485 req/s` | Baseline |
+| `resultar-di` Tier 0 (singleton) + `resultar-hono` | `458,241 req/s` | **8.47x** vs Tier 2 (+1.24 µs vs raw Hono) |
+| `resultar-di` Tier 1 (scoped + transient + locals) + `resultar-hono` | `349,828 req/s` | **6.47x** vs Tier 2 |
+| `resultar-di` Tier 2 (scoped resource `acquire`/`release`) + `resultar-hono` | `54,070 req/s` | Full `TaskScope` + streaming cleanup |
+| `resultar-di` direct `root.fetch` 8-service Tier 1 (`JIT=1` vs `JIT=0`) | `1,684,792 req/s` vs `1,209,753 req/s` | **1.39x** JIT speedup (`0.59 µs/req`) |
+
+### `resultar-typebox.ts` (`bench:typebox`)
+
+| Validation Scenario | `JIT=1` (`Compile`) | `JIT=0` (`Value.Check`) | Speedup |
+| :--- | ---: | ---: | ---: |
+| Direct schema check (nested object + union array) | `108,126,601 op/s` | `154,982 op/s` | **697.67x** |
+| `requestJsonTypeBoxTask` end-to-end (`Response` + JSON + validate) | `363,030 op/s` | `104,856 op/s` | **3.46x** |
 
 ---
 

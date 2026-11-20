@@ -10,7 +10,17 @@ import type {
   MatchRefinement,
   MatchRemaining,
 } from './match-pattern.js'
-import { compileMatchPattern } from './match-pattern.js'
+import {
+  compileMatcher,
+  parseMatchPatternIr,
+  parseTableCaseIr,
+  resolveCaseIr,
+  type MatchBuiltinEmitter,
+  type MatchCaseIr,
+  type MatchHandler,
+  type MatchMode,
+  type MatchOutcomeKind,
+} from './match-jit.js'
 
 export type { MatchPattern, MatchRefinement } from './match-pattern.js'
 
@@ -242,52 +252,64 @@ export interface MatchMatcher<
   option: () => Output<Input, MatchOption<Matched>, Kind, Args>
 }
 
-type Handler = (value: never, ...args: readonly unknown[]) => unknown
-type Case = (value: unknown) => Handler | undefined
+type Handler = MatchHandler
 type Selection = { readonly matched: false } | { readonly matched: true; readonly value: unknown }
 const noMatch: Selection = { matched: false }
 const unmatched = (): never => {
   throw new TypeError('Match: no case matched the input')
 }
-const property = (value: unknown, key: PropertyKey): unknown =>
-  (typeof value === 'object' || typeof value === 'function') && value !== null
-    ? (value as Record<PropertyKey, unknown>)[key]
-    : undefined
-const predicateCase =
-  (matches: (value: unknown) => boolean, handler: Handler): Case =>
-  (input) =>
-    matches(input) ? handler : undefined
-const tableCases = (key: PropertyKey, handlers: object): readonly Case[] => {
-  const table = new Map<PropertyKey, Handler>()
-  for (const tag of Reflect.ownKeys(handlers)) {
-    const handler = (handlers as Record<PropertyKey, unknown>)[tag]
-    if (handler !== undefined) {
-      if (typeof handler !== 'function') throw new TypeError('Match handlers must be functions')
-      table.set(tag, handler as Handler)
-    }
-  }
-  if (table.size === 0) return []
-  return [
-    (input: unknown) => {
-      const actual = property(input, key)
-      return table.get(typeof actual === 'number' ? String(actual) : (actual as PropertyKey))
-    },
-  ]
-}
+
+const isStringPredicate = (input: unknown): input is string => typeof input === 'string'
+const isNumberPredicate = (input: unknown): input is number => typeof input === 'number'
+const isBooleanPredicate = (input: unknown): input is boolean => typeof input === 'boolean'
+const isBigintPredicate = (input: unknown): input is bigint => typeof input === 'bigint'
+const isSymbolPredicate = (input: unknown): input is symbol => typeof input === 'symbol'
+const isNullPredicate = (input: unknown): input is null => input === null
+const isDatePredicate = (input: unknown): input is Date => input instanceof Date
+const isRecordPredicate = ((input: unknown) =>
+  typeof input === 'object' && input !== null && !Array.isArray(input)) as MatchRefinement<
+  Record<PropertyKey, unknown>,
+  never
+>
+const isNonEmptyStringPredicate = ((input: unknown) =>
+  typeof input === 'string' && input.length > 0) as MatchRefinement<string, never>
+const isDefinedPredicate = (input: unknown): input is DefinedValue =>
+  input !== null && input !== undefined
+const isAnyPredicate = (_input: unknown): _input is unknown => true
+
+const builtinPredicates: ReadonlyMap<unknown, MatchBuiltinEmitter> = new Map<
+  unknown,
+  MatchBuiltinEmitter
+>([
+  [isStringPredicate, (expr) => `typeof ${expr} === "string"`],
+  [isNumberPredicate, (expr) => `typeof ${expr} === "number"`],
+  [isBooleanPredicate, (expr) => `typeof ${expr} === "boolean"`],
+  [isBigintPredicate, (expr) => `typeof ${expr} === "bigint"`],
+  [isSymbolPredicate, (expr) => `typeof ${expr} === "symbol"`],
+  [isNullPredicate, (expr) => `${expr} === null`],
+  [isDatePredicate, (expr) => `${expr} instanceof Date`],
+  [
+    isRecordPredicate,
+    (expr) => `(typeof ${expr} === "object" && ${expr} !== null && !Array.isArray(${expr}))`,
+  ],
+  [isNonEmptyStringPredicate, (expr) => `(typeof ${expr} === "string" && ${expr}.length > 0)`],
+  [isDefinedPredicate, (expr) => `(${expr} !== null && ${expr} !== undefined)`],
+  [isAnyPredicate, () => 'true'],
+])
 
 class Matcher extends Pipeable {
-  readonly #kind: Mode
+  readonly #kind: MatchMode
   readonly #input: unknown
   readonly #select: (...args: readonly unknown[]) => unknown
-  readonly #cases: readonly Case[]
+  readonly #cases: readonly MatchCaseIr[]
   readonly #selection: Selection
   // Internal persistent state has five independent fields.
   // eslint-disable-next-line max-params
   public constructor(
-    kind: Mode,
+    kind: MatchMode,
     input: unknown,
     select: (...args: readonly unknown[]) => unknown,
-    cases: readonly Case[] = [],
+    cases: readonly MatchCaseIr[] = [],
     selection: Selection = noMatch,
   ) {
     super()
@@ -297,12 +319,12 @@ class Matcher extends Pipeable {
     this.#cases = cases
     this.#selection = selection
   }
-  public add(cases: readonly Case[]): Matcher {
+  public add(cases: readonly MatchCaseIr[]): Matcher {
     if (this.#kind !== 'value')
       return new Matcher(this.#kind, this.#input, this.#select, [...this.#cases, ...cases])
     if (this.#selection.matched) return this
-    for (const resolveCase of cases) {
-      const handler = resolveCase(this.#input)
+    for (const item of cases) {
+      const handler = resolveCaseIr(item, this.#input)
       if (handler !== undefined)
         return new Matcher('value', this.#input, this.#select, [], {
           matched: true,
@@ -312,38 +334,31 @@ class Matcher extends Pipeable {
     return this
   }
   public when(pattern: unknown, handler: Handler): Matcher {
-    return this.add([predicateCase(compileMatchPattern(pattern), handler)])
+    return this.add([{ kind: 'pattern', pattern: parseMatchPatternIr(pattern), handler }])
   }
   public whenOr(...patternsAndHandler: readonly unknown[]): Matcher {
-    const patterns = patternsAndHandler.slice(0, -1).map(compileMatchPattern)
-    return this.add([
-      predicateCase(
-        (input) => patterns.some((matches) => matches(input)),
-        patternsAndHandler.at(-1) as Handler,
-      ),
-    ])
+    const patterns = patternsAndHandler.slice(0, -1).map(parseMatchPatternIr)
+    return this.add([{ kind: 'or', patterns, handler: patternsAndHandler.at(-1) as Handler }])
   }
   public whenAnd(...patternsAndHandler: readonly unknown[]): Matcher {
-    const patterns = patternsAndHandler.slice(0, -1).map(compileMatchPattern)
-    return this.add([
-      predicateCase(
-        (input) => patterns.every((matches) => matches(input)),
-        patternsAndHandler.at(-1) as Handler,
-      ),
-    ])
+    const patterns = patternsAndHandler.slice(0, -1).map(parseMatchPatternIr)
+    return this.add([{ kind: 'and', patterns, handler: patternsAndHandler.at(-1) as Handler }])
   }
   public not(pattern: unknown, handler: Handler): Matcher {
-    const matches = compileMatchPattern(pattern)
-    return this.add([predicateCase((input) => !matches(input), handler)])
+    return this.add([{ kind: 'not', pattern: parseMatchPatternIr(pattern), handler }])
   }
   public tag(...tagsAndHandler: readonly unknown[]): Matcher {
-    const tags = new Set(tagsAndHandler.slice(0, -1))
     return this.add([
-      predicateCase((input) => tags.has(property(input, '_tag')), tagsAndHandler.at(-1) as Handler),
+      {
+        kind: 'tagSet',
+        key: '_tag',
+        tags: tagsAndHandler.slice(0, -1),
+        handler: tagsAndHandler.at(-1) as Handler,
+      },
     ])
   }
   public tags(handlers: object): Matcher {
-    return this.add(tableCases('_tag', handlers))
+    return this.add(parseTableCaseIr('_tag', handlers))
   }
   public tagsExhaustive(handlers: object): unknown {
     return this.tags(handlers).exhaustive()
@@ -355,33 +370,33 @@ class Matcher extends Pipeable {
     return this.orElse(unmatched)
   }
   public orElse(handler: Handler): unknown {
-    return this.finish((selected) => selected, handler)
+    return this.finish('direct', handler)
   }
   public result(): unknown {
-    return this.finish(ok, err)
+    return this.finish('result', unmatched)
   }
   public option(): unknown {
-    return this.finish(
-      (selected) => ({ _tag: 'Some', value: selected }),
-      () => ({ _tag: 'None' }),
-    )
+    return this.finish('option', unmatched)
   }
-  public finish(matched: (value: unknown) => unknown, fallback: Handler): unknown {
-    if (this.#kind === 'value')
-      return this.#selection.matched
-        ? matched(this.#selection.value)
-        : fallback(this.#input as never)
-    return (...args: readonly unknown[]) => {
-      const input = this.#select(...args)
-      let handlerArgs = args
-      if (this.#kind === 'context') handlerArgs = args.slice(1)
-      else if (this.#kind === 'type') handlerArgs = []
-      for (const resolveCase of this.#cases) {
-        const handler = resolveCase(input)
-        if (handler !== undefined) return matched(handler(input as never, ...handlerArgs))
+  public finish(outcome: MatchOutcomeKind, fallback: Handler): unknown {
+    if (this.#kind === 'value') {
+      if (this.#selection.matched) {
+        if (outcome === 'result') return ok(this.#selection.value)
+        if (outcome === 'option') return { _tag: 'Some', value: this.#selection.value }
+        return this.#selection.value
       }
-      return fallback(input as never, ...handlerArgs)
+      if (outcome === 'result') return err(this.#input)
+      if (outcome === 'option') return { _tag: 'None' }
+      return fallback(this.#input as never)
     }
+    return compileMatcher({
+      kind: this.#kind,
+      select: this.#select,
+      cases: this.#cases,
+      outcome,
+      fallback,
+      builtins: builtinPredicates,
+    })
   }
 }
 
@@ -622,39 +637,33 @@ type AddPrefix<Key extends PropertyKey> = <
 const discriminators =
   <Key extends PropertyKey>(key: Key): AddTable<Key, false> =>
   (handlers) => {
-    const compiled = tableCases(key, handlers)
+    const compiled = parseTableCaseIr(key, handlers)
     return (self) => runtime(self).add(compiled) as never
   }
 const discriminatorsExhaustive =
   <Key extends PropertyKey>(key: Key): AddTable<Key, true> =>
   (handlers) => {
-    const compiled = tableCases(key, handlers)
+    const compiled = parseTableCaseIr(key, handlers)
     return (self) => runtime(self).add(compiled).exhaustive() as never
   }
 const discriminator =
   <Key extends PropertyKey>(key: Key): AddDiscriminator<Key> =>
   (...tagsAndHandler) =>
-  (self) => {
-    const selected = new Set<unknown>(tagsAndHandler.slice(0, -1))
-    return runtime(self).add([
-      predicateCase(
-        (input) => selected.has(property(input, key)),
-        tagsAndHandler.at(-1) as Handler,
-      ),
+  (self) =>
+    runtime(self).add([
+      {
+        kind: 'tagSet',
+        key,
+        tags: tagsAndHandler.slice(0, -1),
+        handler: tagsAndHandler.at(-1) as Handler,
+      },
     ]) as never
-  }
 const discriminatorStartsWith =
   <Key extends PropertyKey>(key: Key): AddPrefix<Key> =>
   (prefix, handler) =>
   (self) =>
     runtime(self).add([
-      predicateCase(
-        (input) => {
-          const discriminatorValue = property(input, key)
-          return typeof discriminatorValue === 'string' && discriminatorValue.startsWith(prefix)
-        },
-        handler as unknown as Handler,
-      ),
+      { kind: 'tagPrefix', key, prefix, handler: handler as unknown as Handler },
     ]) as never
 
 const tags: AddTable<'_tag', false> = discriminators('_tag')
@@ -725,9 +734,32 @@ function valueTags<Input extends { readonly _tag: string }, const Cases extends 
   handlers: Cases & Table<Input, '_tag', unknown, []> & ExactHandlers<Cases, Input['_tag']>,
 ): (input: TableInput<Input, '_tag'>) => HandlerOutput<Cases>
 function valueTags(inputOrHandlers: object, handlers?: object): unknown {
-  return handlers === undefined
-    ? new Matcher('type', undefined, identity).tagsExhaustive(inputOrHandlers)
-    : new Matcher('value', inputOrHandlers, identity).tagsExhaustive(handlers)
+  if (handlers === undefined) {
+    return new Matcher('type', undefined, identity).tagsExhaustive(inputOrHandlers)
+  }
+  for (const key of Reflect.ownKeys(handlers)) {
+    const entry = (handlers as Record<PropertyKey, unknown>)[key]
+    if (entry !== undefined && typeof entry !== 'function') {
+      throw new TypeError('Match handlers must be functions')
+    }
+  }
+  if (
+    inputOrHandlers !== null &&
+    (typeof inputOrHandlers === 'object' || typeof inputOrHandlers === 'function')
+  ) {
+    const rawTag = (inputOrHandlers as { readonly _tag?: unknown })._tag
+    const lookupKey = typeof rawTag === 'number' ? String(rawTag) : (rawTag as PropertyKey)
+    if (
+      (typeof lookupKey === 'string' || typeof lookupKey === 'symbol') &&
+      Object.hasOwn(handlers, lookupKey)
+    ) {
+      const handler = (handlers as Record<PropertyKey, unknown>)[lookupKey]
+      if (handler !== undefined) {
+        return (handler as Handler)(inputOrHandlers as never)
+      }
+    }
+  }
+  return unmatched()
 }
 const withReturnType =
   <Target>() =>
@@ -883,20 +915,15 @@ export const Match: {
   instanceOf,
   instanceOfUnsafe,
   is,
-  string: (input): input is string => typeof input === 'string',
-  number: (input): input is number => typeof input === 'number',
-  boolean: (input): input is boolean => typeof input === 'boolean',
-  bigint: (input): input is bigint => typeof input === 'bigint',
-  symbol: (input): input is symbol => typeof input === 'symbol',
-  null: (input): input is null => input === null,
-  date: (input): input is Date => input instanceof Date,
-  record: ((input: unknown) =>
-    typeof input === 'object' && input !== null && !Array.isArray(input)) as MatchRefinement<
-    Record<PropertyKey, unknown>,
-    never
-  >,
-  nonEmptyString: ((input: unknown) =>
-    typeof input === 'string' && input.length > 0) as MatchRefinement<string, never>,
-  defined: (input): input is DefinedValue => input !== null && input !== undefined,
-  any: (_input): _input is unknown => true,
+  string: isStringPredicate,
+  number: isNumberPredicate,
+  boolean: isBooleanPredicate,
+  bigint: isBigintPredicate,
+  symbol: isSymbolPredicate,
+  null: isNullPredicate,
+  date: isDatePredicate,
+  record: isRecordPredicate,
+  nonEmptyString: isNonEmptyStringPredicate,
+  defined: isDefinedPredicate,
+  any: isAnyPredicate,
 }

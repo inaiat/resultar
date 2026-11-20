@@ -9,17 +9,26 @@
     "bench:neverthrow": "pnpm run bench",
     "bench:stable": "pnpm --filter resultar build && node --import vite-plus/register resultar-vs-stable.ts",
     "bench:task": "pnpm --filter resultar build && node --import vite-plus/register resultar-task-chains.ts",
+    "bench:task-hot": "pnpm --filter resultar build && node --import vite-plus/register resultar-task-hot.ts",
+    "bench:match": "pnpm --filter resultar build && node --import vite-plus/register resultar-match.ts",
+    "bench:di-http": "pnpm --filter resultar --filter resultar-di --filter resultar-hono build && node --import vite-plus/register resultar-di-http.ts",
+    "bench:typebox": "pnpm --filter resultar --filter resultar-request --filter resultar-request-typebox build && node --import vite-plus/register resultar-typebox.ts",
     "bench:effect": "pnpm --filter resultar build && node --import vite-plus/register resultar-vs-effect.ts",
     "bench:function": "pnpm --filter resultar build && node --import vite-plus/register resultar-functional-ergonomics.ts"
   },
   "dependencies": {
-    "resultar": "workspace:*"
+    "resultar": "workspace:*",
+    "resultar-di": "workspace:*",
+    "resultar-hono": "workspace:*",
+    "resultar-request-typebox": "workspace:*"
   },
   "devDependencies": {
     "cronometro": "^7.0.1",
     "effect": "^4.1.2",
+    "hono": "catalog:",
     "neverthrow": "^8.2.0",
     "resultar-check": "workspace:*",
+    "typebox": "catalog:",
     "typescript": "catalog:"
   }
 }

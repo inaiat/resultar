@@ -54,7 +54,23 @@ class RedactedValue<T> {
 }
 
 /**
- * Wraps a sensitive value so tagged-error messages and JSON output show only a placeholder.
+ * Wraps a sensitive value so tagged-error messages, string interpolation, and JSON output emit
+ * only a placeholder (`<redacted>` or `<redacted:label>`).
+ *
+ * @example
+ * ```ts
+ * import { createTaggedError, redact, revealRedacted } from 'resultar'
+ *
+ * class AuthError extends createTaggedError({
+ *   name: 'AuthError',
+ *   message: 'Rejected token $token',
+ * }) {}
+ *
+ * const token = redact('sk_live_secret', 'apiKey')
+ * const error = new AuthError({ token })
+ * error.message // 'Rejected token <redacted:apiKey>'
+ * revealRedacted(token) // 'sk_live_secret'
+ * ```
  */
 export const redact = <T>(value: T, label?: string): Redacted<T> =>
   new RedactedValue(value, label) as unknown as Redacted<T>

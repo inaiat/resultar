@@ -14,6 +14,18 @@ const requiredFiles = [
   'README.md',
   'dist/index.d.ts',
   'dist/index.js',
+  'dist/result.d.ts',
+  'dist/result.js',
+  'dist/task.d.ts',
+  'dist/task.js',
+  'dist/match.d.ts',
+  'dist/match.js',
+  'dist/tagged.d.ts',
+  'dist/tagged.js',
+  'dist/retry.d.ts',
+  'dist/retry.js',
+  'dist/function.d.ts',
+  'dist/function.js',
   'dist/llms.txt',
   'dist/agent/SKILL.md',
   'dist/agent/versions.json',
@@ -79,11 +91,14 @@ const expectedExports = [
   'AbortError',
   'Cause',
   'Clock',
+  'Deferred',
   'DisposableResult',
   'DisposableResultAsync',
   'Fiber',
   'Match',
   'MissingServiceError',
+  'Queue',
+  'Ref',
   'Result',
   'ResultAsync',
   'ResultTask',
@@ -94,6 +109,8 @@ const expectedExports = [
   'Scheduler',
   'Semaphore',
   'ServiceTagTypeId',
+  'TaskLocal',
+  'Tracer',
   'VirtualClock',
   'constant',
   'createTaggedError',
@@ -284,6 +301,27 @@ try {
   writeFileSync(
     consumer,
     `import { Fiber, ResultTask, type Result, type Exit, type FiberHandle } from 'resultar';
+import { ok as subOk } from 'resultar/result';
+import { Deferred as SubDeferred, Queue as SubQueue, Ref as SubRef, TaskLocal as SubLocal, Tracer as SubTracer } from 'resultar/task';
+import { Match as SubMatch } from 'resultar/match';
+import { createTaggedError as subTaggedError, redact as subRedact } from 'resultar/tagged';
+import { Retry as SubRetry } from 'resultar/retry';
+import { pipe as subPipe } from 'resultar/function';
+if (subPipe(subOk(20), (r) => r.map((n) => n + 22)).unwrapOr(0) !== 42) throw new Error('Subpath result/function failed');
+if (SubMatch.value(1).when(1, () => 'one').orElse(() => 'other') !== 'one') throw new Error('Subpath match failed');
+const SubErr = subTaggedError({ name: 'SubErr', message: 'Secret $secret' });
+if (!new SubErr({ secret: subRedact('top') }).message.includes('<redacted>')) throw new Error('Subpath tagged failed');
+if (SubRetry.policy({ times: 1, maxDelayMs: 50 }).times !== 1) throw new Error('Subpath retry failed');
+const subRef = SubRef.make(1);
+const subLocal = SubLocal.make('def');
+const subTracer = SubTracer.memory();
+const subDef = SubDeferred.make<number>();
+const subQ = SubQueue.bounded<number>(2);
+if (subRef.updateAndGet((n) => n + 1).runSync().unwrapOr(0) !== 2) throw new Error('Subpath ref/runSync failed');
+if (subLocal.locally('x', subLocal.get()).withSpan('smoke').runSync({ tracer: subTracer }).unwrapOr('') !== 'x') throw new Error('Subpath local/tracer failed');
+if (subTracer.spans.length !== 1) throw new Error('Subpath tracer span missing');
+if (!subDef.succeed(7).runSync().unwrapOr(false) || subDef.await().runSync().unwrapOr(0) !== 7) throw new Error('Subpath deferred failed');
+if (!subQ.offer(9).runSync().unwrapOr(false) || subQ.take().runSync().unwrapOr(0) !== 9) throw new Error('Subpath queue failed');
 let executions = 0;
 const task = ResultTask.sync(() => ++executions);
 const result: Result<number, never> = await task.runResult();

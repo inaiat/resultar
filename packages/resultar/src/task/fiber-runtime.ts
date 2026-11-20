@@ -196,6 +196,10 @@ class NativeFiberHandle<A, E> implements FiberHandle<A, E>, FiberMeta {
     return joinFiber(this, joinOptions)
   }
 
+  public await(): ResultTask<Exit<A, E>> {
+    return awaitFiber(this)
+  }
+
   public interrupt(reason: unknown = 'ResultTask fiber interrupted'): ResultTask<Exit<A, E>> {
     return createTask<Exit<A, E>, never>(() => {
       this.backing.observe()

@@ -250,6 +250,15 @@ importers:
       resultar:
         specifier: workspace:*
         version: link:../packages/resultar
+      resultar-di:
+        specifier: workspace:*
+        version: link:../packages/di
+      resultar-hono:
+        specifier: workspace:*
+        version: link:../packages/hono
+      resultar-request-typebox:
+        specifier: workspace:*
+        version: link:../packages/request-typebox
     devDependencies:
       cronometro:
         specifier: ^7.0.1
@@ -257,12 +266,18 @@ importers:
       effect:
         specifier: ^4.1.2
         version: 4.1.2
+      hono:
+        specifier: 'catalog:'
+        version: 4.13.19
       neverthrow:
         specifier: ^8.2.0
         version: 8.2.0
       resultar-check:
         specifier: workspace:*
         version: link:../packages/check
+      typebox:
+        specifier: 'catalog:'
+        version: 1.4.7
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

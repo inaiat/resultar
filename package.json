@@ -37,6 +37,13 @@
     "example:fastify": "pnpm --filter resultar-fastify-example smoke",
     "example:nestjs": "pnpm --filter resultar-nestjs-example smoke",
     "docs:generate": "node scripts/generate-docs.mjs",
+    "docs:dev": "pnpm --dir website run dev",
+    "docs:build": "pnpm --dir website run build",
+    "docs:preview": "pnpm --dir website run preview",
+    "build:vscode": "pnpm --dir editors/vscode run build",
+    "check:vscode": "pnpm --dir editors/vscode run check",
+    "test:vscode": "pnpm --filter resultar-check run native:build:current && pnpm --dir editors/vscode run test",
+    "test:website": "pnpm --dir website run check && pnpm --dir website run build && pnpm --dir website run test",
     "test:docs": "node scripts/generate-docs.mjs --check && node --test scripts/test-documentation.mjs"
   },
   "devDependencies": {

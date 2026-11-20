@@ -20,13 +20,15 @@ import (
 const usage = `Usage: resultar-check
 
 Commands:
-  init                      Create a portable Zed LSP setup.
-  doctor                    Check the project, binary, pnpm, and Zed setup.
+  init                      Create editor setup (Zed, VS Code, Cursor).
+  doctor                    Check the project, binary, pnpm, and editor setup.
   overview                  Inventory exported workflows, errors, and services.
   quickfixes                Preview diagnostic fixes without writing files.
 
 Flags:
-  --file <path>             Filter overview/quickfixes by source file.
+  --fix                     Apply safe correction fixes in place (never intentional-discard).
+  --fix-dry-run             Preview safe correction fixes without modifying files.
+  --file <path>             Filter overview, quickfixes, or --fix by source file.
   --mode <direct|must-use>  Override noDiscardMode.
   -p, --project <path>      TypeScript project. Defaults to tsconfig.json.
   --format <human|json|sarif|junit>  Diagnostic output format (default: human).
@@ -67,16 +69,20 @@ func run(args []string) int {
 	var fileFilter string
 	var mode string
 	var jsonOutput bool
+	var fixMode bool
+	var fixDryRun bool
 	var formatName string
 	var failOnName string
 	var help bool
-	flags.StringVar(&fileFilter, "file", "", "filter overview or quickfixes by source file")
+	flags.StringVar(&fileFilter, "file", "", "filter overview, quickfixes, or --fix by source file")
 	flags.StringVar(&projectPath, "project", "tsconfig.json", "TypeScript project")
 	flags.StringVar(&projectPath, "p", "tsconfig.json", "TypeScript project")
 	flags.StringVar(&mode, "mode", "", "no-discard mode")
 	flags.StringVar(&formatName, "format", string(output.FormatHuman), "diagnostic output format")
 	flags.StringVar(&failOnName, "fail-on", "", "minimum severity that fails the command")
 	flags.BoolVar(&jsonOutput, "json", false, "emit JSON lines")
+	flags.BoolVar(&fixMode, "fix", false, "apply safe correction fixes in place")
+	flags.BoolVar(&fixDryRun, "fix-dry-run", false, "preview safe correction fixes without modifying files")
 	flags.BoolVar(&help, "help", false, "show help")
 	flags.BoolVar(&help, "h", false, "show help")
 	if err := flags.Parse(args); err != nil {
@@ -98,6 +104,10 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "Unknown --fail-on value: %s\n", failOnName)
 		return 1
 	}
+	if command != "" && (fixMode || fixDryRun) {
+		fmt.Fprintf(os.Stderr, "--fix and --fix-dry-run cannot be used with %s.\n", command)
+		return 1
+	}
 	if jsonOutput {
 		formatName = string(output.FormatJSON)
 	}
@@ -105,8 +115,8 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "Preview commands support human or json output.")
 		return 1
 	}
-	if command == "" && fileFilter != "" {
-		fmt.Fprintln(os.Stderr, "--file requires overview or quickfixes.")
+	if command == "" && !fixMode && !fixDryRun && fileFilter != "" {
+		fmt.Fprintln(os.Stderr, "--file requires overview, quickfixes, --fix, or --fix-dry-run.")
 		return 1
 	}
 	format := output.Format(formatName)
@@ -115,44 +125,10 @@ func run(args []string) int {
 		return 1
 	}
 
-	opened, diagnostics, err := project.Open(projectPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	if len(diagnostics) > 0 {
-		if command != "" {
-			printHumanDiagnostics(tsDiagnostics(diagnostics))
-			return 1
-		}
-		if err := writeDiagnostics(format, tsDiagnostics(diagnostics)); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		}
-		return 1
-	}
-	options, err := config.Load(opened.ConfigPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	if mode != "" {
-		options.NoDiscardMode = mode
-	}
-	if failOnName != "" {
-		options.FailOn = config.Severity(failOnName)
-	}
-
 	ctx := context.Background()
-	tsFindings := collectTypeScriptDiagnostics(ctx, opened.Program, opened.Program.SourceFiles())
-	if len(tsFindings) > 0 {
-		if command != "" {
-			printHumanDiagnostics(tsFindings)
-			return 1
-		}
-		if err := writeDiagnostics(format, tsFindings); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		}
-		return 1
+	opened, options, tsFindings, exitCode := openProjectForAnalysis(ctx, projectPath, mode, failOnName, command, format)
+	if exitCode != 0 {
+		return exitCode
 	}
 	if command == "overview" {
 		return printOverview(ctx, opened, options, fileFilter, format)
@@ -164,6 +140,39 @@ func run(args []string) int {
 	}
 	if command == "quickfixes" {
 		return printQuickfixes(opened, findings, fileFilter, format)
+	}
+	if fixDryRun {
+		summary, fixErr := applyCorrectionFixes(opened.Program.SourceFiles(), findings, fileFilter, opened.Directory, true)
+		if fixErr != nil {
+			fmt.Fprintln(os.Stderr, fixErr)
+			return 1
+		}
+		printFixSummary(summary, mustGetwd(), true)
+	} else if fixMode {
+		totalSummary := fixSummary{}
+		for pass := 0; pass < maxFixPasses; pass++ {
+			passSummary, fixErr := applyCorrectionFixes(opened.Program.SourceFiles(), findings, fileFilter, opened.Directory, false)
+			if fixErr != nil {
+				fmt.Fprintln(os.Stderr, fixErr)
+				return 1
+			}
+			totalSummary.merge(passSummary)
+			if passSummary.TotalFixes == 0 {
+				break
+			}
+			opened, options, tsFindings, exitCode = openProjectForAnalysis(ctx, projectPath, mode, failOnName, command, format)
+			if exitCode != 0 {
+				printFixSummary(totalSummary, mustGetwd(), false)
+				return exitCode
+			}
+			findings, err = analyzer.Run(ctx, opened.Program, opened.Directory, options)
+			if err != nil {
+				printFixSummary(totalSummary, mustGetwd(), false)
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+		}
+		printFixSummary(totalSummary, mustGetwd(), false)
 	}
 	if format == output.FormatHuman {
 		cwd, _ := os.Getwd()
@@ -179,6 +188,55 @@ func run(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func openProjectForAnalysis(
+	ctx context.Context,
+	projectPath string,
+	mode string,
+	failOnName string,
+	command string,
+	format output.Format,
+) (*project.Opened, config.Options, []output.Diagnostic, int) {
+	opened, diagnostics, err := project.Open(projectPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return nil, config.Options{}, nil, 1
+	}
+	if len(diagnostics) > 0 {
+		if command != "" {
+			printHumanDiagnostics(tsDiagnostics(diagnostics))
+			return nil, config.Options{}, nil, 1
+		}
+		if err := writeDiagnostics(format, tsDiagnostics(diagnostics)); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		return nil, config.Options{}, nil, 1
+	}
+	options, err := config.Load(opened.ConfigPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return nil, config.Options{}, nil, 1
+	}
+	if mode != "" {
+		options.NoDiscardMode = mode
+	}
+	if failOnName != "" {
+		options.FailOn = config.Severity(failOnName)
+	}
+
+	tsFindings := collectTypeScriptDiagnostics(ctx, opened.Program, opened.Program.SourceFiles())
+	if len(tsFindings) > 0 {
+		if command != "" {
+			printHumanDiagnostics(tsFindings)
+			return nil, config.Options{}, nil, 1
+		}
+		if err := writeDiagnostics(format, tsFindings); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		return nil, config.Options{}, nil, 1
+	}
+	return opened, options, tsFindings, 0
 }
 
 func validSeverity(value string) bool {

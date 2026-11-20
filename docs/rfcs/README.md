@@ -22,6 +22,8 @@ and [migration reference](../migrations/v4.md): `ResultTask` is the default for 
 | [**RFC 0007**](./rfc-0007-task-promise-defect-boundary.md) | **Direct Promise adaptation with defect semantics** | `resultar`, `resultar-check` | **Implemented (Validated; Awaiting Release)** | 2026-11-15 |
 | [**RFC 0008**](./rfc-0008-declarative-configuration.md) | **Declarative configuration and dependency injection** | `resultar-config` | **Implemented (Awaiting Publication)** | 2026-11-16 |
 | [**RFC 0009**](./rfc-0009-inference-scopes-and-application-lifecycle.md) | **Inference, typed scope closure, and application lifecycle** | `resultar`, `resultar-di`, `resultar-check` | **Implemented (Recipe-only Lifecycle; Awaiting Release)** | 2026-11-16 |
+| [**RFC 0010**](./rfc-0010-dx-observability-concurrency-and-tooling.md) | **Core DX, lean concurrency, opt-in observability, subpath tree-shaking, and tooling** | `resultar`, `resultar-app`, `resultar-check` | **Implemented (Validated; Awaiting Release)** | 2026-11-19 |
+| [**RFC 0011**](./rfc-0011-jit-compilation-and-runtime-performance.md) | **Transparent JIT compilation, static graph specialization, and V8 runtime performance** | `resultar`, `resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, `resultar-request-typebox`, `resultar-config` | **Implemented (Validated; Awaiting Release)** | 2026-11-20 |
 
 ---
 

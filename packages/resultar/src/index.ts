@@ -90,6 +90,21 @@ export { Retry } from './core/retry.js'
 export type { RetryContext, RetryPolicy, RetryPolicyOptions } from './core/retry.js'
 export { isRedacted, redact, revealRedacted } from './core/redacted.js'
 export type { Redacted } from './core/redacted.js'
+export { Deferred } from './task/deferred.js'
+export { Queue } from './task/queue.js'
+export { Ref } from './task/ref.js'
+export { TaskLocal } from './task/task-local.js'
+export { Tracer } from './task/tracer.js'
+export type {
+  MemoryTracer,
+  RecordedSpan,
+  SpanAttributes,
+  SpanAttributeValue,
+  SpanTraceFrame,
+  TaskSpan,
+  TaskTracer,
+  TaskTracerStartOptions,
+} from './task/tracer.js'
 export {
   isResultTask,
   isServiceTag,
@@ -117,6 +132,8 @@ export type {
   ResultTaskLoopDiscardOptions,
   ResultTaskLoopOptions,
   ResultTaskMatchOptions,
+  ResultTaskRepeatInput,
+  ResultTaskRepeatOptions,
   ResultTaskRunOptions,
   ResultTaskScope,
   ResultTaskScopeOwner,

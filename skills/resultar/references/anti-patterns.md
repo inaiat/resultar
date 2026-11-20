@@ -8,6 +8,9 @@ how to apply the rules without changing the application's execution contract.
 ## Verify and repair
 
 Run `resultar-check --project tsconfig.json` through the project's package manager.
+Use `resultar-check --fix` to apply safe `kind: "correction"` edits automatically (it never
+auto-applies `intentional-discard` edits; use `--fix-dry-run` or `quickfixes --json` to preview),
+and `resultar-check init --editor zed|vscode|cursor|all` to scaffold editor setup.
 Use the documented JSON Lines, SARIF, JUnit, inspection, and LSP interfaces from the
 [CLI reference](../../../packages/check/README.md#command-line). Fix the cause,
 then rerun TypeScript, the checker, and the relevant behavior tests.

@@ -37,6 +37,8 @@ ESM; Node.js 24+. The implementation has no Node-specific imports or global cont
 
 ## Recommended API
 
+> **Choosing a style:** Default to **`service(...)` + `resource(...)` + `createModule()`** for new applications (shortest syntax, zero boilerplate). Use **`class X extends Service(...)`** when you want nominal class tags that workflows request via `yield* X` across modules. Use named string registration only for dynamic or migration boundaries.
+
 Define a token with `service`, then choose its lifetime when composing the module. Dependencies
 are a typed object of tokens; ordinary synchronous factories need no class or generator wrapper.
 Use `service(name, task)` for task initialization and `resource(name, { acquire, release })` for

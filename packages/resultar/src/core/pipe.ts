@@ -1,10 +1,18 @@
-/* eslint-disable max-params */
+/* eslint-disable max-params, prefer-rest-params, complexity */
 export type PipeFn<Input, Output> = (input: Input) => Output
 
 export type FnPipe<Input, Args extends readonly unknown[], Output> = (
   input: Input,
   ...args: Args
 ) => Output
+
+export const applyPipeStep = (
+  value: unknown,
+  transform: PipeFn<never, unknown> | undefined,
+): unknown => {
+  if (transform === undefined) throw new TypeError('pipe requires transformation functions')
+  return transform(value as never)
+}
 
 export const runPipe = <Self>(self: Self, fns: readonly PipeFn<never, unknown>[]): unknown => {
   let input: unknown = self
@@ -16,6 +24,48 @@ export const runPipe = <Self>(self: Self, fns: readonly PipeFn<never, unknown>[]
   }
 
   return input
+}
+
+export const runPipeArgs = (self: unknown, args: IArguments, startIndex: number): unknown => {
+  const count = args.length - startIndex
+  let value: unknown = self
+  /* Stryker disable all: fixed-arity switches are allocation-free fast paths equivalent to the loop below. */
+  switch (count) {
+    case 0: {
+      return value
+    }
+    case 1: {
+      return applyPipeStep(value, args[startIndex] as PipeFn<never, unknown> | undefined)
+    }
+    case 2: {
+      return applyPipeStep(
+        applyPipeStep(value, args[startIndex] as PipeFn<never, unknown> | undefined),
+        args[startIndex + 1] as PipeFn<never, unknown> | undefined,
+      )
+    }
+    case 3: {
+      return applyPipeStep(
+        applyPipeStep(
+          applyPipeStep(value, args[startIndex] as PipeFn<never, unknown> | undefined),
+          args[startIndex + 1] as PipeFn<never, unknown> | undefined,
+        ),
+        args[startIndex + 2] as PipeFn<never, unknown> | undefined,
+      )
+    }
+    case 4: {
+      value = applyPipeStep(value, args[startIndex] as PipeFn<never, unknown> | undefined)
+      value = applyPipeStep(value, args[startIndex + 1] as PipeFn<never, unknown> | undefined)
+      value = applyPipeStep(value, args[startIndex + 2] as PipeFn<never, unknown> | undefined)
+      return applyPipeStep(value, args[startIndex + 3] as PipeFn<never, unknown> | undefined)
+    }
+    default: {
+      for (let index = startIndex; index < args.length; index += 1) {
+        value = applyPipeStep(value, args[index] as PipeFn<never, unknown> | undefined)
+      }
+      return value
+    }
+  }
+  /* Stryker restore all */
 }
 
 export const runFnPipe = <Self>(
@@ -85,7 +135,7 @@ export abstract class Pipeable {
     gh: PipeFn<F, G>,
     hi: PipeFn<G, H>,
   ): H
-  public pipe(...fns: readonly PipeFn<never, unknown>[]): unknown {
-    return runPipe(this, fns)
+  public pipe(): unknown {
+    return runPipeArgs(this, arguments, 0)
   }
 }

@@ -1,0 +1,811 @@
+import "./styles.css";
+
+import {
+  DOC_LOADERS,
+  DOC_TITLES,
+  NAV_SECTIONS,
+  SEARCH_INDEX,
+  SITE_META,
+  type DocPage,
+} from "./generated/site-data.js";
+import type { PlaygroundRunResult } from "./playground-runner.js";
+import { PLAYGROUND_PRESETS } from "./presets.js";
+import { searchDocs } from "./search.js";
+
+type Route =
+  | { readonly view: "home" }
+  | { readonly view: "docs"; readonly slug: string; readonly anchor?: string }
+  | { readonly view: "playground"; readonly presetId?: string; readonly code?: string };
+
+const ALL_ORDERED_SLUGS: readonly string[] = NAV_SECTIONS.flatMap((section) =>
+  section.items.map((item) => item.slug),
+);
+
+const INSTALL_COMMANDS: Readonly<Record<"pnpm" | "npm" | "jsr", string>> = {
+  pnpm: "pnpm add resultar && pnpm add -D resultar-check",
+  npm: "npm install resultar && npm install -D resultar-check",
+  jsr: "npx jsr add @inaiat/resultar",
+};
+
+const state = {
+  installTab: "pnpm" as "pnpm" | "npm" | "jsr",
+  theme: "dark" as "dark" | "light",
+  sidebarOpen: false,
+  searchOpen: false,
+  searchQuery: "",
+  searchSelected: 0,
+  playgroundCode: PLAYGROUND_PRESETS[0]?.code ?? "",
+  playgroundPresetId: PLAYGROUND_PRESETS[0]?.id ?? "result-errors",
+  playgroundResult: undefined as PlaygroundRunResult | undefined,
+  playgroundRunning: false,
+};
+
+const escapeHtml = (value: string): string =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+
+const decodeBase64Utf8 = (encoded: string): string => {
+  const bytes = Uint8Array.from(atob(encoded), (char) => char.codePointAt(0) ?? 0);
+  return new TextDecoder().decode(bytes);
+};
+
+const encodeBase64Utf8 = (text: string): string => {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCodePoint(byte);
+  }
+  return btoa(binary);
+};
+
+const pageCache = new Map<string, DocPage>();
+
+const loadDocPage = async (slug: string): Promise<DocPage | undefined> => {
+  const cached = pageCache.get(slug);
+  if (cached !== undefined) return cached;
+  const loader = DOC_LOADERS[slug] ?? DOC_LOADERS.overview;
+  if (loader === undefined) return undefined;
+  const loaded = await loader();
+  pageCache.set(loaded.slug, loaded);
+  return loaded;
+};
+
+const parseHashRoute = (): Route => {
+  const raw = globalThis.location.hash.replace(/^#\/?/u, "");
+  if (raw.length === 0) {
+    return { view: "home" };
+  }
+  if (raw.startsWith("playground")) {
+    const queryIdx = raw.indexOf("?");
+    if (queryIdx !== -1) {
+      const params = new URLSearchParams(raw.slice(queryIdx + 1));
+      const encoded = params.get("code");
+      if (encoded !== null) {
+        try {
+          return { view: "playground", code: decodeBase64Utf8(encoded) };
+        } catch {
+          // Fall back to default preset when hash payload is malformed.
+        }
+      }
+      const preset = params.get("preset") ?? undefined;
+      return preset === undefined
+        ? { view: "playground" }
+        : { view: "playground", presetId: preset };
+    }
+    return { view: "playground" };
+  }
+  if (raw.startsWith("docs/")) {
+    const rest = raw.slice("docs/".length);
+    const hashIdx = rest.indexOf("#");
+    const slug = hashIdx === -1 ? rest : rest.slice(0, hashIdx);
+    const anchor = hashIdx === -1 ? undefined : rest.slice(hashIdx + 1);
+    const resolvedSlug = DOC_LOADERS[slug] === undefined ? "overview" : slug;
+    return anchor === undefined
+      ? { view: "docs", slug: resolvedSlug }
+      : { view: "docs", slug: resolvedSlug, anchor };
+  }
+  return { view: "home" };
+};
+
+const initTheme = (): void => {
+  const stored = globalThis.localStorage.getItem("resultar-theme");
+  if (stored === "light" || stored === "dark") {
+    state.theme = stored;
+  } else if (globalThis.matchMedia("(prefers-color-scheme: light)").matches) {
+    state.theme = "light";
+  }
+  document.documentElement.dataset.theme = state.theme;
+};
+
+const toggleTheme = (): void => {
+  state.theme = state.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = state.theme;
+  globalThis.localStorage.setItem("resultar-theme", state.theme);
+  render();
+};
+
+const renderTopbar = (route: Route): string => {
+  const isDocs = route.view === "docs";
+  const isPlay = route.view === "playground";
+  return `
+    <header class="topbar">
+      <div class="topbar-left">
+        ${
+          isDocs
+            ? `<button class="icon-btn mobile-menu-btn" type="button" data-action="toggle-sidebar" aria-label="Toggle navigation">☰</button>`
+            : ""
+        }
+        <a class="brand" href="#/">
+          <span class="brand-mark">R</span>
+          <span>Resultar</span>
+          <span class="version-pill">v${escapeHtml(SITE_META.version)}</span>
+        </a>
+        <nav class="nav-links" aria-label="Main navigation">
+          <a class="nav-link ${isDocs && route.slug !== "coming-from-effect" && route.slug !== "resultar-check" && route.slug !== "api-inventory" ? "active" : ""}" href="#/docs/overview">Docs</a>
+          <a class="nav-link ${isDocs && route.slug === "coming-from-effect" ? "active" : ""}" href="#/docs/coming-from-effect">From Effect</a>
+          <a class="nav-link ${isDocs && route.slug === "api-inventory" ? "active" : ""}" href="#/docs/api-inventory">API</a>
+          <a class="nav-link ${isDocs && route.slug === "resultar-check" ? "active" : ""}" href="#/docs/resultar-check">resultar-check</a>
+          <a class="nav-link nav-link-play ${isPlay ? "active" : ""}" href="#/playground">▶ Playground</a>
+        </nav>
+      </div>
+      <div class="topbar-right">
+        <button class="search-trigger" type="button" data-action="open-search">
+          <span>Search docs, API &amp; rules…</span>
+          <span class="kbd">⌘K</span>
+        </button>
+        <button class="icon-btn" type="button" data-action="toggle-theme" title="Toggle theme" aria-label="Toggle theme">
+          ${state.theme === "dark" ? "☀" : "☾"}
+        </button>
+        <a class="icon-btn" href="https://github.com/inaiat/resultar" target="_blank" rel="noopener noreferrer" title="GitHub" aria-label="GitHub">GH</a>
+      </div>
+    </header>
+  `;
+};
+
+const renderHome = (): string => {
+  const heroSnippet = `import { createTaggedError, ResultTask, serviceTag, Tracer } from "resultar";
+
+class UserNotFoundError extends createTaggedError({
+  name: "UserNotFoundError",
+  message: "User $id not found",
+}) {}
+
+const UserRepo = serviceTag<{ find: (id: string) => ResultTask<string, UserNotFoundError> }>("UserRepo");
+
+const greet = ResultTask.fn("users.greet", function* (id: string) {
+  const repo = yield* UserRepo;
+  const name = yield* repo.find(id).withSpan("db.findUser", { id });
+  return \`Welcome, \${name}!\`;
+});`;
+
+  const encodedHero = encodeBase64Utf8(PLAYGROUND_PRESETS[4]?.code ?? heroSnippet);
+  const installCmd = INSTALL_COMMANDS[state.installTab];
+
+  return `
+    <main class="home">
+      <section class="hero">
+        <div>
+          <div class="hero-eyebrow">TypeScript 7 · Node 24+ · ESM · sideEffects: false</div>
+          <h1>Typed error handling &amp; lazy tasks without the monolith.</h1>
+          <p class="hero-sub">
+            Start with zero-overhead <code>Result&lt;T, E&gt;</code>. Scale cleanly to lazy
+            <code>ResultTask&lt;A, E, R&gt;</code>, lean concurrency, opt-in tracing, and
+            ${SITE_META.ruleCount} native TypeScript-Go static checks.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="#/docs/overview">Get Started</a>
+            <a class="btn" href="#/playground">▶ Interactive Playground</a>
+            <a class="btn" href="#/docs/coming-from-effect">Coming from Effect</a>
+          </div>
+          <div class="install-box">
+            <div class="install-tabs">
+              ${(["pnpm", "npm", "jsr"] as const)
+                .map(
+                  (tab) =>
+                    `<button type="button" class="install-tab ${state.installTab === tab ? "active" : ""}" data-install-tab="${tab}">${tab}</button>`,
+                )
+                .join("")}
+            </div>
+            <span class="install-cmd">${escapeHtml(installCmd)}</span>
+            <button type="button" class="code-btn" data-copy-raw="${escapeHtml(installCmd)}">Copy</button>
+          </div>
+        </div>
+        <div class="code-block">
+          <div class="code-header">
+            <span>workflow.ts</span>
+            <div class="code-actions">
+              <button class="code-btn code-btn-play" type="button" data-play="${encodedHero}">▶ Try Live</button>
+            </div>
+          </div>
+          <pre><code>${escapeHtml(heroSnippet)}</code></pre>
+        </div>
+      </section>
+
+      <section class="metrics-strip">
+        <div class="metric-card">
+          <div class="metric-val">~5.9 kB</div>
+          <div class="metric-label"><code>resultar/result</code> gzipped subpath</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-val">${SITE_META.ruleCount} rules</div>
+          <div class="metric-label">Native Go analyzer + <code>--fix</code></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-val">0 deps</div>
+          <div class="metric-label">Pure JS core &amp; VS Code/Cursor LSP</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-val">100% live</div>
+          <div class="metric-label">CI-verified docs, recipes &amp; agent evals</div>
+        </div>
+      </section>
+
+      <section class="feature-grid">
+        <a class="feature-card" href="#/docs/core-guide">
+          <span class="feature-tag">CORE ERGONOMICS</span>
+          <h3>Result, ResultTask &amp; Tagged Errors</h3>
+          <p>Real Error subclasses with <code>$var</code> interpolation, redaction, exhaustive <code>Match</code>, <code>runSync</code>, error-aware <code>Retry.policy</code>, and <code>repeat</code>.</p>
+        </a>
+        <a class="feature-card" href="#/playground?preset=concurrency">
+          <span class="feature-tag">CONCURRENCY</span>
+          <h3>Ref, Deferred, Queue &amp; Fibers</h3>
+          <p>Structured concurrency with bounded FIFO backpressure, interruption-safe waiters, lossless shutdown draining, and <code>task.forkChild().scoped()</code>.</p>
+        </a>
+        <a class="feature-card" href="#/playground?preset=observability">
+          <span class="feature-tag">OBSERVABILITY</span>
+          <h3>Zero-Overhead TaskLocal &amp; Tracer</h3>
+          <p>Fiber-inherited ambient context, opt-in <code>TaskTracer</code> / <code>Tracer.memory()</code>, <code>withSpan</code>, named <code>ResultTask.fn</code>, and span traces on <code>Cause</code>.</p>
+        </a>
+        <a class="feature-card" href="#/docs/resultar-check">
+          <span class="feature-tag">STATIC ANALYSIS</span>
+          <h3>Native TypeScript-Go Checker</h3>
+          <p>Catch unhandled results, leaked scopes, and <code>Promise&lt;Result&gt;</code> bugs at native speed. Auto-repair safe issues via <code>resultar-check --fix</code>.</p>
+        </a>
+        <a class="feature-card" href="#/docs/vscode-extension">
+          <span class="feature-tag">EDITORS</span>
+          <h3>Zed, VS Code &amp; Cursor LSP</h3>
+          <p>Inline <code>T / E / R</code> channel hover, live unsaved-buffer diagnostics, and preferred semantic quickfixes via the official thin extension.</p>
+        </a>
+        <a class="feature-card" href="#/docs/agents/skill">
+          <span class="feature-tag">CODING AGENTS</span>
+          <h3>Version-Matched Agent Guides</h3>
+          <p>Ships <code>dist/agent/SKILL.md</code> and <code>dist/llms.txt</code> directly inside <code>node_modules/resultar</code>, verified by executable agent evals.</p>
+        </a>
+      </section>
+    </main>
+  `;
+};
+
+const renderDocs = (page: DocPage): string => {
+  const index = ALL_ORDERED_SLUGS.indexOf(page.slug);
+  const prevSlug = index > 0 ? ALL_ORDERED_SLUGS[index - 1] : undefined;
+  const nextSlug =
+    index !== -1 && index + 1 < ALL_ORDERED_SLUGS.length ? ALL_ORDERED_SLUGS[index + 1] : undefined;
+  const prevTitle = prevSlug === undefined ? undefined : DOC_TITLES[prevSlug];
+  const nextTitle = nextSlug === undefined ? undefined : DOC_TITLES[nextSlug];
+
+  return `
+    <div class="docs-layout">
+      <aside class="sidebar ${state.sidebarOpen ? "open" : ""}" aria-label="Documentation sidebar">
+        ${NAV_SECTIONS.map(
+          (section) => `
+            <div class="sidebar-group">
+              <div class="sidebar-group-title">${escapeHtml(section.group)}</div>
+              ${section.items
+                .map(
+                  (item) =>
+                    `<a class="sidebar-link ${item.slug === page.slug ? "active" : ""}" href="#/docs/${escapeHtml(item.slug)}">${escapeHtml(item.title)}</a>`,
+                )
+                .join("")}
+            </div>
+          `,
+        ).join("")}
+      </aside>
+      <main class="doc-main">
+        <div class="doc-meta">
+          <span>${escapeHtml(page.group)} / ${escapeHtml(page.title)}</span>
+          <a href="https://github.com/inaiat/resultar/blob/main/${escapeHtml(page.source)}" target="_blank" rel="noopener noreferrer">Source: ${escapeHtml(page.source)}</a>
+        </div>
+        <article class="doc-prose">${page.html}</article>
+        <nav class="doc-pager" aria-label="Pagination">
+          ${
+            prevSlug !== undefined && prevTitle !== undefined
+              ? `<a class="pager-card" href="#/docs/${escapeHtml(prevSlug)}"><span class="pager-label">← Previous</span><span class="pager-title">${escapeHtml(prevTitle)}</span></a>`
+              : "<div></div>"
+          }
+          ${
+            nextSlug !== undefined && nextTitle !== undefined
+              ? `<a class="pager-card next" href="#/docs/${escapeHtml(nextSlug)}"><span class="pager-label">Next →</span><span class="pager-title">${escapeHtml(nextTitle)}</span></a>`
+              : "<div></div>"
+          }
+        </nav>
+      </main>
+      <aside class="toc" aria-label="On this page">
+        <div class="toc-title">On This Page</div>
+        ${
+          page.toc.length === 0
+            ? `<span class="toc-link">Top of page</span>`
+            : page.toc
+                .slice(0, 60)
+                .map(
+                  (item) =>
+                    `<a class="toc-link depth-${item.level}" href="#/docs/${escapeHtml(page.slug)}#${escapeHtml(item.id)}">${escapeHtml(item.text)}</a>`,
+                )
+                .join("")
+        }
+      </aside>
+    </div>
+  `;
+};
+
+const renderWaterfall = (result: PlaygroundRunResult): string => {
+  if (result.spans.length === 0) return "";
+  const minStart = Math.min(...result.spans.map((span) => span.startTime));
+  const maxEnd = Math.max(
+    ...result.spans.map((span) => span.endTime ?? span.startTime + (span.durationMs ?? 1)),
+  );
+  const totalRange = Math.max(1, maxEnd - minStart);
+
+  return `
+    <div class="waterfall">
+      <div class="waterfall-title">Span Waterfall (${result.spans.length} spans)</div>
+      ${result.spans
+        .map((span) => {
+          const leftPct = ((span.startTime - minStart) / totalRange) * 100;
+          const dur =
+            span.durationMs ?? Math.max(0, (span.endTime ?? span.startTime) - span.startTime);
+          const widthPct = Math.max(3, (dur / totalRange) * 100);
+          const failed = span.exit?._tag === "Failure";
+          const attrs = Object.entries(span.attributes)
+            .map(([k, v]) => `${k}=${String(v)}`)
+            .join(" ");
+          return `
+            <div class="span-row" title="${escapeHtml(attrs || span.name)}">
+              <div class="span-name ${span.parentName === undefined ? "" : "span-child"}">
+                ${span.parentName === undefined ? "" : "↳ "}${escapeHtml(span.name)}
+              </div>
+              <div class="span-track">
+                <div class="span-bar ${failed ? "failed" : ""}" style="left:${leftPct.toFixed(1)}%;width:${Math.min(100 - leftPct, widthPct).toFixed(1)}%"></div>
+              </div>
+              <div class="span-dur">${dur.toFixed(1)}ms</div>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+};
+
+const logClassForLevel = (level: "log" | "info" | "warn" | "error"): string => {
+  if (level === "error") return "pg-log-error";
+  if (level === "warn") return "pg-log-warn";
+  return "";
+};
+
+const renderPlayground = (): string => {
+  const result = state.playgroundResult;
+  let outputBody = `<div class="pg-log">Click <strong>Run</strong> (or press <code>⌘/Ctrl+Enter</code>) to execute live Resultar code directly in your browser.</div>`;
+
+  if (state.playgroundRunning) {
+    outputBody = `<div class="pg-log">Executing…</div>`;
+  } else if (result !== undefined) {
+    const logLines = result.logs
+      .map(
+        (entry) =>
+          `<div class="pg-log ${logClassForLevel(entry.level)}">${escapeHtml(entry.text)}</div>`,
+      )
+      .join("");
+    const errLine =
+      result.error === undefined
+        ? ""
+        : `<div class="pg-log pg-log-error">${escapeHtml(result.error)}</div>`;
+    outputBody =
+      (logLines || errLine || `<div class="pg-log">Completed with no console output.</div>`) +
+      errLine +
+      renderWaterfall(result);
+  }
+
+  let statusClass = "";
+  let statusText = "Ready";
+  if (result !== undefined) {
+    statusClass = result.ok ? "pg-status-ok" : "pg-status-err";
+    statusText = result.ok
+      ? `✓ Passed in ${result.durationMs.toFixed(1)}ms`
+      : `✗ Error (${result.durationMs.toFixed(1)}ms)`;
+  }
+
+  return `
+    <main class="playground">
+      <div class="pg-header">
+        <div>
+          <h1 style="margin:0;font-size:22px">Resultar Interactive Playground</h1>
+          <div style="font-size:13px;color:var(--text-muted)">Runs the real bundled <code>resultar</code> v${escapeHtml(SITE_META.version)} runtime locally in your browser.</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary" type="button" data-action="pg-run">▶ Run (⌘↵)</button>
+          <button class="btn" type="button" data-action="pg-share">Share URL</button>
+          <button class="btn" type="button" data-action="pg-reset">Reset</button>
+        </div>
+      </div>
+
+      <div class="pg-presets" role="tablist" aria-label="Playground presets">
+        ${PLAYGROUND_PRESETS.map(
+          (preset) => `
+            <button
+              type="button"
+              class="preset-btn ${state.playgroundPresetId === preset.id ? "active" : ""}"
+              data-preset="${escapeHtml(preset.id)}"
+              title="${escapeHtml(preset.description)}"
+            >
+              <span>${escapeHtml(preset.title)}</span>
+              <span class="preset-badge">${escapeHtml(preset.badge)}</span>
+            </button>
+          `,
+        ).join("")}
+      </div>
+
+      <div class="pg-grid">
+        <div class="pg-pane">
+          <div class="pg-pane-head">
+            <span>playground.ts</span>
+            <span>Imports from "resultar" work directly</span>
+          </div>
+          <textarea
+            id="pg-editor"
+            class="pg-editor"
+            spellcheck="false"
+            aria-label="TypeScript playground editor"
+          >${escapeHtml(state.playgroundCode)}</textarea>
+        </div>
+        <div class="pg-pane">
+          <div class="pg-pane-head">
+            <span>Output</span>
+            <span class="${statusClass}">${statusText}</span>
+          </div>
+          <div class="pg-output">${outputBody}</div>
+        </div>
+      </div>
+    </main>
+  `;
+};
+
+const renderSearchModal = (): string => {
+  if (!state.searchOpen) return "";
+  const results = searchDocs(SEARCH_INDEX, state.searchQuery, 16);
+  const clampedIdx = Math.min(state.searchSelected, Math.max(0, results.length - 1));
+  state.searchSelected = clampedIdx;
+
+  return `
+    <div class="modal-backdrop" data-action="close-search-backdrop">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="modal-input-row">
+          <span style="color:var(--text-dim)">⌕</span>
+          <input
+            id="search-input"
+            class="modal-input"
+            type="text"
+            value="${escapeHtml(state.searchQuery)}"
+            placeholder="Search guides, API symbols (Deferred, TaskLocal…), or 42 rules…"
+            autocomplete="off"
+          />
+          <span class="kbd">ESC</span>
+        </div>
+        <div class="modal-results">
+          ${
+            results.length === 0
+              ? `<div style="padding:20px;text-align:center;color:var(--text-dim)">No results for "${escapeHtml(state.searchQuery)}"</div>`
+              : results
+                  .map(
+                    ({ entry }, idx) => `
+                      <a
+                        class="search-item ${idx === clampedIdx ? "selected" : ""}"
+                        href="${escapeHtml(entry.route)}"
+                        data-search-idx="${idx}"
+                      >
+                        <div class="search-item-head">
+                          <span class="search-badge ${entry.kind}">${entry.kind}</span>
+                          <strong>${escapeHtml(entry.title)}</strong>
+                        </div>
+                        <div class="search-item-sub">${escapeHtml(entry.subtitle)}</div>
+                        <div class="search-item-excerpt">${escapeHtml(entry.excerpt)}</div>
+                      </a>
+                    `,
+                  )
+                  .join("")
+          }
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+const executePlayground = async (): Promise<void> => {
+  state.playgroundRunning = true;
+  render();
+  const { runPlaygroundCode } = await import("./playground-runner.js");
+  state.playgroundResult = await runPlaygroundCode(state.playgroundCode);
+  state.playgroundRunning = false;
+  render();
+};
+
+const syncPlaygroundFromRoute = (route: Route): void => {
+  if (route.view !== "playground") return;
+  if (route.code !== undefined) {
+    state.playgroundCode = route.code;
+    state.playgroundPresetId = "custom";
+    void executePlayground();
+    return;
+  }
+  if (route.presetId !== undefined) {
+    const preset = PLAYGROUND_PRESETS.find((item) => item.id === route.presetId);
+    if (preset !== undefined) {
+      state.playgroundPresetId = preset.id;
+      state.playgroundCode = preset.code;
+      void executePlayground();
+      return;
+    }
+  }
+  if (state.playgroundResult === undefined) {
+    void executePlayground();
+  }
+};
+
+const scrollToAnchor = (anchor: string | undefined): void => {
+  if (anchor === undefined || anchor.length === 0) {
+    globalThis.scrollTo({ top: 0 });
+    return;
+  }
+  globalThis.requestAnimationFrame(() => {
+    const target = document.querySelector(`#${anchor}`);
+    if (target !== null) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  });
+};
+
+const render = (): void => {
+  const root = document.querySelector("#app");
+  if (root === null) return;
+  const route = parseHashRoute();
+
+  let mainContent = "";
+  if (route.view === "home") {
+    mainContent = renderHome();
+  } else if (route.view === "playground") {
+    mainContent = renderPlayground();
+  } else {
+    const page = pageCache.get(route.slug);
+    if (page === undefined) {
+      mainContent = `<main class="doc-main"><p style="color:var(--text-muted)">Loading documentation…</p></main>`;
+      void loadDocPage(route.slug).then(() => {
+        render();
+        scrollToAnchor(route.anchor);
+      });
+    } else {
+      mainContent = renderDocs(page);
+    }
+  }
+
+  root.innerHTML = `${renderTopbar(route)}${mainContent}${renderSearchModal()}`;
+
+  if (state.searchOpen) {
+    const input = document.querySelector("#search-input");
+    if (input instanceof HTMLInputElement) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }
+
+  const editor = document.querySelector("#pg-editor");
+  if (editor instanceof HTMLTextAreaElement) {
+    editor.addEventListener("input", () => {
+      state.playgroundCode = editor.value;
+    });
+    editor.addEventListener("keydown", (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        void executePlayground();
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        editor.value = `${editor.value.slice(0, start)}  ${editor.value.slice(end)}`;
+        editor.selectionStart = start + 2;
+        editor.selectionEnd = start + 2;
+        state.playgroundCode = editor.value;
+      }
+    });
+  }
+};
+
+const openSearch = (): void => {
+  state.searchOpen = true;
+  state.searchSelected = 0;
+  render();
+};
+
+const closeSearch = (): void => {
+  if (!state.searchOpen) return;
+  state.searchOpen = false;
+  render();
+};
+
+document.addEventListener("click", (event: MouseEvent) => {
+  const { target } = event;
+  if (!(target instanceof HTMLElement)) return;
+
+  const actionEl = target.closest<HTMLElement>("[data-action]");
+  const action = actionEl?.dataset.action;
+
+  if (action === "open-search") {
+    openSearch();
+    return;
+  }
+  if (action === "close-search-backdrop" && target === actionEl) {
+    closeSearch();
+    return;
+  }
+  if (action === "toggle-theme") {
+    toggleTheme();
+    return;
+  }
+  if (action === "toggle-sidebar") {
+    state.sidebarOpen = !state.sidebarOpen;
+    render();
+    return;
+  }
+  if (action === "pg-run") {
+    void executePlayground();
+    return;
+  }
+  if (action === "pg-reset") {
+    const preset =
+      PLAYGROUND_PRESETS.find((item) => item.id === state.playgroundPresetId) ??
+      PLAYGROUND_PRESETS[0];
+    if (preset !== undefined) {
+      state.playgroundCode = preset.code;
+      void executePlayground();
+    }
+    return;
+  }
+  if (action === "pg-share") {
+    const encoded = encodeURIComponent(encodeBase64Utf8(state.playgroundCode));
+    const shareUrl = `${globalThis.location.origin}${globalThis.location.pathname}#/playground?code=${encoded}`;
+    void navigator.clipboard?.writeText(shareUrl);
+    if (actionEl !== null) {
+      actionEl.textContent = "Copied link!";
+      setTimeout(() => {
+        actionEl.textContent = "Share URL";
+      }, 1500);
+    }
+    return;
+  }
+
+  const installBtn = target.closest<HTMLElement>("[data-install-tab]");
+  if (installBtn?.dataset.installTab !== undefined) {
+    const tab = installBtn.dataset.installTab;
+    if (tab === "pnpm" || tab === "npm" || tab === "jsr") {
+      state.installTab = tab;
+      render();
+    }
+    return;
+  }
+
+  const presetBtn = target.closest<HTMLElement>("[data-preset]");
+  if (presetBtn?.dataset.preset !== undefined) {
+    const preset = PLAYGROUND_PRESETS.find((item) => item.id === presetBtn.dataset.preset);
+    if (preset !== undefined) {
+      state.playgroundPresetId = preset.id;
+      state.playgroundCode = preset.code;
+      globalThis.location.hash = `#/playground?preset=${preset.id}`;
+      void executePlayground();
+    }
+    return;
+  }
+
+  const copyBtn = target.closest<HTMLElement>("[data-copy], [data-copy-raw]");
+  if (copyBtn !== null) {
+    const raw =
+      copyBtn.dataset.copyRaw ??
+      (copyBtn.dataset.copy === undefined ? "" : decodeBase64Utf8(copyBtn.dataset.copy));
+    void navigator.clipboard?.writeText(raw);
+    const prev = copyBtn.textContent;
+    copyBtn.textContent = "Copied!";
+    setTimeout(() => {
+      copyBtn.textContent = prev;
+    }, 1400);
+    return;
+  }
+
+  const playBtn = target.closest<HTMLElement>("[data-play]");
+  if (playBtn?.dataset.play !== undefined) {
+    state.playgroundCode = decodeBase64Utf8(playBtn.dataset.play);
+    state.playgroundPresetId = "custom";
+    globalThis.location.hash = `#/playground?code=${encodeURIComponent(playBtn.dataset.play)}`;
+    void executePlayground();
+    return;
+  }
+
+  if (target.closest(".search-item") !== null) {
+    state.searchOpen = false;
+  }
+  if (target.closest(".sidebar-link") !== null) {
+    state.sidebarOpen = false;
+  }
+});
+
+document.addEventListener("input", (event: Event) => {
+  const { target } = event;
+  if (target instanceof HTMLInputElement && target.id === "search-input") {
+    state.searchQuery = target.value;
+    state.searchSelected = 0;
+    render();
+  }
+});
+
+document.addEventListener("keydown", (event: KeyboardEvent) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    if (state.searchOpen) closeSearch();
+    else openSearch();
+    return;
+  }
+  if (
+    event.key === "/" &&
+    !state.searchOpen &&
+    !(document.activeElement instanceof HTMLInputElement) &&
+    !(document.activeElement instanceof HTMLTextAreaElement)
+  ) {
+    event.preventDefault();
+    openSearch();
+    return;
+  }
+  if (!state.searchOpen) return;
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeSearch();
+    return;
+  }
+  const results = searchDocs(SEARCH_INDEX, state.searchQuery, 16);
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    state.searchSelected = Math.min(results.length - 1, state.searchSelected + 1);
+    render();
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    state.searchSelected = Math.max(0, state.searchSelected - 1);
+    render();
+  } else if (event.key === "Enter" && results[state.searchSelected] !== undefined) {
+    event.preventDefault();
+    const chosen = results[state.searchSelected];
+    state.searchOpen = false;
+    if (chosen !== undefined) {
+      globalThis.location.hash = chosen.entry.route;
+    }
+    render();
+  }
+});
+
+globalThis.addEventListener("hashchange", () => {
+  const route = parseHashRoute();
+  state.sidebarOpen = false;
+  syncPlaygroundFromRoute(route);
+  render();
+  if (route.view === "docs") {
+    scrollToAnchor(route.anchor);
+  }
+});
+
+initTheme();
+const initialRoute = parseHashRoute();
+syncPlaygroundFromRoute(initialRoute);
+render();
+if (initialRoute.view === "docs") {
+  scrollToAnchor(initialRoute.anchor);
+}

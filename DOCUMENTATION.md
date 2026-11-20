@@ -3226,7 +3226,7 @@ editor actions.
 Both commands accept `--file`, `--format human|json`, and `--json`, and leave files unchanged.
 They exit `0` after valid analysis even when fixes exist; configuration/compiler failures exit `1`.
 Use the default `pnpm exec resultar-check --project tsconfig.json` command for the CI diagnostic gate.
-See the [checker reference](packages/check/README.md#command-line) for configuration and exit policy, and the [Anti-Patterns & `resultar-check` Elimination Guide](skills/resultar/references/anti-patterns.md) for configuration, severity thresholds, and repair guidance linked to all 41 rules.
+See the [checker reference](packages/check/README.md#command-line) for configuration and exit policy, and the [Anti-Patterns & `resultar-check` Elimination Guide](skills/resultar/references/anti-patterns.md) for configuration, severity thresholds, and repair guidance linked to all 42 rules.
 
 ## Testing Resultar Code
 
@@ -3807,11 +3807,78 @@ Prefer `errAsync(new DomainError(props))` in new eager recipes.
 remain absent. Use observers, disposables and compatibility `safeTry(async function* () {})`
 where an existing eager contract requires them.
 
+## Concurrency Primitives (`Ref`, `Deferred`, `Queue`)
+
+Resultar ships three lean, interruption-safe concurrency primitives built directly on `ResultTask`:
+
+- **`Ref.make(initial)`**: synchronous-atomic mutable state exposed as lazy `ResultTask` operations (`get`, `set`, `update`, `updateAndGet`, `getAndUpdate`, `getAndSet`, `modify`).
+- **`Deferred.make<A, E>()`**: one-shot asynchronous synchronization (`await`, `succeed`, `fail`, `die`, `done`, `complete`, `poll`, `isDone`). First settlement wins; interrupted waiters unregister cleanly without leaking listeners.
+- **`Queue.bounded<A>(capacity)` / `Queue.unbounded<A>()`**: FIFO backpressure queue (`offer`, `offerAll`, `take`, `poll`, `takeAll`, `takeUpTo`, `shutdown`, `size`, `isShutdown`). `offer` suspends when a bounded queue is full and resumes in FIFO order when consumers drain items; `shutdown` drains buffered items before interrupting waiting takers so buffered work is never silently lost.
+
+## Opt-in Observability (`TaskLocal`, `Tracer`, `withSpan`, named `ResultTask.fn`)
+
+Observability is **strictly opt-in** with zero overhead when no tracer is passed (`Tracer.noop`):
+
+- **`TaskLocal.make(defaultValue, name?)`**: fiber-inherited ambient state (`get()`, `set(v)`, `update(fn)`, `locally`, `locallyWith`). `forkChild()`, `all`, and `race` inherit a snapshot copy so child mutations stay isolated from parents and sibling fibers.
+- **`Tracer` (`Tracer.noop`, `Tracer.memory()`, custom `TaskTracer`)**: pass `{ tracer }` to `runExit`, `runResult`, `runPromise`, `runFork`, `runSync`, or `runSyncExit`. `MemoryTracer` implements `TaskTracer` directly and records parent/child span links, attributes, timestamps, and exits.
+- **`task.withSpan(name, attributes?)` / `ResultTask.withSpan(...)`** and **named `ResultTask.fn("spanName", body, ...pipes)`**: wrap executions in a span and attach the active span stack to failure `Cause` values (`Cause.spans(cause)` and `Cause.pretty(cause)`).
+
+## Subpath Exports & Tree-Shaking
+
+Every library package declares `"sideEffects": false`. In addition to the root `resultar` entry point, you can import smaller focused entry points:
+
+- `resultar/result` — synchronous `Result`, `ok`, `err`, `tryResult`, `fromThrowable`, `redact`
+- `resultar/task` — `ResultTask`, `Cause`, `Exit`, `Fiber`, `Semaphore`, `Ref`, `Deferred`, `Queue`, `TaskLocal`, `Tracer`, `Clock`, `Scheduler`, `serviceTag`, `Retry`
+- `resultar/match` — exhaustive `Match` pattern matcher
+- `resultar/tagged` — `createTaggedError`, `taggedEnum`, `matchError`, `matchErrorPartial`, `findCause`, `redact`
+- `resultar/retry` — `Retry` policy builder and types
+- `resultar/function` — `pipe`, `flow`, `identity`, `constant`
+
+## Promise defect boundaries
+
+`ResultTask.fromPromise(signal => operation(signal))` defers a raw Promise factory
+until each run and returns `ResultTask<A, never, never>`. Throws and rejections
+become runtime defects; `runResult()` rejects for these failures. Use
+`tryPromise({ try, catch })` for expected errors and `fromResultAsync` for existing
+Result-producing operations. Unlike eager `ResultAsync.fromPromise`, this factory
+accepts no error mapper or already-started Promise.
+
+Cancellation waits for settlement. Register resource ownership directly with
+`acquireRelease` before composing transformations so late acquisitions are released.
+The checker recognizes async factories as explicit defect boundaries for
+`no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.
+
+## Node configuration and explicit lifetime ownership
+
+[`resultar-app`](packages/app/README.md) provides these configuration APIs together with
+Resultar workflows and DI through one package and import. The component packages
+remain available for independent use. With only `resultar-app` installed, import
+`Result`, `ResultTask`, `createModule`, `defineAppConfig` and `t` from `resultar-app`.
+To use `import { Result } from 'resultar'`, declare `resultar` directly in the
+application's dependencies. Apply the same rule to `resultar-di`, `resultar-config`
+and direct TypeBox imports. Both styles may coexist with aligned component versions;
+see [installation and import examples](packages/app/README.md#unified-and-direct-imports).
+
+[`resultar-config`](packages/config/README.md) defines a lazy singleton `appConfig`
+from TypeBox properties. Explicit source maps replace the environment; precise DI
+graphs propagate `ConfigError` only to selected dependents. Startup resources must
+depend on configuration before opening connections or listeners.
+
+`ResultTask.makeScope<CloseError>()` creates an invariant owner with a declared
+cleanup error bound. Both direct finalizers and acquired/nested scope requirements
+must fit it. `use` includes failures from cleaning a failed attempt; `close(exit?)`
+reports cleanup errors and uses the supplied exit only as finalizer context. An
+omitted type argument retains `unknown`. Defects and interruption remain possible.
+
+The [Node recipe](examples/cookbook/src/node-lifecycle.ts) keeps the scope open for
+the serving lifetime, shares shutdown across signals, and drains HTTP/SSE before
+releasing dependencies. Its deadline applies to HTTP work, not arbitrary finalizers.
+
 ## API Map
 
 The [generated public inventory](docs/api-inventory.md) lists every exported value/type
 and public member across the library packages. The checker uses a CLI/LSP surface;
-its [diagnostic table](packages/check/README.md#diagnostics) covers all 41 rules.
+its [diagnostic table](packages/check/README.md#diagnostics) covers all 42 rules.
 [Executable recipes](docs/recipes.md) are compiled and tested by `vp run test:docs`.
 Run `vp run docs:generate` after building when the public surface changes.
 
@@ -3826,7 +3893,8 @@ Run `vp run docs:generate` after building when the public surface changes.
 
 - `ResultTask.ok(value)`
 - `ResultTask.err(error)`
-- `ResultTask.fn(generator, ...ops)`
+- `ResultTask.suspend(factory)`
+- `ResultTask.fn(generator, ...ops)` / `ResultTask.fn(spanName, generator, ...ops)`
 - `ResultTask.gen(generator)`
 - `ResultTask.mapErr(task, mapper)` / `ResultTask.mapErr(mapper)(task)`
 - `ResultTask.andThen(task, next)` / `ResultTask.andThen(next)(task)`
@@ -3856,7 +3924,11 @@ Run `vp run docs:generate` after building when the public surface changes.
 - `ResultTask.unwrapReason(task, parentTag)` / `ResultTask.unwrapReason(parentTag)(task)`
 - `ResultTask.acquireDisposable(acquireTask)`
 - `ResultTask.acquireRelease(options)`
-- `ResultTask.scoped(task)`
+- `ResultTask.scoped(task)` / `task.scoped()`
+- `task.forkChild()` / `ResultTask.forkChild(task)`
+- `task.withSpan(name, attributes?)` / `ResultTask.withSpan(task, name, attributes?)` / `ResultTask.withSpan(name, attributes?)(task)`
+- `task.repeat(options)` / `ResultTask.repeat(task, options)` / `ResultTask.repeat(options)(task)`
+- `ResultTask.raceAll(tasks)` / `ResultTask.raceFirstAll(tasks)`
 - `task.ensuring(finalizer)` / `ResultTask.ensuring(task, finalizer)` / `ResultTask.ensuring(finalizer)(task)`
 - `task.onExit(cleanup)` / `ResultTask.onExit(task, cleanup)` / `ResultTask.onExit(cleanup)(task)`
 - `task.delay(milliseconds)` / `ResultTask.delay(task, milliseconds)` / `ResultTask.delay(milliseconds)(task)`
@@ -3874,11 +3946,16 @@ Run `vp run docs:generate` after building when the public surface changes.
 - `task.runResult(options?)` / `ResultTask.runResult(task, options?)` returns `ResultAsync<T, E | ScopeError<R>>`
 - `task.runPromise(options?)` / `ResultTask.runPromise(task, options?)` returns `Promise<T>`
 - `task.runExit(options?)` / `ResultTask.runExit(task, options?)` returns `Promise<Exit<T, E>>`
+- `task.runSync(options?)` / `ResultTask.runSync(task, options?)` executes synchronous tasks and returns `Result<T, E | ScopeError<R>>` (throws if an async step, defect, interruption, or composite cause occurs)
+- `task.runSyncExit(options?)` / `ResultTask.runSyncExit(task, options?)` executes synchronous tasks and returns `Exit<T, E | ScopeError<R>>` (throws only if an async step occurs)
 - `task.runFork(options?)` / `ResultTask.runFork(task, options?)` returns a running native `FiberHandle`
-- `Fiber.join(fiber, options?)`, `Fiber.await(fiber)`, `Fiber.interrupt(fiber)`
+- `Fiber.join(fiber, options?)`, `Fiber.await(fiber)` / `fiber.await()`, `Fiber.interrupt(fiber)`
 - Native fiber `id`, `Fiber.poll(fiber)` and `Fiber.addObserver(fiber, callback)`
+- Concurrency & state primitives: `Ref.make(initial)`, `Deferred.make<A, E>()`, `Queue.bounded<A>(capacity)`, `Queue.unbounded<A>()`
+- Observability: `TaskLocal.make(defaultValue, name?)`, `Tracer.noop`, `Tracer.memory()`, `{ tracer?: TaskTracer }` in run options
+- Deterministic testing clock: `Clock.virtual()` with `advanceBy(ms)`, `advanceToNext()`, `runToCompletion(task, { maxSteps? })`
 - Run options `yieldEvery` / `scheduler: TaskScheduler`; `Scheduler.live` is the default dispatcher
-- `Retry.policy(options)` for shared ResultAsync / ResultTask retry configuration
+- `Retry.policy(options)` for shared ResultAsync / ResultTask retry configuration (including `maxDelayMs`, `maxElapsedMs`, and error-aware `delayMs: (ctx, error) => number`)
 
 See the [core task reference](packages/resultar/README.md#lazy-workflows-with-resulttask) for the full
 execution, services, and composition API.
@@ -3887,16 +3964,19 @@ execution, services, and composition API.
 
 `Cause` is available as both a runtime namespace and the existing `Cause<E>` type:
 
+- `Cause.fail(error)`, `Cause.die(defect)`, `Cause.interrupt(reason?)`, `Cause.sequential(left, right)`, `Cause.parallel(left, right)` construct structured causes.
 - `Cause.isCause(value)` narrows runtime values to `Cause<unknown>`.
 - `Cause.hasFails(cause)` checks for typed failures anywhere in the tree.
 - `Cause.hasDies(cause)` checks for defects.
-- `Cause.hasInterrupts(cause)` checks for interruptions.
+- `Cause.hasInterrupts(cause)` checks for interruptions; `Cause.isInterruptedOnly(cause)` checks whether every leaf is an interruption.
 - `Cause.failures(cause)` collects all `Fail` errors in left-to-right order.
 - `Cause.defects(cause)` collects all `Die` defects in left-to-right order.
+- `Cause.spans(cause)` returns the captured span trace frames attached to a traced failure cause.
 - `Cause.findError(cause)` returns `Result<E, Cause<never>>`, selecting the first typed error
   in left-to-right order. When none exists, its `Err` retains the original tree by identity.
-- `Cause.pretty(cause)` renders each leaf with its kind in the same order, retaining Error
-  stacks and handling circular payloads and JSON redaction. Formatting is diagnostic text.
+- `Cause.pretty(cause)` renders each leaf with its kind in the same order (plus any attached
+  `Span trace:` frames), retaining Error stacks and handling circular payloads and JSON redaction.
+  `ResultTaskCauseError` also exposes `.prettyCause` and custom Node `util.inspect` formatting.
 
 Traversal is iterative and preserves repeated leaves, `Sequential` and `Parallel` structures.
 These helpers do not execute tasks or change `runExit`, `runResult`, or `runPromise` behavior.
@@ -4161,8 +4241,6 @@ pnpm run bench
 ### Workspace toolchain and validation
 
 Keep Vite+, Vitest, UI, and coverage versions aligned with the workspace catalog.
-Historical validation on October 7, 2026 passed `check:full` with 832 tests (629 in the core), build,
-package smoke tests, all example suites, and the agent evaluation graders.
 
 `check:full` also runs `test:release`, which exercises JSR version synchronization with the
 package formatter configurations and checks that repeated runs preserve the output. The
@@ -4170,61 +4248,11 @@ package formatter configurations and checks that repeated runs preserve the outp
 release commits follow the same configuration as package validation.
 
 Mutation testing uses the installed Stryker runner and `coverageAnalysis: "perTest"`.
-Read `packages/resultar/stryker.conf.json` and the workspace catalog for current settings;
-there is no tracked Stryker patch. After changing the runner or its configuration,
-regenerate the report and incremental cache with
+Read `packages/resultar/stryker.conf.json` and the workspace catalog for current settings.
+After changing the runner or its configuration, regenerate the report and incremental cache with
 `pnpm --filter resultar run test:mutation --force`. The JSON report is written to
 `packages/resultar/reports/mutation/mutation.json`.
-
-The following mutation results are historical, not a claim about the current checkout.
-The previous report contained 52 survivors with zero completed tests. After fixing test selection,
-strengthening the pipeline/service-resolver tests, and forcing a fresh run on October 7, 2026, the
-report recorded 2,052 killed mutants, 61 detected by timeout, zero survivors, and zero uncovered
-mutants: a 100% mutation score. The 290 ignored mutants include nine documented exclusions in three
-unreachable defensive defaults of the private interpreter. These results cover the ten configured
-source files and preserve runtime behavior and public execution contracts.
 
 ## License
 
 MIT
-
-## Promise defect boundaries
-
-`ResultTask.fromPromise(signal => operation(signal))` defers a raw Promise factory
-until each run and returns `ResultTask<A, never, never>`. Throws and rejections
-become runtime defects; `runResult()` rejects for these failures. Use
-`tryPromise({ try, catch })` for expected errors and `fromResultAsync` for existing
-Result-producing operations. Unlike eager `ResultAsync.fromPromise`, this factory
-accepts no error mapper or already-started Promise.
-
-Cancellation waits for settlement. Register resource ownership directly with
-`acquireRelease` before composing transformations so late acquisitions are released.
-The checker recognizes async factories as explicit defect boundaries for
-`no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.
-
-
-## Node configuration and explicit lifetime ownership
-
-[`resultar-app`](packages/app/README.md) provides these configuration APIs together with
-Resultar workflows and DI through one package and import. The component packages
-remain available for independent use. With only `resultar-app` installed, import
-`Result`, `ResultTask`, `createModule`, `defineAppConfig` and `t` from `resultar-app`.
-To use `import { Result } from 'resultar'`, declare `resultar` directly in the
-application's dependencies. Apply the same rule to `resultar-di`, `resultar-config`
-and direct TypeBox imports. Both styles may coexist with aligned component versions;
-see [installation and import examples](packages/app/README.md#unified-and-direct-imports).
-
-[`resultar-config`](packages/config/README.md) defines a lazy singleton `appConfig`
-from TypeBox properties. Explicit source maps replace the environment; precise DI
-graphs propagate `ConfigError` only to selected dependents. Startup resources must
-depend on configuration before opening connections or listeners.
-
-`ResultTask.makeScope<CloseError>()` creates an invariant owner with a declared
-cleanup error bound. Both direct finalizers and acquired/nested scope requirements
-must fit it. `use` includes failures from cleaning a failed attempt; `close(exit?)`
-reports cleanup errors and uses the supplied exit only as finalizer context. An
-omitted type argument retains `unknown`. Defects and interruption remain possible.
-
-The [Node recipe](examples/cookbook/src/node-lifecycle.ts) keeps the scope open for
-the serving lifetime, shares shutdown across signals, and drains HTTP/SSE before
-releasing dependencies. Its deadline applies to HTTP work, not arbitrary finalizers.

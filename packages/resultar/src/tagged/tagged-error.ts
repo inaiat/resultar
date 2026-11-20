@@ -1,5 +1,6 @@
 import type { ErrResult } from '../result/result.js'
 
+import { compileJitFunction, formatPropertyAccess, serializeStringLiteral } from '../core/jit.js'
 import { isRedacted, stringifyRedacted, type Redacted } from '../core/redacted.js'
 import type { ResultAsync } from '../result-async/result-async.js'
 import { createResultAsync } from '../result-async/result-async-adapter.js'
@@ -415,13 +416,123 @@ const stringifyTemplateValue = (value: unknown): string =>
     ? stringifyRedacted(value)
     : templateValueStringifiers[typeof value as StringifiableTemplateValueType](value)
 
-const compileMessageInterpolator =
-  (template: string): ((values?: Record<string, unknown>) => string) =>
-  (values) =>
-    template.replaceAll(templateVariableMatcher, (variable, key: string) => {
-      const value = values?.[key]
-      return value === undefined ? variable : stringifyTemplateValue(value)
-    })
+interface ParsedMessageTemplate {
+  readonly chunks: readonly string[]
+  readonly variables: readonly string[]
+}
+
+const parseMessageTemplate = (template: string): ParsedMessageTemplate => {
+  templateVariableMatcher.lastIndex = 0
+  const chunks: string[] = []
+  const variables: string[] = []
+  let cursor = 0
+  let match = templateVariableMatcher.exec(template)
+
+  while (match !== null) {
+    chunks.push(template.slice(cursor, match.index))
+    variables.push(String(match[1]))
+    cursor = match.index + match[0].length
+    match = templateVariableMatcher.exec(template)
+  }
+
+  chunks.push(template.slice(cursor))
+  return { chunks, variables }
+}
+
+const formatTemplateValue = (value: unknown): string => {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number') return String(value)
+  return stringifyTemplateValue(value)
+}
+
+const buildFallbackInterpolator =
+  (template: string, parsed: ParsedMessageTemplate) =>
+  (values?: Record<string, unknown>): string => {
+    if (values === undefined || values === null) return template
+    const { chunks, variables } = parsed
+    let output = chunks[0] ?? ''
+    const length = variables.length
+
+    for (let index = 0; index < length; index += 1) {
+      const key = variables[index]
+      if (key !== undefined) {
+        const raw = values[key]
+        output += raw === undefined ? `$${key}` : formatTemplateValue(raw)
+        output += chunks[index + 1] ?? ''
+      }
+    }
+
+    return output
+  }
+
+const buildJitInterpolator = (
+  template: string,
+  parsed: ParsedMessageTemplate,
+): ((values?: Record<string, unknown>) => string) | undefined => {
+  const { chunks, variables } = parsed
+  const varLines: string[] = []
+  const parts: string[] = []
+  const singleBareVariable =
+    variables.length === 1 && (chunks[0] ?? '') === '' && (chunks[1] ?? '') === ''
+
+  if (chunks[0] !== undefined && chunks[0] !== '') {
+    parts.push(serializeStringLiteral(chunks[0]))
+  }
+
+  for (let index = 0; index < variables.length; index += 1) {
+    const key = variables[index]
+    if (key !== undefined) {
+      const varName = `v${String(index)}`
+      const propExpr = formatPropertyAccess('p', key)
+      const missingLiteral = serializeStringLiteral(`$${key}`)
+      varLines.push(`const ${varName} = ${propExpr};`)
+
+      if (singleBareVariable) {
+        parts.push(
+          `(${varName} === undefined ? ${missingLiteral} : typeof ${varName} === "string" ? ${varName} : typeof ${varName} === "number" ? String(${varName}) : s(${varName}))`,
+        )
+      } else {
+        parts.push(
+          `(${varName} === undefined ? ${missingLiteral} : typeof ${varName} === "string" || typeof ${varName} === "number" ? ${varName} : s(${varName}))`,
+        )
+      }
+
+      const tail = chunks[index + 1]
+      if (tail !== undefined && tail !== '') {
+        parts.push(serializeStringLiteral(tail))
+      }
+    }
+  }
+
+  const body = `return function resultarInterpolate(p) {
+  if (p === undefined || p === null) return ${serializeStringLiteral(template)};
+  ${varLines.join('\n  ')}
+  return ${parts.join(' + ')};
+}`
+
+  return compileJitFunction<(values?: Record<string, unknown>) => string>(['s'], body, [
+    stringifyTemplateValue,
+  ])
+}
+
+const compileMessageInterpolator = (
+  template: string,
+): ((values?: Record<string, unknown>) => string) => {
+  if (template === defaultMessageTemplate) {
+    return (values) => {
+      if (values === undefined || values === null) return defaultMessageTemplate
+      const raw = values['message']
+      return raw === undefined ? defaultMessageTemplate : formatTemplateValue(raw)
+    }
+  }
+
+  const parsed = parseMessageTemplate(template)
+  if (parsed.variables.length === 0) {
+    return () => template
+  }
+
+  return buildJitInterpolator(template, parsed) ?? buildFallbackInterpolator(template, parsed)
+}
 
 const getTemplateVariableNames = (template: string): readonly string[] => {
   templateVariableMatcher.lastIndex = 0
@@ -445,16 +556,20 @@ const assertNoReservedTemplateVariables = (tag: string, template: string): void 
   }
 }
 
-const getErrorOptions = (cause: unknown): { cause?: unknown } =>
-  cause === undefined ? {} : { cause }
+const readonlyDescriptor: PropertyDescriptor = {
+  configurable: true,
+  enumerable: true,
+  value: undefined,
+  writable: false,
+}
 
 const assignReadonly = (target: object, key: PropertyKey, value: unknown): void => {
-  Object.defineProperty(target, key, {
-    configurable: true,
-    enumerable: true,
-    value,
-    writable: false,
-  })
+  readonlyDescriptor.value = value
+  try {
+    Object.defineProperty(target, key, readonlyDescriptor)
+  } finally {
+    readonlyDescriptor.value = undefined
+  }
 }
 
 const reservedMetadataProperties = new Set(['err', 'is', 'tag', 'withProps', 'prototype', 'then'])
@@ -465,7 +580,28 @@ const shouldCopyMetadata = (target: object, owner: object, key: string): boolean
   owner !== Function.prototype &&
   !(key in target)
 
+const copyOwnMetadata = (target: object, props: Record<string, unknown>): void => {
+  for (const key in props) {
+    if (
+      Object.hasOwn(props, key) &&
+      !reservedTemplateVariables.has(key as ReservedTemplateVariable)
+    ) {
+      assignReadonly(target, key, props[key])
+    }
+  }
+}
+
 const copyVisibleMetadata = (target: object, props: object): void => {
+  const proto: unknown = Object.getPrototypeOf(props)
+  if (proto === Object.prototype || proto === null) {
+    for (const key of Object.getOwnPropertyNames(props)) {
+      if (shouldCopyMetadata(target, props, key)) {
+        assignReadonly(target, key, Reflect.get(props, key))
+      }
+    }
+    return
+  }
+
   let current: object | null = props
 
   while (current !== null) {
@@ -570,16 +706,18 @@ const createTaggedErrorClass = <
   const messageTemplate = options.message ?? (defaultMessageTemplate as MessageTemplate)
   assertNoReservedTemplateVariables(options.name, messageTemplate)
   const interpolate = compileMessageInterpolator(messageTemplate)
+  const sharedFingerprint = Object.freeze([options.name, messageTemplate] as const)
 
   class GeneratedTaggedError extends BaseError {
     public static readonly tag = options.name
     public readonly _tag = options.name
-    public readonly fingerprint = [options.name, messageTemplate] as const
+    public readonly fingerprint = sharedFingerprint
     public readonly messageTemplate = messageTemplate
 
     public constructor(props?: ConstructorProps<MessageTemplate>) {
       const message = interpolate(props)
-      super(message, getErrorOptions(props?.cause))
+      const cause = props?.cause
+      super(message, cause === undefined ? undefined : { cause })
       // eslint-disable-next-line nicorn/custom-error-definition
       this.name = options.name
 
@@ -587,11 +725,7 @@ const createTaggedErrorClass = <
         if (explicitProps) {
           copyVisibleMetadata(this, props)
         } else {
-          for (const [key, value] of Object.entries(props)) {
-            if (!reservedTemplateVariables.has(key as ReservedTemplateVariable)) {
-              assignReadonly(this, key, value)
-            }
-          }
+          copyOwnMetadata(this, props as Record<string, unknown>)
         }
       }
     }
@@ -690,7 +824,23 @@ const createTaggedErrorClass = <
 }
 
 /**
- * Creates a small tagged-union factory with member constructors, `$is`, and `$match`.
+ * Creates a lightweight discriminated-union factory with frozen member constructors, `$is`, and `$match`.
+ *
+ * @example
+ * ```ts
+ * import { taggedEnum } from 'resultar'
+ *
+ * const PaymentState = taggedEnum<{
+ *   Pending: { readonly id: string }
+ *   Settled: { readonly id: string; readonly amount: number }
+ * }>()
+ *
+ * const state = PaymentState.Settled({ id: 'pay_1', amount: 4200 })
+ * PaymentState.$match(state, {
+ *   Pending: ({ id }) => `waiting:${id}`,
+ *   Settled: ({ amount }) => `paid:${amount}`,
+ * })
+ * ```
  */
 export const taggedEnum = <
   Members extends Record<string, object>,
@@ -725,6 +875,8 @@ export const taggedEnum = <
     },
   }
 
+  const constructors = new Map<string, (props?: object) => object>()
+
   return new Proxy(target, {
     get(base, property, receiver) {
       if (property in base) {
@@ -735,27 +887,43 @@ export const taggedEnum = <
         return undefined
       }
 
-      return (props?: object): object => {
-        const value: Record<string, unknown> = { _tag: property }
+      let ctor = constructors.get(property)
+      if (ctor === undefined) {
+        ctor = (props?: object): object => {
+          const value: Record<string, unknown> = { _tag: property }
 
-        if (props !== undefined) {
-          for (const [key, propValue] of Object.entries(props)) {
-            if (key !== '_tag') {
-              value[key] = propValue
+          if (props !== undefined) {
+            for (const key in props) {
+              if (Object.hasOwn(props, key) && key !== '_tag') {
+                value[key] = (props as Record<string, unknown>)[key]
+              }
             }
           }
-        }
 
-        return Object.freeze(value)
+          return Object.freeze(value)
+        }
+        constructors.set(property, ctor)
       }
+
+      return ctor
     },
   }) as TaggedEnumFactory<Members>
 }
 
 /**
- * Matches an Error by tagged `_tag`, with optional native `Error` fallback.
+ * Exhaustively matches an `Error` union by its `_tag` property, with an optional native `Error` handler.
  *
- * Throws the original error when no handler matches.
+ * Throws the original error when no handler matches at runtime.
+ *
+ * @example
+ * ```ts
+ * import { matchError } from 'resultar'
+ *
+ * const status = matchError(error, {
+ *   NotFoundError: () => 404,
+ *   ValidationError: () => 400,
+ * })
+ * ```
  */
 export const matchError = <ErrorType extends Error, ReturnType>(
   error: ErrorType,
@@ -776,7 +944,18 @@ export const matchError = <ErrorType extends Error, ReturnType>(
 }
 
 /**
- * Matches an Error by tagged `_tag`, then native `Error`, then the provided fallback.
+ * Partially matches an `Error` union by `_tag`, falling back to `handlers.Error` and finally `fallback`.
+ *
+ * @example
+ * ```ts
+ * import { matchErrorPartial } from 'resultar'
+ *
+ * const status = matchErrorPartial(
+ *   error,
+ *   { NotFoundError: () => 404 },
+ *   () => 500,
+ * )
+ * ```
  */
 export const matchErrorPartial = <ErrorType extends Error, ReturnType>(
   error: ErrorType,

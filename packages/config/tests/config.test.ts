@@ -292,3 +292,28 @@ test("t reexports TypeBox and preserves inference alongside directly imported sc
   >();
   expect(await config.load().runPromise()).toEqual({ PORT: 9000, MODE: "dev", ENABLED: false });
 });
+
+test("cached Ajv validator isolates errors and env snapshots across repeated load() runs", async () => {
+  let port = "8080";
+  const config = defineAppConfig({
+    properties: { PORT: t.Integer({ minimum: 1 }) },
+    source: {
+      get PORT() {
+        return port;
+      },
+    },
+  });
+
+  expect(await config.load().runPromise()).toEqual({ PORT: 8080 });
+
+  port = "not-a-number";
+  const invalidFirst = await config.load().runResult();
+  expect(invalidFirst.isErr()).toBe(true);
+
+  port = "9090";
+  expect(await config.load().runPromise()).toEqual({ PORT: 9090 });
+
+  port = "0";
+  const invalidSecond = await config.load().runResult();
+  expect(invalidSecond.isErr()).toBe(true);
+});

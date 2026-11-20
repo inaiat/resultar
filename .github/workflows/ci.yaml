@@ -55,6 +55,12 @@ jobs:
       - name: Agent evaluation graders
         run: vp run test:agents
 
+      - name: VS Code & Cursor extension checks and live LSP tests
+        run: vp run check:vscode && vp run build:vscode && vp run test:vscode
+
+      - name: Docs website & playground checks and tests
+        run: vp run test:website
+
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: validate

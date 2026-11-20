@@ -1,0 +1,82 @@
+import { defineConfig, type UserConfig } from "vite-plus";
+
+const ignorePatterns = ["dist", "node_modules", "*.vsix", "README.md"];
+
+const config: UserConfig = defineConfig({
+  pack: {
+    checks: { legacyCjs: false },
+    clean: true,
+    deps: { neverBundle: ["vscode"] },
+    dts: false,
+    entry: ["src/extension.ts"],
+    format: ["cjs"],
+    outExtensions: () => ({ js: ".cjs" }),
+    platform: "node",
+    sourcemap: false,
+  },
+  fmt: { ignorePatterns, objectWrap: "collapse" },
+  lint: {
+    categories: {
+      correctness: "error",
+      nursery: "off",
+      pedantic: "error",
+      perf: "error",
+      restriction: "error",
+      style: "error",
+      suspicious: "error",
+    },
+    ignorePatterns,
+    options: { typeAware: true, typeCheck: true },
+    rules: {
+      "capitalized-comments": "allow",
+      complexity: "allow",
+      "consistent-type-definitions": "allow",
+      curly: "allow",
+      "explicit-function-return-type": "allow",
+      "func-style": "allow",
+      "max-lines": "allow",
+      "max-lines-per-function": "allow",
+      "max-params": "allow",
+      "max-statements": "allow",
+      "no-async-await": "allow",
+      "no-bitwise": "allow",
+      "no-console": "allow",
+      "no-continue": "allow",
+      "no-magic-numbers": "allow",
+      "no-map-spread": "allow",
+      "no-optional-chaining": "allow",
+      "no-rest-spread-properties": "allow",
+      "no-ternary": "allow",
+      "no-undefined": "allow",
+      "no-use-before-define": "allow",
+      "no-void": "allow",
+      "one-var": "allow",
+      "prefer-readonly-parameter-types": "allow",
+      "require-await": "allow",
+      "sort-imports": "allow",
+      "sort-keys": "allow",
+      "typescript/method-signature-style": "allow",
+      "unicorn/filename-case": ["error", { case: "kebabCase" }],
+      "unicorn/import-style": "allow",
+      "unicorn/no-array-for-each": "allow",
+      "unicorn/no-negated-condition": "allow",
+      "unicorn/no-null": "allow",
+      "unicorn/no-object-as-default-parameter": "allow",
+      "unicorn/no-useless-undefined": "allow",
+    },
+    overrides: [
+      {
+        files: ["tests/**"],
+        rules: {
+          "max-classes-per-file": "allow",
+          "no-unsafe-type-assertion": "allow",
+          "typescript/promise-function-async": "allow",
+          "unicorn/no-array-callback-reference": "allow",
+          "unicorn/consistent-function-scoping": "allow",
+        },
+      },
+    ],
+  },
+});
+
+export default config;

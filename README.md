@@ -193,7 +193,7 @@ Resultar's runtime is engineered so that gradual adoption is also **pay-as-you-g
 
 ### Production Tagged Errors & Secret Redaction
 
-`createTaggedError` creates real `Error` subclasses (`instanceof Error === true`) with a literal `_tag`, `$variable` message interpolation, stable log `.fingerprint` strings, `.findCause(ErrorClass)` traversal, and first-class secret redaction:
+`createTaggedError` creates real `Error` subclasses (`instanceof Error === true`) with a literal `_tag`, `$variable` message interpolation, stable log `.fingerprint` tuples (`[tag, template]`), `.findCause(ErrorClass)` traversal, and first-class secret redaction:
 
 ```ts
 import { createTaggedError, isRedacted, redact, revealRedacted } from 'resultar'
@@ -210,7 +210,7 @@ const err = new TokenRejectedError({
 })
 
 err.message     // 'Token <redacted:stripe-key> rejected for tenant t_42'
-err.fingerprint // 'TokenRejectedError:Token $token rejected for tenant $tenantId'
+err.fingerprint // ['TokenRejectedError', 'Token $token rejected for tenant $tenantId']
 err.toJSON()    // safe for structured loggers — redacted value is never serialized
 
 if (isRedacted(err.token)) {
@@ -299,8 +299,8 @@ pnpm add -D resultar-check
 }
 ```
 
-- **41 native static analysis rules (`RESULTAR001`–`RESULTAR041`)**: Forbids ignored `Result` / `ResultAsync` / `ResultTask` / `MatchMatcher` / `Fiber` values (`noDiscard`), `unknown` / `any` error or service channels (`noUnknownResultError`, `noUnknownTaskRequirements`), generator mistakes (`yieldStarInResultTaskGen`, `noAwaitInResultTaskGen`, `requireReturnYieldStar`, `noResultInTaskGen`, `noRunInsideGen`), unscoped resources (`noUnscopedAcquireRelease`), invalid DI lifetimes (`noInvalidLifetime`), and non-idiomatic combinator chains.
-- **CI, Editor & AI Agent ready**: Emits human, JSON (`--json`), and structured quickfix (`quickfixes --json`) / codebase topology (`overview --json`) inventories, plus a native `resultar-check lsp` server. See the [Anti-Patterns & `resultar-check` Guide](skills/resultar/references/anti-patterns.md) for repair guidance and the complete diagnostic reference.
+- **42 native static analysis rules (`RESULTAR001`–`RESULTAR042`)**: Forbids ignored `Result` / `ResultAsync` / `ResultTask` / `MatchMatcher` / `Fiber` values (`noDiscard`), `unknown` / `any` error or service channels (`noUnknownResultError`, `noUnknownTaskRequirements`), `Promise<Result<...>>` leaks (`noPromiseResultar`), generator mistakes (`yieldStarInResultTaskGen`, `noAwaitInResultTaskGen`, `requireReturnYieldStar`, `noResultInTaskGen`, `noRunInsideGen`), unscoped resources (`noUnscopedAcquireRelease`), invalid DI lifetimes (`noInvalidLifetime`), and non-idiomatic combinator chains.
+- **Auto-fix, CI, Multi-Editor & AI Agent ready**: Apply safe semantic corrections automatically with `resultar-check --fix` (or preview via `--fix-dry-run` / `quickfixes --json`), inspect codebase topology with `overview --json`, emit human/JSON/SARIF/JUnit reports, run `resultar-check lsp`, use the official [VS Code & Cursor LSP extension](editors/vscode/README.md) (inline `T / E / R` hover and quickfixes), and scaffold editor setup with `resultar-check init --editor zed|vscode|cursor|all`. See the [Anti-Patterns & `resultar-check` Guide](skills/resultar/references/anti-patterns.md) for repair guidance and the complete diagnostic reference.
 
 ---
 
@@ -317,10 +317,10 @@ schema validation, and web frameworks:
 
 | Package | Description | Docs |
 | --- | --- | --- |
-| [`resultar`](packages/resultar/README.md) | Core `Result<T, E>`, `ResultTask<T, E, R>`, `ResultAsync<T, E>`, `Match`, `Cause`, `Retry`, `Clock`, `Fiber`, `Semaphore`. | [README](packages/resultar/README.md) · [Guide](DOCUMENTATION.md) |
-| [`resultar-check`](packages/check/README.md) | Native TypeScript-Go compiler + Resultar diagnostics CLI & LSP server. | [README](packages/check/README.md) |
+| [`resultar`](packages/resultar/README.md) | Core `Result<T, E>`, `ResultTask<T, E, R>`, `ResultAsync<T, E>`, `Match`, `Cause`, `Retry`, `Clock`, `Fiber`, `Semaphore`, `Deferred`, `Queue`, `Ref`, `TaskLocal`, `Tracer`, plus tree-shakeable subpath exports (`resultar/result`, `resultar/task`, `resultar/match`, `resultar/tagged`, `resultar/retry`, `resultar/function`). | [README](packages/resultar/README.md) · [Guide](DOCUMENTATION.md) |
+| [`resultar-check`](packages/check/README.md) | Native TypeScript-Go compiler + 42 Resultar diagnostics, `--fix`, LSP server, and Zed/VS Code/Cursor setup. | [README](packages/check/README.md) |
 | [`resultar-app`](packages/app/README.md) | Unified entry point for workflows, dependency injection and validated configuration. | [README](packages/app/README.md) |
-| [`resultar-config`](packages/config/README.md) | Lazy, typed Node environment configuration with TypeBox schemas and DI integration. | [README](packages/config/README.md) |
+| [`resultar-config`](packages/config/README.md) | Lazy, typed Node environment configuration with TypeBox schemas, secret sanitization, and DI startup ordering. | [README](packages/config/README.md) |
 | [`resultar-di`](packages/di/README.md) | Typed dependency injection, class/function services, request scopes, and test overrides for `ResultTask`. | [README](packages/di/README.md) |
 | [`resultar-hono`](packages/hono/README.md) | Typed Hono middleware & bindings with one DI resource scope per HTTP response and graceful shutdown. | [README](packages/hono/README.md) |
 | [`resultar-fastify`](packages/fastify/README.md) | Native Fastify plugin providing application & request-scoped DI services, cancellation, and cleanup. | [README](packages/fastify/README.md) |
@@ -328,6 +328,8 @@ schema validation, and web frameworks:
 | [`resultar-request`](packages/request/README.md) | Fetch-first JSON HTTP client preserving its eager `ResultAsync` return contract; bridge into Task workflows. | [README](packages/request/README.md) |
 | [`resultar-request-zod`](packages/request-zod/README.md) | Zod schema validation adapter for `resultar-request`. | [README](packages/request-zod/README.md) |
 | [`resultar-request-typebox`](packages/request-typebox/README.md) | TypeBox schema validation adapter for `resultar-request`. | [README](packages/request-typebox/README.md) |
+
+For Node process startup, signal handling, and HTTP draining with typed configuration, see [`resultar-config`](packages/config/README.md) and the [Node lifecycle recipe](examples/cookbook/src/node-lifecycle.ts).
 
 ### End-to-End Web Service Example (`resultar-di` + `resultar-hono` / `resultar-fastify` / `resultar-nestjs`)
 
@@ -369,7 +371,7 @@ Every release of `resultar` bundles version-matched coding-agent instructions di
 
 - **[`SKILL.md`](skills/resultar/SKILL.md)**: Execution contracts and routing to the relevant manual for Claude Code, Cursor, Codex, and Antigravity.
 - **[`references/api.md`](skills/resultar/references/api.md)**: Feature map and semantic constraints across `Result`, `ResultAsync`, `ResultTask`, `createTaggedError`, `taggedEnum`, `redact`, `Match`, `Cause`, `Fiber`, `Semaphore`, `Retry`, `Clock`, and `Scheduler`.
-- **[`references/anti-patterns.md`](skills/resultar/references/anti-patterns.md)**: Native checker configuration, repair patterns, and links to all 41 rules and their verified defaults.
+- **[`references/anti-patterns.md`](skills/resultar/references/anti-patterns.md)**: Native checker configuration, repair patterns, and links to all 42 rules and their verified defaults.
 - **[`references/patterns.md`](skills/resultar/references/patterns.md)**: Production recipes (`ResultTask.memoize`, `onExit`, background workers with `runFork`, uncooperative Promise timeouts with `interruption: 'detach'`, bounded concurrency, and `VirtualClock` testing).
 - **[`references/services.md`](skills/resultar/references/services.md)**: `serviceTag`, `resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, and `resultar-request` (`zod` and `typebox`).
 - **[`references/integrations.md`](skills/resultar/references/integrations.md)** & **[`references/review-checklist.md`](skills/resultar/references/review-checklist.md)**: Boundary adapters and pre-commit review checklist.
@@ -398,6 +400,7 @@ Explore complete, runnable projects in [`examples/`](examples):
 
 | Topic | Guide |
 | --- | --- |
+| **Coming from Effect** | [`docs/coming-from-effect.md`](docs/coming-from-effect.md) |
 | **Gradual Adoption (`Result` → `ResultTask`; eager compatibility bridges)** | [`docs/gradual-adoption.md`](docs/gradual-adoption.md) |
 | **Core Package Quickstart & Cookbook** | [`packages/resultar/README.md`](packages/resultar/README.md) |
 | **The Core Model (`Ok`, `Err`, `ResultTask`)** | [`DOCUMENTATION.md#the-model`](DOCUMENTATION.md#the-model) |
@@ -426,6 +429,9 @@ pnpm build            # Build all workspace packages
 pnpm smoke:package    # Verify packed tarballs, exports, and published artifacts
 pnpm test:examples    # Run smoke tests across all example projects
 pnpm test:agents      # Validate coding-agent skill contracts
+pnpm test:vscode      # Build and test the VS Code / Cursor extension against live resultar-check lsp
+pnpm docs:dev         # Launch the searchable docs portal & live browser playground locally
+pnpm test:website     # Build and test the docs portal, search index, and playground presets
 ```
 
 Reproducible benchmarks live in [`benchmarks/`](benchmarks/README.md) (`pnpm --filter resultar-benchmarks run bench:effect`, `bench:neverthrow`, `bench:task`). Releases are managed with Changesets (`pnpm changeset`).
@@ -433,5 +439,3 @@ Reproducible benchmarks live in [`benchmarks/`](benchmarks/README.md) (`pnpm --f
 ## License
 
 [MIT](LICENSE)
-
-Node environment configuration is available through [resultar-config](packages/config/README.md), with typed, sanitized errors and lazy DI startup ordering. The [Node lifecycle recipe](examples/cookbook/src/node-lifecycle.ts) covers signals and HTTP draining.

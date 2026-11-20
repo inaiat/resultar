@@ -12,8 +12,8 @@ a small Node launcher and selects the matching Go binary for the current platfor
 - TypeScript compiler and Resultar diagnostics from one `tsconfig.json` project pass;
 - human, JSON Lines, SARIF 2.1.0, and JUnit output for local development and CI;
 - per-rule severities, file overrides, line suppressions, and configurable failure policy;
-- stdio LSP diagnostics and safe composition quick fixes;
-- `init` and `doctor` commands for portable project-local Zed setup;
+- stdio LSP diagnostics, safe composition quick fixes, and `--fix` / `--fix-dry-run` auto-repair;
+- `init` and `doctor` commands for portable Zed, VS Code, and Cursor setup (`--editor zed|vscode|cursor|all`);
 - native packages for macOS, Linux, and Windows on ARM64 and x64.
 
 ## Install
@@ -121,6 +121,9 @@ With no subcommand, `resultar-check` analyzes the project and writes diagnostics
 Usage: resultar-check
 
 Flags:
+  --fix                               Apply safe correction fixes in place (never intentional-discard).
+  --fix-dry-run                       Preview safe correction fixes without modifying files.
+  --file <path>                       Filter overview, quickfixes, or --fix by source file.
   --mode <direct|must-use>            Override noDiscardMode.
   -p, --project <path>                TypeScript project (default: tsconfig.json).
   --format <human|json|sarif|junit>   Diagnostic output format (default: human).
@@ -131,21 +134,28 @@ Flags:
 
 Additional commands:
 
-| Command                                                                    | Purpose                                                                   |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `resultar-check overview --project tsconfig.json --json`                   | Inventory exported Resultar functions/values, tagged errors, and services |
-| `resultar-check quickfixes --project tsconfig.json --file src/workflow.ts` | Preview diagnostics with proposed edits without writing files             |
-| `resultar-check lsp --project tsconfig.json`                               | Run the stdio language server                                             |
-| `resultar-check init --project tsconfig.json`                              | Create the portable Zed LSP configuration                                 |
-| `resultar-check init --force`                                              | Refresh the Resultar Zed entry while preserving other settings            |
-| `resultar-check doctor --project tsconfig.json`                            | Check the project, launcher, pnpm, and Zed setup                          |
-| `resultar-check --version`                                                 | Print the launcher package version                                        |
+| Command                                                                    | Purpose                                                                     |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `resultar-check --fix --project tsconfig.json`                             | Apply safe `kind: "correction"` fixes in place and re-verify diagnostics    |
+| `resultar-check --fix-dry-run --project tsconfig.json`                     | Preview how many safe correction fixes would be applied without writing     |
+| `resultar-check overview --project tsconfig.json --json`                   | Inventory exported Resultar functions/values, tagged errors, and services   |
+| `resultar-check quickfixes --project tsconfig.json --file src/workflow.ts` | Preview diagnostics with proposed edits without writing files               |
+| `resultar-check lsp --project tsconfig.json`                               | Run the stdio language server                                               |
+| `resultar-check init --editor zed\|vscode\|cursor\|all`                    | Create portable Zed LSP, VS Code/Cursor tasks, and Cursor rule setup        |
+| `resultar-check init --force`                                              | Refresh generated Resultar entries while preserving other editor settings   |
+| `resultar-check doctor --editor zed\|vscode\|cursor\|all`                  | Check the project, launcher, pnpm, and configured editor setup              |
+| `resultar-check --version`                                                 | Print the launcher package version                                          |
 
 Compiler diagnostics are always included. Resultar diagnostics use their configured severity, and
 the process exits with status `1` when a compiler error or a diagnostic at or above `failOn` exists.
 
-`overview` and `quickfixes` support `--file` (relative to the project directory),
-`--format human|json`, and `--json`. `overview --json` emits one document with
+`--fix` applies only non-overlapping `kind: "correction"` edits (it **never** auto-applies
+`kind: "intentional-discard"` edits such as `void expr`), converges over multiple passes if needed,
+writes the fix summary to stderr (keeping `--json` / `--format sarif` / `--format junit` stdout
+machine-readable), and re-analyzes the project so the exit code reflects remaining diagnostics.
+
+`overview`, `quickfixes`, and `--fix` / `--fix-dry-run` support `--file` (relative to the project directory).
+`overview` and `quickfixes` also support `--format human|json` and `--json`. `overview --json` emits one document with
 `schemaVersion: 1` and sorted `entries`, containing declaration/export locations and
 `success`, `error`, and `requirements` channels where applicable. Reexports retain the
 original declaration and the exporting module. Services include identifier/contract;
@@ -178,6 +188,9 @@ preserve these fields in `data.kind` and `data.description`. Recheck compilation
 after applying a correction; a local edit can require follow-up changes in the surrounding code.
 
 ## Editor And LSP Setup
+
+- `resultar-check lsp --project tsconfig.json` runs the native stdio language server (works directly in Zed via `resultar-check init`, or in VS Code / Cursor via the official thin [VS Code & Cursor extension](../../editors/vscode/README.md)).
+- `resultar-check init --editor vscode|cursor|all` writes `.vscode/tasks.json` (problemMatcher for `resultar-check` and `resultar-check: fix`), recommends `inaiat.resultar-check` in `.vscode/extensions.json`, and (for `cursor` / `all`) creates `.cursor/rules/resultar-check.mdc`.
 
 Run the native stdio server directly from any editor that supports a custom language server:
 
@@ -436,6 +449,53 @@ bootstrap/handler contracts and Promise-returning driver callbacks passed to con
 the rule does not automatically exempt callbacks. Keep suppressions at the conversion boundary,
 with the reason documented, so application contracts stay checked.
 
+## Rule Analysis Boundaries
+
+### Resource scopes (`no-unscoped-acquire-release`)
+
+Resource factories may return a task carrying `ResultTaskScope<E>` and compose across files.
+The caller can use `ResultTask.scoped`, a root `run*` boundary (which creates and closes its own
+scope), or an explicit scope owner. The scope requirement also tracks pending release errors;
+its presence alone does not imply a leak. `no-unscoped-acquire-release` retains its syntactic
+fallback when a generator's type does not expose a scope requirement. Requirement-erasing
+assertions remain covered by `unsafe-result-type-assertion`.
+
+### Cause recovery (`no-useless-recovery`)
+
+`no-useless-recovery` uses the typed failure channel for typed-only recovery methods.
+It does not flag `catchCause` merely because `E` is `never`: runtime defects can still reach cause
+recovery. This applies to instance, static and curried calls. External interruption keeps its
+runtime semantics and cannot be swallowed by this diagnostic correction.
+
+### Promise defect boundaries
+
+`ResultTask.fromPromise(signal => operation(signal))` defers a raw Promise factory
+until each run and returns `ResultTask<A, never, never>`. Throws and rejections
+become runtime defects; `runResult()` rejects for these failures. Use
+`tryPromise({ try, catch })` for expected errors and `fromResultAsync` for existing
+Result-producing operations. Unlike eager `ResultAsync.fromPromise`, this factory
+accepts no error mapper or already-started Promise.
+
+Cancellation waits for settlement. Register resource ownership directly with
+`acquireRelease` before composing transformations so late acquisitions are released.
+The checker recognizes async factories as explicit defect boundaries for
+`no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.
+
+### Static lifetime graph boundaries (`no-invalid-lifetime`)
+
+`no-invalid-lifetime` follows immutable `createModule()` chains and const aliases,
+known `merge` inputs and value `override` operations. It reads named dependencies
+and token/class `make` task requirements. Each composition has its own graph;
+identically named services in separate roots are unrelated. Findings include the
+direct consumer → dependency edge, both lifetimes, and both registration locations
+in the existing message field. The JSON/CLI/LSP diagnostic schema is unchanged.
+No fix automatically promotes a dependency to singleton.
+
+Dynamic factories, mutable aliases, computed registration names/dependency arrays,
+and unknown merge inputs are analysis boundaries. The rule does not invent edges
+across them. A direct invalid edge explains a longer invalid path; runtime DI
+validation remains authoritative for graphs the static checker cannot establish.
+
 ## Migrating To Version 3
 
 Version 3 intentionally removes the legacy JavaScript checker surface. Applications upgrading from
@@ -470,44 +530,3 @@ For backend architecture, local Go commands, and TypeScript-Go revision details,
 ## License
 
 MIT
-
-Resource factories may return a task carrying `ResultTaskScope<E>` and compose across files.
-The caller can use `ResultTask.scoped`, a root `run*` boundary (which creates and closes its own
-scope), or an explicit scope owner. The scope requirement also tracks pending release errors;
-its presence alone does not imply a leak. `no-unscoped-acquire-release` retains its syntactic
-fallback when a generator's type does not expose a scope requirement. Requirement-erasing
-assertions remain covered by `unsafe-result-type-assertion`.
-
-`no-useless-recovery` uses the typed failure channel for typed-only recovery methods.
-It does not flag `catchCause` merely because `E` is `never`: runtime defects can still reach cause
-recovery. This applies to instance, static and curried calls. External interruption keeps its
-runtime semantics and cannot be swallowed by this diagnostic correction.
-
-## Promise defect boundaries
-
-`ResultTask.fromPromise(signal => operation(signal))` defers a raw Promise factory
-until each run and returns `ResultTask<A, never, never>`. Throws and rejections
-become runtime defects; `runResult()` rejects for these failures. Use
-`tryPromise({ try, catch })` for expected errors and `fromResultAsync` for existing
-Result-producing operations. Unlike eager `ResultAsync.fromPromise`, this factory
-accepts no error mapper or already-started Promise.
-
-Cancellation waits for settlement. Register resource ownership directly with
-`acquireRelease` before composing transformations so late acquisitions are released.
-The checker recognizes async factories as explicit defect boundaries for
-`no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.
-
-### Static lifetime graph boundaries
-
-`no-invalid-lifetime` follows immutable `createModule()` chains and const aliases,
-known `merge` inputs and value `override` operations. It reads named dependencies
-and token/class `make` task requirements. Each composition has its own graph;
-identically named services in separate roots are unrelated. Findings include the
-direct consumer → dependency edge, both lifetimes, and both registration locations
-in the existing message field. The JSON/CLI/LSP diagnostic schema is unchanged.
-No fix automatically promotes a dependency to singleton.
-
-Dynamic factories, mutable aliases, computed registration names/dependency arrays,
-and unknown merge inputs are analysis boundaries. The rule does not invent edges
-across them. A direct invalid edge explains a longer invalid path; runtime DI
-validation remains authoritative for graphs the static checker cannot establish.

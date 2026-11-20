@@ -3,6 +3,7 @@ import { AbortError } from '../core/abort-error.js'
 import { dual } from '../core/dual.js'
 import { Pipeable } from '../core/pipe.js'
 import {
+  isRetryElapsedExceeded,
   isRetryPolicy,
   observeRetry,
   retryContext,
@@ -910,8 +911,10 @@ const validateResultAsyncRetry = <E>(options: ResultAsyncRetryInput<E>): void =>
 const resultAsyncRetryDelay = <E>(
   options: ResultAsyncRetryInput<E>,
   context: ResultAsyncRetryContext,
+  error: E,
 ): number => {
-  if (isRetryPolicy<E>(options)) return retryPolicyDelay(options, context, Math.random)
+  if (isRetryPolicy<E>(options))
+    return retryPolicyDelay(options, context, { random: Math.random, error })
   let delayMs =
     typeof options.delayMs === 'function' ? options.delayMs(context) : (options.delayMs ?? 0)
   validateResultAsyncRetryDelayValue(delayMs)
@@ -976,6 +979,8 @@ const runResultAsyncRetryAttempts = async <T, E, U, F>(
   validateResultAsyncRetry(options)
 
   const signal: ResultAsyncAbortSignal = options.signal ?? new AbortController().signal
+  const maxElapsedMs = isRetryPolicy<E>(options) ? options.maxElapsedMs : undefined
+  const startedAt = performance.now()
   let attempt = 0
 
   while (true) {
@@ -997,6 +1002,12 @@ const runResultAsyncRetryAttempts = async <T, E, U, F>(
       return recover(result.error, context)
     }
 
+    if (
+      isRetryElapsedExceeded(maxElapsedMs, { startedAt, now: performance.now(), nextDelayMs: 0 })
+    ) {
+      return recover(result.error, context)
+    }
+
     const onRetry = options.onRetry
 
     // Stryker disable next-line all: skip a needless function call and await when no retry hook exists.
@@ -1005,7 +1016,17 @@ const runResultAsyncRetryAttempts = async <T, E, U, F>(
       await observeRetry(options, result.error, context)
     }
 
-    const delayMs = resultAsyncRetryDelay(options, context)
+    const delayMs = resultAsyncRetryDelay(options, context, result.error)
+
+    if (
+      isRetryElapsedExceeded(maxElapsedMs, {
+        startedAt,
+        now: performance.now(),
+        nextDelayMs: delayMs,
+      })
+    ) {
+      return recover(result.error, context)
+    }
 
     // eslint-disable-next-line no-await-in-loop
     const delayResult = await waitResultAsyncRetryDelay(delayMs, signal)
