@@ -6,43 +6,43 @@ packages:
   - packages/check/native-packages/*
 
 catalog:
-  "@nestjs/common": 12.5.1
-  "@nestjs/core": 12.5.1
-  "@nestjs/platform-fastify": 12.5.1
+  "@nestjs/common": 12.6.0
+  "@nestjs/core": 12.6.0
+  "@nestjs/platform-fastify": 12.6.0
   "@stryker-mutator/core": 10.1.1
   "@stryker-mutator/vitest-runner": 10.1.1
   "@types/node": 26.6.6
-  "@vitest/coverage-v8": 5.1.0
-  "@vitest/ui": 5.1.0
-  fallow: 3.43.1
+  "@vitest/coverage-v8": 5.1.1
+  "@vitest/ui": 5.1.1
+  fallow: 3.45.0
   fastify: 5.12.8
   fastify-plugin: 6.0.1
   hono: 4.13.19
   reflect-metadata: 0.2.2
   rxjs: 7.8.2
   typebox: 1.4.7
-  vitest: 5.1.0
-  vite-plus: 1.6.0
+  vitest: 5.1.1
+  vite-plus: 1.7.0
   typescript: 7.0.2
   zod: 4.6.7
-  vite: npm:@voidzero-dev/vite-plus-core@1.6.0
+  vite: npm:@voidzero-dev/vite-plus-core@8.3.8000
 
 allowBuilds:
   esbuild: true
 
-# Keep the runner and its coverage/UI packages aligned with Vite+'s bundled Vitest.
+# Align the Vitest runner with coverage, UI, and Vite+'s browser integrations.
 # https://viteplus.dev/guide/migrate#manual-installation-migration
 overrides:
-  vite@*: "catalog:"
-  vitest@*: "catalog:"
+  vite@*: 'catalog:'
+  vitest@*: 'catalog:'
+  "vite-plus>@vitest/browser": 5.1.1
+  "vite-plus>@vitest/browser-preview": 5.1.1
 
 # The Vite+ alias uses its own version instead of the bundled Vite version.
 peerDependencyRules:
   allowedVersions:
-    vite: "*"
-    vitest: "*"
+    vitest: '*'
   allowAny:
-    - vite
     - vitest
 
 # Stryker 10 still calls compiler APIs (e.g. ts.parseConfigFileTextToJson) removed from TypeScript 7.
@@ -55,6 +55,7 @@ strictDepBuilds: true
 trustPolicy: no-downgrade
 trustPolicyExclude:
   - semver@6.3.1
+  - tsrs@7.1.0-beta.tsrs2
 blockExoticSubdeps: true
 minimumReleaseAge: 10080 # 1 week
 minimumReleaseAgeExclude:
@@ -84,8 +85,8 @@ minimumReleaseAgeExclude:
   - "@oxfmt/*"
   - vitest
   - "@vitest/*"
-  - "@oxc-project/runtime@0.153.0 || 0.154.0"
-  - "@oxc-project/types@0.153.0 || 0.154.0"
+  - "@oxc-project/runtime@0.153.0 || 0.154.0 || 0.159.0"
+  - "@oxc-project/types@0.153.0 || 0.154.0 || 0.159.0"
   - "@yuku-core/binding-android-arm64@0.19.0"
   - "@yuku-core/binding-darwin-arm64@0.19.0"
   - "@yuku-core/binding-darwin-x64@0.19.0"
@@ -104,3 +105,12 @@ minimumReleaseAgeExclude:
   - yuku-parser@0.19.0
   - effect@4.0.5
   - "@fastify/cors@11.4.1"
+  - "@fastify/formbody@9.0.2"
+  - "@fastify/middie@9.3.7"
+  - find-my-way@9.10.2
+  - light-my-request@6.8.1
+  - tsrs
+  - '@tsrs/*'
+patchedDependencies:
+  # Check coverage against the Vitest runner selected by the override above.
+  vite-plus@1.7.0: patches/vite-plus@1.7.0.patch

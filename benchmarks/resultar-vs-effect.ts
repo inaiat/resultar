@@ -3,6 +3,7 @@ import type { FiberHandle } from "resultar";
 
 import { cronometro } from "cronometro";
 import { Data, Effect, Fiber as EffectFiber, Semaphore as EffectSemaphore } from "effect";
+import effectPackage from "effect/package.json" with { type: "json" };
 import { deepStrictEqual, strictEqual } from "node:assert";
 import {
   createTaggedError,
@@ -541,7 +542,7 @@ const printComparisonSummary = (results: Results): void => {
     scenarios.set(scenario, entry);
   }
 
-  console.log("\n=== Resultar vs Effect v4 (4.0.5) Summary ===");
+  console.log(`\n=== Resultar vs Effect v4 (${effectPackage.version}) Summary ===`);
   for (const [scenario, entry] of scenarios.entries()) {
     if (entry.effectMeanNs === undefined || entry.resultarMeanNs === undefined) {
       continue;

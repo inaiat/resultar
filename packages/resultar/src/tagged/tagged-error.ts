@@ -164,17 +164,16 @@ type ReservedMetadataKeys<Template extends string, Base extends Error> = Exclude
   Template extends typeof defaultMessageTemplate ? 'message' : never
 >
 type InvalidMetadataKeys<Props, Template extends string, Base extends Error> = Props extends unknown
-  ?
-      | Extract<keyof Props, ReservedMetadataKeys<Template, Base> | symbol>
-      | (string extends keyof Props ? string : never)
-      | (number extends keyof Props ? number : never)
-      | {
-          [Key in keyof Props]-?: Key extends ExtractTemplateVariables<Template>
-            ? object extends Pick<Props, Key>
-              ? Key
-              : never
+  ? | Extract<keyof Props, ReservedMetadataKeys<Template, Base> | symbol>
+    | (string extends keyof Props ? string : never)
+    | (number extends keyof Props ? number : never)
+    | {
+        [Key in keyof Props]-?: Key extends ExtractTemplateVariables<Template>
+          ? object extends Pick<Props, Key>
+            ? Key
             : never
-        }[keyof Props]
+          : never
+      }[keyof Props]
   : never
 
 /** Configuration used to create a tagged `Error` class. */

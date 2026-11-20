@@ -26,7 +26,8 @@ describe('Result type narrowing', () => {
   })
 
   it('does not expose value in an Err branch from fromThrowable', () => {
-    const resultarJsonParse = Result.fromThrowable(JSON.parse, () => 'JSON parse error')
+    const parseJson: (text: string) => unknown = JSON.parse
+    const resultarJsonParse = Result.fromThrowable(parseJson, () => 'JSON parse error')
     const result = resultarJsonParse('boom')
 
     if (result.isErr()) {

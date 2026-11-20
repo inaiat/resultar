@@ -56,7 +56,7 @@ pnpm --filter resultar-benchmarks run bench:check-native
 
 ## `resultar-vs-effect.ts` (`bench:effect`)
 
-Compares `Resultar` (`Result`, `ResultTask`, `Fiber`, `Semaphore`, `createTaggedError`) against `Effect` v4 (`effect@^4.0.5`) across 10 equivalent workflows using [`cronometro`](https://github.com/ShogunPanda/cronometro) (1,500 samples per scenario).
+Compares `Resultar` (`Result`, `ResultTask`, `Fiber`, `Semaphore`, `createTaggedError`) against `Effect` v4 across 10 equivalent workflows using [`cronometro`](https://github.com/ShogunPanda/cronometro) (1,500 samples per scenario).
 
 ### Scenarios & Reference Measurements (Node.js v24, Apple Silicon)
 

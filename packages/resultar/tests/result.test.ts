@@ -1373,24 +1373,22 @@ describe('ResultAsync', async () => {
   })
 
   describe('Result.fromThrowable', async () => {
-    it('Parser JSON', async () => {
-      const safeJSONParse = (
-        text: string,
-        reviver?: (this: unknown, key: string, value: unknown) => unknown,
-      ) =>
-        Result.fromThrowable(JSON.parse, () => 'parser error')(text, reviver) as Result<
-          { name: string },
-          string
-        >
+    const parseJson: (
+      text: string,
+      reviver?: (this: unknown, key: string, value: unknown) => unknown,
+    ) => unknown = JSON.parse
 
-      const result = safeJSONParse('{"name": "Elizeu Drummond"}')
+    it('Parser JSON', async () => {
+      const safeJSONParse = Result.fromThrowable(parseJson, () => 'parser error')
+
+      const result = safeJSONParse('{"name": "Elizeu Drummond"}', undefined)
 
       isTrue(result.isOk())
       deepEqual(result._unsafeUnwrap(), { name: 'Elizeu Drummond' })
     })
 
     it('does not expose value in an Err branch', async () => {
-      const resultarJsonParse = Result.fromThrowable(JSON.parse, () => 'JSON parse error')
+      const resultarJsonParse = Result.fromThrowable(parseJson, () => 'JSON parse error')
       const result = resultarJsonParse('boom')
 
       if (result.isErr()) {

@@ -1,5 +1,7 @@
 # Plano de correção das RFCs 0010 e 0011
 
+**Segunda revisão de 20/11/2026.** O status abaixo se refere aos achados da primeira rodada. As três pendências identificadas após esses fixes estão no [adendo de correção](./rfc-0010-0011-fix-follow-up.md).
+
 **Status em 20/11/2026 — resolvido e validado na branch `feat/dx-docs-observability-tooling`.** A revisão comparou `cacb729` com a base `5629d83`. Todas as regressões de segurança, navegador, filas, observabilidade, iteradores, `Match`, DI e benchmark Hono foram corrigidas com testes de regressão dedicados, changeset e gate dual-mode no CI. Os desvios quantitativos residuais foram reconciliados com evidências reproduzíveis na [RFC 0011](./rfc-0011-jit-compilation-and-runtime-performance.md#12-implementation-record). Este documento acompanha as pendências da [RFC 0010](./rfc-0010-dx-observability-concurrency-and-tooling.md) e da [RFC 0011](./rfc-0011-jit-compilation-and-runtime-performance.md).
 
 ## RFC 0010 — playground, filas e observabilidade
