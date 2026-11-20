@@ -24,10 +24,13 @@ and [migration reference](../migrations/v4.md): `ResultTask` is the default for 
 | [**RFC 0009**](./rfc-0009-inference-scopes-and-application-lifecycle.md) | **Inference, typed scope closure, and application lifecycle** | `resultar`, `resultar-di`, `resultar-check` | **Implemented (Recipe-only Lifecycle; Awaiting Release)** | 2026-11-16 |
 | [**RFC 0010**](./rfc-0010-dx-observability-concurrency-and-tooling.md) | **Core DX, lean concurrency, opt-in observability, subpath tree-shaking, and tooling** | `resultar`, `resultar-app`, `resultar-check` | **Implemented (Validated; Awaiting Release)** | 2026-11-19 |
 | [**RFC 0011**](./rfc-0011-jit-compilation-and-runtime-performance.md) | **Transparent JIT compilation, static graph specialization, and V8 runtime performance** | `resultar`, `resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, `resultar-request-typebox`, `resultar-config` | **Implemented (Validated; Awaiting Release)** | 2026-11-20 |
+| [**RFC 0012**](./rfc-0012-v5-async-model-unification.md) | **v5 unified async model, `ResultTask` / `ResultAsync` decoupling, and ecosystem alignment** | `resultar`, `resultar-app`, `resultar-check`, `resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, `resultar-request*` | **Proposal (Draft — Targeted for v5.0)** | 2026-11-20 |
 
 ---
 
 ## Tracking Documents and Addenda
+
+- [RFC 0010 and RFC 0011 correction plan](./rfc-0010-0011-fix-plan.md) tracks the open findings from the review of `cacb729`, regression tests, and performance acceptance criteria.
 
 - [**Resolution of Phase 0 Items — RFC 0001 (Done)**](./rfc-0001-phase-0-done.md): Record of resolving the stack overflow via iterative trampoline, 10k-chain benchmarks, and nominal `ResultTaskTypeId` typing.
 - [**Phase 1 Specification and Completed Items — RFC 0001 (Done)**](./rfc-0001-phase-1-done.md): Specification of the lazy combinators (`mapError`, `tap`, `tapError`, `match`, `as`), interoperability with `ResultAsync`, and functional pipelines.
