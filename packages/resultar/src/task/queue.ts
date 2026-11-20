@@ -4,23 +4,21 @@ import { ResultTask } from './result-task.js'
 import type { Exit } from './result-task.js'
 import { createRuntimeTask } from './task-runtime-bridge.js'
 
-const QUEUE_SHUTDOWN_EXIT: Exit<never, never> = failure({
-  _tag: 'Interrupt',
-  reason: 'Queue shut down',
-})
+const createQueueShutdownExit = (): Exit<never, never> =>
+  failure({ _tag: 'Interrupt', reason: 'Queue shut down' })
 
 interface Taker<A> {
-  readonly signal: AbortSignal
-  readonly resolve: (exit: Exit<A, never>) => void
-  readonly onAbort: () => void
+  signal: AbortSignal | undefined
+  resolve: ((exit: Exit<A, never>) => void) | undefined
+  onAbort: (() => void) | undefined
   settled: boolean
 }
 
 interface Putter<A> {
-  readonly value: A
-  readonly signal: AbortSignal
-  readonly resolve: (exit: Exit<boolean, never>) => void
-  readonly onAbort: () => void
+  value: A | undefined
+  signal: AbortSignal | undefined
+  resolve: ((exit: Exit<boolean, never>) => void) | undefined
+  onAbort: (() => void) | undefined
   settled: boolean
 }
 
@@ -36,32 +34,89 @@ const assertNonNegativeLimit = (max: number): void => {
   }
 }
 
-const shiftActive = <T extends { settled: boolean }>(
-  items: (T | undefined)[],
-  state: { head: number },
-): T | undefined => {
-  while (state.head < items.length) {
-    const entry = items[state.head]
-    items[state.head] = undefined
-    state.head += 1
-    if (entry !== undefined && !entry.settled) {
-      if (state.head === items.length) {
-        items.length = 0
-        state.head = 0
-      }
-      return entry
-    }
+const shiftWaiter = <T>(waiters: Set<T>): T | undefined => {
+  for (const waiter of waiters) {
+    waiters.delete(waiter)
+    return waiter
   }
-  items.length = 0
-  state.head = 0
   return undefined
 }
 
-const detachSignal = (signal: AbortSignal, listener: () => void): void => {
-  if (signal !== NEVER_ABORTED_SIGNAL) {
+const detachSignal = (
+  signal: AbortSignal | undefined,
+  listener: (() => void) | undefined,
+): void => {
+  if (signal !== undefined && listener !== undefined && signal !== NEVER_ABORTED_SIGNAL) {
     signal.removeEventListener('abort', listener)
   }
 }
+
+const clearTaker = <A>(taker: Taker<A>): void => {
+  taker.signal = undefined
+  taker.resolve = undefined
+  taker.onAbort = undefined
+}
+
+const clearPutter = <A>(putter: Putter<A>): void => {
+  putter.value = undefined
+  putter.signal = undefined
+  putter.resolve = undefined
+  putter.onAbort = undefined
+}
+
+const makePutterAbortHandler =
+  <A>(putters: Set<Putter<A>>, putter: Putter<A>): (() => void) =>
+  () => {
+    if (putter.settled) return
+    putter.settled = true
+    putters.delete(putter)
+    const finish = putter.resolve
+    const abortSignal = putter.signal
+    clearPutter(putter)
+    if (finish !== undefined && abortSignal !== undefined) {
+      finish(interrupted(abortSignal))
+    }
+  }
+
+const makeTakerAbortHandler =
+  <A>(takers: Set<Taker<A>>, taker: Taker<A>): (() => void) =>
+  () => {
+    if (taker.settled) return
+    taker.settled = true
+    takers.delete(taker)
+    const finish = taker.resolve
+    const abortSignal = taker.signal
+    clearTaker(taker)
+    if (finish !== undefined && abortSignal !== undefined) {
+      finish(interrupted(abortSignal))
+    }
+  }
+
+const enqueuePutter = <A>(
+  putters: Set<Putter<A>>,
+  value: A,
+  signal: AbortSignal,
+): Promise<Exit<boolean, never>> =>
+  new Promise<Exit<boolean, never>>((resolve) => {
+    const putter: Putter<A> = { value, signal, resolve, onAbort: undefined, settled: false }
+    const onAbort = makePutterAbortHandler(putters, putter)
+    putter.onAbort = onAbort
+    if (signal !== NEVER_ABORTED_SIGNAL) {
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
+    putters.add(putter)
+  })
+
+const enqueueTaker = <A>(takers: Set<Taker<A>>, signal: AbortSignal): Promise<Exit<A, never>> =>
+  new Promise<Exit<A, never>>((resolve) => {
+    const taker: Taker<A> = { signal, resolve, onAbort: undefined, settled: false }
+    const onAbort = makeTakerAbortHandler(takers, taker)
+    taker.onAbort = onAbort
+    if (signal !== NEVER_ABORTED_SIGNAL) {
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
+    takers.add(taker)
+  })
 
 /**
  * Cooperative, backpressure-aware FIFO queue for producer-consumer `ResultTask` workflows.
@@ -110,10 +165,8 @@ export interface Queue<A> {
 const createQueue = <A>(capacity: number): Queue<A> => {
   const buffer: (A | undefined)[] = []
   let bufferHead = 0
-  const takers: (Taker<A> | undefined)[] = []
-  const takersState = { head: 0 }
-  const putters: (Putter<A> | undefined)[] = []
-  const puttersState = { head: 0 }
+  const takers = new Set<Taker<A>>()
+  const putters = new Set<Putter<A>>()
   let closed = false
 
   const bufferedSize = (): number => buffer.length - bufferHead
@@ -136,22 +189,32 @@ const createQueue = <A>(capacity: number): Queue<A> => {
   const refillFromPutters = (): void => {
     if (closed) return
     while (bufferedSize() < capacity) {
-      const putter = shiftActive(putters, puttersState)
+      const putter = shiftWaiter(putters)
       if (putter === undefined) break
-      putter.settled = true
-      detachSignal(putter.signal, putter.onAbort)
-      pushBuffer(putter.value)
-      putter.resolve(success(true))
+      if (!putter.settled) {
+        putter.settled = true
+        const value = putter.value as A
+        const finish = putter.resolve
+        detachSignal(putter.signal, putter.onAbort)
+        clearPutter(putter)
+        pushBuffer(value)
+        finish?.(success(true))
+      }
     }
   }
 
   const deliverDirectOrBuffer = (value: A): boolean => {
-    const taker = shiftActive(takers, takersState)
-    if (taker !== undefined) {
-      taker.settled = true
-      detachSignal(taker.signal, taker.onAbort)
-      taker.resolve(success(value))
-      return true
+    for (;;) {
+      const taker = shiftWaiter(takers)
+      if (taker === undefined) break
+      if (!taker.settled) {
+        taker.settled = true
+        const finish = taker.resolve
+        detachSignal(taker.signal, taker.onAbort)
+        clearTaker(taker)
+        finish?.(success(value))
+        return true
+      }
     }
     if (bufferedSize() < capacity) {
       pushBuffer(value)
@@ -176,23 +239,7 @@ const createQueue = <A>(capacity: number): Queue<A> => {
       if (context.signal.aborted) return interrupted(context.signal)
       if (closed) return success(false)
       if (deliverDirectOrBuffer(value)) return success(true)
-      return new Promise<Exit<boolean, never>>((resolve) => {
-        const putter: Putter<A> = {
-          value,
-          signal: context.signal,
-          resolve,
-          settled: false,
-          onAbort: () => {
-            if (putter.settled) return
-            putter.settled = true
-            resolve(interrupted(context.signal))
-          },
-        }
-        if (context.signal !== NEVER_ABORTED_SIGNAL) {
-          context.signal.addEventListener('abort', putter.onAbort, { once: true })
-        }
-        putters.push(putter)
-      })
+      return enqueuePutter(putters, value, context.signal)
     })
 
   const take = (): ResultTask<A> =>
@@ -203,23 +250,8 @@ const createQueue = <A>(capacity: number): Queue<A> => {
         refillFromPutters()
         return success(value)
       }
-      if (closed) return QUEUE_SHUTDOWN_EXIT
-      return new Promise<Exit<A, never>>((resolve) => {
-        const taker: Taker<A> = {
-          signal: context.signal,
-          resolve,
-          settled: false,
-          onAbort: () => {
-            if (taker.settled) return
-            taker.settled = true
-            resolve(interrupted(context.signal))
-          },
-        }
-        if (context.signal !== NEVER_ABORTED_SIGNAL) {
-          context.signal.addEventListener('abort', taker.onAbort, { once: true })
-        }
-        takers.push(taker)
-      })
+      if (closed) return createQueueShutdownExit()
+      return enqueueTaker(takers, context.signal)
     })
 
   const offerAll = (values: Iterable<A>): ResultTask<boolean> =>
@@ -236,18 +268,26 @@ const createQueue = <A>(capacity: number): Queue<A> => {
       if (closed) return
       closed = true
       for (;;) {
-        const putter = shiftActive(putters, puttersState)
+        const putter = shiftWaiter(putters)
         if (putter === undefined) break
-        putter.settled = true
-        detachSignal(putter.signal, putter.onAbort)
-        putter.resolve(success(false))
+        if (!putter.settled) {
+          putter.settled = true
+          const finish = putter.resolve
+          detachSignal(putter.signal, putter.onAbort)
+          clearPutter(putter)
+          finish?.(success(false))
+        }
       }
       for (;;) {
-        const taker = shiftActive(takers, takersState)
+        const taker = shiftWaiter(takers)
         if (taker === undefined) break
-        taker.settled = true
-        detachSignal(taker.signal, taker.onAbort)
-        taker.resolve(QUEUE_SHUTDOWN_EXIT)
+        if (!taker.settled) {
+          taker.settled = true
+          const finish = taker.resolve
+          detachSignal(taker.signal, taker.onAbort)
+          clearTaker(taker)
+          finish?.(createQueueShutdownExit())
+        }
       }
     })
 

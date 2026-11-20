@@ -253,28 +253,52 @@ importers:
       resultar-di:
         specifier: workspace:*
         version: link:../packages/di
+      resultar-fastify:
+        specifier: workspace:*
+        version: link:../packages/fastify
       resultar-hono:
         specifier: workspace:*
         version: link:../packages/hono
+      resultar-nestjs:
+        specifier: workspace:*
+        version: link:../packages/nestjs
       resultar-request-typebox:
         specifier: workspace:*
         version: link:../packages/request-typebox
     devDependencies:
+      '@nestjs/common':
+        specifier: 'catalog:'
+        version: 12.5.1(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/core':
+        specifier: 'catalog:'
+        version: 12.5.1(@nestjs/common@12.5.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/platform-fastify':
+        specifier: 'catalog:'
+        version: 12.5.1(@nestjs/common@12.5.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.5.1(@nestjs/common@12.5.1(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2)
       cronometro:
         specifier: ^7.0.1
         version: 7.0.1
       effect:
         specifier: ^4.1.2
         version: 4.1.2
+      fastify:
+        specifier: 'catalog:'
+        version: 5.12.8
       hono:
         specifier: 'catalog:'
         version: 4.13.19
       neverthrow:
         specifier: ^8.2.0
         version: 8.2.0
+      reflect-metadata:
+        specifier: 'catalog:'
+        version: 0.2.2
       resultar-check:
         specifier: workspace:*
         version: link:../packages/check
+      rxjs:
+        specifier: 'catalog:'
+        version: 7.8.2
       typebox:
         specifier: 'catalog:'
         version: 1.4.7

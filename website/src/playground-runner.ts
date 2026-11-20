@@ -1,161 +1,154 @@
-import * as resultar from "../../packages/resultar/dist/index.js";
-import type { RecordedSpan } from "../../packages/resultar/dist/index.js";
+import { PLAYGROUND_SANDBOX_JS } from "./generated/sandbox-bundle.js";
+import {
+  executePlaygroundInContext,
+  type PlaygroundLogEntry,
+  type PlaygroundRunResult,
+  type PlaygroundSpan,
+} from "./playground-core.js";
 
-import { transpilePlaygroundTs } from "./ts-strip.js";
+export type { PlaygroundLogEntry, PlaygroundRunResult, PlaygroundSpan } from "./playground-core.js";
 
-export interface PlaygroundLogEntry {
-  readonly level: "log" | "info" | "warn" | "error";
-  readonly text: string;
-}
-
-export interface PlaygroundRunResult {
-  readonly ok: boolean;
-  readonly durationMs: number;
-  readonly logs: readonly PlaygroundLogEntry[];
-  readonly spans: readonly RecordedSpan[];
-  readonly error?: string;
-}
+const SANDBOX_TIMEOUT_MS = 10_000;
+let runCounter = 0;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
-const isRecordedSpan = (value: unknown): value is RecordedSpan =>
-  isRecord(value) &&
-  typeof value.name === "string" &&
-  typeof value.startTime === "number" &&
-  "attributes" in value;
+const isLogLevel = (value: unknown): value is PlaygroundLogEntry["level"] =>
+  value === "log" || value === "info" || value === "warn" || value === "error";
 
-interface ResultLike {
-  readonly isOk: () => boolean;
-  readonly isErr: () => boolean;
-  readonly value?: unknown;
-  readonly error?: unknown;
-}
-
-const isResultLike = (value: unknown): value is ResultLike =>
-  isRecord(value) && typeof value.isOk === "function" && typeof value.isErr === "function";
-
-const formatValue = (value: unknown, depth = 0): string => {
-  if (typeof value === "string") {
-    return depth === 0 ? value : JSON.stringify(value);
-  }
-  if (
-    value === null ||
-    value === undefined ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return String(value);
-  }
-  if (typeof value === "symbol" || typeof value === "bigint") {
-    return value.toString();
-  }
-  if (value instanceof Error) {
-    const tag = "_tag" in value && typeof value._tag === "string" ? `[${value._tag}] ` : "";
-    return `${tag}${value.name}: ${value.message}`;
-  }
-  if (isResultLike(value)) {
-    const okFlag = value.isOk();
-    if (okFlag && "value" in value) {
-      return `Ok(${formatValue(value.value, depth + 1)})`;
-    }
-    if (!okFlag && "error" in value) {
-      return `Err(${formatValue(value.error, depth + 1)})`;
+const parseLogs = (raw: unknown): readonly PlaygroundLogEntry[] => {
+  if (!Array.isArray(raw)) return [];
+  const entries: PlaygroundLogEntry[] = [];
+  for (const item of raw) {
+    if (isRecord(item) && isLogLevel(item.level) && typeof item.text === "string") {
+      entries.push({ level: item.level, text: item.text });
     }
   }
-  if (isRecord(value) && value._tag === "Success" && "value" in value) {
-    return `Exit.Success(${formatValue(value.value, depth + 1)})`;
-  }
-  if (isRecord(value) && value._tag === "Failure" && "cause" in value) {
-    const { cause } = value;
-    if (resultar.Cause.isCause(cause)) {
-      return `Exit.Failure(\n${resultar.Cause.pretty(cause)}\n)`;
-    }
-  }
-  try {
-    return JSON.stringify(
-      value,
-      (_key, val: unknown) => {
-        if (val instanceof Error) {
-          const serialized: Record<string, unknown> = { name: val.name, message: val.message };
-          for (const [prop, propVal] of Object.entries(val)) {
-            serialized[prop] = propVal;
-          }
-          return serialized;
-        }
-        return val;
-      },
-      2,
-    );
-  } catch {
-    return "[unserializable]";
-  }
+  return entries;
 };
 
-export const runPlaygroundCode = async (source: string): Promise<PlaygroundRunResult> => {
-  const logs: PlaygroundLogEntry[] = [];
-  const spans: RecordedSpan[] = [];
-  const startedAt = performance.now();
-
-  const captureSpans = (arg: unknown): void => {
-    if (Array.isArray(arg) && arg.length > 0 && arg.every((item) => isRecordedSpan(item))) {
-      for (const span of arg) {
-        spans.push(span);
-      }
-    } else if (
-      isRecord(arg) &&
-      Array.isArray(arg.spans) &&
-      arg.spans.length > 0 &&
-      arg.spans.every((item) => isRecordedSpan(item))
+const parseSpans = (raw: unknown): readonly PlaygroundSpan[] => {
+  if (!Array.isArray(raw)) return [];
+  const spans: PlaygroundSpan[] = [];
+  for (const item of raw) {
+    if (
+      isRecord(item) &&
+      typeof item.name === "string" &&
+      typeof item.startTime === "number" &&
+      isRecord(item.attributes)
     ) {
-      for (const span of arg.spans) {
-        spans.push(span);
-      }
+      const exitTag =
+        isRecord(item.exit) && (item.exit._tag === "Success" || item.exit._tag === "Failure")
+          ? item.exit._tag
+          : undefined;
+      spans.push({
+        name: item.name,
+        parentName: typeof item.parentName === "string" ? item.parentName : undefined,
+        // eslint-disable-next-line typescript/no-unsafe-type-assertion -- Attributes were sanitized inside the sandbox before postMessage.
+        attributes: item.attributes as PlaygroundSpan["attributes"],
+        startTime: item.startTime,
+        endTime: typeof item.endTime === "number" ? item.endTime : undefined,
+        durationMs: typeof item.durationMs === "number" ? item.durationMs : undefined,
+        exit: exitTag === undefined ? undefined : { _tag: exitTag },
+      });
     }
-  };
+  }
+  return spans;
+};
 
-  const pushLog = (level: PlaygroundLogEntry["level"], args: readonly unknown[]): void => {
-    for (const arg of args) {
-      captureSpans(arg);
-    }
-    const text = args.map((arg) => formatValue(arg, 0)).join(" ");
-    logs.push({ level, text });
-  };
-
-  const sandboxConsole = {
-    log: (...args: unknown[]) => {
-      pushLog("log", args);
-    },
-    info: (...args: unknown[]) => {
-      pushLog("info", args);
-    },
-    warn: (...args: unknown[]) => {
-      pushLog("warn", args);
-    },
-    error: (...args: unknown[]) => {
-      pushLog("error", args);
-    },
-  };
-
-  try {
-    const jsCode = transpilePlaygroundTs(source);
-    // eslint-disable-next-line typescript/no-unsafe-type-assertion -- Function constructor evaluates sandboxed playground JS.
-    const runner = new Function(
-      "__resultar",
-      "console",
-      `"use strict"; return (async () => {\n${jsCode}\n})();`,
-    ) as (mod: typeof resultar, con: typeof sandboxConsole) => Promise<void>;
-    await runner(resultar, sandboxConsole);
-
-    return { ok: true, durationMs: Math.max(0, performance.now() - startedAt), logs, spans };
-  } catch (error: unknown) {
-    const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+const parseRunResult = (raw: unknown, fallbackDurationMs: number): PlaygroundRunResult => {
+  if (!isRecord(raw)) {
     return {
       ok: false,
-      durationMs: Math.max(0, performance.now() - startedAt),
-      logs,
-      spans,
-      error: message,
+      durationMs: fallbackDurationMs,
+      logs: [],
+      spans: [],
+      error: "Sandbox returned an invalid execution payload.",
     };
   }
+  const ok = raw.ok === true;
+  const durationMs =
+    typeof raw.durationMs === "number" && Number.isFinite(raw.durationMs)
+      ? Math.max(0, raw.durationMs)
+      : fallbackDurationMs;
+  const logs = parseLogs(raw.logs);
+  const spans = parseSpans(raw.spans);
+  const error = typeof raw.error === "string" ? raw.error : undefined;
+  return error === undefined
+    ? { ok, durationMs, logs, spans }
+    : { ok, durationMs, logs, spans, error };
+};
+
+const buildSandboxSrcdoc = (): string => {
+  const safeScript = PLAYGROUND_SANDBOX_JS.replaceAll("</script", String.raw`<\/script`);
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval';"></head><body><script>${safeScript}</script></body></html>`;
+};
+
+const runPlaygroundInSandboxIframe = async (source: string): Promise<PlaygroundRunResult> =>
+  new Promise<PlaygroundRunResult>((resolve) => {
+    const startedAt = performance.now();
+    runCounter += 1;
+    const runId = `pg-${String(runCounter)}-${String(Date.now())}`;
+    const iframe = document.createElement("iframe");
+    // Opaque origin sandbox: omit allow-same-origin so user code cannot touch portal DOM or storage.
+    iframe.setAttribute("sandbox", "allow-scripts");
+    iframe.setAttribute("referrerpolicy", "no-referrer");
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.style.display = "none";
+
+    let settled = false;
+    let dispatched = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined = undefined;
+
+    const cleanup = (): void => {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+        timeoutId = undefined;
+      }
+      globalThis.removeEventListener("message", onMessage);
+      iframe.remove();
+    };
+
+    const finish = (result: PlaygroundRunResult): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+
+    const onMessage = (event: MessageEvent<unknown>): void => {
+      if (event.source !== iframe.contentWindow || !isRecord(event.data)) return;
+      if (event.data.type === "ready" && !dispatched) {
+        dispatched = true;
+        iframe.contentWindow?.postMessage({ type: "run", runId, source }, "*");
+        return;
+      }
+      if (event.data.type === "result" && event.data.runId === runId) {
+        const elapsedMs = Math.max(0, performance.now() - startedAt);
+        finish(parseRunResult(event.data.result, elapsedMs));
+      }
+    };
+
+    timeoutId = setTimeout(() => {
+      finish({
+        ok: false,
+        durationMs: Math.max(0, performance.now() - startedAt),
+        logs: [],
+        spans: [],
+        error: `Playground execution timed out after ${String(SANDBOX_TIMEOUT_MS)}ms`,
+      });
+    }, SANDBOX_TIMEOUT_MS);
+
+    globalThis.addEventListener("message", onMessage);
+    iframe.srcdoc = buildSandboxSrcdoc();
+    document.body.append(iframe);
+  });
+
+export const runPlaygroundCode = async (source: string): Promise<PlaygroundRunResult> => {
+  if (typeof document !== "undefined") {
+    return runPlaygroundInSandboxIframe(source);
+  }
+  const resultar = await import("../../packages/resultar/dist/index.js");
+  return executePlaygroundInContext(source, resultar);
 };

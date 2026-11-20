@@ -9,7 +9,10 @@ import { err, ok } from '../result/result.js'
 export type MatchHandler = (value: never, ...args: readonly unknown[]) => unknown
 export type MatchMode = 'value' | 'type' | 'fn' | 'context'
 export type MatchOutcomeKind = 'direct' | 'result' | 'option'
-export type MatchBuiltinEmitter = (expr: string) => string
+export interface MatchBuiltinEmitter {
+  readonly emit: (expr: string) => string
+  readonly reads: 0 | 1 | 'many'
+}
 
 export type MatchPatternIr =
   | { readonly kind: 'predicate'; readonly fn: (value: unknown) => boolean }
@@ -275,13 +278,13 @@ class MatchCodeBuilder {
     return this.bind(key)
   }
 
-  public emitLiteralCheck(expr: string, value: unknown): string {
+  public emitLiteralCheck(expr: string, value: unknown, isPureVar = true): string {
     if (typeof value === 'string') return `${expr} === ${serializeStringLiteral(value)}`
     if (typeof value === 'boolean') return `${expr} === ${value ? 'true' : 'false'}`
     if (value === null) return `${expr} === null`
     if (value === undefined) return `${expr} === undefined`
     if (typeof value === 'number') {
-      if (Number.isNaN(value)) return 'false'
+      if (Number.isNaN(value)) return isPureVar ? 'false' : `((${expr}), false)`
       if (value === Infinity) return `${expr} === Infinity`
       if (value === -Infinity) return `${expr} === -Infinity`
       return `${expr} === ${String(value)}`
@@ -295,40 +298,43 @@ class MatchCodeBuilder {
     return `${target}[${this.bind(key)}]`
   }
 
-  public emitPattern(pattern: MatchPatternIr, expr: string): string {
+  public emitPattern(pattern: MatchPatternIr, expr: string, isPureVar = false): string {
     switch (pattern.kind) {
       case 'predicate': {
         const builtin = this.builtins.get(pattern.fn)
-        if (builtin !== undefined) return builtin(expr)
+        if (builtin !== undefined) {
+          if (isPureVar || builtin.reads === 1) return builtin.emit(expr)
+          if (builtin.reads === 0) return `((${expr}), ${builtin.emit(expr)})`
+          const ref = this.temp()
+          return `((${ref} = ${expr}), ${builtin.emit(ref)})`
+        }
         return `${this.bind(pattern.fn)}(${expr})`
       }
       case 'literal': {
-        return this.emitLiteralCheck(expr, pattern.value)
+        return this.emitLiteralCheck(expr, pattern.value, isPureVar)
       }
       case 'array': {
-        const ref = expr === 'v' ? 'v' : this.temp()
-        const prefix =
-          ref === expr
-            ? `Array.isArray(v) && v.length >= ${String(pattern.elements.length)}`
-            : `((${ref} = ${expr}), Array.isArray(${ref}) && ${ref}.length >= ${String(pattern.elements.length)})`
+        const ref = isPureVar ? expr : this.temp()
+        const prefix = isPureVar
+          ? `Array.isArray(${ref}) && ${ref}.length >= ${String(pattern.elements.length)}`
+          : `((${ref} = ${expr}), Array.isArray(${ref}) && ${ref}.length >= ${String(pattern.elements.length)})`
         if (pattern.elements.length === 0) return prefix
         const checks = pattern.elements.map((el, index) =>
-          this.emitPattern(el, `${ref}[${String(index)}]`),
+          this.emitPattern(el, `${ref}[${String(index)}]`, false),
         )
         return `(${prefix} && ${checks.join(' && ')})`
       }
       case 'object': {
-        const ref = expr === 'v' ? 'v' : this.temp()
-        const head =
-          ref === expr
-            ? '(typeof v === "object" && v !== null)'
-            : `((${ref} = ${expr}), typeof ${ref} === "object" && ${ref} !== null)`
+        const ref = isPureVar ? expr : this.temp()
+        const head = isPureVar
+          ? `(typeof ${ref} === "object" && ${ref} !== null)`
+          : `((${ref} = ${expr}), typeof ${ref} === "object" && ${ref} !== null)`
         if (pattern.entries.length === 0) return head
         const checks = pattern.entries.map(([key, sub]) => {
           const keyExpr = this.emitKeyExpr(key)
           const propExpr =
             typeof key === 'string' ? formatPropertyAccess(ref, key) : `${ref}[${keyExpr}]`
-          return `(${keyExpr} in ${ref} && ${this.emitPattern(sub, propExpr)})`
+          return `(${keyExpr} in ${ref} && ${this.emitPattern(sub, propExpr, false)})`
         })
         return `(${head} && ${checks.join(' && ')})`
       }
@@ -362,18 +368,18 @@ const emitTagTableCase = (
   item: Extract<MatchCaseIr, { readonly kind: 'tagTable' }>,
 ): string => {
   const { builder } = ctx
-  const discTemp = builder.temp()
   const propExpr = builder.emitPropertyRead('v', item.key)
   const coerceNumeric = hasNumericStringKey(item.entries)
-  const switchExpr = coerceNumeric
-    ? `typeof ${discTemp} === "number" ? String(${discTemp}) : ${discTemp}`
-    : discTemp
   const branches = item.entries.map(([tag, handler]) => {
     const caseExpr = builder.emitKeyExpr(tag)
     const ret = emitInvokeReturn(ctx, handler)
     return `      case ${caseExpr}: ${ret}`
   })
-  return `  if ((typeof v === "object" || typeof v === "function") && v !== null) {\n    ${discTemp} = ${propExpr};\n    switch (${switchExpr}) {\n${branches.join('\n')}\n    }\n  }`
+  if (!coerceNumeric) {
+    return `  if (v !== null && (typeof v === "object" || typeof v === "function")) {\n    switch (${propExpr}) {\n${branches.join('\n')}\n    }\n  }`
+  }
+  const discTemp = builder.temp()
+  return `  if (v !== null && (typeof v === "object" || typeof v === "function")) {\n    ${discTemp} = ${propExpr};\n    switch (typeof ${discTemp} === "number" ? String(${discTemp}) : ${discTemp}) {\n${branches.join('\n')}\n    }\n  }`
 }
 
 const emitTagSetCase = (
@@ -404,24 +410,28 @@ const emitCaseStatement = (ctx: EmitContext, item: MatchCaseIr): string => {
   const { builder } = ctx
   switch (item.kind) {
     case 'pattern': {
-      const cond = builder.emitPattern(item.pattern, 'v')
+      const cond = builder.emitPattern(item.pattern, 'v', true)
       const ret = emitInvokeReturn(ctx, item.handler)
       return cond === 'true' ? `  ${ret}` : `  if (${cond}) ${ret}`
     }
     case 'or': {
       if (item.patterns.length === 0) return ''
-      const cond = item.patterns.map((pat) => `(${builder.emitPattern(pat, 'v')})`).join(' || ')
+      const cond = item.patterns
+        .map((pat) => `(${builder.emitPattern(pat, 'v', true)})`)
+        .join(' || ')
       const ret = emitInvokeReturn(ctx, item.handler)
       return `  if (${cond}) ${ret}`
     }
     case 'and': {
       if (item.patterns.length === 0) return `  ${emitInvokeReturn(ctx, item.handler)}`
-      const cond = item.patterns.map((pat) => `(${builder.emitPattern(pat, 'v')})`).join(' && ')
+      const cond = item.patterns
+        .map((pat) => `(${builder.emitPattern(pat, 'v', true)})`)
+        .join(' && ')
       const ret = emitInvokeReturn(ctx, item.handler)
       return `  if (${cond}) ${ret}`
     }
     case 'not': {
-      const cond = builder.emitPattern(item.pattern, 'v')
+      const cond = builder.emitPattern(item.pattern, 'v', true)
       const ret = emitInvokeReturn(ctx, item.handler)
       return `  if (!(${cond})) ${ret}`
     }

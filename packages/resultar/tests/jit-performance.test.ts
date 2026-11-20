@@ -1,3 +1,6 @@
+import { execFileSync } from 'node:child_process'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
 import { afterEach, describe, expect, it } from 'vite-plus/test'
 
 import { canUseJit } from '../src/core/jit.js'
@@ -10,8 +13,10 @@ import {
   ok,
   pipe,
   redact,
+  Result,
   ResultTask,
   ResultTaskCauseError,
+  safeTry,
   taggedEnum,
 } from '../src/index.js'
 
@@ -75,6 +80,67 @@ describe('JIT runtime controls and Workstream A micro-optimizations', () => {
       double,
     )
     expect(composed(1, 2)).toBe(78)
+  })
+
+  it('does not alias or mutate retained Ok iterator results across iterations', () => {
+    const r1 = ok(1)[Symbol.iterator]().next()
+    const r2 = ok(2)[Symbol.iterator]().next()
+    expect(r1).not.toBe(r2)
+    expect(r1.done).toBe(true)
+    expect(r2.done).toBe(true)
+    expect(r1.value).toBe(1)
+    expect(r2.value).toBe(2)
+    expect(r1.value).toBe(1)
+    expect(r2.value).toBe(2)
+
+    const it1 = ok('first')[Symbol.iterator]()
+    const it2 = ok('second')[Symbol.iterator]()
+    expect(it1).not.toBe(it2)
+    const s1 = it1.next()
+    const s2 = it2.next()
+    expect(s1.value).toBe('first')
+    expect(s2.value).toBe('second')
+    expect(s1.value).toBe('first')
+
+    function* manualGen() {
+      const a = yield* ok(10)
+      const b = yield* ok(32)
+      return a + b
+    }
+    expect(manualGen().next()).toEqual({ done: true, value: 42 })
+
+    const genRes = Result.gen(function* () {
+      const a = yield* ok(10)
+      const b = yield* ok(32)
+      return a + b
+    })
+    expect(genRes).toEqual(ok(42))
+
+    // eslint-disable-next-line typescript/no-deprecated -- Verify legacy safeTry compatibility.
+    const legacyRes = safeTry(function* () {
+      const a = yield* ok(10)
+      const b = yield* ok(32)
+      return ok(a + b)
+    })
+    expect(legacyRes).toEqual(ok(42))
+  })
+
+  it('does not alias or mutate retained ResultTask iterator results across iterations', () => {
+    const taskIt1 = ResultTask.ok(101)[Symbol.iterator]()
+    const taskIt2 = ResultTask.ok(202)[Symbol.iterator]()
+    expect(taskIt1 === taskIt2).toBe(false)
+    const firstYield = taskIt1.next()
+    expect(firstYield.done).toBe(false)
+    const tr1 = taskIt1.next({ _tag: 'Success', value: 101 })
+    const secondYield = taskIt2.next()
+    expect(secondYield.done).toBe(false)
+    const tr2 = taskIt2.next({ _tag: 'Success', value: 202 })
+    expect(tr1 === tr2).toBe(false)
+    expect(tr1.done).toBe(true)
+    expect(tr2.done).toBe(true)
+    expect(tr1.value).toBe(101)
+    expect(tr2.value).toBe(202)
+    expect(tr1.value).toBe(101)
   })
 })
 
@@ -304,6 +370,143 @@ describe('Workstream C: Match JIT compilation, security, and parity', () => {
         B: () => 2,
       }),
     ).toThrow(TypeError)
+  })
+
+  it('evaluates property and array getters strictly once in identical order across RESULTAR_JIT=0 and 1 processes', () => {
+    const entryUrl = pathToFileURL(fileURLToPath(new URL('../src/index.ts', import.meta.url))).href
+    const script = `
+      import { Match } from ${JSON.stringify(entryUrl)};
+
+      const runAll = () => {
+        // 1. Flaky getter returning string once, then null (previously threw TypeError under JIT)
+        let nameReads = 0;
+        const flakyObj = {
+          get name() {
+            nameReads += 1;
+            return nameReads === 1 ? "Ada" : null;
+          },
+        };
+        const matchName = Match.type().pipe(
+          Match.when({ name: Match.nonEmptyString }, () => "matched"),
+          Match.orElse(() => "missed"),
+        );
+        const flakyResult = matchName(flakyObj);
+
+        // 2. Multi-read & zero-read builtins + NaN literal + nested object/array read order
+        const order = [];
+        const nestedTarget = {
+          get user() {
+            order.push("user");
+            return {
+              get name() { order.push("user.name"); return "Grace"; },
+              get meta() { order.push("user.meta"); return { ok: true }; },
+              get note() { order.push("user.note"); return "kept"; },
+            };
+          },
+          get items() {
+            order.push("items");
+            const arr = [];
+            Object.defineProperty(arr, 0, {
+              enumerable: true,
+              get() { order.push("items[0]"); return 123; },
+            });
+            Object.defineProperty(arr, 1, {
+              enumerable: true,
+              get() { order.push("items[1]"); return "any-val"; },
+            });
+            return arr;
+          },
+          get untouched() {
+            order.push("untouched");
+            return 999;
+          },
+        };
+        const matchNested = Match.type().pipe(
+          Match.when(
+            {
+              user: { name: Match.nonEmptyString, meta: Match.record, note: Match.any },
+              items: [Match.defined, Match.any],
+            },
+            () => "nested-hit",
+          ),
+          Match.when({ untouched: Match.number }, () => "should-short-circuit"),
+          Match.orElse(() => "nested-miss"),
+        );
+        const nestedResult = matchNested(nestedTarget);
+
+        // 3. NaN literal getter must still be read once (matching interpreter)
+        const nanOrder = [];
+        const nanTarget = {
+          get score() { nanOrder.push("score"); return 42; },
+          get after() { nanOrder.push("after"); return "skipped"; },
+        };
+        const matchNan = Match.type().pipe(
+          Match.when({ score: Number.NaN, after: Match.string }, () => "nan-hit"),
+          Match.orElse(() => "nan-miss"),
+        );
+        const nanResult = matchNan(nanTarget);
+
+        // 4. Short-circuit inside whenOr / whenAnd / failed earlier property
+        const scOrder = [];
+        const scTarget = {
+          get first() { scOrder.push("first"); return ""; },
+          get second() { scOrder.push("second"); return "never-read"; },
+          get alt() { scOrder.push("alt"); return "ok"; },
+          get never() { scOrder.push("never"); return 1; },
+        };
+        const matchSc = Match.type().pipe(
+          Match.whenOr(
+            { first: Match.nonEmptyString, second: Match.string },
+            { alt: Match.nonEmptyString },
+            { never: Match.number },
+            () => "sc-hit",
+          ),
+          Match.orElse(() => "sc-miss"),
+        );
+        const scResult = matchSc(scTarget);
+
+        return {
+          flakyResult,
+          nameReads,
+          nestedResult,
+          order,
+          nanResult,
+          nanOrder,
+          scResult,
+          scOrder,
+        };
+      };
+
+      console.log(JSON.stringify(runAll()));
+    `
+
+    const runInProcess = (jitFlag: '0' | '1'): Record<string, unknown> => {
+      const env: NodeJS.ProcessEnv = Object.fromEntries([
+        ...Object.entries(process.env),
+        ['RESULTAR_JIT', jitFlag],
+      ])
+      const stdout = execFileSync(
+        process.execPath,
+        ['--import', 'vite-plus/register', '--input-type=module', '-e', script],
+        { encoding: 'utf8', env },
+      )
+      return JSON.parse(stdout.trim()) as Record<string, unknown>
+    }
+
+    const jit = runInProcess('1')
+    const fallback = runInProcess('0')
+
+    expect(jit).toEqual(fallback)
+    expect(jit).toEqual({
+      flakyResult: 'matched',
+      nameReads: 1,
+      nestedResult: 'nested-hit',
+      order: ['user', 'user.name', 'user.meta', 'user.note', 'items', 'items[0]', 'items[1]'],
+      nanResult: 'nan-miss',
+      nanOrder: ['score'],
+      scResult: 'sc-hit',
+      scOrder: ['first', 'alt'],
+    })
   })
 })
 

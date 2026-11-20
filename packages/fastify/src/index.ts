@@ -2,7 +2,6 @@ import Fastify, {
   type FastifyHttpOptions,
   type FastifyInstance,
   type FastifyPluginAsync,
-  type FastifyReply,
   type FastifyRequest,
   type RawServerDefault,
 } from "fastify";
@@ -16,7 +15,6 @@ import {
   ResultTask,
   ResultTaskCauseError,
   tryResult,
-  tryResultAsync,
   unit,
   unitAsync,
   type ResultAsync,
@@ -32,7 +30,8 @@ import {
   type ServiceTaskRequirements,
 } from "resultar-di";
 
-import { hasFailure, startSession, type RuntimeTask, type ServiceSession } from "./session.js";
+import { registerRequestHooks, type RuntimeScope, type RuntimeServices } from "./fast-hooks.js";
+import { startSession, type RuntimeTask, type ServiceSession } from "./session.js";
 
 export { createModule, Service, service, resource } from "resultar-di";
 export type {
@@ -76,18 +75,6 @@ export type InferRequestServices<Source> = Source extends {
     ? InferRequestServices<Created>
     : never;
 
-type RuntimeServices = Readonly<Record<string, unknown>>;
-type UseServices = (
-  keys: readonly string[],
-  hold: (services: RuntimeServices) => RuntimeTask,
-) => RuntimeTask;
-interface RuntimeScope {
-  readonly use: UseServices;
-  readonly useSingletons: UseServices;
-  readonly withServices: (locals: object) => RuntimeScope;
-  readonly close: () => RuntimeTask;
-}
-
 type ModuleShape = { readonly scope: () => unknown };
 type ModuleSource = ModuleShape | ((app: FastifyInstance) => ModuleShape | Promise<ModuleShape>);
 type ModuleOf<M> = M extends (app: FastifyInstance) => infer Module ? Awaited<Module> : M;
@@ -106,14 +93,6 @@ type Selection<M, Local extends object, Keys extends readonly string[]> = [Keys]
       Keys
     >
   : Keys & { readonly unknownServices: Exclude<Keys[number], keyof ServicesOf<M>> };
-
-interface RequestState {
-  readonly controller: AbortController;
-  readonly cleanup: () => void;
-  session?: ServiceSession;
-  completion?: ServiceSession["completion"];
-  exposed: boolean;
-}
 
 // Fastify owns the external error contract; retain identity, status codes and attached metadata.
 const preserveNativeError = (error: unknown): unknown => error;
@@ -138,40 +117,6 @@ function closeApplication(
         ? err(new AggregateError(errors, "Application service cleanup failed"))
         : unit();
     });
-}
-
-function finishRequest(state: RequestState): ResultAsync<void, never> {
-  const finished: ResultAsync<unknown, never> = state.session?.finish() ?? unitAsync();
-  return finished.andThen(() => state.completion ?? unitAsync()).map(() => state.cleanup());
-}
-
-function attachRequest(request: FastifyRequest, reply: FastifyReply): RequestState {
-  const controller = new AbortController();
-  const abort = () => {
-    const reason: unknown = request.signal.reason;
-    // Fastify 5.12 emits a generic abort on IncomingMessage.close, including a fully
-    // received body. The response close/error listeners own disconnects after upload.
-    if (request.raw.complete && reason instanceof DOMException && reason.name === "AbortError")
-      return;
-    controller.abort(reason);
-  };
-  const disconnect = () => {
-    if (!reply.raw.writableFinished) controller.abort(new Error("Response connection closed"));
-  };
-  const transportError = (error: Error) => controller.abort(error);
-  request.signal.addEventListener("abort", abort, { once: true });
-  reply.raw.once("close", disconnect);
-  reply.raw.once("error", transportError);
-  if (request.signal.aborted) abort();
-  return {
-    controller,
-    exposed: false,
-    cleanup: () => {
-      request.signal.removeEventListener("abort", abort);
-      reply.raw.removeListener("close", disconnect);
-      reply.raw.removeListener("error", transportError);
-    },
-  };
 }
 
 type LocalsFactory = (request: FastifyRequest) => object | Promise<object>;
@@ -325,7 +270,6 @@ function buildFastifyPlugin(options: FastifyServicesOptions): FastifyPluginAsync
     const bindings = options.bindings ?? inspectModule(module).map(({ name }) => name);
     // Selections and local requirements are checked at the public boundary above.
     const root = module.scope() as RuntimeScope;
-    const requests = new WeakMap<FastifyRequest, RequestState>();
     const application: {
       session?: ServiceSession;
       startup?: ServiceTaskSession;
@@ -399,68 +343,13 @@ function buildFastifyPlugin(options: FastifyServicesOptions): FastifyPluginAsync
                   .unwrapOrThrow();
               });
 
-            app.addHook(options.requestHook ?? "preHandler", async (request, reply) => {
-              const state = attachRequest(request, reply);
-              requests.set(request, state);
-              return (
-                tryResultAsync(
-                  async () => (await options.locals?.(request)) ?? {},
-                  preserveNativeError,
-                )
-                  .andThen((locals) =>
-                    tryResult(() => {
-                      state.controller.signal.throwIfAborted();
-                      const scope = root.withServices(locals);
-                      const session = startSession(
-                        (hold) =>
-                          exposeRequest === undefined
-                            ? scope.use(bindings, hold)
-                            : useServiceAccess(
-                                scope,
-                                (access) => hold(exposeRequest(access, request) as RuntimeServices),
-                                { initialize: bindings },
-                              ),
-                        state.controller.signal,
-                      );
-                      state.session = session;
-                      state.completion = session.completion
-                        .map((exit) => {
-                          state.cleanup();
-                          return exit;
-                        })
-                        .inspect((exit) => {
-                          if (state.exposed && exit._tag === "Failure" && hasFailure(exit.cause)) {
-                            request.log.error(
-                              { err: new ResultTaskCauseError(exit.cause) },
-                              "Request service cleanup failed",
-                            );
-                          }
-                        });
-                      return session;
-                    }, preserveNativeError),
-                  )
-                  .andThen((session) => session.ready)
-                  .andThen((services) =>
-                    tryResult(() => {
-                      (request as unknown as { services: unknown }).services = services;
-                      state.exposed = true;
-                    }, preserveNativeError),
-                  )
-                  .orElse((error) => finishRequest(state).andThen(() => err(error)))
-                  // Fastify's native error handler receives the original failure after cleanup.
-                  .mapErr(options.mapError ?? preserveNativeError)
-                  .unwrapOrThrow()
-              );
-            });
-
-            app.addHook("onResponse", async (request) => {
-              const state = requests.get(request);
-              if (state !== undefined) {
-                await finishRequest(state)
-                  .map(() => requests.delete(request))
-                  .mapErr(options.mapError ?? preserveNativeError)
-                  .unwrapOrThrow();
-              }
+            registerRequestHooks(app, {
+              root,
+              bindings,
+              requestHook: options.requestHook ?? "preHandler",
+              locals: options.locals,
+              exposeRequest,
+              mapError: options.mapError ?? preserveNativeError,
             });
           }, preserveNativeError),
         )

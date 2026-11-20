@@ -1,4 +1,6 @@
-import { deepEqual, equal, throws } from 'node:assert'
+import { deepEqual, equal, notStrictEqual, throws } from 'node:assert'
+import v8 from 'node:v8'
+import vm from 'node:vm'
 
 import { describe, it } from 'vite-plus/test'
 
@@ -147,5 +149,167 @@ describe('Ref, Deferred, and Queue concurrency primitives', () => {
         second: undefined,
       },
     })
+  })
+
+  it('assigns distinct shutdown interrupt causes and isolated span traces across queues and consumers', async () => {
+    // 1. Two separate shut-down queues
+    const q1 = Queue.bounded<string>(1)
+    const q2 = Queue.bounded<string>(1)
+    await q1.shutdown().runPromise()
+    await q2.shutdown().runPromise()
+
+    const alphaExit = await q1.take().withSpan('alpha', { queue: 'q1' }).runExit()
+    const betaExit = await q2.take().withSpan('beta', { queue: 'q2' }).runExit()
+
+    equal(alphaExit._tag, 'Failure')
+    equal(betaExit._tag, 'Failure')
+    if (alphaExit._tag === 'Failure' && betaExit._tag === 'Failure') {
+      notStrictEqual(alphaExit.cause, betaExit.cause)
+      deepEqual(alphaExit.cause, { _tag: 'Interrupt', reason: 'Queue shut down' })
+      deepEqual(betaExit.cause, { _tag: 'Interrupt', reason: 'Queue shut down' })
+      deepEqual(Cause.spans(betaExit.cause), [{ name: 'beta', attributes: { queue: 'q2' } }])
+      // Re-read first trace AFTER second run to confirm no cross-contamination
+      deepEqual(Cause.spans(alphaExit.cause), [{ name: 'alpha', attributes: { queue: 'q1' } }])
+    }
+
+    // 2. Two blocked consumers on the SAME queue woken by a single shutdown()
+    const shared = Queue.bounded<string>(1)
+    const both = await ResultTask.gen(function* () {
+      const c1 = yield* shared.take().withSpan('consumer.one', { consumer: 1 }).forkChild()
+      const c2 = yield* shared.take().withSpan('consumer.two', { consumer: 2 }).forkChild()
+      yield* ResultTask.sleep(0)
+      yield* shared.shutdown()
+      return [yield* c1.await(), yield* c2.await()] as const
+    })
+      .scoped()
+      .runPromise()
+
+    const [firstConsumerExit, secondConsumerExit] = both
+    equal(firstConsumerExit._tag, 'Failure')
+    equal(secondConsumerExit._tag, 'Failure')
+    if (firstConsumerExit._tag === 'Failure' && secondConsumerExit._tag === 'Failure') {
+      notStrictEqual(firstConsumerExit.cause, secondConsumerExit.cause)
+      deepEqual(firstConsumerExit.cause, { _tag: 'Interrupt', reason: 'Queue shut down' })
+      deepEqual(secondConsumerExit.cause, { _tag: 'Interrupt', reason: 'Queue shut down' })
+      deepEqual(Cause.spans(secondConsumerExit.cause), [
+        { name: 'consumer.two', attributes: { consumer: 2 } },
+      ])
+      deepEqual(Cause.spans(firstConsumerExit.cause), [
+        { name: 'consumer.one', attributes: { consumer: 1 } },
+      ])
+    }
+  })
+
+  it('preserves FIFO order and backpressure across interleaved active and cancelled offers', async () => {
+    const queue = Queue.bounded<string>(1)
+    await queue.offer('seed').runPromise()
+
+    const cCancel1 = new AbortController()
+    const cActive1 = new AbortController()
+    const cCancel2 = new AbortController()
+    const cActive2 = new AbortController()
+
+    const oCancel1 = queue.offer('cancel-1').runExit({ signal: cCancel1.signal })
+    const oActive1 = queue.offer('active-1').runExit({ signal: cActive1.signal })
+    const oCancel2 = queue.offer('cancel-2').runExit({ signal: cCancel2.signal })
+    const oActive2 = queue.offer('active-2').runExit({ signal: cActive2.signal })
+
+    await Promise.resolve()
+    cCancel1.abort('drop-1')
+    cCancel2.abort('drop-2')
+
+    equal((await oCancel1)._tag, 'Failure')
+    equal((await oCancel2)._tag, 'Failure')
+    deepEqual(queue.size().runSync(), ok(1))
+
+    deepEqual(queue.take().runSync(), ok('seed'))
+    deepEqual(await oActive1, { _tag: 'Success', value: true })
+    deepEqual(queue.take().runSync(), ok('active-1'))
+    deepEqual(await oActive2, { _tag: 'Success', value: true })
+    deepEqual(queue.take().runSync(), ok('active-2'))
+    deepEqual(queue.size().runSync(), ok(0))
+  })
+
+  it('preserves FIFO order across interleaved active and cancelled takers', async () => {
+    const queue = Queue.bounded<string>(1)
+    const tCancel1 = new AbortController()
+    const tActive1 = new AbortController()
+    const tCancel2 = new AbortController()
+    const tActive2 = new AbortController()
+
+    const pCancel1 = queue.take().runExit({ signal: tCancel1.signal })
+    const pActive1 = queue.take().runExit({ signal: tActive1.signal })
+    const pCancel2 = queue.take().runExit({ signal: tCancel2.signal })
+    const pActive2 = queue.take().runExit({ signal: tActive2.signal })
+
+    await Promise.resolve()
+    tCancel1.abort('t-drop-1')
+    tCancel2.abort('t-drop-2')
+
+    equal((await pCancel1)._tag, 'Failure')
+    equal((await pCancel2)._tag, 'Failure')
+
+    deepEqual(queue.offer('msg-1').runSync(), ok(true))
+    deepEqual(queue.offer('msg-2').runSync(), ok(true))
+
+    deepEqual(await pActive1, { _tag: 'Success', value: 'msg-1' })
+    deepEqual(await pActive2, { _tag: 'Success', value: 'msg-2' })
+    deepEqual(queue.size().runSync(), ok(0))
+  })
+
+  it('releases cancelled offer payloads and cancelled taker references without draining or shutting down', async () => {
+    v8.setFlagsFromString('--expose-gc')
+    const runGc = vm.runInNewContext('gc') as () => void
+
+    const forceGc = async (): Promise<void> => {
+      for (let round = 0; round < 5; round += 1) {
+        runGc()
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 5)
+        })
+      }
+    }
+
+    // 1. Full queue: cancelled offer payload must be collectable while queue stays full and open
+    const fullQueue = Queue.bounded<object>(1)
+    await fullQueue.offer({ role: 'filler' }).runPromise()
+
+    const offerRef = await (async (): Promise<WeakRef<object>> => {
+      const payload = { marker: 'cancelled-offer-payload', data: new Uint8Array(4096) }
+      const ref = new WeakRef(payload)
+      const controller = new AbortController()
+      const pending = fullQueue.offer(payload).runExit({ signal: controller.signal })
+      await Promise.resolve()
+      controller.abort('cancel-offer')
+      const exit = await pending
+      equal(exit._tag, 'Failure')
+      return ref
+    })()
+
+    await forceGc()
+    equal(offerRef.deref(), undefined)
+    // Queue is still full and open (never drained or shut down)
+    deepEqual(fullQueue.size().runSync(), ok(1))
+    deepEqual(fullQueue.isShutdown().runSync(), ok(false))
+
+    // 2. Empty queue: cancelled taker signal/closure must be collectable while queue stays empty and open
+    const emptyQueue = Queue.bounded<string>(1)
+
+    const takerRef = await (async (): Promise<WeakRef<AbortController>> => {
+      const controller = new AbortController()
+      const ref = new WeakRef(controller)
+      const pending = emptyQueue.take().runExit({ signal: controller.signal })
+      await Promise.resolve()
+      controller.abort('cancel-taker')
+      const exit = await pending
+      equal(exit._tag, 'Failure')
+      return ref
+    })()
+
+    await forceGc()
+    equal(takerRef.deref(), undefined)
+    deepEqual(emptyQueue.size().runSync(), ok(0))
+    deepEqual(emptyQueue.isShutdown().runSync(), ok(false))
   })
 })

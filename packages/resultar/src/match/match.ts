@@ -281,20 +281,30 @@ const builtinPredicates: ReadonlyMap<unknown, MatchBuiltinEmitter> = new Map<
   unknown,
   MatchBuiltinEmitter
 >([
-  [isStringPredicate, (expr) => `typeof ${expr} === "string"`],
-  [isNumberPredicate, (expr) => `typeof ${expr} === "number"`],
-  [isBooleanPredicate, (expr) => `typeof ${expr} === "boolean"`],
-  [isBigintPredicate, (expr) => `typeof ${expr} === "bigint"`],
-  [isSymbolPredicate, (expr) => `typeof ${expr} === "symbol"`],
-  [isNullPredicate, (expr) => `${expr} === null`],
-  [isDatePredicate, (expr) => `${expr} instanceof Date`],
+  [isStringPredicate, { reads: 1, emit: (expr) => `typeof ${expr} === "string"` }],
+  [isNumberPredicate, { reads: 1, emit: (expr) => `typeof ${expr} === "number"` }],
+  [isBooleanPredicate, { reads: 1, emit: (expr) => `typeof ${expr} === "boolean"` }],
+  [isBigintPredicate, { reads: 1, emit: (expr) => `typeof ${expr} === "bigint"` }],
+  [isSymbolPredicate, { reads: 1, emit: (expr) => `typeof ${expr} === "symbol"` }],
+  [isNullPredicate, { reads: 1, emit: (expr) => `${expr} === null` }],
+  [isDatePredicate, { reads: 1, emit: (expr) => `${expr} instanceof Date` }],
   [
     isRecordPredicate,
-    (expr) => `(typeof ${expr} === "object" && ${expr} !== null && !Array.isArray(${expr}))`,
+    {
+      reads: 'many',
+      emit: (expr) =>
+        `(typeof ${expr} === "object" && ${expr} !== null && !Array.isArray(${expr}))`,
+    },
   ],
-  [isNonEmptyStringPredicate, (expr) => `(typeof ${expr} === "string" && ${expr}.length > 0)`],
-  [isDefinedPredicate, (expr) => `(${expr} !== null && ${expr} !== undefined)`],
-  [isAnyPredicate, () => 'true'],
+  [
+    isNonEmptyStringPredicate,
+    { reads: 'many', emit: (expr) => `(typeof ${expr} === "string" && ${expr}.length > 0)` },
+  ],
+  [
+    isDefinedPredicate,
+    { reads: 'many', emit: (expr) => `(${expr} !== null && ${expr} !== undefined)` },
+  ],
+  [isAnyPredicate, { reads: 0, emit: () => 'true' }],
 ])
 
 class Matcher extends Pipeable {

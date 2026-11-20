@@ -32,6 +32,12 @@ pnpm --filter resultar-benchmarks run bench:match
 # resultar-di + resultar-hono HTTP tiers (Tier 0/1/2) vs raw Hono
 pnpm --filter resultar-benchmarks run bench:di-http
 
+# resultar-fastify HTTP tiers (Tier 0/1/2) vs raw Fastify (loopback keep-alive c=16)
+pnpm --filter resultar-benchmarks run bench:fastify-http
+
+# resultar-nestjs (FastifyAdapter) HTTP tiers (Tier 0/1/2 + guard) vs raw NestJS (keep-alive c=16)
+pnpm --filter resultar-benchmarks run bench:nestjs-http
+
 # TypeBox Compile(schema) JIT vs Value.Check and requestJsonTypeBoxTask end-to-end
 pnpm --filter resultar-benchmarks run bench:typebox
 
@@ -170,36 +176,65 @@ Measured on Node.js v26.13.1, Apple Silicon (`darwin/arm64`), median of 5 sample
 
 ### `resultar-match.ts` (`bench:match`)
 
-| Scenario | `RESULTAR_JIT=1` (`op/s`) | `RESULTAR_JIT=0` (`op/s`) | Speedup |
-| :--- | ---: | ---: | ---: |
-| `Match` 8-tag `tagsExhaustive` | `250,388,666 op/s` | `108,521,664 op/s` | **2.31x** |
-| `Match` nested object + array + built-in guards | `264,570,632 op/s` | `18,251,103 op/s` | **14.50x** |
-| `createTaggedError` 3-var template (incl. `Error` stack capture) | `874,439 op/s` | `864,500 op/s` | **1.01x** |
+| Scenario | Pre-RFC (`5629d83`) | `RESULTAR_JIT=0` (`op/s`) | `RESULTAR_JIT=1` (`op/s`) | Speedup |
+| :--- | ---: | ---: | ---: | :--- |
+| `Match` 8-tag `tagsExhaustive` | `61,638,186 op/s` | `113,801,777 op/s` | **`252,847,186 op/s`** | **4.10x** vs `5629d83` / **2.22x** vs `JIT=0` (`1.72x` time of inline `switch`) |
+| `Match` nested object + array + built-in guards | `17,488,632 op/s` | `18,553,306 op/s` | **`263,412,087 op/s`** | **15.06x** vs `5629d83` / **14.20x** vs `JIT=0` |
+| `createTaggedError` 3-var template (incl. `Error` stack capture) | `559,915 op/s` | `852,480 op/s` | **`861,320 op/s`** | **1.54x** vs `5629d83` / **1.01x** vs `JIT=0` |
 
 ### `resultar-task-hot.ts` (`bench:task-hot`)
 
 | Reused Chain Scenario (100,000 runs) | `Resultar` (`JIT=1`) | `Resultar` (`JIT=0`) | `Effect` v4 | vs `JIT=0` / vs `Effect` |
 | :--- | ---: | ---: | ---: | ---: |
-| 10-step `map + andThen` | `20,111,955 op/s` | `8,012,018 op/s` | `3,199,190 op/s` | **2.51x** / **6.29x** |
-| 50-step `map + andThen` | `5,020,154 op/s` | `2,150,861 op/s` | `898,224 op/s` | **2.33x** / **5.59x** |
-| `catchTag + mapErr` recovery | `22,484,961 op/s` | `8,373,807 op/s` | `3,406,966 op/s` | **2.69x** / **6.60x** |
+| 10-step `map + andThen` | `19,712,361 op/s` | `7,967,281 op/s` | `3,181,615 op/s` | **2.47x** / **6.20x** |
+| 50-step `map + andThen` | `4,697,418 op/s` | `2,154,832 op/s` | `897,522 op/s` | **2.18x** / **5.23x** |
+| `catchTag + mapErr` recovery | `22,638,945 op/s` | `8,440,124 op/s` | `3,418,458 op/s` | **2.68x** / **6.62x** |
 
 ### `resultar-di-http.ts` (`bench:di-http`)
 
-| HTTP Request Scenario (25,000 reqs) | Throughput (`req/s`) | Comparison |
-| :--- | ---: | :--- |
-| Raw `Hono` (no DI) | `1,061,485 req/s` | Baseline |
-| `resultar-di` Tier 0 (singleton) + `resultar-hono` | `458,241 req/s` | **8.47x** vs Tier 2 (+1.24 µs vs raw Hono) |
-| `resultar-di` Tier 1 (scoped + transient + locals) + `resultar-hono` | `349,828 req/s` | **6.47x** vs Tier 2 |
-| `resultar-di` Tier 2 (scoped resource `acquire`/`release`) + `resultar-hono` | `54,070 req/s` | Full `TaskScope` + streaming cleanup |
-| `resultar-di` direct `root.fetch` 8-service Tier 1 (`JIT=1` vs `JIT=0`) | `1,684,792 req/s` vs `1,209,753 req/s` | **1.39x** JIT speedup (`0.59 µs/req`) |
+Each scenario and `RESULTAR_JIT` mode executes in an isolated Node process from app creation through sampling (`20,000 reqs × 7 samples` after `4,000` warmup, full `await res.text()` body consumption, `hono@4.13.19`):
+
+| HTTP Request Scenario (body consumed) | Base `5629d83` | `JIT=0` | `JIT=1` | Speedup / Overhead vs Raw Hono |
+| :--- | ---: | ---: | ---: | :--- |
+| Raw `Hono` (no DI) | — | — | `422,459 req/s` (`2.37 µs`) | Baseline |
+| `resultar-di` Tier 0 (singleton) + Hono middleware | `65,497 req/s` (`15.27 µs`) | `264,272 req/s` (`3.78 µs`) | **`272,457 req/s`** (`3.67 µs`) | **4.16x** end-to-end (**+1.30 µs** over raw Hono; DI overhead **9.92x** lower) |
+| `resultar-di` Tier 1 (scoped+transient+locals) + Hono middleware | `41,018 req/s` (`24.38 µs`) | `228,209 req/s` (`4.38 µs`) | **`235,191 req/s`** (`4.25 µs`) | **5.73x** end-to-end (**+1.88 µs** over raw Hono; DI overhead **11.71x** lower) |
+| `resultar-di` Tier 2 (scoped resource) + Hono middleware | — | — | `58,388 req/s` (`17.13 µs`) | Full `TaskScope` + streaming cleanup |
+| `resultar-di` Tier 0 (singleton) + `createHonoApp` | `86,084 req/s` (`11.62 µs`) | — | **`411,014 req/s`** (`2.43 µs`) | **4.77x** end-to-end (**+0.07 µs** over raw Hono) |
+| `resultar-di` Tier 1 (scoped+transient) + `createHonoApp` | `46,461 req/s` (`21.52 µs`) | — | **`426,647 req/s`** (`2.34 µs`) | **9.18x** end-to-end (**~0 µs** over raw Hono) |
+| `resultar-di` direct 8-service Tier 1 `root.fetch` | `28,951 req/s` (`34.54 µs`) | `379,000 req/s` (`2.64 µs`) | **`444,781 req/s`** (`2.25 µs`) | **15.36x** vs `5629d83` / **1.17x** vs `JIT=0` |
+
+### `resultar-fastify-http.ts` (`bench:fastify-http`)
+
+Real TCP loopback HTTP keep-alive (`concurrency = 16`, 10,000 reqs × 5 samples, median after warmup):
+
+| Fastify HTTP Scenario | Before (`startSession`) | After (Tier 0 / Tier 1 Fast Hooks) | Speedup / DI Overhead |
+| :--- | ---: | ---: | :--- |
+| Raw `Fastify` (no DI) | `45,306 req/s` (`22.07 µs`) | `46,625 req/s` (`21.45 µs`) | Baseline |
+| `resultar-fastify` Tier 0 (singleton) | `25,571 req/s` (`39.11 µs`) | **`44,419 req/s`** (`22.51 µs`) | **1.74x** (**95.3%** of raw Fastify; DI overhead `+17.04 µs` → **`+1.06 µs`**, **16.1x** lower) |
+| `resultar-fastify` Tier 1 (scoped + transient + locals) | `20,846 req/s` (`47.97 µs`) | **`44,472 req/s`** (`22.49 µs`) | **2.13x** (**95.4%** of raw Fastify; DI overhead `+25.90 µs` → **`+1.04 µs`**, **24.9x** lower) |
+| `resultar-fastify` Tier 1 deep (8-service scoped DAG) | `16,641 req/s` (`60.09 µs`) | **`43,929 req/s`** (`22.76 µs`) | **2.64x** (**94.2%** of raw Fastify; DI overhead `+38.02 µs` → **`+1.31 µs`**, **29.0x** lower) |
+| `resultar-fastify` Tier 2 (scoped resource `acquire`/`release`) | `22,766 req/s` (`43.93 µs`) | `23,482 req/s` (`42.59 µs`) | Full `TaskScope` resource ownership & rollback |
+
+### `resultar-nestjs-http.ts` (`bench:nestjs-http`)
+
+Real TCP loopback HTTP keep-alive on `@nestjs/platform-fastify` (`concurrency = 16`, 10,000 reqs × 5 samples, median after warmup):
+
+| NestJS HTTP Scenario | Before (`startSession`) | After (Tier 0 / Tier 1 Fast Dispatcher) | Speedup / DI Overhead |
+| :--- | ---: | ---: | :--- |
+| Raw `NestJS` + `FastifyAdapter` (no DI) | `42,858 req/s` (`23.33 µs`) | `44,694 req/s` (`22.37 µs`) | Baseline |
+| `resultar-nestjs` Tier 0 (singleton, `interceptor`) | `24,141 req/s` (`41.42 µs`) | **`37,505 req/s`** (`26.66 µs`) | **1.55x** (**84.3%** of raw NestJS; ~95% of NestJS's no-op interceptor ceiling) |
+| `resultar-nestjs` Tier 1 (scoped + transient + locals, `interceptor`) | `18,309 req/s` (`54.62 µs`) | **`36,636 req/s`** (`27.30 µs`) | **2.00x** (**82.0%** of raw NestJS; DI overhead `+31.29 µs` → **`+4.93 µs`**, **6.3x** lower) |
+| `resultar-nestjs` Tier 1 deep (8-service scoped DAG, `interceptor`) | `14,872 req/s` (`67.24 µs`) | **`37,290 req/s`** (`26.82 µs`) | **2.51x** (**83.4%** of raw NestJS; DI overhead `+43.91 µs` → **`+4.45 µs`**, **9.9x** lower) |
+| `resultar-nestjs` Tier 0 (`requestHook: "guard"`, skips RxJS) | — | **`41,167 req/s`** (`24.29 µs`) | **92.1%** of raw NestJS (**+1.92 µs** total overhead) |
+| `resultar-nestjs` Tier 2 (scoped resource `acquire`/`release`) | `20,160 req/s` (`49.60 µs`) | `21,720 req/s` (`46.04 µs`) | Full `TaskScope` resource ownership & rollback |
 
 ### `resultar-typebox.ts` (`bench:typebox`)
 
 | Validation Scenario | `JIT=1` (`Compile`) | `JIT=0` (`Value.Check`) | Speedup |
 | :--- | ---: | ---: | ---: |
-| Direct schema check (nested object + union array) | `108,126,601 op/s` | `154,982 op/s` | **697.67x** |
-| `requestJsonTypeBoxTask` end-to-end (`Response` + JSON + validate) | `363,030 op/s` | `104,856 op/s` | **3.46x** |
+| Direct schema check (nested object + union array) | `108,144,141 op/s` | `160,721 op/s` | **672.87x** |
+| `requestJsonTypeBoxTask` end-to-end (`Response` + JSON + validate) | `375,337 op/s` | `107,641 op/s` | **3.49x** |
 
 ---
 

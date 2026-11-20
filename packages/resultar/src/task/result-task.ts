@@ -616,7 +616,7 @@ interface ContinuationStep {
 class ResultTaskIterator<A, E, R> implements ResultTaskYield<A, E, R> {
   declare public readonly [ResultTaskYieldTypeId]: typeof ResultTaskYieldTypeId
   declare public readonly _tag: 'ResultTask'
-  public task: ResultTask<A, E, R>
+  public readonly task: ResultTask<A, E, R>
   public value: unknown
   public done = false
   public yielded = false
@@ -634,16 +634,11 @@ class ResultTaskIterator<A, E, R> implements ResultTaskYield<A, E, R> {
     if (exit._tag === 'Success') {
       this.done = true
       this.value = exit.value
-      // Stryker disable next-line all: single-element iterator pool is an allocation optimization equivalent to new ResultTaskIterator(this).
-      idleTaskIterator = this as ResultTaskIterator<unknown, unknown, unknown>
       return this as unknown as IteratorResult<ResultTaskYield<A, E, R>, A>
     }
     return throwDefect(new Error('ResultTask generator received a failed task result'))
   }
 }
-
-// eslint-disable-next-line init-declarations
-let idleTaskIterator: ResultTaskIterator<unknown, unknown, unknown> | undefined
 
 Object.assign(ResultTaskIterator.prototype, {
   [ResultTaskYieldTypeId]: ResultTaskYieldTypeId,
@@ -792,34 +787,123 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
 
   /* Stryker disable all: combinator fast-path and tiered JIT are behaviorally equivalent to ResultTask.runTaskLoop(task, context). */
-  static #runCombinator(
+  static #runFastLeafStep(
+    invoke: (value: unknown) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>,
+    input: unknown,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
+    let next: ResultTask<unknown, unknown, unknown> | Result<unknown, unknown> = undefined as never
+    try {
+      next = invoke(input)
+    } catch (error) {
+      return died(error)
+    }
+    if (isResultTask(next)) {
+      return next.run(context)
+    }
+    return next.isOk() ? success(next.value) : failed(next.error)
+  }
+
+  static #tryFastCatchTag(
+    task: ResultTask<unknown, unknown, unknown>,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> | undefined {
+    if (context.scheduling.remaining <= 8) {
+      return undefined
+    }
+    let cursor = task.value as ResultTask<unknown, unknown, unknown>
+    let steps = 3
+    while (
+      (cursor.op === OP_MAP || cursor.op === OP_FLAT_MAP || cursor.op === OP_TAP) &&
+      steps < 16
+    ) {
+      cursor = cursor.value as ResultTask<unknown, unknown, unknown>
+      steps += 2
+    }
+    if (cursor.op !== OP_FAIL || context.scheduling.remaining <= steps) {
+      return undefined
+    }
+    context.scheduling.remaining -= steps
+    const desc = task.continuation as CatchTagContinuation
+    if (hasTag(cursor.value, desc.tag)) {
+      return ResultTask.#runFastLeafStep(
+        desc.handler as (
+          value: unknown,
+        ) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>,
+        cursor.value,
+        context,
+      )
+    }
+    return failed(cursor.value)
+  }
+
+  static #tryFastLeafCombinator(
     task: ResultTask<unknown, unknown, unknown>,
     rootOp: number,
     context: ResultTaskRuntimeContext,
-  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
-    if (rootOp === OP_FLAT_MAP && context.scheduling.remaining > 4) {
-      const inner = task.value as ResultTask<unknown, unknown, unknown>
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> | undefined {
+    if (rootOp === OP_CATCH_TAG) {
+      return ResultTask.#tryFastCatchTag(task, context)
+    }
+    if (context.scheduling.remaining <= 4) {
+      return undefined
+    }
+    const inner = task.value as ResultTask<unknown, unknown, unknown>
+    if (rootOp === OP_MAP) {
       if (inner.op === OP_SUCCESS) {
         context.scheduling.remaining -= 3
-        let next: ResultTask<unknown, unknown, unknown> | Result<unknown, unknown> = inner
         try {
-          next = (
-            task.continuation as (
-              value: unknown,
-            ) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>
-          )(inner.value)
+          return success((task.continuation as (value: unknown) => unknown)(inner.value))
         } catch (error) {
           return died(error)
         }
-        if (isResultTask(next)) {
-          return next.run(context)
-        }
-        return next.isOk() ? success(next.value) : failed(next.error)
       }
       if (inner.op === OP_FAIL) {
         context.scheduling.remaining -= 3
         return failed(inner.value)
       }
+    } else if (rootOp === OP_FLAT_MAP) {
+      if (inner.op === OP_SUCCESS) {
+        context.scheduling.remaining -= 3
+        return ResultTask.#runFastLeafStep(
+          task.continuation as (
+            value: unknown,
+          ) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>,
+          inner.value,
+          context,
+        )
+      }
+      if (inner.op === OP_FAIL) {
+        context.scheduling.remaining -= 3
+        return failed(inner.value)
+      }
+    } else if (rootOp === OP_CATCH_ALL) {
+      if (inner.op === OP_SUCCESS) {
+        context.scheduling.remaining -= 3
+        return success(inner.value)
+      }
+      if (inner.op === OP_FAIL) {
+        context.scheduling.remaining -= 3
+        return ResultTask.#runFastLeafStep(
+          task.continuation as (
+            value: unknown,
+          ) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>,
+          inner.value,
+          context,
+        )
+      }
+    }
+    return undefined
+  }
+
+  static #runCombinator(
+    task: ResultTask<unknown, unknown, unknown>,
+    rootOp: number,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
+    const fast = ResultTask.#tryFastLeafCombinator(task, rootOp, context)
+    if (fast !== undefined) {
+      return fast
     }
     if (rootOp >= OP_FLAT_MAP && task.jitHits < 2) {
       task.jitHits += 1
@@ -2053,7 +2137,7 @@ export class ResultTask<out A, out E = never, out R = never> {
       while (step.done === false) {
         /* Stryker disable all: fast-path for standard Success instruction is equivalent to #runGenSlow. */
         if (
-          isResultTaskYield(step.value) &&
+          step.value instanceof ResultTaskIterator &&
           step.value.task.op === OP_SUCCESS &&
           (context.signal === NEVER_ABORTED_SIGNAL || !context.signal.aborted) &&
           context.scheduling.remaining > 1
@@ -2061,6 +2145,7 @@ export class ResultTask<out A, out E = never, out R = never> {
           context.scheduling.remaining -= 1
           sharedSuccessExit.value = step.value.task.value
           step = iterator.next(sharedSuccessExit as Next)
+          sharedSuccessExit.value = undefined
         } else {
           /* Stryker restore all */
           return ResultTask.#runGenSlow(iterator, step, context)
@@ -2069,6 +2154,7 @@ export class ResultTask<out A, out E = never, out R = never> {
 
       return success<Return, GeneratorError<Yield>>(step.value as Return)
     } catch (error) {
+      sharedSuccessExit.value = undefined
       return died<Return, GeneratorError<Yield>>(error)
     }
   }
@@ -3061,17 +3147,6 @@ export class ResultTask<out A, out E = never, out R = never> {
 
   /** Enables `yield* task` inside `ResultTask.gen` workflows. */
   public [Symbol.iterator](): Generator<ResultTaskYield<A, E, R>, A, Exit<A, E>> {
-    /* Stryker disable all: single-element iterator pool is an allocation optimization equivalent to new ResultTaskIterator(this). */
-    const iterator = idleTaskIterator
-    if (iterator !== undefined) {
-      idleTaskIterator = undefined
-      iterator.task = this
-      iterator.value = iterator
-      iterator.done = false
-      iterator.yielded = false
-      return iterator as unknown as Generator<ResultTaskYield<A, E, R>, A, Exit<A, E>>
-    }
-    /* Stryker restore all */
     return new ResultTaskIterator(this) as unknown as Generator<
       ResultTaskYield<A, E, R>,
       A,

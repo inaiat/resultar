@@ -503,4 +503,62 @@ describe('cooperative task scheduling', () => {
     )
     equal(yields, 0)
   })
+
+  it('works without setImmediate in browser-like runtimes, preserving wake order and cancellation', async () => {
+    const host = globalThis as {
+      setImmediate: typeof globalThis.setImmediate | undefined
+      clearImmediate: typeof globalThis.clearImmediate | undefined
+    }
+    const savedSetImmediate = host.setImmediate
+    const savedClearImmediate = host.clearImmediate
+    host.setImmediate = undefined
+    host.clearImmediate = undefined
+
+    try {
+      // 1. VirtualClock.flush / advanceBy / runToCompletion without setImmediate
+      const clock = Clock.virtual(0)
+      const order: string[] = []
+      const retryLike = ResultTask.gen(function* () {
+        order.push('start')
+        yield* ResultTask.sleep(250)
+        order.push('step-1')
+        yield* ResultTask.sleep(500)
+        order.push('step-2')
+        yield* ResultTask.sleep(600)
+        order.push('done')
+        return clock.now()
+      })
+      const exit = await clock.runToCompletion(retryLike)
+      deepEqual(exit, { _tag: 'Success', value: 1350 })
+      equal(clock.now(), 1350)
+      deepEqual(order, ['start', 'step-1', 'step-2', 'done'])
+
+      // 2. Scheduler.live.yield preserves FIFO wake order without setImmediate
+      const wakeOrder: number[] = []
+      const c1 = new AbortController()
+      const c2 = new AbortController()
+      const c3 = new AbortController()
+      const y1 = Promise.resolve(Scheduler.live.yield(c1.signal)).then(() => {
+        wakeOrder.push(1)
+      })
+      const y2 = Promise.resolve(Scheduler.live.yield(c2.signal)).then(() => {
+        wakeOrder.push(2)
+      })
+      const y3 = Promise.resolve(Scheduler.live.yield(c3.signal)).then(() => {
+        wakeOrder.push(3)
+      })
+      // Cancel middle yield before macrotask fires
+      c2.abort('cancelled-middle')
+      await rejects(y2, { name: 'AbortError' })
+      await Promise.all([y1, y3])
+      deepEqual(wakeOrder, [1, 3])
+
+      // 3. Long runnable task yields cooperatively via fallback macrotask scheduler
+      const sum = await ResultTask.runPromise(mapped(5000), { yieldEvery: 1000 })
+      equal(sum, 5000)
+    } finally {
+      host.setImmediate = savedSetImmediate
+      host.clearImmediate = savedClearImmediate
+    }
+  })
 })

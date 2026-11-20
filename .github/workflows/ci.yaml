@@ -37,8 +37,11 @@ jobs:
       - name: Install dependencies
         run: vp install --frozen-lockfile
 
-      - name: Check and coverage
-        run: vp run check:full
+      - name: Check and coverage (JIT enabled)
+        run: RESULTAR_JIT=1 vp run check:full
+
+      - name: Test suite with JIT disabled (CSP/Edge fallback)
+        run: RESULTAR_JIT=0 vp run test
 
       - name: Build
         run: vp run build

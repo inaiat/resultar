@@ -448,6 +448,7 @@ const assertTokenSync = (value: unknown): void => {
 
 const MAX_PLAN_CACHE_SIZE = 64;
 const EMPTY_LOCALS: RuntimeServices = Object.freeze({});
+const SYNC_PLAN_BRIDGE = Symbol.for("resultar-di/sync-plan-bridge");
 
 class RuntimeScope {
   public readonly cache = new Map<string, unknown>();
@@ -455,6 +456,15 @@ class RuntimeScope {
   private readonly resources = ResultTask.makeScope();
   private readonly localNames = new Set<string>();
   private readonly syncPlans = new Map<string, CompiledSyncPlan | undefined>();
+  private lastPlan:
+    | {
+        readonly envFlag: string;
+        readonly keys: readonly string[];
+        readonly localCount: number;
+        readonly singleLocalKey: string | undefined;
+        readonly plan: CompiledSyncPlan | undefined;
+      }
+    | undefined = undefined;
   private defaultResolvers:
     | { readonly localCount: number; readonly map: Readonly<Record<string, () => RuntimeTask>> }
     | undefined = undefined;
@@ -509,13 +519,34 @@ class RuntimeScope {
     const envFlag =
       (globalThis as { readonly process?: { readonly env?: { readonly RESULTAR_JIT?: string } } })
         .process?.env?.RESULTAR_JIT ?? "";
-    const cacheKey = `${envFlag}\u0002${keys.join("\0")}\u0001${localKeys.join("\0")}`;
-    if (this.syncPlans.has(cacheKey)) {
-      return this.syncPlans.get(cacheKey);
+    const last = this.lastPlan;
+    if (
+      last !== undefined &&
+      last.envFlag === envFlag &&
+      last.keys === keys &&
+      last.localCount === localKeys.length &&
+      (localKeys.length === 0 || (localKeys.length === 1 && last.singleLocalKey === localKeys[0]))
+    ) {
+      return last.plan;
     }
-    const plan = compileSyncSubgraph(this.definitions, keys, localKeys, assertSynchronous);
-    if (this.syncPlans.size < MAX_PLAN_CACHE_SIZE) {
-      this.syncPlans.set(cacheKey, plan);
+    const cacheKey = JSON.stringify([envFlag, keys, localKeys]);
+    let plan: CompiledSyncPlan | undefined = undefined;
+    if (this.syncPlans.has(cacheKey)) {
+      plan = this.syncPlans.get(cacheKey);
+    } else {
+      plan = compileSyncSubgraph(this.definitions, keys, localKeys, assertSynchronous);
+      if (this.syncPlans.size < MAX_PLAN_CACHE_SIZE) {
+        this.syncPlans.set(cacheKey, plan);
+      }
+    }
+    if (Object.isFrozen(keys) && localKeys.length <= 1) {
+      this.lastPlan = {
+        envFlag,
+        keys,
+        localCount: localKeys.length,
+        singleLocalKey: localKeys[0],
+        plan,
+      };
     }
     return plan;
   }
@@ -1027,6 +1058,9 @@ const makeScope = <Services extends object, E, R, G extends Graph>(
         ScopeError<R>
       >,
     withServices: (values) => {
+      if (locals === EMPTY_LOCALS) {
+        return makeScope(runtime, Object.freeze({ ...values }));
+      }
       for (const key of Object.keys(values)) {
         if (Object.hasOwn(locals, key))
           throw new TypeError(`Local service already supplied: ${key}`);
@@ -1035,6 +1069,18 @@ const makeScope = <Services extends object, E, R, G extends Graph>(
     },
   };
   scopeRuntimes.set(scope, { runtime, locals });
+  if (locals === EMPTY_LOCALS) {
+    Object.defineProperty(scope, SYNC_PLAN_BRIDGE, {
+      value: {
+        isClosed: () => runtime.isClosedOrDisposing(),
+        beginChild: () => runtime.beginChild(),
+        endChild: () => runtime.endChild(),
+        getPlan: (keys: readonly string[], planLocalKeys: readonly string[]) =>
+          runtime.getSyncPlan(keys, planLocalKeys),
+        rootCache: runtime.root.cache,
+      },
+    });
+  }
   return scope;
 };
 

@@ -249,13 +249,24 @@ Resultar intentionally does **not** introduce:
 
 ## 9. Validation and acceptance
 
-All workspace verification gates pass on branch `feat/dx-docs-observability-tooling`:
+All workspace verification gates pass on branch `feat/dx-docs-observability-tooling` (re-validated after addressing the review findings tracked in [RFC 0010 and RFC 0011 correction plan](./rfc-0010-0011-fix-plan.md)):
 
-- `pnpm --filter resultar-check run native:test && pnpm --filter resultar-check run native:build:current`
-- `pnpm run build`
-- `pnpm run docs:generate`
-- `pnpm run check:full` (all 11 packages: build, format, lint, type-check, tests, Fallow analyze, and `test:release`)
-- `pnpm run smoke:package` (all 11 packages, including subpath export + consumer `tsc` verification)
-- `pnpm run test:examples`
-- `pnpm run test:docs` (15/15 passing, including automated drift checks and bundled link resolution)
-- `pnpm run test:agents` (15/15 eval cases + 4/4 harness tests passing)
+- **Playground security and real-browser verification**:
+  - Shared links (`#/playground?code=...`) no longer auto-execute on initial load or `hashchange`; code is loaded into the editor and requires an explicit **Run** click (`⌘/Ctrl+Enter`).
+  - Browser execution runs inside an ephemeral `<iframe sandbox="allow-scripts">` (opaque origin `null`, CSP `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval';`) bundled with a self-contained runtime, preventing access to portal DOM, `localStorage`, `sessionStorage`, and cookies.
+  - [website/tests/playground-browser.test.ts](../../website/tests/playground-browser.test.ts) serves `website/dist` and drives headless Chrome over CDP to verify manual run gating on direct load and hash navigation, opaque-origin isolation, and all 6 presets (including `retry-virtual-clock` at `1350 ms` virtual elapsed time and `observability` with all 3 spans in the waterfall).
+- **Browser-compatible macrotask scheduling**:
+  - `VirtualClock.flush()` and `Scheduler.live.yield()` use a shared `scheduleMacrotask` helper (`setImmediate` when available, `setTimeout(..., 0)` + `clearTimeout` fallback in browsers/edge runtimes), preserving FIFO wake order and cancellation without Node-only globals (tested in [packages/resultar/tests/task-scheduler.test.ts](../../packages/resultar/tests/task-scheduler.test.ts)).
+- **Queue trace isolation and cancellation cleanup**:
+  - `Queue.shutdown()` and closed-queue `take()` construct a fresh `Interrupt` `Cause` per operation so `Cause.spans()` traces never cross-contaminate across queues or concurrent consumers.
+  - `Queue` waiters use FIFO `Set`s and immediately unlink and clear payload, callback, and signal references on abort (verified with interleaved FIFO/backpressure tests and `WeakRef` + GC diagnostics in [packages/resultar/tests/concurrency-primitives.test.ts](../../packages/resultar/tests/concurrency-primitives.test.ts)).
+- **Workspace gates**:
+  - `RESULTAR_JIT=1 pnpm run check:full`
+  - `RESULTAR_JIT=0 pnpm run test`
+  - `pnpm run build`
+  - `pnpm run smoke:package`
+  - `pnpm run test:examples`
+  - `pnpm run test:docs`
+  - `pnpm run test:agents`
+  - `pnpm run check:vscode && pnpm run build:vscode && pnpm run test:vscode`
+  - `pnpm run test:website` (including real headless Chrome browser test against `website/dist`)

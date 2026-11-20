@@ -1,5 +1,5 @@
 import type { Exit } from './result-task.js'
-import { hasScheduledTasks } from './task-scheduler.js'
+import { hasScheduledTasks, scheduleMacrotask } from './task-scheduler.js'
 
 /**
  * Clock and randomness source used by `ResultTask` sleeps, delays, timeouts, `timed`, and retry jitter.
@@ -130,13 +130,13 @@ export class VirtualClock implements TaskClock {
     this.flushing ??= new Promise<void>((resolve) => {
       const drained = (): void => {
         if (hasScheduledTasks(this)) {
-          setImmediate(drained)
+          scheduleMacrotask(drained)
           return
         }
         this.flushing = undefined
         resolve()
       }
-      setImmediate(drained)
+      scheduleMacrotask(drained)
     })
     return this.flushing
   }

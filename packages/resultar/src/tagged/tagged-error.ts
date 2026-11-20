@@ -703,6 +703,7 @@ const createTaggedErrorClass = <
   explicitProps: boolean,
 ): TaggedErrorClass<Tag, MessageTemplate, Base> => {
   const BaseError = options.extends ?? defaultBaseError
+  const isDefaultBase = BaseError === defaultBaseError
   const messageTemplate = options.message ?? (defaultMessageTemplate as MessageTemplate)
   assertNoReservedTemplateVariables(options.name, messageTemplate)
   const interpolate = compileMessageInterpolator(messageTemplate)
@@ -710,16 +711,22 @@ const createTaggedErrorClass = <
 
   class GeneratedTaggedError extends BaseError {
     public static readonly tag = options.name
-    public readonly _tag = options.name
-    public readonly fingerprint = sharedFingerprint
-    public readonly messageTemplate = messageTemplate
+    declare public readonly _tag: Tag
+    declare public readonly fingerprint: readonly [Tag, MessageTemplate]
+    declare public readonly messageTemplate: MessageTemplate
 
+    /* eslint-disable unicorn/custom-error-definition -- Prototype defines name; 1-arg super avoids options overhead when cause is absent. */
     public constructor(props?: ConstructorProps<MessageTemplate>) {
       const message = interpolate(props)
       const cause = props?.cause
-      super(message, cause === undefined ? undefined : { cause })
-      // eslint-disable-next-line nicorn/custom-error-definition
-      this.name = options.name
+      if (cause === undefined) {
+        super(message)
+      } else {
+        super(message, { cause })
+      }
+      if (!isDefaultBase) {
+        this.name = options.name
+      }
 
       if (props) {
         if (explicitProps) {
@@ -729,6 +736,7 @@ const createTaggedErrorClass = <
         }
       }
     }
+    /* eslint-enable unicorn/custom-error-definition */
 
     /**
      * Narrows a value to this tagged error class.
@@ -819,6 +827,23 @@ const createTaggedErrorClass = <
       return json
     }
   }
+
+  Object.defineProperties(GeneratedTaggedError.prototype, {
+    _tag: { configurable: true, enumerable: false, value: options.name, writable: false },
+    fingerprint: {
+      configurable: true,
+      enumerable: false,
+      value: sharedFingerprint,
+      writable: false,
+    },
+    messageTemplate: {
+      configurable: true,
+      enumerable: false,
+      value: messageTemplate,
+      writable: false,
+    },
+    name: { configurable: true, enumerable: false, value: options.name, writable: true },
+  })
 
   return GeneratedTaggedError as unknown as TaggedErrorClass<Tag, MessageTemplate, Base>
 }

@@ -64,7 +64,7 @@ const config: UserConfig = defineConfig({
     },
     overrides: [
       {
-        files: ["src/playground-runner.ts"],
+        files: ["src/playground-core.ts", "src/playground-runner.ts"],
         rules: { "no-new-func": "allow", "typescript/no-implied-eval": "allow" },
       },
       {

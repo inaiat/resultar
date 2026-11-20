@@ -12,6 +12,8 @@
     "bench:task-hot": "pnpm --filter resultar build && node --import vite-plus/register resultar-task-hot.ts",
     "bench:match": "pnpm --filter resultar build && node --import vite-plus/register resultar-match.ts",
     "bench:di-http": "pnpm --filter resultar --filter resultar-di --filter resultar-hono build && node --import vite-plus/register resultar-di-http.ts",
+    "bench:fastify-http": "pnpm --filter resultar --filter resultar-di --filter resultar-fastify build && node --import vite-plus/register resultar-fastify-http.ts",
+    "bench:nestjs-http": "pnpm --filter resultar --filter resultar-di --filter resultar-nestjs build && node --import vite-plus/register resultar-nestjs-http.ts",
     "bench:typebox": "pnpm --filter resultar --filter resultar-request --filter resultar-request-typebox build && node --import vite-plus/register resultar-typebox.ts",
     "bench:effect": "pnpm --filter resultar build && node --import vite-plus/register resultar-vs-effect.ts",
     "bench:function": "pnpm --filter resultar build && node --import vite-plus/register resultar-functional-ergonomics.ts"
@@ -19,15 +21,23 @@
   "dependencies": {
     "resultar": "workspace:*",
     "resultar-di": "workspace:*",
+    "resultar-fastify": "workspace:*",
     "resultar-hono": "workspace:*",
+    "resultar-nestjs": "workspace:*",
     "resultar-request-typebox": "workspace:*"
   },
   "devDependencies": {
+    "@nestjs/common": "catalog:",
+    "@nestjs/core": "catalog:",
+    "@nestjs/platform-fastify": "catalog:",
     "cronometro": "^7.0.1",
     "effect": "^4.1.2",
+    "fastify": "catalog:",
     "hono": "catalog:",
     "neverthrow": "^8.2.0",
+    "reflect-metadata": "catalog:",
     "resultar-check": "workspace:*",
+    "rxjs": "catalog:",
     "typebox": "catalog:",
     "typescript": "catalog:"
   }

@@ -49,6 +49,12 @@ import {
   type ServiceTaskRequirements,
 } from "resultar-di";
 
+import {
+  createFastRequestDispatcher,
+  ensureRequestHelpersFast,
+  getSyncPlanBridge,
+  type FastRequestDispatcher,
+} from "./fast-request.js";
 import { hasFailure, startSession, type RuntimeTask, type ServiceSession } from "./session.js";
 
 export { FastifyAdapter } from "@nestjs/platform-fastify";
@@ -510,24 +516,12 @@ interface InternalAppHost {
 interface InternalModuleState {
   readonly appServicesTarget: Record<PropertyKey, unknown>;
   readonly prepareRequest: (context: ExecutionContext) => void;
-  readonly initializeRequest: (context: ExecutionContext) => Promise<void>;
+  readonly initializeRequest: (context: ExecutionContext) => void | Promise<void>;
   readonly onModuleInit: () => Promise<void>;
   readonly onApplicationBootstrap: () => Promise<void>;
   readonly beforeApplicationShutdown: () => Promise<void>;
   readonly onApplicationShutdown: () => Promise<void>;
 }
-
-const noopLog = (): void => {
-  /* No-op fallback when a custom HTTP adapter omits request.log. */
-};
-const fallbackRequestLogger: NestRequestLogger = {
-  info: noopLog,
-  error: noopLog,
-  warn: noopLog,
-  debug: noopLog,
-  trace: noopLog,
-  fatal: noopLog,
-};
 
 function logCleanupFailure(
   request: NestRequest,
@@ -551,42 +545,6 @@ function logCleanupFailure(
   Logger.error("Request service cleanup failed", failure, "ResultarServices");
 }
 
-function ensureRequestHelpers(
-  request: NestRequest,
-  nextRequestId: () => string,
-  requestIdHeader?: string,
-): void {
-  const headerValue =
-    requestIdHeader === undefined ? undefined : request.headers[requestIdHeader.toLowerCase()];
-  if (typeof headerValue === "string" && headerValue.length > 0) {
-    request.id = headerValue;
-  } else if (Array.isArray(headerValue) && typeof headerValue[0] === "string") {
-    request.id = headerValue[0];
-  } else if (typeof request.id !== "string" || request.id.length === 0) {
-    request.id = nextRequestId();
-  }
-  const requestRecord = request as unknown as Record<PropertyKey, unknown>;
-  if (typeof requestRecord.log !== "object" || requestRecord.log === null) {
-    requestRecord.log = fallbackRequestLogger;
-  }
-  if (!Object.hasOwn(requestRecord, "getDecorator")) {
-    Object.defineProperty(requestRecord, "getDecorator", {
-      value: <T = unknown>(name: PropertyKey): T => requestRecord[name] as T,
-      writable: true,
-      configurable: true,
-    });
-  }
-  if (!Object.hasOwn(requestRecord, "setDecorator")) {
-    Object.defineProperty(requestRecord, "setDecorator", {
-      value: (name: PropertyKey, value: unknown): void => {
-        requestRecord[name] = value;
-      },
-      writable: true,
-      configurable: true,
-    });
-  }
-}
-
 function createModuleState(
   options: NestServicesOptions,
   httpAdapterHost: HttpAdapterHost,
@@ -603,6 +561,7 @@ function createModuleState(
   };
 
   let root: RuntimeScope | undefined = undefined;
+  let fastDispatcher: FastRequestDispatcher | undefined = undefined;
   let resolvedBindings: readonly string[] = options.bindings ?? [];
   const application: {
     session?: ServiceSession;
@@ -718,6 +677,27 @@ function createModuleState(
             host.appContext.decorate("services", appServices);
           }
           Object.defineProperties(appServicesTarget, Object.getOwnPropertyDescriptors(appServices));
+          const bridge =
+            exposeRequest === undefined &&
+            options.handlerTimeout === undefined &&
+            root !== undefined
+              ? getSyncPlanBridge(root)
+              : undefined;
+          if (bridge !== undefined) {
+            const fastifyInstance =
+              typeof adapter === "object" && adapter !== null && "getInstance" in adapter
+                ? (adapter as { readonly getInstance: () => unknown }).getInstance()
+                : undefined;
+            fastDispatcher = createFastRequestDispatcher({
+              bridge,
+              bindings: resolvedBindings,
+              locals: options.locals,
+              mapError: options.mapError ?? preserveNativeError,
+              nextRequestId,
+              requestIdHeader: host?.requestIdHeader,
+              fastifyInstance,
+            });
+          }
         }, preserveNativeError),
       )
       .orElse(rollback);
@@ -744,7 +724,10 @@ function createModuleState(
       .unwrapOrThrow();
   };
 
-  const initializeRequest = async (context: ExecutionContext): Promise<void> => {
+  const initializeRequestTier2 = async (
+    context: ExecutionContext,
+    precomputedLocals?: RuntimeServices,
+  ): Promise<void> => {
     if (root === undefined)
       throw new TypeError("Resultar application services are not initialized");
     const currentRoot = root;
@@ -753,7 +736,7 @@ function createModuleState(
     const response = http.getResponse<ServerResponse>();
     const rawRequest = getRawRequest(request);
     const rawResponse = getRawResponse(response);
-    ensureRequestHelpers(request, nextRequestId, host?.requestIdHeader);
+    ensureRequestHelpersFast(request, nextRequestId, host?.requestIdHeader);
     if (request.services !== undefined) return;
 
     const state = attachRequest(request, rawRequest, response, rawResponse, options.handlerTimeout);
@@ -773,7 +756,10 @@ function createModuleState(
     rawResponse.once("close", onComplete);
 
     return (
-      tryResultAsync(async () => (await options.locals?.(request)) ?? {}, preserveNativeError)
+      tryResultAsync(
+        async () => precomputedLocals ?? (await options.locals?.(request)) ?? {},
+        preserveNativeError,
+      )
         .andThen((locals) =>
           tryResult(() => {
             state.controller.signal.throwIfAborted();
@@ -822,9 +808,18 @@ function createModuleState(
     );
   };
 
+  const initializeRequest = (context: ExecutionContext): void | Promise<void> => {
+    if (fastDispatcher !== undefined) {
+      return fastDispatcher.tryFastInitialize(context, (precomputedLocals) =>
+        initializeRequestTier2(context, precomputedLocals),
+      );
+    }
+    return initializeRequestTier2(context);
+  };
+
   const prepareRequest = (context: ExecutionContext): void => {
     const request = context.switchToHttp().getRequest<NestRequest>();
-    ensureRequestHelpers(request, nextRequestId, host?.requestIdHeader);
+    ensureRequestHelpersFast(request, nextRequestId, host?.requestIdHeader);
   };
 
   return {
@@ -849,9 +844,9 @@ function buildNestModule(options: NestServicesOptions, host?: InternalAppHost): 
           {
             provide: APP_GUARD,
             useFactory: (state: InternalModuleState): CanActivate => ({
-              canActivate: async (context: ExecutionContext): Promise<boolean> => {
-                await state.initializeRequest(context);
-                return true;
+              canActivate: (context: ExecutionContext): boolean | Promise<boolean> => {
+                const pending = state.initializeRequest(context);
+                return pending === undefined ? true : pending.then(() => true);
               },
             }),
             inject: [STATE_TOKEN],
@@ -871,8 +866,12 @@ function buildNestModule(options: NestServicesOptions, host?: InternalAppHost): 
           {
             provide: APP_INTERCEPTOR,
             useFactory: (state: InternalModuleState): NestInterceptor => ({
-              intercept: (context: ExecutionContext, next: CallHandler): Observable<unknown> =>
-                from(state.initializeRequest(context)).pipe(switchMap(() => next.handle())),
+              intercept: (context: ExecutionContext, next: CallHandler): Observable<unknown> => {
+                const pending = state.initializeRequest(context);
+                return pending === undefined
+                  ? next.handle()
+                  : from(pending).pipe(switchMap(() => next.handle()));
+              },
             }),
             inject: [STATE_TOKEN],
           },
@@ -991,7 +990,12 @@ async function dispatchInject(
   req.url = options.url;
   req.headers = headers;
   if (options.signal !== undefined) {
-    (req as unknown as { signal: AbortSignal }).signal = options.signal;
+    Object.defineProperty(req, "signal", {
+      value: options.signal,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
   }
 
   const res = new ServerResponse(req);

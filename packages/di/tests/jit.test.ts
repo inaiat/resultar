@@ -238,4 +238,81 @@ describe("resultar-di static subgraph JIT tiers and dual-mode parity", () => {
       });
     }
   });
+
+  test("does not collide plan cache keys when service names contain NUL or control delimiters", async () => {
+    const joinedKey = "a\0b";
+    const ctrlKey = "a\u0001b";
+    const readJson = async (
+      handler: (req: Request) => Response | Promise<Response>,
+      path: string,
+    ): Promise<Record<string, unknown>> => {
+      const response = await handler(new Request(`https://example.test${path}`));
+      return (await response.json()) as Record<string, unknown>;
+    };
+
+    for (const jitEnabled of [true, false]) {
+      // eslint-disable-next-line no-await-in-loop
+      await withJitMode(jitEnabled, async () => {
+        const makeMod = () =>
+          createModule()
+            .value("a", "val-a")
+            .value("b", "val-b")
+            .value(joinedKey, "val-joined")
+            .value(ctrlKey, "val-ctrl");
+
+        // Order 1: ["a", "b"] then ["a\0b"], plus locals boundary check
+        const scopeForward = makeMod().scope();
+        const fetchAB = scopeForward.fetch(["a", "b"], (services) =>
+          Response.json({ keys: Object.keys(services), values: services }),
+        );
+        const fetchJoined = scopeForward.fetch([joinedKey], (services) =>
+          Response.json({ keys: Object.keys(services), values: services }),
+        );
+        const fetchCtrl = scopeForward.fetch([ctrlKey], (services) =>
+          Response.json({ keys: Object.keys(services), values: services }),
+        );
+        const withLocalB = scopeForward.withServices({ localKey: "loc-val" });
+        const fetchWithLocal = withLocalB.fetch(["a", "localKey"], (services) =>
+          Response.json({ keys: Object.keys(services), values: services }),
+        );
+
+        expect(await readJson(fetchAB, "/ab")).toEqual({
+          keys: ["a", "b"],
+          values: { a: "val-a", b: "val-b" },
+        });
+        expect(await readJson(fetchJoined, "/joined")).toEqual({
+          keys: [joinedKey],
+          values: { [joinedKey]: "val-joined" },
+        });
+        expect(await readJson(fetchCtrl, "/ctrl")).toEqual({
+          keys: [ctrlKey],
+          values: { [ctrlKey]: "val-ctrl" },
+        });
+        expect(await readJson(fetchWithLocal, "/local")).toEqual({
+          keys: ["a", "localKey"],
+          values: { a: "val-a", localKey: "loc-val" },
+        });
+        await ResultTask.runPromise(scopeForward.close());
+
+        // Order 2 (reverse): ["a\0b"] first, then ["a", "b"] on the same scope
+        const scopeReverse = makeMod().scope();
+        const revJoined = scopeReverse.fetch([joinedKey], (services) =>
+          Response.json({ keys: Object.keys(services), values: services }),
+        );
+        const revAB = scopeReverse.fetch(["a", "b"], (services) =>
+          Response.json({ keys: Object.keys(services), values: services }),
+        );
+
+        expect(await readJson(revJoined, "/rev-joined")).toEqual({
+          keys: [joinedKey],
+          values: { [joinedKey]: "val-joined" },
+        });
+        expect(await readJson(revAB, "/rev-ab")).toEqual({
+          keys: ["a", "b"],
+          values: { a: "val-a", b: "val-b" },
+        });
+        await ResultTask.runPromise(scopeReverse.close());
+      });
+    }
+  });
 });

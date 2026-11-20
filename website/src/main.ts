@@ -38,6 +38,8 @@ const state = {
   playgroundPresetId: PLAYGROUND_PRESETS[0]?.id ?? "result-errors",
   playgroundResult: undefined as PlaygroundRunResult | undefined,
   playgroundRunning: false,
+  playgroundLoadedFromShare: false,
+  playgroundRunSeq: 0,
 };
 
 const escapeHtml = (value: string): string =>
@@ -387,7 +389,9 @@ const logClassForLevel = (level: "log" | "info" | "warn" | "error"): string => {
 
 const renderPlayground = (): string => {
   const result = state.playgroundResult;
-  let outputBody = `<div class="pg-log">Click <strong>Run</strong> (or press <code>⌘/Ctrl+Enter</code>) to execute live Resultar code directly in your browser.</div>`;
+  let outputBody = state.playgroundLoadedFromShare
+    ? `<div class="pg-log">Shared snippet loaded from URL. Review the code and click <strong>Run</strong> (or press <code>⌘/Ctrl+Enter</code>) to execute it in an isolated sandbox.</div>`
+    : `<div class="pg-log">Click <strong>Run</strong> (or press <code>⌘/Ctrl+Enter</code>) to execute live Resultar code in an isolated browser sandbox.</div>`;
 
   if (state.playgroundRunning) {
     outputBody = `<div class="pg-log">Executing…</div>`;
@@ -523,33 +527,38 @@ const renderSearchModal = (): string => {
 };
 
 const executePlayground = async (): Promise<void> => {
+  const seq = state.playgroundRunSeq + 1;
+  state.playgroundRunSeq = seq;
   state.playgroundRunning = true;
+  state.playgroundLoadedFromShare = false;
   render();
   const { runPlaygroundCode } = await import("./playground-runner.js");
-  state.playgroundResult = await runPlaygroundCode(state.playgroundCode);
+  const result = await runPlaygroundCode(state.playgroundCode);
+  if (state.playgroundRunSeq !== seq) return;
+  state.playgroundResult = result;
   state.playgroundRunning = false;
   render();
 };
 
 const syncPlaygroundFromRoute = (route: Route): void => {
   if (route.view !== "playground") return;
+  state.playgroundRunSeq += 1;
+  state.playgroundRunning = false;
   if (route.code !== undefined) {
     state.playgroundCode = route.code;
     state.playgroundPresetId = "custom";
-    void executePlayground();
+    state.playgroundResult = undefined;
+    state.playgroundLoadedFromShare = true;
     return;
   }
+  state.playgroundLoadedFromShare = false;
   if (route.presetId !== undefined) {
     const preset = PLAYGROUND_PRESETS.find((item) => item.id === route.presetId);
     if (preset !== undefined) {
       state.playgroundPresetId = preset.id;
       state.playgroundCode = preset.code;
-      void executePlayground();
-      return;
+      state.playgroundResult = undefined;
     }
-  }
-  if (state.playgroundResult === undefined) {
-    void executePlayground();
   }
 };
 
@@ -668,8 +677,12 @@ document.addEventListener("click", (event: MouseEvent) => {
       PLAYGROUND_PRESETS.find((item) => item.id === state.playgroundPresetId) ??
       PLAYGROUND_PRESETS[0];
     if (preset !== undefined) {
+      state.playgroundRunSeq += 1;
+      state.playgroundRunning = false;
+      state.playgroundLoadedFromShare = false;
       state.playgroundCode = preset.code;
-      void executePlayground();
+      state.playgroundResult = undefined;
+      render();
     }
     return;
   }
@@ -700,10 +713,18 @@ document.addEventListener("click", (event: MouseEvent) => {
   if (presetBtn?.dataset.preset !== undefined) {
     const preset = PLAYGROUND_PRESETS.find((item) => item.id === presetBtn.dataset.preset);
     if (preset !== undefined) {
+      state.playgroundRunSeq += 1;
+      state.playgroundRunning = false;
+      state.playgroundLoadedFromShare = false;
       state.playgroundPresetId = preset.id;
       state.playgroundCode = preset.code;
-      globalThis.location.hash = `#/playground?preset=${preset.id}`;
-      void executePlayground();
+      state.playgroundResult = undefined;
+      const targetHash = `#/playground?preset=${preset.id}`;
+      if (globalThis.location.hash === targetHash) {
+        render();
+      } else {
+        globalThis.location.hash = targetHash;
+      }
     }
     return;
   }
@@ -724,10 +745,13 @@ document.addEventListener("click", (event: MouseEvent) => {
 
   const playBtn = target.closest<HTMLElement>("[data-play]");
   if (playBtn?.dataset.play !== undefined) {
-    state.playgroundCode = decodeBase64Utf8(playBtn.dataset.play);
-    state.playgroundPresetId = "custom";
-    globalThis.location.hash = `#/playground?code=${encodeURIComponent(playBtn.dataset.play)}`;
-    void executePlayground();
+    const targetHash = `#/playground?code=${encodeURIComponent(playBtn.dataset.play)}`;
+    if (globalThis.location.hash === targetHash) {
+      syncPlaygroundFromRoute(parseHashRoute());
+      render();
+    } else {
+      globalThis.location.hash = targetHash;
+    }
     return;
   }
 

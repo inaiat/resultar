@@ -36,7 +36,9 @@ export function createHonoServices<S extends object, E, R, G extends ServiceGrap
   let closing: ResultAsync<void, ServiceScopeError<R>> | undefined = undefined;
   return {
     middleware: (keys, options) => {
+      const selectedKeys = Object.freeze([...keys]);
       const getLocals = options?.locals;
+      const withLocals = root.withServices as unknown as (values: object) => typeof root;
       return async (context, next) => {
         // A native middleware lifecycle violation is reported through Hono's error handler.
         // resultar-check-disable-next-line prefer-tagged-error
@@ -45,11 +47,18 @@ export function createHonoServices<S extends object, E, R, G extends ServiceGrap
           throw new TypeError("Only one services middleware may run per request");
         active.add(context);
         // Avoid allocating a child ServiceScope with empty locals when no locals factory is provided.
-        const withLocals = root.withServices as unknown as (values: object) => typeof root;
-        const scope =
-          getLocals === undefined
-            ? root
-            : withLocals(await getLocals(context as unknown as Parameters<typeof getLocals>[0]));
+        let scope = root;
+        if (getLocals !== undefined) {
+          const raw = getLocals(context as unknown as Parameters<typeof getLocals>[0]);
+          const localValues =
+            typeof raw === "object" &&
+            raw !== null &&
+            "then" in raw &&
+            typeof (raw as PromiseLike<object>).then === "function"
+              ? await raw
+              : raw;
+          scope = withLocals(localValues);
+        }
         const dispatch = scope.fetch as unknown as (
           keys: readonly string[],
           handle: (
@@ -57,7 +66,7 @@ export function createHonoServices<S extends object, E, R, G extends ServiceGrap
             request: Request,
           ) => Promise<Response>,
         ) => (request: Request) => Promise<Response>;
-        context.res = await dispatch(keys, async (values) => {
+        context.res = await dispatch(selectedKeys, async (values) => {
           context.set("services", values as never);
           await next();
           return context.res;
