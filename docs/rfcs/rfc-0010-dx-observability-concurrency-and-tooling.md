@@ -1,6 +1,6 @@
 # RFC 0010: Core DX, lean concurrency, opt-in observability, subpath tree-shaking, and tooling
 
-- Status: Implemented (Validated; Awaiting Release)
+- Status: Implemented and validated. Finalizers that schedule a virtual sleep after an external promise complete automatically on both success and domain failure. [Review record and acceptance criteria](./rfc-0010-0011-fix-plan.md#pendências-da-revalidação)
 - Date: 2026-11-19
 - Target packages: `resultar`, `resultar-app`, `resultar-check`, and library package manifests (`resultar-config`, `resultar-di`, `resultar-fastify`, `resultar-hono`, `resultar-nestjs`, `resultar-request`, `resultar-request-typebox`, `resultar-request-zod`)
 - References: [RFC 0001](./rfc-0001-result-task-core.md), [RFC 0004](./rfc-0004-effect-v4-ergonomics-and-tooling.md), [RFC 0006](./rfc-0006-task-cancellation-and-recovery.md), [RFC 0009](./rfc-0009-inference-scopes-and-application-lifecycle.md)
@@ -249,17 +249,24 @@ Resultar intentionally does **not** introduce:
 
 ## 9. Validation and acceptance
 
-All workspace verification gates pass on branch `feat/dx-docs-observability-tooling` (re-validated after addressing the review findings tracked in [RFC 0010 and RFC 0011 correction plan](./rfc-0010-0011-fix-plan.md)):
+All workspace verification gates passed on branch `feat/dx-docs-observability-tooling` after all three review rounds (including the final review fixes). [Review record and fix plan](./rfc-0010-0011-fix-plan.md#revisão-final)
 
 - **Playground security and real-browser verification**:
   - Shared links (`#/playground?code=...`) no longer auto-execute on initial load or `hashchange`; code is loaded into the editor and requires an explicit **Run** click (`⌘/Ctrl+Enter`).
   - Browser execution runs inside an ephemeral `<iframe sandbox="allow-scripts">` (opaque origin `null`, CSP `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval';`) bundled with a self-contained runtime, preventing access to portal DOM, `localStorage`, `sessionStorage`, and cookies.
-  - [website/tests/playground-browser.test.ts](../../website/tests/playground-browser.test.ts) serves `website/dist` and drives headless Chrome over CDP to verify manual run gating on direct load and hash navigation, opaque-origin isolation, and all 6 presets (including `retry-virtual-clock` at `1350 ms` virtual elapsed time and `observability` with all 3 spans in the waterfall).
-- **Browser-compatible macrotask scheduling**:
+  - [website/tests/playground-browser.test.ts](../../website/tests/playground-browser.test.ts) serves `website/dist` and drives headless Chrome over CDP to verify manual run gating on direct load and hash navigation, opaque-origin isolation, stale initial-runner cancellation on snippet switch, and all 6 presets (including `retry-virtual-clock` at `1350 ms` virtual elapsed time and `observability` with all 3 spans in the waterfall).
+- **Browser-compatible macrotask scheduling & `VirtualClock.runToCompletion` cleanup**:
   - `VirtualClock.flush()` and `Scheduler.live.yield()` use a shared `scheduleMacrotask` helper (`setImmediate` when available, `setTimeout(..., 0)` + `clearTimeout` fallback in browsers/edge runtimes), preserving FIFO wake order and cancellation without Node-only globals (tested in [packages/resultar/tests/task-scheduler.test.ts](../../packages/resultar/tests/task-scheduler.test.ts)).
-- **Queue trace isolation and cancellation cleanup**:
-  - `Queue.shutdown()` and closed-queue `take()` construct a fresh `Interrupt` `Cause` per operation so `Cause.spans()` traces never cross-contaminate across queues or concurrent consumers.
+  - `VirtualClock.runToCompletion` drives scheduled virtual sleeps continuously until the task settles — resuming automatically when new sleepers are registered after external promises during normal execution (both success and domain failure) and draining finite finalizer sleeps (including delayed timers and >10,000 finite sleeps) after `maxSteps` aborts the task, finishing with zero pending timers. [Review record and acceptance criteria](./rfc-0010-0011-fix-plan.md#pendências-da-revalidação)
+- **Synchronous execution boundaries, `TaskLocal` isolation, and race snapshots**:
+  - `runSync` and `runSyncExit` attach a per-run `FiberSignal` and abort it synchronously when an asynchronous boundary is encountered, unlinking suspended waiters (such as `Queue.take`) and preventing pending continuations (such as `.map()`) from running after the error.
+  - `ResultTask.all` / `forEach` / `validateAll` reset dirty child contexts whenever `TaskLocal` bindings are touched, isolating mutations across items for all concurrencies while keeping parent fibers untouched.
+  - `ResultTask.raceAll` and `ResultTask.raceFirstAll` eagerly snapshot input iterables at construction time and guard empty lists defensively.
+- **Queue & Deferred memory, trace isolation, and shutdown semantics**:
+  - `Queue.bounded` stores items in a fixed-capacity circular ring buffer (`O(capacity)` memory under continuous non-empty cycling), and `Queue.unbounded` compacts its backing array periodically.
+  - `Queue.shutdown()` interrupts producers already blocked on `offer()` with per-waiter `Interrupt('Queue shut down')` causes (matching §4), resolves subsequent `offer()` calls with `Success(false)`, and constructs fresh `Interrupt` causes per closed-queue `take()` / waiting taker so `Cause.spans()` traces never cross-contaminate.
   - `Queue` waiters use FIFO `Set`s and immediately unlink and clear payload, callback, and signal references on abort (verified with interleaved FIFO/backpressure tests and `WeakRef` + GC diagnostics in [packages/resultar/tests/concurrency-primitives.test.ts](../../packages/resultar/tests/concurrency-primitives.test.ts)).
+  - `Deferred` clones failure `Cause` values per observer while preserving origin span traces via `copyCauseSpans`, preventing cross-consumer `Cause.spans()` bleed.
 - **Workspace gates**:
   - `RESULTAR_JIT=1 pnpm run check:full`
   - `RESULTAR_JIT=0 pnpm run test`

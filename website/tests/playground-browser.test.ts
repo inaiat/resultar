@@ -86,8 +86,14 @@ const findBrowserExecutable = (): string => {
   );
 };
 
+interface StaticServerHooks {
+  readonly beforeServe?: (relPath: string) => Promise<void> | void;
+  readonly afterServe?: (relPath: string) => void;
+}
+
 const startStaticServer = async (
   rootDir: string,
+  hooks?: StaticServerHooks,
 ): Promise<{ readonly server: Server; readonly url: string }> => {
   if (!existsSync(join(rootDir, "index.html"))) {
     throw new Error(
@@ -98,14 +104,22 @@ const startStaticServer = async (
     const rawUrl = (req.url ?? "/").split("?")[0] ?? "/";
     const relPath = rawUrl === "/" ? "index.html" : rawUrl.replace(/^\/+/u, "");
     const absPath = resolve(rootDir, relPath);
-    if (!absPath.startsWith(rootDir) || !existsSync(absPath)) {
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("Not Found");
-      return;
-    }
-    const contentType = MIME_TYPES[extname(absPath)] ?? "application/octet-stream";
-    res.writeHead(200, { "Content-Type": contentType });
-    res.end(readFileSync(absPath));
+    const sendResponse = async (): Promise<void> => {
+      if (hooks?.beforeServe !== undefined) {
+        await hooks.beforeServe(relPath);
+      }
+      if (!absPath.startsWith(rootDir) || !existsSync(absPath)) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Not Found");
+        hooks?.afterServe?.(relPath);
+        return;
+      }
+      const contentType = MIME_TYPES[extname(absPath)] ?? "application/octet-stream";
+      res.writeHead(200, { "Content-Type": contentType });
+      res.end(readFileSync(absPath));
+      hooks?.afterServe?.(relPath);
+    };
+    void sendResponse();
   });
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once("error", rejectListen);
@@ -557,6 +571,206 @@ console.log("ISOLATION_REPORT=" + JSON.stringify(report));
         }
       }
 
+      assert.deepEqual(
+        browser.uncaughtExceptions,
+        [],
+        `Uncaught browser exceptions: ${browser.uncaughtExceptions.join("; ")}`,
+      );
+    } finally {
+      await browser.close();
+      await new Promise<void>((resolveClose) => {
+        server.close(() => {
+          resolveClose();
+        });
+      });
+    }
+  },
+);
+
+const createDeferred = (): {
+  readonly promise: Promise<undefined>;
+  readonly resolve: () => void;
+} => {
+  let resolveFn: (value: undefined) => void = () => {
+    /* replaced immediately by Promise executor */
+  };
+  const promise = new Promise<undefined>((resolvePromise) => {
+    resolveFn = resolvePromise;
+  });
+  return {
+    promise,
+    resolve: () => {
+      resolveFn(undefined);
+    },
+  };
+};
+
+const isRunnerChunk = (relPath: string): boolean =>
+  /^assets\/playground-runner-[^/]+\.js$/u.test(relPath);
+
+const sleep = async (ms: number): Promise<void> =>
+  new Promise((resolveWait) => {
+    setTimeout(resolveWait, ms);
+  });
+
+const withDeadline = async <T>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`Timed out after ${String(ms)}ms waiting for ${label}`));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+};
+
+void test(
+  "real browser cancels stale initial playground run when hash switches before runner module resolves",
+  { timeout: 60_000 },
+  async () => {
+    const runnerRequested = createDeferred();
+    const releaseRunner = createDeferred();
+    const runnerServed = createDeferred();
+
+    const { server, url } = await startStaticServer(distDir, {
+      beforeServe: async (relPath) => {
+        if (isRunnerChunk(relPath)) {
+          runnerRequested.resolve();
+          await releaseRunner.promise;
+        }
+      },
+      afterServe: (relPath) => {
+        if (isRunnerChunk(relPath)) {
+          runnerServed.resolve();
+        }
+      },
+    });
+    const browser = await HeadlessBrowser.launch();
+
+    try {
+      const snippetA = `console.log("STALE_SNIPPET_A_RAN");\n`;
+      const snippetB = `import { ok } from "resultar";\nconsole.log("TARGET_SNIPPET_B_RAN", ok(42));\n`;
+
+      await browser.navigate(`${url}/#/playground?code=${encodeShareCode(snippetA)}`);
+      await browser.waitFor(
+        `document.querySelector("#pg-editor")?.value?.includes("STALE_SNIPPET_A_RAN")`,
+      );
+
+      // Observe every sandbox iframe creation, DOM mount, handshake, and execution result directly.
+      await browser.evalJs(`(() => {
+        const log = { createIframeCount: 0, mountedIframeCount: 0, readyCount: 0, results: [] };
+        const originalCreateElement = document.createElement.bind(document);
+        document.createElement = function (tagName, options) {
+          if (String(tagName).toLowerCase() === "iframe") {
+            log.createIframeCount += 1;
+          }
+          return originalCreateElement(tagName, options);
+        };
+        const observer = new MutationObserver((mutations) => {
+          for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+              if (node instanceof HTMLIFrameElement) {
+                log.mountedIframeCount += 1;
+              }
+            }
+          }
+        });
+        observer.observe(document.body, { childList: true });
+        globalThis.addEventListener("message", (event) => {
+          const data = event.data;
+          if (!data || typeof data !== "object") return;
+          if (data.type === "ready") {
+            log.readyCount += 1;
+          } else if (data.type === "result") {
+            const logs = Array.isArray(data.result?.logs)
+              ? data.result.logs.map((entry) => String(entry?.text ?? "")).join("\\n")
+              : "";
+            log.results.push({ runId: String(data.runId ?? ""), logs });
+          }
+        });
+        globalThis.__pgDispatchLog = log;
+      })()`);
+
+      // Click Run on snippet A while the initial runner module chunk is held open by the server.
+      await browser.evalJs(`document.querySelector('[data-action="pg-run"]')?.click()`);
+      await withDeadline(runnerRequested.promise, 5000, "initial playground-runner module fetch");
+
+      // Navigate via hash to shared snippet B before the runner module resolves.
+      await browser.evalJs(
+        `globalThis.location.hash = ${JSON.stringify(`#/playground?code=${encodeShareCode(snippetB)}`)}`,
+      );
+      await browser.waitFor(
+        `document.querySelector("#pg-editor")?.value?.includes("TARGET_SNIPPET_B_RAN")`,
+      );
+
+      // Release the runner chunk and allow any errant dispatch/iframe execution to settle.
+      releaseRunner.resolve();
+      await withDeadline(runnerServed.promise, 5000, "playground-runner response completion");
+      await sleep(450);
+
+      const afterStale = await browser.evalJs<{
+        readonly createIframeCount: number;
+        readonly mountedIframeCount: number;
+        readonly readyCount: number;
+        readonly results: readonly { readonly runId: string; readonly logs: string }[];
+        readonly hasStatus: boolean;
+        readonly editor: string;
+      }>(`({
+        createIframeCount: globalThis.__pgDispatchLog.createIframeCount,
+        mountedIframeCount: globalThis.__pgDispatchLog.mountedIframeCount,
+        readyCount: globalThis.__pgDispatchLog.readyCount,
+        results: globalThis.__pgDispatchLog.results,
+        hasStatus: document.querySelector(".pg-status-ok, .pg-status-err") !== null,
+        editor: document.querySelector("#pg-editor")?.value ?? "",
+      })`);
+
+      assert.equal(afterStale.editor, snippetB);
+      assert.equal(
+        afterStale.createIframeCount,
+        0,
+        `Stale run must not dispatch to a sandbox iframe (results=${JSON.stringify(afterStale.results)})`,
+      );
+      assert.equal(afterStale.mountedIframeCount, 0);
+      assert.equal(afterStale.readyCount, 0);
+      assert.deepEqual(afterStale.results, []);
+      assert.equal(afterStale.hasStatus, false);
+
+      // Now explicitly click Run on B and verify a single dispatch running only snippet B.
+      await browser.evalJs(`document.querySelector('[data-action="pg-run"]')?.click()`);
+      await browser.waitFor(`document.querySelector(".pg-status-ok, .pg-status-err") !== null`);
+
+      const afterRunB = await browser.evalJs<{
+        readonly passed: boolean;
+        readonly output: string;
+        readonly createIframeCount: number;
+        readonly mountedIframeCount: number;
+        readonly readyCount: number;
+        readonly results: readonly { readonly runId: string; readonly logs: string }[];
+      }>(`({
+        passed: document.querySelector(".pg-status-ok") !== null,
+        output: document.querySelector(".pg-output")?.textContent ?? "",
+        createIframeCount: globalThis.__pgDispatchLog.createIframeCount,
+        mountedIframeCount: globalThis.__pgDispatchLog.mountedIframeCount,
+        readyCount: globalThis.__pgDispatchLog.readyCount,
+        results: globalThis.__pgDispatchLog.results,
+      })`);
+
+      assert.equal(afterRunB.passed, true, `Snippet B failed: ${afterRunB.output}`);
+      assert.equal(afterRunB.createIframeCount, 1);
+      assert.equal(afterRunB.mountedIframeCount, 1);
+      assert.equal(afterRunB.readyCount, 1);
+      assert.equal(afterRunB.results.length, 1);
+      assert.equal(afterRunB.results[0]?.logs.includes("TARGET_SNIPPET_B_RAN"), true);
+      assert.equal(afterRunB.results[0]?.logs.includes("STALE_SNIPPET_A_RAN"), false);
+      assert.ok(afterRunB.output.includes("TARGET_SNIPPET_B_RAN"));
+      assert.ok(afterRunB.output.includes("Ok(42)"));
       assert.deepEqual(
         browser.uncaughtExceptions,
         [],

@@ -82,6 +82,14 @@ export const attachCauseSpans = (cause: object, stack: SpanStackNode | undefined
   causeSpanTraces.set(cause, Object.freeze(frames))
 }
 
+/** Copies an existing logical span trace from `source` to `target` without overwriting an existing trace. */
+export const copyCauseSpans = (source: object, target: object): void => {
+  const frames = causeSpanTraces.get(source)
+  if (frames !== undefined && !causeSpanTraces.has(target)) {
+    causeSpanTraces.set(target, frames)
+  }
+}
+
 /** Returns the logical span stack attached to `cause` (innermost-first), or an empty array. */
 export const getCauseSpans = (cause: object): readonly SpanTraceFrame[] =>
   causeSpanTraces.get(cause) ?? EMPTY_SPAN_TRACE

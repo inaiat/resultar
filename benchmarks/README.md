@@ -196,13 +196,13 @@ Each scenario and `RESULTAR_JIT` mode executes in an isolated Node process from 
 
 | HTTP Request Scenario (body consumed) | Base `5629d83` | `JIT=0` | `JIT=1` | Speedup / Overhead vs Raw Hono |
 | :--- | ---: | ---: | ---: | :--- |
-| Raw `Hono` (no DI) | — | — | `422,459 req/s` (`2.37 µs`) | Baseline |
-| `resultar-di` Tier 0 (singleton) + Hono middleware | `65,497 req/s` (`15.27 µs`) | `264,272 req/s` (`3.78 µs`) | **`272,457 req/s`** (`3.67 µs`) | **4.16x** end-to-end (**+1.30 µs** over raw Hono; DI overhead **9.92x** lower) |
-| `resultar-di` Tier 1 (scoped+transient+locals) + Hono middleware | `41,018 req/s` (`24.38 µs`) | `228,209 req/s` (`4.38 µs`) | **`235,191 req/s`** (`4.25 µs`) | **5.73x** end-to-end (**+1.88 µs** over raw Hono; DI overhead **11.71x** lower) |
-| `resultar-di` Tier 2 (scoped resource) + Hono middleware | — | — | `58,388 req/s` (`17.13 µs`) | Full `TaskScope` + streaming cleanup |
-| `resultar-di` Tier 0 (singleton) + `createHonoApp` | `86,084 req/s` (`11.62 µs`) | — | **`411,014 req/s`** (`2.43 µs`) | **4.77x** end-to-end (**+0.07 µs** over raw Hono) |
-| `resultar-di` Tier 1 (scoped+transient) + `createHonoApp` | `46,461 req/s` (`21.52 µs`) | — | **`426,647 req/s`** (`2.34 µs`) | **9.18x** end-to-end (**~0 µs** over raw Hono) |
-| `resultar-di` direct 8-service Tier 1 `root.fetch` | `28,951 req/s` (`34.54 µs`) | `379,000 req/s` (`2.64 µs`) | **`444,781 req/s`** (`2.25 µs`) | **15.36x** vs `5629d83` / **1.17x** vs `JIT=0` |
+| Raw `Hono` (no DI) | — | — | `427,479 req/s` (`2.34 µs`) | Baseline |
+| `resultar-di` Tier 0 (singleton) + Hono middleware | `65,497 req/s` (`15.27 µs`) | `190,778 req/s` (`5.24 µs`) | **`194,082 req/s`** (`5.15 µs`) | **2.96x** end-to-end (**+2.81 µs** over raw Hono incl. stream abort lifecycle; DI+stream overhead **4.59x** lower) |
+| `resultar-di` Tier 1 (scoped+transient+locals) + Hono middleware | `41,018 req/s` (`24.38 µs`) | `175,080 req/s` (`5.71 µs`) | **`178,164 req/s`** (`5.61 µs`) | **4.34x** end-to-end (**+3.27 µs** over raw Hono incl. stream abort lifecycle; DI+stream overhead **6.74x** lower) |
+| `resultar-di` Tier 2 (scoped resource) + Hono middleware | — | — | `59,763 req/s` (`16.73 µs`) | Full `TaskScope` + streaming cleanup |
+| `resultar-di` Tier 0 (singleton) + `createHonoApp` | `86,084 req/s` (`11.62 µs`) | — | **`259,013 req/s`** (`3.86 µs`) | **3.01x** end-to-end (**+1.52 µs** over raw Hono incl. stream abort lifecycle) |
+| `resultar-di` Tier 1 (scoped+transient) + `createHonoApp` | `46,461 req/s` (`21.52 µs`) | — | **`257,345 req/s`** (`3.89 µs`) | **5.54x** end-to-end (**+1.55 µs** over raw Hono incl. stream abort lifecycle) |
+| `resultar-di` direct 8-service Tier 1 `root.fetch` | `28,951 req/s` (`34.54 µs`) | `261,468 req/s` (`3.82 µs`) | **`277,612 req/s`** (`3.60 µs`) | **9.59x** vs `5629d83` / **1.06x** vs `JIT=0` (with post-delivery stream abort propagation) |
 
 ### `resultar-fastify-http.ts` (`bench:fastify-http`)
 

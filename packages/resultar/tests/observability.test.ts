@@ -67,6 +67,99 @@ describe('TaskLocal and opt-in span tracing', () => {
     )
   })
 
+  it('isolates TaskLocal per item across ResultTask.all workers for concurrency 1 and 2', async () => {
+    const Scope = TaskLocal.make<string>('root', 'Scope')
+    const writeItem = (label: string, delayMs: number) =>
+      ResultTask.gen(function* () {
+        yield* Scope.set(label)
+        yield* ResultTask.sleep(delayMs)
+        return yield* Scope.get()
+      })
+    const readItem = () =>
+      ResultTask.gen(function* () {
+        yield* ResultTask.sleep(0)
+        return yield* Scope.get()
+      })
+
+    for (const concurrency of [1, 2] as const) {
+      const program = ResultTask.gen(function* () {
+        const defaultValues = yield* ResultTask.all(
+          [writeItem('A', 0), writeItem('B', 0), readItem(), readItem(), readItem()],
+          { concurrency },
+        )
+        const parentDefault = yield* Scope.get()
+
+        yield* Scope.set('parent')
+        const inheritedValues = yield* ResultTask.all(
+          [writeItem('X', 0), writeItem('Y', 0), readItem(), readItem()],
+          { concurrency },
+        )
+        const parentAfter = yield* Scope.get()
+
+        return { defaultValues, parentDefault, inheritedValues, parentAfter }
+      })
+
+      // eslint-disable-next-line no-await-in-loop
+      deepEqual(
+        await program.runResult(),
+        ok({
+          defaultValues: ['A', 'B', 'root', 'root', 'root'],
+          parentDefault: 'root',
+          inheritedValues: ['X', 'Y', 'parent', 'parent'],
+          parentAfter: 'parent',
+        }),
+      )
+    }
+  })
+
+  it('preserves worker scheduling budget during ResultTask.forEach when inheriting TaskLocal', async () => {
+    const Scope = TaskLocal.make<string>('root', 'Scope')
+    const items = Array.from({ length: 1000 }, (_value, index) => index)
+
+    const runCollection = async (withInheritedLocal: boolean) => {
+      const controller = new AbortController()
+      let executed = 0
+      let yields = 0
+      const scheduler = {
+        yield: () => {
+          yields += 1
+          controller.abort('scheduler-stop')
+          return Promise.resolve()
+        },
+      }
+      // eslint-disable-next-line unicorn/no-array-for-each -- ResultTask.forEach is not Array#forEach.
+      const collection = ResultTask.forEach(
+        items,
+        (item) =>
+          ResultTask.sync(() => {
+            executed += 1
+            return item
+          }),
+        { concurrency: 1 },
+      )
+      const program = withInheritedLocal ? Scope.locally('inherited', collection) : collection
+      const exit = await ResultTask.runExit(program, {
+        scheduler,
+        yieldEvery: 16,
+        signal: controller.signal,
+      })
+      return { exit, executed, yields }
+    }
+
+    const withoutLocal = await runCollection(false)
+    const withLocal = await runCollection(true)
+
+    deepEqual(withoutLocal.exit, {
+      _tag: 'Failure',
+      cause: { _tag: 'Interrupt', reason: 'scheduler-stop' },
+    })
+    deepEqual(withLocal.exit, withoutLocal.exit)
+    equal(withoutLocal.yields, 1)
+    equal(withLocal.yields, 1)
+    equal(withoutLocal.executed, 15)
+    equal(withLocal.executed, withoutLocal.executed)
+  })
+
   it('records nested spans, attributes, parent links, and virtual-clock durations via Tracer.memory', async () => {
     const clock = Clock.virtual(100)
     const memory = Tracer.memory()

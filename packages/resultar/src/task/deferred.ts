@@ -1,8 +1,40 @@
-import { died, failed, interrupted, success } from './exit.js'
+import type { Cause } from './cause.js'
+import { died, failed, failure, interrupted, success } from './exit.js'
 import { NEVER_ABORTED_SIGNAL } from './promise-interruption.js'
 import { ResultTask } from './result-task.js'
 import type { Exit } from './result-task.js'
 import { createRuntimeTask, runRuntimeTask } from './task-runtime-bridge.js'
+import { copyCauseSpans } from './tracer.js'
+
+const cloneCause = <E>(cause: Cause<E>): Cause<E> => {
+  switch (cause._tag) {
+    case 'Fail': {
+      return { _tag: 'Fail', error: cause.error }
+    }
+    case 'Die': {
+      return { _tag: 'Die', defect: cause.defect }
+    }
+    case 'Interrupt': {
+      return { _tag: 'Interrupt', reason: cause.reason }
+    }
+    case 'Sequential': {
+      return { _tag: 'Sequential', left: cause.left, right: cause.right }
+    }
+    case 'Parallel': {
+      return { _tag: 'Parallel', left: cause.left, right: cause.right }
+    }
+    default: {
+      return cause
+    }
+  }
+}
+
+const isolateExitForObserver = <A, E>(exit: Exit<A, E>): Exit<A, E> => {
+  if (exit._tag === 'Success') return exit
+  const cloned = cloneCause(exit.cause)
+  copyCauseSpans(exit.cause, cloned)
+  return failure(cloned)
+}
 
 interface DeferredWaiter<A, E> {
   readonly signal: AbortSignal
@@ -60,7 +92,7 @@ const make = <A, E = never>(): Deferred<A, E> => {
       if (waiter.signal !== NEVER_ABORTED_SIGNAL) {
         waiter.signal.removeEventListener('abort', waiter.onAbort)
       }
-      waiter.resolve(exit)
+      waiter.resolve(isolateExitForObserver(exit))
     }
     waiters.clear()
     return true
@@ -69,7 +101,7 @@ const make = <A, E = never>(): Deferred<A, E> => {
   return {
     await: () =>
       createRuntimeTask<A, E>(ResultTask, (context) => {
-        if (settled !== undefined) return settled
+        if (settled !== undefined) return isolateExitForObserver(settled)
         if (context.signal.aborted) return interrupted(context.signal)
         return new Promise<Exit<A, E>>((resolve) => {
           const waiter: DeferredWaiter<A, E> = {

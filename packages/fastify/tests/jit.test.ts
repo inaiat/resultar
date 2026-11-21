@@ -1,4 +1,6 @@
-import Fastify, { type FastifyRequest } from "fastify";
+import { request as httpRequest } from "node:http";
+import { PassThrough } from "node:stream";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { ResultTask, ResultTaskCauseError } from "resultar";
 import { createModule, resource, service } from "resultar-di";
 import { afterEach, describe, expect, test } from "vite-plus/test";
@@ -252,4 +254,213 @@ describe("resultar-fastify Tier 0 / Tier 1 compiled request hooks and dual-mode 
       });
     }
   });
+
+  const disconnectAfterFirstChunk = (url: string, body: string): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const payload = Buffer.from(body, "utf8");
+      let firstChunk = "";
+      let disconnected = false;
+      const client = httpRequest(
+        url,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "content-length": String(payload.byteLength),
+            connection: "close",
+          },
+        },
+        (response) => {
+          response.once("data", (chunk: Buffer | string) => {
+            firstChunk = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+            disconnected = true;
+            response.destroy();
+            client.destroy();
+          });
+          response.once("close", () => {
+            if (disconnected) {
+              resolve(firstChunk);
+            }
+          });
+        },
+      );
+      client.once("close", () => {
+        if (disconnected) {
+          resolve(firstChunk);
+        }
+      });
+      client.once("error", (error) => {
+        if (!disconnected) {
+          reject(error);
+        }
+      });
+      client.end(payload);
+    });
+
+  const awaitWithTimeout = async <T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    label: string,
+  ): Promise<T> => {
+    const handle: { id?: ReturnType<typeof setTimeout> } = {};
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_resolve, reject) => {
+          handle.id = setTimeout(() => {
+            reject(new Error(`Timed out after ${String(timeoutMs)}ms waiting for ${label}`));
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (handle.id !== undefined) {
+        clearTimeout(handle.id);
+      }
+    }
+  };
+
+  test.each([
+    { mode: "static" as const, jitEnabled: true },
+    { mode: "static" as const, jitEnabled: false },
+    { mode: "dynamic" as const, jitEnabled: true },
+    { mode: "dynamic" as const, jitEnabled: false },
+  ])(
+    "closes cleanly after streaming client disconnect without releasing singleton early ($mode, jit=$jitEnabled)",
+    async ({ mode, jitEnabled }) => {
+      await withJitMode(jitEnabled, async () => {
+        const events: string[] = [];
+        const expectedValue = mode === "static" ? "fast" : "hi:alpha";
+        let poolReleases = 0;
+        let requestComplete = false;
+        let requestAborted = true;
+        const openStream = new PassThrough();
+        const holdStarted = Promise.withResolvers<void>();
+        const releaseHold = Promise.withResolvers<void>();
+        const streamReplyClosed = Promise.withResolvers<void>();
+
+        const Tenant = ResultTask.service<string, "tenant">("tenant");
+        const Pool = resource("pool", {
+          acquire: ResultTask.sync(() => {
+            events.push("acquire-pool");
+            return { ready: true };
+          }),
+          release: () =>
+            ResultTask.sync(() => {
+              poolReleases += 1;
+              events.push("release-pool");
+            }),
+        });
+
+        const services = createModule()
+          .singleton(Pool)
+          .value("tag", "fast")
+          .scoped(service("greeting", { tenant: Tenant }, ({ tenant }) => `hi:${tenant}`));
+
+        const configureRoutes = (
+          instance: FastifyInstance,
+          readValue: (request: FastifyRequest) => string,
+        ): void => {
+          instance.post("/stream", (request, reply) => {
+            expect(readValue(request)).toBe(expectedValue);
+            requestComplete = request.raw.complete;
+            requestAborted = request.raw.destroyed && !request.raw.complete;
+            reply.raw.once("close", () => {
+              events.push("stream-closed");
+              streamReplyClosed.resolve();
+            });
+            openStream.write("chunk-1\n");
+            return reply.type("text/plain").send(openStream);
+          });
+          instance.get("/ping", (request) => ({ ok: true, value: readValue(request) }));
+          instance.get("/hold", async (request) => {
+            const value = readValue(request);
+            events.push("hold-start");
+            holdStarted.resolve();
+            await releaseHold.promise;
+            events.push("hold-end");
+            return { ok: true, value };
+          });
+        };
+
+        const app =
+          mode === "static"
+            ? createFastifyApp(
+                { services, appBindings: ["pool"], bindings: ["tag"] },
+                (instance) => {
+                  configureRoutes(
+                    instance,
+                    (request) => request.getDecorator<{ readonly tag: string }>("services").tag,
+                  );
+                },
+              )
+            : createFastifyApp(
+                {
+                  services,
+                  appBindings: ["pool"],
+                  bindings: ["greeting"],
+                  locals: (request: FastifyRequest) => ({
+                    tenant: request.headers["x-tenant"] === "beta" ? "beta" : "alpha",
+                  }),
+                },
+                (instance) => {
+                  configureRoutes(
+                    instance,
+                    (request) =>
+                      request.getDecorator<{ readonly greeting: string }>("services").greeting,
+                  );
+                },
+              );
+
+        const url = await app.listen({ port: 0, host: "127.0.0.1" });
+        try {
+          const holdFetch = fetch(`${url}/hold`, { headers: { connection: "close" } });
+          await holdStarted.promise;
+
+          const pingResponse = await fetch(`${url}/ping`, { headers: { connection: "close" } });
+          const pingBody = (await pingResponse.json()) as {
+            readonly ok: boolean;
+            readonly value: string;
+          };
+          expect(pingBody).toEqual({ ok: true, value: mode === "static" ? "fast" : "hi:alpha" });
+          expect(poolReleases).toBe(0);
+
+          const chunk = await disconnectAfterFirstChunk(
+            `${url}/stream`,
+            JSON.stringify({ uploaded: true }),
+          );
+          expect(chunk).toBe("chunk-1\n");
+          await awaitWithTimeout(streamReplyClosed.promise, 2000, "server reply.raw close");
+          expect(requestComplete).toBe(true);
+          expect(requestAborted).toBe(false);
+          expect(poolReleases).toBe(0);
+
+          const closing = app.close();
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 30);
+          });
+          expect(poolReleases).toBe(0);
+
+          releaseHold.resolve();
+          const holdResponse = await holdFetch;
+          const holdBody = (await holdResponse.json()) as {
+            readonly ok: boolean;
+            readonly value: string;
+          };
+          expect(holdBody).toEqual({ ok: true, value: mode === "static" ? "fast" : "hi:alpha" });
+
+          await awaitWithTimeout(closing, 2000, "app.close() after streaming disconnect");
+          expect(poolReleases).toBe(1);
+          expect(events).toEqual([
+            "acquire-pool",
+            "hold-start",
+            "stream-closed",
+            "hold-end",
+            "release-pool",
+          ]);
+        } finally {
+          openStream.destroy();
+        }
+      });
+    },
+  );
 });

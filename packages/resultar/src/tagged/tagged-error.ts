@@ -415,32 +415,42 @@ const stringifyTemplateValue = (value: unknown): string =>
     ? stringifyRedacted(value)
     : templateValueStringifiers[typeof value as StringifiableTemplateValueType](value)
 
+interface ParsedTemplateSegment {
+  readonly key: string
+  readonly tail: string
+}
+
 interface ParsedMessageTemplate {
-  readonly chunks: readonly string[]
-  readonly variables: readonly string[]
+  readonly prefix: string
+  readonly segments: readonly ParsedTemplateSegment[]
 }
 
 const parseMessageTemplate = (template: string): ParsedMessageTemplate => {
   templateVariableMatcher.lastIndex = 0
-  const chunks: string[] = []
-  const variables: string[] = []
-  let cursor = 0
+  const segments: ParsedTemplateSegment[] = []
   let match = templateVariableMatcher.exec(template)
-
-  while (match !== null) {
-    chunks.push(template.slice(cursor, match.index))
-    variables.push(String(match[1]))
-    cursor = match.index + match[0].length
-    match = templateVariableMatcher.exec(template)
+  if (match === null) {
+    return { prefix: template, segments }
   }
 
-  chunks.push(template.slice(cursor))
-  return { chunks, variables }
+  const prefix = template.slice(0, match.index)
+  while (match !== null) {
+    const key = String(match[1])
+    const end = match.index + match[0].length
+    const next = templateVariableMatcher.exec(template)
+    const tail = next === null ? template.slice(end) : template.slice(end, next.index)
+    segments.push({ key, tail })
+    match = next
+  }
+
+  return { prefix, segments }
 }
 
 const formatTemplateValue = (value: unknown): string => {
+  /* Stryker disable all: primitive fast-paths are equivalent to stringifyTemplateValue(value). */
   if (typeof value === 'string') return value
   if (typeof value === 'number') return String(value)
+  /* Stryker restore all */
   return stringifyTemplateValue(value)
 }
 
@@ -448,58 +458,49 @@ const buildFallbackInterpolator =
   (template: string, parsed: ParsedMessageTemplate) =>
   (values?: Record<string, unknown>): string => {
     if (values === undefined || values === null) return template
-    const { chunks, variables } = parsed
-    let output = chunks[0] ?? ''
-    const length = variables.length
+    let output = parsed.prefix
 
-    for (let index = 0; index < length; index += 1) {
-      const key = variables[index]
-      if (key !== undefined) {
-        const raw = values[key]
-        output += raw === undefined ? `$${key}` : formatTemplateValue(raw)
-        output += chunks[index + 1] ?? ''
-      }
+    for (const { key, tail } of parsed.segments) {
+      const raw = values[key]
+      output += raw === undefined ? `$${key}` : formatTemplateValue(raw)
+      output += tail
     }
 
     return output
   }
 
+/* Stryker disable all: transparent JIT interpolator equivalent to buildFallbackInterpolator; parity verified by jit-performance.test.ts. */
 const buildJitInterpolator = (
   template: string,
   parsed: ParsedMessageTemplate,
 ): ((values?: Record<string, unknown>) => string) | undefined => {
-  const { chunks, variables } = parsed
+  const { prefix, segments } = parsed
   const varLines: string[] = []
   const parts: string[] = []
-  const singleBareVariable =
-    variables.length === 1 && (chunks[0] ?? '') === '' && (chunks[1] ?? '') === ''
+  const singleBareVariable = segments.length === 1 && prefix === '' && segments[0]?.tail === ''
 
-  if (chunks[0] !== undefined && chunks[0] !== '') {
-    parts.push(serializeStringLiteral(chunks[0]))
+  if (prefix !== '') {
+    parts.push(serializeStringLiteral(prefix))
   }
 
-  for (let index = 0; index < variables.length; index += 1) {
-    const key = variables[index]
-    if (key !== undefined) {
-      const varName = `v${String(index)}`
-      const propExpr = formatPropertyAccess('p', key)
-      const missingLiteral = serializeStringLiteral(`$${key}`)
-      varLines.push(`const ${varName} = ${propExpr};`)
+  for (const [index, { key, tail }] of segments.entries()) {
+    const varName = `v${String(index)}`
+    const propExpr = formatPropertyAccess('p', key)
+    const missingLiteral = serializeStringLiteral(`$${key}`)
+    varLines.push(`const ${varName} = ${propExpr};`)
 
-      if (singleBareVariable) {
-        parts.push(
-          `(${varName} === undefined ? ${missingLiteral} : typeof ${varName} === "string" ? ${varName} : typeof ${varName} === "number" ? String(${varName}) : s(${varName}))`,
-        )
-      } else {
-        parts.push(
-          `(${varName} === undefined ? ${missingLiteral} : typeof ${varName} === "string" || typeof ${varName} === "number" ? ${varName} : s(${varName}))`,
-        )
-      }
+    if (singleBareVariable) {
+      parts.push(
+        `(${varName} === undefined ? ${missingLiteral} : typeof ${varName} === "string" ? ${varName} : typeof ${varName} === "number" ? String(${varName}) : s(${varName}))`,
+      )
+    } else {
+      parts.push(
+        `(${varName} === undefined ? ${missingLiteral} : typeof ${varName} === "string" || typeof ${varName} === "number" ? ${varName} : s(${varName}))`,
+      )
+    }
 
-      const tail = chunks[index + 1]
-      if (tail !== undefined && tail !== '') {
-        parts.push(serializeStringLiteral(tail))
-      }
+    if (tail !== '') {
+      parts.push(serializeStringLiteral(tail))
     }
   }
 
@@ -513,10 +514,12 @@ const buildJitInterpolator = (
     stringifyTemplateValue,
   ])
 }
+/* Stryker restore all */
 
 const compileMessageInterpolator = (
   template: string,
 ): ((values?: Record<string, unknown>) => string) => {
+  /* Stryker disable all: fast-path shortcuts for default $message and variable-free templates are equivalent to the general interpolator below. */
   if (template === defaultMessageTemplate) {
     return (values) => {
       if (values === undefined || values === null) return defaultMessageTemplate
@@ -526,9 +529,10 @@ const compileMessageInterpolator = (
   }
 
   const parsed = parseMessageTemplate(template)
-  if (parsed.variables.length === 0) {
+  if (parsed.segments.length === 0) {
     return () => template
   }
+  /* Stryker restore all */
 
   return buildJitInterpolator(template, parsed) ?? buildFallbackInterpolator(template, parsed)
 }
@@ -564,11 +568,13 @@ const readonlyDescriptor: PropertyDescriptor = {
 
 const assignReadonly = (target: object, key: PropertyKey, value: unknown): void => {
   readonlyDescriptor.value = value
+  /* Stryker disable BlockStatement: clears cached descriptor reference in finally to prevent GC retention. */
   try {
     Object.defineProperty(target, key, readonlyDescriptor)
   } finally {
     readonlyDescriptor.value = undefined
   }
+  /* Stryker restore BlockStatement */
 }
 
 const reservedMetadataProperties = new Set(['err', 'is', 'tag', 'withProps', 'prototype', 'then'])
@@ -591,6 +597,7 @@ const copyOwnMetadata = (target: object, props: Record<string, unknown>): void =
 }
 
 const copyVisibleMetadata = (target: object, props: object): void => {
+  /* Stryker disable all: plain-object fast path is equivalent to the prototype-walk loop below. */
   const proto: unknown = Object.getPrototypeOf(props)
   if (proto === Object.prototype || proto === null) {
     for (const key of Object.getOwnPropertyNames(props)) {
@@ -600,6 +607,7 @@ const copyVisibleMetadata = (target: object, props: object): void => {
     }
     return
   }
+  /* Stryker restore all */
 
   let current: object | null = props
 
@@ -702,7 +710,6 @@ const createTaggedErrorClass = <
   explicitProps: boolean,
 ): TaggedErrorClass<Tag, MessageTemplate, Base> => {
   const BaseError = options.extends ?? defaultBaseError
-  const isDefaultBase = BaseError === defaultBaseError
   const messageTemplate = options.message ?? (defaultMessageTemplate as MessageTemplate)
   assertNoReservedTemplateVariables(options.name, messageTemplate)
   const interpolate = compileMessageInterpolator(messageTemplate)
@@ -710,11 +717,11 @@ const createTaggedErrorClass = <
 
   class GeneratedTaggedError extends BaseError {
     public static readonly tag = options.name
-    declare public readonly _tag: Tag
-    declare public readonly fingerprint: readonly [Tag, MessageTemplate]
-    declare public readonly messageTemplate: MessageTemplate
+    public readonly _tag = options.name
+    public readonly fingerprint = sharedFingerprint
+    public readonly messageTemplate = messageTemplate
 
-    /* eslint-disable unicorn/custom-error-definition -- Prototype defines name; 1-arg super avoids options overhead when cause is absent. */
+    /* eslint-disable unicorn/custom-error-definition -- 1-arg super avoids options overhead when cause is absent; name is always set explicitly. */
     public constructor(props?: ConstructorProps<MessageTemplate>) {
       const message = interpolate(props)
       const cause = props?.cause
@@ -723,9 +730,7 @@ const createTaggedErrorClass = <
       } else {
         super(message, { cause })
       }
-      if (!isDefaultBase) {
-        this.name = options.name
-      }
+      this.name = options.name
 
       if (props) {
         if (explicitProps) {
@@ -826,23 +831,6 @@ const createTaggedErrorClass = <
       return json
     }
   }
-
-  Object.defineProperties(GeneratedTaggedError.prototype, {
-    _tag: { configurable: true, enumerable: false, value: options.name, writable: false },
-    fingerprint: {
-      configurable: true,
-      enumerable: false,
-      value: sharedFingerprint,
-      writable: false,
-    },
-    messageTemplate: {
-      configurable: true,
-      enumerable: false,
-      value: messageTemplate,
-      writable: false,
-    },
-    name: { configurable: true, enumerable: false, value: options.name, writable: true },
-  })
 
   return GeneratedTaggedError as unknown as TaggedErrorClass<Tag, MessageTemplate, Base>
 }

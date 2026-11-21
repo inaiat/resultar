@@ -153,16 +153,11 @@ const emitLeafInit = (ctx: TaskEmitContext, leaf: TaskNodeLike): string => {
         return `  let ok = true, v = undefined, ex = undefined, n = undefined;
   try { v = ${fnParam}(); } catch (e) { ok = false; ex = died(e); }`
       }
-      const opts = leaf.continuation as {
-        readonly try: () => unknown
-        readonly catch: (cause: unknown) => unknown
-      }
-      const tryParam = b.bind(opts.try)
-      const catchParam = b.bind(opts.catch)
+      const optsParam = b.bind(leaf.continuation)
       return `  let ok = true, v = undefined, ex = undefined, n = undefined;
-  try { v = ${tryParam}(); } catch (e) {
+  try { v = ${optsParam}.try(); } catch (e) {
     ok = false;
-    try { ex = failed(${catchParam}(e)); } catch (ce) { ex = died(ce); }
+    try { ex = failed(${optsParam}.catch(e)); } catch (ce) { ex = died(ce); }
   }`
     }
     case OP_TRY_PROMISE: {

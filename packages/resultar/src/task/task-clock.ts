@@ -91,6 +91,7 @@ interface Sleeper {
 export class VirtualClock implements TaskClock {
   private time: number
   private readonly sleepers = new Set<Sleeper>()
+  private readonly waiters = new Set<() => void>()
   private advancing: Promise<void> = Promise.resolve()
   private flushing: Promise<void> | undefined = undefined
   public readonly random: () => number
@@ -115,6 +116,7 @@ export class VirtualClock implements TaskClock {
         },
       }
       this.sleepers.add(sleeper)
+      this.notifyWaiters()
       return () => {
         this.sleepers.delete(sleeper)
       }
@@ -164,10 +166,17 @@ export class VirtualClock implements TaskClock {
 
   /**
    * Runs `task` with this virtual clock and automatically advances through scheduled sleeps until
-   * it settles (or no sleepers remain). Guards against infinite timer loops via `maxSteps`.
+   * it settles, resuming automatically when new virtual sleeps are scheduled after external async
+   * work. Guards against infinite timer loops via `maxSteps`, interrupting the task and awaiting
+   * its cleanup if the limit is exceeded.
    */
   public async runToCompletion<A, E>(
-    task: { readonly runExit: (options: { readonly clock: TaskClock }) => Promise<Exit<A, E>> },
+    task: {
+      readonly runExit: (options: {
+        readonly clock: TaskClock
+        readonly signal?: AbortSignal
+      }) => Promise<Exit<A, E>>
+    },
     options?: { readonly maxSteps?: number },
   ): Promise<Exit<A, E>> {
     const maxSteps = options?.maxSteps ?? 10_000
@@ -176,26 +185,66 @@ export class VirtualClock implements TaskClock {
         'VirtualClock.runToCompletion maxSteps must be a non-negative safe integer',
       )
     }
+    const controller = new AbortController()
     let settled = false
-    const pending = task.runExit({ clock: this }).finally(() => {
+    const pending = task.runExit({ clock: this, signal: controller.signal }).finally(() => {
       settled = true
+      this.notifyWaiters()
     })
-    let steps = 0
-    for (;;) {
-      // eslint-disable-next-line no-await-in-loop
+    void pending.catch(() => undefined)
+    const isSettled = (): boolean => settled
+    const limitError = await this.driveUntilSettled(isSettled, maxSteps)
+    if (limitError !== undefined) {
+      controller.abort(limitError)
+      await this.driveUntilSettled(isSettled, Number.POSITIVE_INFINITY)
+      await pending.catch(() => undefined)
       await this.flush()
-      if (settled) break
-      if (steps >= maxSteps) {
-        throw new RangeError(
-          `VirtualClock.runToCompletion exceeded ${maxSteps} virtual clock steps`,
-        )
-      }
-      // eslint-disable-next-line no-await-in-loop
-      const advanced = await this.advanceToNext()
-      if (!advanced) break
-      steps += 1
+      throw limitError
     }
     return pending
+  }
+
+  private async driveUntilSettled(
+    isSettled: () => boolean,
+    maxSteps: number,
+  ): Promise<RangeError | undefined> {
+    await this.flush()
+    let steps = 0
+    for (;;) {
+      if (isSettled()) return undefined
+      if (this.sleepers.size === 0) {
+        // eslint-disable-next-line no-await-in-loop
+        await this.waitForSleeperOrSettled(isSettled)
+        if (!isSettled()) {
+          // eslint-disable-next-line no-await-in-loop
+          await this.flush()
+        }
+      } else {
+        if (steps >= maxSteps) {
+          return new RangeError(
+            `VirtualClock.runToCompletion exceeded ${maxSteps} virtual clock steps`,
+          )
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const advanced = await this.advanceToNext()
+        if (advanced) steps += 1
+      }
+    }
+  }
+
+  private notifyWaiters(): void {
+    if (this.waiters.size === 0) return
+    for (const wake of this.waiters) {
+      this.waiters.delete(wake)
+      wake()
+    }
+  }
+
+  private waitForSleeperOrSettled(isSettled: () => boolean): Promise<void> {
+    if (isSettled() || this.sleepers.size > 0) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      this.waiters.add(resolve)
+    })
   }
 
   private async stepNext(): Promise<boolean> {

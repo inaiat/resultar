@@ -122,8 +122,9 @@ const enqueueTaker = <A>(takers: Set<Taker<A>>, signal: AbortSignal): Promise<Ex
  * Cooperative, backpressure-aware FIFO queue for producer-consumer `ResultTask` workflows.
  *
  * Bounded queues suspend `offer` when at capacity and resume producers in FIFO order as consumers
- * drain items. Calling `shutdown()` rejects new offers (`false`), interrupts blocked takers, and
- * lets consumers drain any already-buffered items before interrupting once empty.
+ * drain items. Calling `shutdown()` rejects subsequent offers (`false`), interrupts blocked
+ * producers and takers, and lets consumers drain any already-buffered items before interrupting
+ * once empty.
  *
  * @example
  * ```ts
@@ -142,9 +143,9 @@ const enqueueTaker = <A>(takers: Set<Taker<A>>, signal: AbortSignal): Promise<Ex
 export interface Queue<A> {
   /** Maximum buffered items (`Infinity` for unbounded queues). */
   readonly capacity: number
-  /** Enqueues `value`, suspending on backpressure if bounded and full. Returns `false` if shut down. */
+  /** Enqueues `value`, suspending on backpressure if bounded and full. Returns `false` if already shut down; interrupts if shut down while suspended. */
   readonly offer: (value: A) => ResultTask<boolean>
-  /** Enqueues every item from `values` in order, stopping with `false` if the queue shuts down. */
+  /** Enqueues every item from `values` in order, stopping with `false` if already shut down or interrupting if shut down while suspended. */
   readonly offerAll: (values: Iterable<A>) => ResultTask<boolean>
   /** Dequeues the next item FIFO, suspending until available. Interrupts once shut down and empty. */
   readonly take: () => ResultTask<A>
@@ -154,7 +155,7 @@ export interface Queue<A> {
   readonly takeAll: () => ResultTask<readonly A[]>
   /** Drains up to `max` currently buffered items without blocking and wakes waiting producers. */
   readonly takeUpTo: (max: number) => ResultTask<readonly A[]>
-  /** Shuts down the queue: rejects new offers (`false`) and interrupts waiting takers. Idempotent. */
+  /** Shuts down the queue: rejects subsequent offers (`false`) and interrupts blocked producers and takers. Idempotent. */
   readonly shutdown: () => ResultTask<void>
   /** Returns the number of currently buffered items. */
   readonly size: () => ResultTask<number>
@@ -162,29 +163,79 @@ export interface Queue<A> {
   readonly isShutdown: () => ResultTask<boolean>
 }
 
+interface QueueBuffer<A> {
+  readonly size: () => number
+  readonly push: (value: A) => void
+  readonly shift: () => A
+}
+
+const createBoundedBuffer = <A>(capacity: number): QueueBuffer<A> => {
+  const ring: (A | undefined)[] = []
+  let head = 0
+  let tail = 0
+  let count = 0
+  return {
+    size: () => count,
+    push: (value) => {
+      ring[tail] = value
+      tail = (tail + 1) % capacity
+      count += 1
+    },
+    shift: () => {
+      const value = ring[head] as A
+      ring[head] = undefined
+      head = (head + 1) % capacity
+      count -= 1
+      if (count === 0) {
+        head = 0
+        tail = 0
+      }
+      return value
+    },
+  }
+}
+
+const createUnboundedBuffer = <A>(): QueueBuffer<A> => {
+  const items: (A | undefined)[] = []
+  let head = 0
+  return {
+    size: () => items.length - head,
+    push: (value) => {
+      items.push(value)
+    },
+    shift: () => {
+      const value = items[head] as A
+      items[head] = undefined
+      head += 1
+      const remaining = items.length - head
+      if (remaining === 0) {
+        items.length = 0
+        head = 0
+      } else if (head >= 64 && head * 2 >= items.length) {
+        for (let index = 0; index < remaining; index += 1) {
+          items[index] = items[head + index]
+        }
+        items.length = remaining
+        head = 0
+      }
+      return value
+    },
+  }
+}
+
 const createQueue = <A>(capacity: number): Queue<A> => {
-  const buffer: (A | undefined)[] = []
-  let bufferHead = 0
+  const storage: QueueBuffer<A> = Number.isFinite(capacity)
+    ? createBoundedBuffer<A>(capacity)
+    : createUnboundedBuffer<A>()
   const takers = new Set<Taker<A>>()
   const putters = new Set<Putter<A>>()
   let closed = false
 
-  const bufferedSize = (): number => buffer.length - bufferHead
-
+  const bufferedSize = (): number => storage.size()
   const pushBuffer = (value: A): void => {
-    buffer.push(value)
+    storage.push(value)
   }
-
-  const shiftBuffer = (): A => {
-    const value = buffer[bufferHead] as A
-    buffer[bufferHead] = undefined
-    bufferHead += 1
-    if (bufferHead === buffer.length) {
-      buffer.length = 0
-      bufferHead = 0
-    }
-    return value
-  }
+  const shiftBuffer = (): A => storage.shift()
 
   const refillFromPutters = (): void => {
     if (closed) return
@@ -275,7 +326,7 @@ const createQueue = <A>(capacity: number): Queue<A> => {
           const finish = putter.resolve
           detachSignal(putter.signal, putter.onAbort)
           clearPutter(putter)
-          finish?.(success(false))
+          finish?.(createQueueShutdownExit())
         }
       }
       for (;;) {

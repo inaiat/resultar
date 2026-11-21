@@ -80,14 +80,19 @@ describe("resultar-di static subgraph JIT tiers and dual-mode parity", () => {
       );
       const tier1Second = await handleTier1Second(new Request("https://example.test/t1"));
 
+      const tier0FirstText = await tier0First.text();
+      const tier0SecondText = await tier0Second.text();
+      const tier1Json = (await tier1Response.json()) as Record<string, unknown>;
+      const tier1SecondText = await tier1Second.text();
+
       await ResultTask.runPromise(root.close());
 
       return {
-        tier0First: await tier0First.text(),
-        tier0Second: await tier0Second.text(),
+        tier0First: tier0FirstText,
+        tier0Second: tier0SecondText,
         scopedUseLabel,
-        tier1: (await tier1Response.json()) as Record<string, unknown>,
-        tier1Second: await tier1Second.text(),
+        tier1: tier1Json,
+        tier1Second: tier1SecondText,
         singletonCreations,
         scopedCreations,
         transientCreations,
@@ -154,8 +159,8 @@ describe("resultar-di static subgraph JIT tiers and dual-mode parity", () => {
 
         gate.resolve();
         const response = await pending;
-        await closing;
         expect(await response.text()).toBe("fast");
+        await closing;
         expect(events).toEqual(["acquire-pool", "handler-start", "handler-end", "release-pool"]);
       });
     }
@@ -313,6 +318,455 @@ describe("resultar-di static subgraph JIT tiers and dual-mode parity", () => {
         });
         await ResultTask.runPromise(scopeReverse.close());
       });
+    }
+  });
+
+  test("propagates request.signal abort after fast-path fetch delivers sync or async Response", async () => {
+    for (const jitEnabled of [true, false]) {
+      for (const asyncHandler of [false, true]) {
+        // eslint-disable-next-line no-await-in-loop
+        await withJitMode(jitEnabled, async () => {
+          const root = createModule().value("tag", "stream").scope();
+
+          let cancelCount = 0;
+          let cancelReason: unknown = undefined;
+          const canceled = Promise.withResolvers<void>();
+
+          const makeResponse = () =>
+            new Response(
+              new ReadableStream<Uint8Array>({
+                cancel(reason) {
+                  cancelCount += 1;
+                  cancelReason = reason;
+                  canceled.resolve();
+                },
+              }),
+            );
+
+          const handle = root.fetch(["tag"], () =>
+            asyncHandler ? Promise.resolve().then(makeResponse) : makeResponse(),
+          );
+
+          const controller = new AbortController();
+          const response = await handle(
+            new Request("https://example.test/stream", { signal: controller.signal }),
+          );
+
+          expect(cancelCount).toBe(0);
+          const closing = ResultTask.runPromise(root.close());
+
+          const reason = new Error("client-aborted-after-delivery");
+          controller.abort(reason);
+          await canceled.promise;
+
+          expect(cancelCount).toBe(1);
+          expect(cancelReason).toBe(reason);
+          await expect(response.text()).rejects.toThrow("Request scope failed");
+          await response.body?.cancel("second-cancel").catch(() => undefined);
+          expect(cancelCount).toBe(1);
+          await closing;
+
+          // Verify normal completion removes the abort listener so later aborts do not trigger cancel.
+          const root2 = createModule().value("tag", "normal").scope();
+          let completedCancelCount = 0;
+          const handleNormal = root2.fetch(["tag"], ({ tag }) => {
+            const build = () =>
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  start(streamController) {
+                    streamController.enqueue(new TextEncoder().encode(tag));
+                    streamController.close();
+                  },
+                  cancel() {
+                    completedCancelCount += 1;
+                  },
+                }),
+              );
+            return asyncHandler ? Promise.resolve().then(build) : build();
+          });
+
+          const controller2 = new AbortController();
+          const normalResponse = await handleNormal(
+            new Request("https://example.test/normal", { signal: controller2.signal }),
+          );
+          expect(await normalResponse.text()).toBe("normal");
+          controller2.abort("after-complete");
+          await Promise.resolve();
+          expect(completedCancelCount).toBe(0);
+          await ResultTask.runPromise(root2.close());
+        });
+      }
+    }
+  });
+
+  test("preserves service named __proto__ as an own property in compiled and interpreted DI plans", async () => {
+    const protoKey = "__proto__";
+
+    for (const jitEnabled of [true, false]) {
+      // eslint-disable-next-line no-await-in-loop
+      await withJitMode(jitEnabled, async () => {
+        const root = createModule()
+          .value(protoKey, 7)
+          .scoped("derived", [protoKey], (deps) => ({
+            hasOwn: Object.hasOwn(deps, protoKey),
+            value: (deps as Record<string, unknown>)[protoKey],
+            isPlainProto: Object.getPrototypeOf(deps) === Object.prototype,
+          }))
+          .scope();
+
+        const handleDirect = root.fetch([protoKey, "derived"], (services) =>
+          Response.json({
+            hasOwn: Object.hasOwn(services, protoKey),
+            value: (services as Record<string, unknown>)[protoKey],
+            isPlainProto: Object.getPrototypeOf(services) === Object.prototype,
+            derived: services.derived,
+          }),
+        );
+
+        const directResponse = await handleDirect(new Request("https://example.test/proto"));
+        expect(await directResponse.json()).toEqual({
+          hasOwn: true,
+          value: 7,
+          isPlainProto: true,
+          derived: { hasOwn: true, value: 7, isPlainProto: true },
+        });
+
+        const useResult = await ResultTask.runPromise(
+          root.use([protoKey], (services) =>
+            ResultTask.ok({
+              hasOwn: Object.hasOwn(services, protoKey),
+              value: (services as Record<string, unknown>)[protoKey],
+            }),
+          ),
+        );
+        expect(useResult).toEqual({ hasOwn: true, value: 7 });
+
+        await ResultTask.runPromise(root.close());
+
+        // Also check __proto__ provided as a local via withServices()
+        const localRoot = createModule().value("other", 1).scope();
+        const locals = Object.defineProperty({}, protoKey, {
+          value: 7,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        }) as Record<string, number>;
+        const scopedWithLocal = localRoot.withServices(locals);
+        const handleLocal = scopedWithLocal.fetch(["other", protoKey], (services) =>
+          Response.json({
+            hasOwn: Object.hasOwn(services, protoKey),
+            value: (services as Record<string, unknown>)[protoKey],
+            other: services.other,
+          }),
+        );
+        const localResponse = await handleLocal(new Request("https://example.test/proto-local"));
+        expect(await localResponse.json()).toEqual({ hasOwn: true, value: 7, other: 1 });
+        await ResultTask.runPromise(localRoot.close());
+      });
+    }
+  });
+
+  test("keeps fetch scope open until asynchronous producer cancel finishes with a pending read", async () => {
+    for (const jitEnabled of [true, false]) {
+      for (const useScopedResource of [false, true]) {
+        // eslint-disable-next-line no-await-in-loop
+        await withJitMode(jitEnabled, async () => {
+          const events: string[] = [];
+          let poolReleases = 0;
+          const cancelStarted = Promise.withResolvers<void>();
+          const cancelGate = Promise.withResolvers<void>();
+
+          const root = createModule()
+            .resource("pool", [], {
+              lifetime: "singleton",
+              acquire: () =>
+                ResultTask.sync(() => {
+                  events.push("acquire-pool");
+                  return { ok: true };
+                }),
+              release: () =>
+                ResultTask.sync(() => {
+                  poolReleases += 1;
+                  events.push("release-pool");
+                }),
+            })
+            .resource("tx", [], {
+              acquire: () => ResultTask.ok({ id: 1 }),
+              release: () =>
+                ResultTask.sync(() => {
+                  events.push("release-tx");
+                }),
+            })
+            .value("tag", "stream")
+            .scope();
+
+          await ResultTask.runPromise(root.use(["pool"], () => ResultTask.ok(undefined)));
+
+          const makeStreamResponse = () =>
+            new Response(
+              new ReadableStream<Uint8Array>({
+                async cancel() {
+                  events.push("producer-cancel-start");
+                  cancelStarted.resolve();
+                  await cancelGate.promise;
+                  events.push("producer-cancel-done");
+                },
+              }),
+            );
+
+          const handle = useScopedResource
+            ? root.fetch(["tx"], makeStreamResponse)
+            : root.fetch(["tag"], makeStreamResponse);
+
+          const response = await handle(new Request("https://example.test/async-cancel"));
+          const reader = response.body?.getReader();
+          if (reader === undefined) throw new Error("Expected response body");
+
+          const pendingRead = reader.read();
+          const pendingCancel = reader.cancel("consumer-cancel");
+          await cancelStarted.promise;
+
+          let closed = false;
+          const closing = ResultTask.runPromise(root.close()).then(() => {
+            closed = true;
+          });
+
+          await Promise.resolve();
+          await new Promise((resolve) => {
+            setTimeout(resolve, 15);
+          });
+
+          expect(closed).toBe(false);
+          expect(poolReleases).toBe(0);
+          expect(events).toEqual(["acquire-pool", "producer-cancel-start"]);
+
+          cancelGate.resolve();
+          await pendingCancel;
+          await pendingRead;
+          await closing;
+
+          expect(closed).toBe(true);
+          expect(poolReleases).toBe(1);
+          expect(events).toEqual(
+            useScopedResource
+              ? [
+                  "acquire-pool",
+                  "producer-cancel-start",
+                  "producer-cancel-done",
+                  "release-tx",
+                  "release-pool",
+                ]
+              : ["acquire-pool", "producer-cancel-start", "producer-cancel-done", "release-pool"],
+          );
+        });
+      }
+    }
+  });
+
+  test("rejects already-locked response bodies consistently across fast-path and resource fetch", async () => {
+    for (const jitEnabled of [true, false]) {
+      // eslint-disable-next-line no-await-in-loop
+      await withJitMode(jitEnabled, async () => {
+        const events: string[] = [];
+        let poolReleases = 0;
+        let txReleases = 0;
+        const holdStarted = Promise.withResolvers<void>();
+        const holdGate = Promise.withResolvers<void>();
+
+        const root = createModule()
+          .resource("pool", [], {
+            lifetime: "singleton",
+            acquire: () =>
+              ResultTask.sync(() => {
+                events.push("acquire-pool");
+                return { ok: true };
+              }),
+            release: () =>
+              ResultTask.sync(() => {
+                poolReleases += 1;
+                events.push("release-pool");
+              }),
+          })
+          .resource("tx", [], {
+            acquire: () =>
+              ResultTask.sync(() => {
+                events.push("acquire-tx");
+                return { id: 1 };
+              }),
+            release: () =>
+              ResultTask.sync(() => {
+                txReleases += 1;
+                events.push("release-tx");
+              }),
+          })
+          .value("tag", "fast")
+          .scope();
+
+        await ResultTask.runPromise(root.use(["pool"], () => ResultTask.ok(undefined)));
+
+        // Keep an unrelated request active to prove locked-body rejection decrements activeChildren exactly once.
+        const handleHold = root.fetch(["tag"], async ({ tag }) => {
+          holdStarted.resolve();
+          await holdGate.promise;
+          return new Response(tag);
+        });
+        const pendingHold = handleHold(new Request("https://example.test/hold"));
+        await holdStarted.promise;
+
+        const makeLockedResponse = () => {
+          const response = new Response(new ReadableStream<Uint8Array>());
+          response.body?.getReader();
+          return response;
+        };
+
+        const handleLockedFast = root.fetch(["tag"], makeLockedResponse);
+        const handleLockedTier2 = root.fetch(["tx"], makeLockedResponse);
+
+        await expect(
+          handleLockedFast(new Request("https://example.test/locked-fast")),
+        ).rejects.toThrow("Request scope failed");
+        await expect(
+          handleLockedTier2(new Request("https://example.test/locked-tier2")),
+        ).rejects.toThrow("Request scope failed");
+
+        expect(txReleases).toBe(1);
+
+        let closed = false;
+        const closing = ResultTask.runPromise(root.close()).then(() => {
+          closed = true;
+        });
+        await Promise.resolve();
+        expect(closed).toBe(false);
+        expect(poolReleases).toBe(0);
+
+        holdGate.resolve();
+        const holdResponse = await pendingHold;
+        expect(await holdResponse.text()).toBe("fast");
+        await closing;
+
+        expect(closed).toBe(true);
+        expect(poolReleases).toBe(1);
+        expect(txReleases).toBe(1);
+      });
+    }
+  });
+
+  test("coordinates overlapping and re-entrant request abort with reader.cancel across fast and resource fetch", async () => {
+    for (const jitEnabled of [true, false]) {
+      for (const useScopedResource of [false, true]) {
+        for (const abortMode of ["while-pending", "reentrant-inside-cancel"] as const) {
+          // eslint-disable-next-line no-await-in-loop
+          await withJitMode(jitEnabled, async () => {
+            const events: string[] = [];
+            let poolReleases = 0;
+            let txReleases = 0;
+            let producerCancelCalls = 0;
+            const cancelStarted = Promise.withResolvers<void>();
+            const cancelGate = Promise.withResolvers<void>();
+            const controller = new AbortController();
+
+            const root = createModule()
+              .resource("pool", [], {
+                lifetime: "singleton",
+                acquire: () =>
+                  ResultTask.sync(() => {
+                    events.push("acquire-pool");
+                    return { ok: true };
+                  }),
+                release: () =>
+                  ResultTask.sync(() => {
+                    poolReleases += 1;
+                    events.push("release-pool");
+                  }),
+              })
+              .resource("tx", [], {
+                acquire: () => ResultTask.ok({ id: 1 }),
+                release: () =>
+                  ResultTask.sync(() => {
+                    txReleases += 1;
+                    events.push("release-tx");
+                  }),
+              })
+              .value("tag", "stream")
+              .scope();
+
+            await ResultTask.runPromise(root.use(["pool"], () => ResultTask.ok(undefined)));
+
+            const makeStreamResponse = () =>
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  cancel() {
+                    producerCancelCalls += 1;
+                    events.push("producer-cancel-start");
+                    cancelStarted.resolve();
+                    if (abortMode === "reentrant-inside-cancel") {
+                      // Trigger request abort synchronously BEFORE returning the cancel Promise.
+                      controller.abort(new Error("reentrant-abort"));
+                    }
+                    return cancelGate.promise.then(() => {
+                      events.push("producer-cancel-done");
+                    });
+                  },
+                }),
+              );
+
+            const handle = useScopedResource
+              ? root.fetch(["tx"], makeStreamResponse)
+              : root.fetch(["tag"], makeStreamResponse);
+
+            const response = await handle(
+              new Request("https://example.test/overlapping-cancel", { signal: controller.signal }),
+            );
+            const reader = response.body?.getReader();
+            if (reader === undefined) throw new Error("Expected response body");
+
+            const pendingRead = reader.read();
+            const pendingCancel = reader.cancel("consumer-cancel");
+            await cancelStarted.promise;
+
+            if (abortMode === "while-pending") {
+              controller.abort(new Error("overlapping-abort"));
+            }
+
+            let closed = false;
+            const closing = ResultTask.runPromise(root.close()).then(() => {
+              closed = true;
+            });
+
+            await Promise.resolve();
+            await new Promise((resolve) => {
+              setTimeout(resolve, 15);
+            });
+
+            expect(closed).toBe(false);
+            expect(poolReleases).toBe(0);
+            expect(txReleases).toBe(0);
+            expect(producerCancelCalls).toBe(1);
+            expect(events).toEqual(["acquire-pool", "producer-cancel-start"]);
+
+            cancelGate.resolve();
+            await pendingCancel;
+            await pendingRead.catch(() => undefined);
+            await closing;
+
+            expect(closed).toBe(true);
+            expect(poolReleases).toBe(1);
+            expect(txReleases).toBe(useScopedResource ? 1 : 0);
+            expect(producerCancelCalls).toBe(1);
+            expect(events).toEqual(
+              useScopedResource
+                ? [
+                    "acquire-pool",
+                    "producer-cancel-start",
+                    "producer-cancel-done",
+                    "release-tx",
+                    "release-pool",
+                  ]
+                : ["acquire-pool", "producer-cancel-start", "producer-cancel-done", "release-pool"],
+            );
+          });
+        }
+      }
     }
   });
 });

@@ -69,8 +69,25 @@ const serializeLiteral = (value: string): string =>
 
 const buildObjectLiteral = (entries: readonly (readonly [string, string])[]): string => {
   if (entries.length === 0) return "EMPTY";
-  const fields = entries.map(([key, expr]) => `${serializeLiteral(key)}: ${expr}`);
+  const fields = entries.map(([key, expr]) =>
+    key === "__proto__"
+      ? `[${serializeLiteral(key)}]: ${expr}`
+      : `${serializeLiteral(key)}: ${expr}`,
+  );
   return `Object.freeze({ ${fields.join(", ")} })`;
+};
+
+const setOwnProperty = (target: Record<string, unknown>, key: string, value: unknown): void => {
+  if (key === "__proto__") {
+    Object.defineProperty(target, key, {
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    return;
+  }
+  target[key] = value;
 };
 
 interface FallbackRuntimeState {
@@ -85,7 +102,7 @@ const buildDependencyRecord = (
   if (deps.length === 0) return EMPTY_FROZEN;
   const record: Record<string, unknown> = {};
   for (const [propKey, depIndex] of deps) {
-    record[propKey] = values[depIndex];
+    setOwnProperty(record, propKey, values[depIndex]);
   }
   return Object.freeze(record);
 };
@@ -123,7 +140,7 @@ const buildFallbackPlan = (
       }
       const output: Record<string, unknown> = {};
       for (const [key, stepIndex] of outputRefs) {
-        output[key] = values[stepIndex];
+        setOwnProperty(output, key, values[stepIndex]);
       }
       const frozen = Object.freeze(output);
       if (tier === 0) cached = frozen;

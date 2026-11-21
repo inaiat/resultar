@@ -89,7 +89,8 @@ export class FiberSignal {
   public abort(reason?: unknown): void {
     if (this.isAborted) return
     this.isAborted = true
-    this.abortReason = reason ?? new DOMException('This operation was aborted', 'AbortError')
+    this.abortReason =
+      reason === undefined ? new DOMException('This operation was aborted', 'AbortError') : reason
     if (this.nativeController !== undefined) {
       this.nativeController.abort(this.abortReason)
     }

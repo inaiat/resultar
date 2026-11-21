@@ -1,10 +1,15 @@
 import "reflect-metadata";
 
+import { request as httpRequest } from "node:http";
+import type { AddressInfo } from "node:net";
+import { PassThrough } from "node:stream";
 import {
   Catch,
   Controller,
   Get,
+  HttpCode,
   Post,
+  Res,
   type ArgumentsHost,
   type ExceptionFilter,
 } from "@nestjs/common";
@@ -409,4 +414,208 @@ describe("resultar-nestjs Tier 0 / Tier 1 compiled request dispatcher and dual-m
       });
     }
   });
+
+  const disconnectAfterFirstChunk = (url: string, body: string): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const payload = Buffer.from(body, "utf8");
+      let firstChunk = "";
+      let disconnected = false;
+      const client = httpRequest(
+        url,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "content-length": String(payload.byteLength),
+            connection: "close",
+          },
+        },
+        (response) => {
+          response.once("data", (chunk: Buffer | string) => {
+            firstChunk = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+            disconnected = true;
+            response.destroy();
+            client.destroy();
+          });
+          response.once("close", () => {
+            if (disconnected) resolve(firstChunk);
+          });
+        },
+      );
+      client.once("close", () => {
+        if (disconnected) resolve(firstChunk);
+      });
+      client.once("error", (error) => {
+        if (!disconnected) reject(error);
+      });
+      client.end(payload);
+    });
+
+  const awaitWithTimeout = async <T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    label: string,
+  ): Promise<T> => {
+    const handle: { id?: ReturnType<typeof setTimeout> } = {};
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_resolve, reject) => {
+          handle.id = setTimeout(() => {
+            reject(new Error(`Timed out after ${String(timeoutMs)}ms waiting for ${label}`));
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (handle.id !== undefined) clearTimeout(handle.id);
+    }
+  };
+
+  test.each([
+    { mode: "static" as const, jitEnabled: true },
+    { mode: "static" as const, jitEnabled: false },
+    { mode: "dynamic" as const, jitEnabled: true },
+    { mode: "dynamic" as const, jitEnabled: false },
+  ])(
+    "closes cleanly after streaming client disconnect without releasing singleton early ($mode, jit=$jitEnabled)",
+    async ({ mode, jitEnabled }) => {
+      await withJitMode(jitEnabled, async () => {
+        const events: string[] = [];
+        let poolReleases = 0;
+        const openStream = new PassThrough();
+        const holdStarted = Promise.withResolvers<void>();
+        const releaseHold = Promise.withResolvers<void>();
+        const streamReplyClosed = Promise.withResolvers<void>();
+
+        const Tenant = ResultTask.service<string, "tenant">("tenant");
+        const Pool = resource("pool", {
+          acquire: ResultTask.sync(() => {
+            events.push("acquire-pool");
+            return { ready: true };
+          }),
+          release: () =>
+            ResultTask.sync(() => {
+              poolReleases += 1;
+              events.push("release-pool");
+            }),
+        });
+
+        const services = createModule()
+          .singleton(Pool)
+          .value("tag", "fast")
+          .scoped(service("greeting", { tenant: Tenant }, ({ tenant }) => `hi:${tenant}`));
+
+        const expectedVal = mode === "static" ? "fast" : "hi:alpha";
+
+        @Controller()
+        class StreamController {
+          @Post("/stream")
+          @HttpCode(200)
+          stream(
+            @Services() reqServices: { readonly tag?: string; readonly greeting?: string },
+            @Res()
+            res: {
+              status: (code: number) => void;
+              raw: NodeJS.WritableStream & { once: (event: string, listener: () => void) => void };
+            },
+          ) {
+            expect(reqServices.tag ?? reqServices.greeting).toBe(expectedVal);
+            res.status(200);
+            res.raw.once("close", () => {
+              events.push("stream-closed");
+              streamReplyClosed.resolve();
+            });
+            openStream.write("chunk-1\n");
+            openStream.pipe(res.raw);
+          }
+
+          @Get("/ping")
+          ping(@Services() reqServices: { readonly tag?: string; readonly greeting?: string }) {
+            return { ok: true, value: reqServices.tag ?? reqServices.greeting };
+          }
+
+          @Get("/hold")
+          async hold(
+            @Services() reqServices: { readonly tag?: string; readonly greeting?: string },
+          ) {
+            const value = reqServices.tag ?? reqServices.greeting;
+            events.push("hold-start");
+            holdStarted.resolve();
+            await releaseHold.promise;
+            events.push("hold-end");
+            return { ok: true, value };
+          }
+        }
+
+        const app =
+          mode === "static"
+            ? createNestApp({
+                services,
+                appBindings: ["pool"],
+                bindings: ["tag"],
+                controllers: [StreamController],
+              })
+            : createNestApp({
+                services,
+                appBindings: ["pool"],
+                bindings: ["greeting"],
+                locals: (request: NestRequest) => ({
+                  tenant: request.headers["x-tenant"] === "beta" ? "beta" : "alpha",
+                }),
+                controllers: [StreamController],
+              });
+
+        await app.listen({ port: 0, host: "127.0.0.1" });
+        const address = app.server.address() as AddressInfo;
+        const url = `http://127.0.0.1:${String(address.port)}`;
+
+        try {
+          const holdFetch = fetch(`${url}/hold`, { headers: { connection: "close" } });
+          await holdStarted.promise;
+
+          const pingResponse = await fetch(`${url}/ping`, { headers: { connection: "close" } });
+          const pingBody = (await pingResponse.json()) as {
+            readonly ok: boolean;
+            readonly value: string;
+          };
+          expect(pingBody).toEqual({ ok: true, value: expectedVal });
+          expect(poolReleases).toBe(0);
+
+          const chunk = await disconnectAfterFirstChunk(
+            `${url}/stream`,
+            JSON.stringify({ uploaded: true }),
+          );
+          expect(chunk).toBe("chunk-1\n");
+          await awaitWithTimeout(streamReplyClosed.promise, 2000, "server reply.raw close");
+          expect(poolReleases).toBe(0);
+
+          const closing = app.close();
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 30);
+          });
+          expect(poolReleases).toBe(0);
+
+          releaseHold.resolve();
+          const holdResponse = await holdFetch;
+          const holdBody = (await holdResponse.json()) as {
+            readonly ok: boolean;
+            readonly value: string;
+          };
+          expect(holdBody).toEqual({ ok: true, value: expectedVal });
+
+          await awaitWithTimeout(closing, 2000, "NestJS app.close() after streaming disconnect");
+          expect(poolReleases).toBe(1);
+          expect(events).toEqual([
+            "acquire-pool",
+            "hold-start",
+            "stream-closed",
+            "hold-end",
+            "release-pool",
+          ]);
+        } finally {
+          openStream.destroy();
+        }
+      });
+    },
+  );
 });

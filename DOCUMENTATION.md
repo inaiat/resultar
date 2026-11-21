@@ -3813,7 +3813,7 @@ Resultar ships three lean, interruption-safe concurrency primitives built direct
 
 - **`Ref.make(initial)`**: synchronous-atomic mutable state exposed as lazy `ResultTask` operations (`get`, `set`, `update`, `updateAndGet`, `getAndUpdate`, `getAndSet`, `modify`).
 - **`Deferred.make<A, E>()`**: one-shot asynchronous synchronization (`await`, `succeed`, `fail`, `die`, `done`, `complete`, `poll`, `isDone`). First settlement wins; interrupted waiters unregister cleanly without leaking listeners.
-- **`Queue.bounded<A>(capacity)` / `Queue.unbounded<A>()`**: FIFO backpressure queue (`offer`, `offerAll`, `take`, `poll`, `takeAll`, `takeUpTo`, `shutdown`, `size`, `isShutdown`). `offer` suspends when a bounded queue is full and resumes in FIFO order when consumers drain items; `shutdown` drains buffered items before interrupting waiting takers so buffered work is never silently lost.
+- **`Queue.bounded<A>(capacity)` / `Queue.unbounded<A>()`**: FIFO backpressure queue (`offer`, `offerAll`, `take`, `poll`, `takeAll`, `takeUpTo`, `shutdown`, `size`, `isShutdown`). `offer` suspends when a bounded queue is full and resumes in FIFO order when consumers drain items; `shutdown` interrupts producers already blocked on `offer`, rejects subsequent `offer` calls with `false`, and drains buffered items before interrupting waiting takers so buffered work is never silently lost.
 
 ## Opt-in Observability (`TaskLocal`, `Tracer`, `withSpan`, named `ResultTask.fn`)
 

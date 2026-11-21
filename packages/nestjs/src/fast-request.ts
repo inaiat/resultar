@@ -28,7 +28,7 @@ export interface SyncPlanBridge {
 
 interface FastifyLikeInstance {
   readonly addHook?: (name: string, handler: (...args: readonly unknown[]) => void) => unknown;
-  readonly decorateRequest?: (name: PropertyKey, value: unknown) => unknown;
+  readonly decorateRequest?: (name: PropertyKey, value?: unknown) => unknown;
   readonly hasRequestDecorator?: (name: PropertyKey) => boolean;
 }
 
@@ -199,11 +199,9 @@ const matchesLocalKeys = (
   return count === expected.length;
 };
 
-const installFastifyDrainHooks = (
-  fastifyInstance: unknown,
-  fastActiveKey: symbol,
-  bridge: SyncPlanBridge,
-): boolean => {
+type FastRequestFinalizer = () => void;
+
+const installFastifyDrainHooks = (fastifyInstance: unknown, fastActiveKey: symbol): boolean => {
   if (typeof fastifyInstance !== "object" || fastifyInstance === null) return false;
   const candidate = fastifyInstance as FastifyLikeInstance;
   if (typeof candidate.addHook !== "function") return false;
@@ -211,13 +209,13 @@ const installFastifyDrainHooks = (
     typeof candidate.decorateRequest === "function" &&
     candidate.hasRequestDecorator?.(fastActiveKey) !== true
   ) {
-    candidate.decorateRequest(fastActiveKey, false);
+    candidate.decorateRequest(fastActiveKey);
   }
   const finish = (request: unknown): void => {
-    const record = request as Record<symbol, boolean | undefined>;
-    if (record[fastActiveKey] === true) {
-      record[fastActiveKey] = false;
-      bridge.endChild();
+    const record = request as Record<symbol, FastRequestFinalizer | undefined>;
+    const finalize = record[fastActiveKey];
+    if (finalize !== undefined) {
+      finalize();
     }
   };
   candidate.addHook("onResponse", (request, _reply, done) => {
@@ -242,6 +240,9 @@ const attachFallbackDrain = (rawResponse: ServerResponse, bridge: SyncPlanBridge
   };
   rawResponse.once("finish", onDone);
   rawResponse.once("close", onDone);
+  if (rawResponse.closed) {
+    onDone();
+  }
 };
 
 interface ResolvedPlanContext {
@@ -256,11 +257,22 @@ const createFastTracker = (
   fastifyInstance: unknown,
 ): ((request: NestRequest, rawResponse: ServerResponse) => void) => {
   const fastActiveKey = Symbol("resultar.nestjs.active");
-  const usesFastifyHooks = installFastifyDrainHooks(fastifyInstance, fastActiveKey, bridge);
+  const usesFastifyHooks = installFastifyDrainHooks(fastifyInstance, fastActiveKey);
   return (request: NestRequest, rawResponse: ServerResponse): void => {
     bridge.beginChild();
     if (usesFastifyHooks) {
-      (request as unknown as Record<symbol, boolean>)[fastActiveKey] = true;
+      const record = request as unknown as Record<symbol, FastRequestFinalizer | undefined>;
+      const finalize: FastRequestFinalizer = () => {
+        if (record[fastActiveKey] !== finalize) return;
+        record[fastActiveKey] = undefined;
+        rawResponse.removeListener("close", finalize);
+        bridge.endChild();
+      };
+      record[fastActiveKey] = finalize;
+      rawResponse.once("close", finalize);
+      if (rawResponse.closed) {
+        finalize();
+      }
     } else {
       attachFallbackDrain(rawResponse, bridge);
     }

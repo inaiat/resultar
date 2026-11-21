@@ -508,6 +508,69 @@ describe('Workstream C: Match JIT compilation, security, and parity', () => {
       scOrder: ['first', 'alt'],
     })
   })
+
+  it('matches numeric NaN discriminators identically across RESULTAR_JIT=0 and 1 for <=4 and >4 tags', () => {
+    const entryUrl = pathToFileURL(fileURLToPath(new URL('../src/index.ts', import.meta.url))).href
+    const script = `
+      import { Match } from ${JSON.stringify(entryUrl)};
+
+      const small = Match.type().pipe(
+        Match.discriminator('code')(1, Number.NaN, (v) => 'small-hit:' + String(v.code)),
+        Match.orElse(() => 'small-fallback'),
+      );
+
+      const large = Match.type().pipe(
+        Match.discriminator('code')(1, 2, 3, 4, Number.NaN, 6, (v) => 'large-hit:' + String(v.code)),
+        Match.orElse(() => 'large-fallback'),
+      );
+
+      const smallSingleNan = Match.type().pipe(
+        Match.discriminator('code')(Number.NaN, () => 'single-nan'),
+        Match.orElse(() => 'single-fallback'),
+      );
+
+      console.log(JSON.stringify({
+        smallNan: small({ code: Number.NaN }),
+        smallOne: small({ code: 1 }),
+        smallMiss: small({ code: 2 }),
+        largeNan: large({ code: Number.NaN }),
+        largeFour: large({ code: 4 }),
+        largeSix: large({ code: 6 }),
+        largeMiss: large({ code: 99 }),
+        singleNan: smallSingleNan({ code: Number.NaN }),
+        singleMiss: smallSingleNan({ code: 0 }),
+      }));
+    `
+
+    const runInChild = (jitFlag: '0' | '1') => {
+      const env: NodeJS.ProcessEnv = Object.fromEntries([
+        ...Object.entries(process.env),
+        ['RESULTAR_JIT', jitFlag],
+      ])
+      const stdout = execFileSync(
+        process.execPath,
+        ['--import', 'vite-plus/register', '--input-type=module', '-e', script],
+        { env, encoding: 'utf8' },
+      )
+      return JSON.parse(stdout.trim()) as Record<string, string>
+    }
+
+    const fallback = runInChild('0')
+    const jit = runInChild('1')
+
+    expect(jit).toEqual(fallback)
+    expect(jit).toEqual({
+      smallNan: 'small-hit:NaN',
+      smallOne: 'small-hit:1',
+      smallMiss: 'small-fallback',
+      largeNan: 'large-hit:NaN',
+      largeFour: 'large-hit:4',
+      largeSix: 'large-hit:6',
+      largeMiss: 'large-fallback',
+      singleNan: 'single-nan',
+      singleMiss: 'single-fallback',
+    })
+  })
 })
 
 describe('Workstream E: ResultTask tiered JIT parity, bailout, abort, and safety', () => {
@@ -537,6 +600,7 @@ describe('Workstream E: ResultTask tiered JIT parity, bailout, abort, and safety
         .map((n) => n * 2)
         .andThen((n) => ResultTask.tryPromise({ try: async () => n + 10, catch: String }))
         .map((n) => n * 3)
+        .map((n) => n + 1)
 
       const errMapChain = ResultTask.err({ _tag: 'Initial' as const, code: 1 })
         .mapErr((e) => ({ _tag: 'Mapped' as const, code: e.code + 10 }))
@@ -584,9 +648,9 @@ describe('Workstream E: ResultTask tiered JIT parity, bailout, abort, and safety
       { _tag: 'Success', value: 501 },
     ])
     expect(jit.asyncRuns).toEqual([
-      { _tag: 'Success', value: 48 },
-      { _tag: 'Success', value: 48 },
-      { _tag: 'Success', value: 48 },
+      { _tag: 'Success', value: 49 },
+      { _tag: 'Success', value: 49 },
+      { _tag: 'Success', value: 49 },
     ])
     expect(jit.errMapRuns).toEqual([
       { _tag: 'Success', value: 23 },
@@ -667,5 +731,116 @@ describe('Workstream E: ResultTask tiered JIT parity, bailout, abort, and safety
     expect(jit.longHotExit).toEqual({ _tag: 'Success', value: 260 })
     expect(jit.beforeOverride).toEqual({ _tag: 'Success', value: 20 })
     expect(jit.afterOverride).toEqual({ _tag: 'Success', value: 777 })
+  })
+
+  it('preserves this receiver in ResultTask.try across cold and JIT-compiled success and failure paths', async () => {
+    const runReceiverSuite = (jitEnabled: boolean) =>
+      withJitModeAsync(jitEnabled, async () => {
+        const successOptions = {
+          value: 40,
+          try() {
+            return this.value + 4
+          },
+          catch() {
+            return `err:${String(this.value)}`
+          },
+        }
+        const successTask = ResultTask.try(successOptions).map((n) => n)
+
+        const failureOptions = {
+          value: 40,
+          prefix: 'caught',
+          try(): number {
+            throw new Error(`boom:${String(this.value)}`)
+          },
+          catch(error: unknown) {
+            return `${this.prefix}:${String(this.value)}:${error instanceof Error ? error.message : String(error)}`
+          },
+        }
+        const failureTask = ResultTask.try(failureOptions).map((n) => n + 1)
+
+        const successRuns = []
+        const failureRuns = []
+        // Repeat the same task instance 5 times to cross warmup and execute the compiled chain.
+        for (let index = 0; index < 5; index += 1) {
+          // eslint-disable-next-line no-await-in-loop
+          successRuns.push(await ResultTask.runExit(successTask))
+          // eslint-disable-next-line no-await-in-loop
+          failureRuns.push(await ResultTask.runExit(failureTask))
+        }
+        return { successRuns, failureRuns }
+      })
+
+    const fallback = await runReceiverSuite(false)
+    const jit = await runReceiverSuite(true)
+
+    expect(jit).toEqual(fallback)
+    expect(jit.successRuns).toEqual([
+      { _tag: 'Success', value: 44 },
+      { _tag: 'Success', value: 44 },
+      { _tag: 'Success', value: 44 },
+      { _tag: 'Success', value: 44 },
+      { _tag: 'Success', value: 44 },
+    ])
+    expect(jit.failureRuns).toEqual([
+      { _tag: 'Failure', cause: { _tag: 'Fail', error: 'caught:40:boom:40' } },
+      { _tag: 'Failure', cause: { _tag: 'Fail', error: 'caught:40:boom:40' } },
+      { _tag: 'Failure', cause: { _tag: 'Fail', error: 'caught:40:boom:40' } },
+      { _tag: 'Failure', cause: { _tag: 'Fail', error: 'caught:40:boom:40' } },
+      { _tag: 'Failure', cause: { _tag: 'Fail', error: 'caught:40:boom:40' } },
+    ])
+  })
+
+  it('preserves explicit null abort reason identically in runExit and runSyncExit across JIT modes', async () => {
+    // eslint-disable-next-line unicorn/no-null -- Explicit null abort reason is the regression under test.
+    const explicitNull: unknown = null
+
+    for (const jitEnabled of [false, true]) {
+      // eslint-disable-next-line no-await-in-loop
+      await withJitModeAsync(jitEnabled, async () => {
+        let activeController = new AbortController()
+        let shouldAbort = false
+        const task = ResultTask.sync(() => {
+          if (shouldAbort) {
+            activeController.abort(explicitNull)
+          }
+          return 1
+        })
+          .map((n) => n + 1)
+          .map((n) => n * 2)
+
+        // Warm up so JIT compiles the chain when RESULTAR_JIT=1.
+        for (let index = 0; index < 3; index += 1) {
+          expect(ResultTask.runSyncExit(task)).toEqual({ _tag: 'Success', value: 4 })
+        }
+
+        shouldAbort = true
+
+        // 1. Mid-execution abort(null) in runExit vs runSyncExit
+        activeController = new AbortController()
+        const asyncExit = await ResultTask.runExit(task, { signal: activeController.signal })
+
+        activeController = new AbortController()
+        const syncExit = ResultTask.runSyncExit(task, { signal: activeController.signal })
+
+        expect(asyncExit).toEqual({
+          _tag: 'Failure',
+          cause: { _tag: 'Interrupt', reason: explicitNull },
+        })
+        expect(syncExit).toEqual(asyncExit)
+        if (syncExit._tag === 'Failure' && syncExit.cause._tag === 'Interrupt') {
+          expect(Object.is(syncExit.cause.reason, explicitNull)).toBe(true)
+        }
+
+        // 2. Pre-aborted abort(null)
+        const preAborted = new AbortController()
+        preAborted.abort(explicitNull)
+        const preSyncExit = ResultTask.runSyncExit(task, { signal: preAborted.signal })
+        expect(preSyncExit).toEqual({
+          _tag: 'Failure',
+          cause: { _tag: 'Interrupt', reason: explicitNull },
+        })
+      })
+    }
   })
 })

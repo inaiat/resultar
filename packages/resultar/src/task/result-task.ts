@@ -558,15 +558,15 @@ const acquireContinuationStack = (): ResultTask<unknown, unknown, unknown>[] => 
   return []
 }
 
+/* Stryker disable all: single-element stack pool is an allocation optimization. */
 const releaseContinuationStack = (stack: ResultTask<unknown, unknown, unknown>[]): void => {
-  /* Stryker disable all: single-element stack pool is an allocation optimization. */
   const previousLength = stack.length
   stack.length = 0
   if (previousLength <= 256) {
     idleContinuationStack = stack
   }
-  /* Stryker restore all */
 }
+/* Stryker restore all */
 
 // eslint-disable-next-line init-declarations
 let taskJitHelpers: TaskJitHelpers | undefined = undefined
@@ -574,16 +574,8 @@ let taskJitHelpers: TaskJitHelpers | undefined = undefined
 const buildSuffixContinuations = (
   steps: readonly TaskNodeLike[],
   fromIndex: number,
-): ResultTask<unknown, unknown, unknown>[] => {
-  const stack: ResultTask<unknown, unknown, unknown>[] = []
-  for (let index = steps.length - 1; index >= fromIndex; index -= 1) {
-    const step = steps[index]
-    if (step !== undefined) {
-      stack.push(step as unknown as ResultTask<unknown, unknown, unknown>)
-    }
-  }
-  return stack
-}
+): ResultTask<unknown, unknown, unknown>[] =>
+  steps.slice(fromIndex).toReversed() as unknown as ResultTask<unknown, unknown, unknown>[]
 
 const executeSync = (
   tryFn: (() => unknown) | undefined,
@@ -706,8 +698,10 @@ export class ResultTask<out A, out E = never, out R = never> {
       this.value = opOrExecute
       this.continuation = undefined
     } else if (
+      /* Stryker disable ConditionalExpression,LogicalOperator: opOrExecute in this branch is always a non-null Promise or internal Custom descriptor. */
       typeof opOrExecute === 'object' &&
       opOrExecute !== null &&
+      /* Stryker restore ConditionalExpression,LogicalOperator */
       (opOrExecute as { readonly _tag?: unknown })._tag === 'Custom'
     ) {
       this.op = OP_CUSTOM
@@ -997,20 +991,16 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
   /* Stryker restore all */
 
-  static #applySuccessContinuation(
+  static #applyTapSuccessContinuation(
     continuation: ResultTask<unknown, unknown, unknown>,
-    exit: Exit<unknown, unknown> & { readonly _tag: 'Success' },
+    value: unknown,
   ): ContinuationStep {
-    const op = continuation.op
-    if (op === OP_TAP || op === OP_TAP_BOTH) {
-      const callback =
-        op === OP_TAP
-          ? (continuation.continuation as (value: unknown) => unknown)
-          : (continuation.continuation as TapBothContinuation).onOk
-      const res = callback(exit.value)
-      return ResultTask.#toTapContinuationStep(res, exit)
-    }
-    return { current: undefined, currentExit: exit }
+    const callback =
+      continuation.op === OP_TAP
+        ? (continuation.continuation as (value: unknown) => unknown)
+        : (continuation.continuation as TapBothContinuation).onOk
+    const res = callback(value)
+    return ResultTask.#toTapContinuationStep(res, success(value))
   }
 
   static #applyCatchFailureContinuation(
@@ -1230,6 +1220,7 @@ export class ResultTask<out A, out E = never, out R = never> {
             context,
           )
           if (schedulerExit !== undefined) {
+            // Stryker disable next-line CallExpression: returns stack to allocation pool.
             releaseContinuationStack(continuations)
             return schedulerExit
           }
@@ -1270,8 +1261,6 @@ export class ResultTask<out A, out E = never, out R = never> {
                 } else {
                   /* Stryker restore all */
                   current = next
-                  hasSuccess = false
-                  currentExit = undefined
                 }
               } else if (next.isOk()) {
                 successValue = next.value
@@ -1284,19 +1273,8 @@ export class ResultTask<out A, out E = never, out R = never> {
                 successValue,
               )
             } else if (contOp === OP_TAP || contOp === OP_TAP_BOTH) {
-              const step = ResultTask.#applySuccessContinuation(
-                nextContinuation,
-                success(successValue) as Exit<unknown, unknown> & { readonly _tag: 'Success' },
-              )
+              const step = ResultTask.#applyTapSuccessContinuation(nextContinuation, successValue)
               current = step.current
-              if (step.currentExit !== undefined && step.currentExit._tag === 'Success') {
-                hasSuccess = true
-                successValue = step.currentExit.value
-                currentExit = undefined
-              } else {
-                hasSuccess = false
-                currentExit = step.currentExit
-              }
             }
           } catch (error) {
             hasSuccess = false
@@ -1319,6 +1297,7 @@ export class ResultTask<out A, out E = never, out R = never> {
         }
       } else {
         if (trackSignal && context.signal.aborted) {
+          // Stryker disable next-line CallExpression: returns stack to allocation pool.
           releaseContinuationStack(continuations)
           return interrupted(context.signal)
         }
@@ -1402,6 +1381,7 @@ export class ResultTask<out A, out E = never, out R = never> {
     }
     /* eslint-enable typescript/switch-exhaustiveness-check */
 
+    // Stryker disable next-line CallExpression: returns stack to allocation pool.
     releaseContinuationStack(continuations)
     return hasSuccess ? success(successValue) : (currentExit as unknown as Exit<unknown, unknown>)
   }
@@ -3491,6 +3471,9 @@ export class ResultTask<out A, out E = never, out R = never> {
     context: ResultTaskRuntimeContext,
     firstSuccess: boolean,
   ): Promise<Exit<unknown, unknown>> {
+    if (tasks.length === 0) {
+      return died(new RangeError('ResultTask.race requires at least one task'))
+    }
     // Stryker disable next-line BooleanLiteral: skipping handle allocation is an internal optimization for race fibers.
     const children = tasks.map((task) => ResultTask.#startFiber(task, context, false))
     for (const child of children) child.observe()
@@ -3645,9 +3628,7 @@ export class ResultTask<out A, out E = never, out R = never> {
   public static raceAll(
     tasks: Iterable<ResultTask<unknown, unknown, unknown>>,
   ): ResultTask<unknown, unknown, unknown> {
-    const list = Array.isArray(tasks)
-      ? (tasks as readonly ResultTask<unknown, unknown, unknown>[])
-      : [...tasks]
+    const list = [...tasks]
     if (list.length === 0) {
       throw new RangeError('ResultTask.raceAll requires at least one task')
     }
@@ -3686,9 +3667,7 @@ export class ResultTask<out A, out E = never, out R = never> {
   public static raceFirstAll(
     tasks: Iterable<ResultTask<unknown, unknown, unknown>>,
   ): ResultTask<unknown, unknown, unknown> {
-    const list = Array.isArray(tasks)
-      ? (tasks as readonly ResultTask<unknown, unknown, unknown>[])
-      : [...tasks]
+    const list = [...tasks]
     if (list.length === 0) {
       throw new RangeError('ResultTask.raceFirstAll requires at least one task')
     }
@@ -4180,10 +4159,19 @@ export class ResultTask<out A, out E = never, out R = never> {
       }
       /* Stryker restore all */
       const resetDirtyScope = (): void => {
-        // Stryker disable next-line ConditionalExpression: reusing an untouched scope when isClean() is true is an allocation optimization; always recreating it is functionally equivalent.
-        if (childContext !== undefined && !childContext.scope.isClean()) {
+        if (childContext === undefined) return
+        // Stryker disable next-line ConditionalExpression: reusing an untouched scope when isClean() is true is an allocation optimization; preserving scheduling.remaining keeps cooperative yield budgets intact.
+        if (!childContext.scope.isClean()) {
+          remaining = childContext.scheduling.remaining
           childContext = undefined
-          remaining = context.scheduling.yieldEvery
+        } else if (
+          // Stryker disable next-line ConditionalExpression,OptionalChaining: skipping reset when no locals map exists is an allocation optimization; withChildScope always initializes locals.
+          childContext.locals?.map !== undefined
+        ) {
+          /* Stryker disable ConditionalExpression,OptionalChaining: avoids allocating an empty Map when parent has no TaskLocals; new Map(undefined) behaves identically on reads. */
+          childContext.locals.map =
+            context.locals?.map === undefined ? undefined : new Map(context.locals.map)
+          /* Stryker restore ConditionalExpression,OptionalChaining */
         }
       }
       while (next < input.length && !isCancelled()) {
@@ -6618,26 +6606,37 @@ export class ResultTask<out A, out E = never, out R = never> {
     task: ResultTask<A, E, R>,
     options?: ResultTaskRunOptions<R>,
   ): Exit<A, E | ScopeError<R>> {
+    const fiberSignal = new FiberSignal(options?.signal ?? NEVER_ABORTED_SIGNAL)
+    const syncSignal = fiberSignal.asAbortSignal()
     const syncOptions = (options === undefined
-      ? { yieldEvery: Infinity }
+      ? { signal: syncSignal, yieldEvery: Infinity }
       : {
-          signal: options.signal,
+          signal: syncSignal,
           clock: options.clock,
           scheduler: options.scheduler,
           tracer: options.tracer,
           yieldEvery: options.yieldEvery ?? Infinity,
           services: 'services' in options ? options.services : undefined,
         }) as unknown as ResultTaskRunOptions<R>
-    const outcome = ResultTask.runExitSyncOrAsync(task, syncOptions)
+    const runSyncAttempt = (): Exit<A, E | ScopeError<R>> | Promise<Exit<A, E | ScopeError<R>>> => {
+      try {
+        return ResultTask.runExitSyncOrAsync(task, syncOptions)
+      } catch (error) {
+        fiberSignal.dispose()
+        throw error
+      }
+    }
+    const outcome = runSyncAttempt()
     if (isPromiseExit(outcome)) {
-      void outcome.then(
-        () => undefined,
-        () => undefined,
-      )
+      fiberSignal.abort('ResultTask.runSync encountered an asynchronous step')
+      void outcome.then(() => {
+        fiberSignal.dispose()
+      })
       throw new Error(
         'ResultTask.runSync cannot execute an asynchronous task; use runResult(), runPromise(), or runExit() instead',
       )
     }
+    fiberSignal.dispose()
     return outcome
   }
 

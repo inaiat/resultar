@@ -1,4 +1,6 @@
 /* eslint-disable unicorn/no-await-expression-member, no-await-in-loop -- Sequential isolation checks inspect execution results. */
+import { execFileSync } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, expectTypeOf, test } from "vite-plus/test";
 import { Type } from "typebox";
 import { ResultTask } from "resultar";
@@ -316,4 +318,55 @@ test("cached Ajv validator isolates errors and env snapshots across repeated loa
   port = "0";
   const invalidSecond = await config.load().runResult();
   expect(invalidSecond.isErr()).toBe(true);
+});
+
+test("imports and lazy definitions succeed under --disallow-code-generation-from-strings while Ajv resolution dies with EvalError", () => {
+  const entryUrl = pathToFileURL(fileURLToPath(new URL("../src/index.ts", import.meta.url))).href;
+  const script = `
+    import { ResultTask } from "resultar";
+    import { createModule } from "resultar-di";
+    import { defineAppConfig, t } from ${JSON.stringify(entryUrl)};
+
+    const config = defineAppConfig({
+      properties: { PORT: t.Integer({ default: 3000 }) },
+      source: { PORT: "8080" },
+    });
+    const app = createModule().merge(config).value("health", "ok");
+    const unrelated = await app.use(["health"], ({ health }) => ResultTask.ok(health)).runPromise();
+    const loadExit = await config.load().runExit();
+
+    console.log(JSON.stringify({
+      unrelated,
+      exitTag: loadExit._tag,
+      causeTag: loadExit._tag === "Failure" ? loadExit.cause._tag : undefined,
+      isEvalError:
+        loadExit._tag === "Failure" &&
+        loadExit.cause._tag === "Die" &&
+        loadExit.cause.defect instanceof EvalError,
+    }));
+  `;
+
+  for (const jitFlag of ["0", "1"] as const) {
+    const raw = execFileSync(
+      process.execPath,
+      ["--disallow-code-generation-from-strings", "--input-type=module", "-e", script],
+      {
+        env: { ...process.env, RESULTAR_JIT: jitFlag },
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const parsed = JSON.parse(raw.trim()) as {
+      unrelated: string;
+      exitTag: string;
+      causeTag: string;
+      isEvalError: boolean;
+    };
+    expect(parsed).toEqual({
+      unrelated: "ok",
+      exitTag: "Failure",
+      causeTag: "Die",
+      isEvalError: true,
+    });
+  }
 });

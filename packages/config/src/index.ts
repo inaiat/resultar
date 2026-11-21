@@ -1,5 +1,4 @@
-import envSchema from "env-schema";
-import { Ajv, type ErrorObject } from "ajv";
+import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { createTaggedError, ResultTask, type TaggedErrorClass } from "resultar";
 import { createModule, type ServiceModule } from "resultar-di";
@@ -67,9 +66,8 @@ const configError = (errors: readonly ErrorObject[]): ConfigError =>
   });
 
 interface CompiledConfigValidators<P extends TProperties> {
-  readonly schema: TObject<P>;
-  readonly normalize: (data: unknown) => boolean;
-  readonly ajv: Ajv;
+  readonly normalize: ValidateFunction;
+  readonly validate: ValidateFunction<Static<TObject<P>>>;
 }
 
 /** Defines a lazy singleton configuration provider; explicit sources completely replace process.env. */
@@ -93,40 +91,22 @@ export function defineAppConfig<P extends TProperties>(options: {
             strictNumbers: true,
             allowUnionTypes: true,
           });
-          // Schema compilation failures are defects, not invalid environment input.
-          const normalize = coercing.compile(schema) as (data: unknown) => boolean;
+          // Schema compilation failures (including EvalError under --disallow-code-generation-from-strings)
+          // are runtime defects, not invalid environment input.
+          const normalize = coercing.compile(schema);
           // Revalidate the normalized copy even when coercion reports other errors:
           // this aggregates overflow and unrelated invalid fields in one failure.
           const ajv = new Ajv({ allErrors: true, strictNumbers: true, allowUnionTypes: true });
-          ajv.compile(schema);
-          compiled = { schema, normalize, ajv };
+          const validate = ajv.compile<Static<TObject<P>>>(schema);
+          compiled = { normalize, validate };
         }
-        const { schema, normalize, ajv } = compiled;
-        ajv.errors = undefined;
-        const data = { ...(options.source ?? process.env) };
+        const { normalize, validate } = compiled;
+        const data: Record<string, unknown> = { ...(options.source ?? process.env) };
         normalize(data);
-        try {
-          const value = envSchema<Static<TObject<P>>>({
-            schema,
-            data,
-            env: false,
-            dotenv: false,
-            expandEnv: false,
-            ajv,
-          });
-          return ResultTask.ok(value);
-        } catch (error) {
-          if (
-            error instanceof Error &&
-            "errors" in error &&
-            ajv.errors !== null &&
-            ajv.errors !== undefined &&
-            error.errors === ajv.errors
-          ) {
-            return ResultTask.err(configError(ajv.errors));
-          }
-          throw error;
+        if (!validate(data)) {
+          return ResultTask.err(configError(validate.errors ?? []));
         }
+        return ResultTask.ok(data);
       }).andThen((task) => task),
     { lifetime: "singleton" },
   );

@@ -221,15 +221,13 @@ const runTier2WithLocals = (
     .unwrapOrThrow();
 };
 
-const finishFastRequest = (
-  request: FastifyRequest,
-  fastActiveKey: symbol,
-  bridge: SyncPlanBridge,
-): void => {
-  const flagged = request as unknown as Record<symbol, boolean | undefined>;
-  if (flagged[fastActiveKey] === true) {
-    flagged[fastActiveKey] = false;
-    bridge.endChild();
+type FastRequestFinalizer = () => void;
+
+const finishFastRequest = (request: FastifyRequest, fastActiveKey: symbol): void => {
+  const flagged = request as unknown as Record<symbol, FastRequestFinalizer | undefined>;
+  const finalize = flagged[fastActiveKey];
+  if (finalize !== undefined) {
+    finalize();
   }
 };
 
@@ -258,7 +256,7 @@ const executeFastPlan = (
   invocation: HookInvocation,
 ): void => {
   const { plan, bridge, fastActiveKey, mapError } = ctx;
-  const { request, done } = invocation;
+  const { request, reply, done } = invocation;
   if (bridge.isClosed()) {
     done(mapError(createClosedScopeError()) as Error);
     return;
@@ -271,7 +269,19 @@ const executeFastPlan = (
     return;
   }
   bridge.beginChild();
-  (request as unknown as Record<symbol, boolean>)[fastActiveKey] = true;
+  const flagged = request as unknown as Record<symbol, FastRequestFinalizer | undefined>;
+  const rawReply = reply.raw;
+  const finalize: FastRequestFinalizer = () => {
+    if (flagged[fastActiveKey] !== finalize) return;
+    flagged[fastActiveKey] = undefined;
+    rawReply.removeListener("close", finalize);
+    bridge.endChild();
+  };
+  flagged[fastActiveKey] = finalize;
+  rawReply.once("close", finalize);
+  if (rawReply.closed) {
+    finalize();
+  }
   (request as unknown as { services: unknown }).services = services;
   done();
 };
@@ -283,7 +293,7 @@ const registerStaticFastHooks = (
 ): void => {
   const { bridge, staticPlan } = fast;
   const fastActiveKey = Symbol("resultar.fastify.active");
-  app.decorateRequest(fastActiveKey, false);
+  app.decorateRequest(fastActiveKey);
   const execCtx: FastExecutionContext = {
     plan: staticPlan,
     bridge,
@@ -301,12 +311,12 @@ const registerStaticFastHooks = (
   });
 
   app.addHook("onResponse", (request, _reply, done) => {
-    finishFastRequest(request, fastActiveKey, bridge);
+    finishFastRequest(request, fastActiveKey);
     done();
   });
 
   app.addHook("onRequestAbort", (request, done) => {
-    finishFastRequest(request, fastActiveKey, bridge);
+    finishFastRequest(request, fastActiveKey);
     done();
   });
 };
@@ -323,7 +333,7 @@ const registerDynamicFastHooks = (
   const fastActiveKey = Symbol("resultar.fastify.active");
   const requests = new WeakMap<FastifyRequest, RequestState>();
   const tier2Ctx: Tier2RequestContext = { config, requests };
-  app.decorateRequest(fastActiveKey, false);
+  app.decorateRequest(fastActiveKey);
 
   const localCache: { keys?: readonly string[]; plan?: CompiledSyncPlan } = {};
 
@@ -378,7 +388,7 @@ const registerDynamicFastHooks = (
   });
 
   app.addHook("onResponse", (request, _reply, done) => {
-    finishFastRequest(request, fastActiveKey, bridge);
+    finishFastRequest(request, fastActiveKey);
     const state = requests.get(request);
     if (state === undefined) {
       done();
@@ -394,7 +404,7 @@ const registerDynamicFastHooks = (
   });
 
   app.addHook("onRequestAbort", (request, done) => {
-    finishFastRequest(request, fastActiveKey, bridge);
+    finishFastRequest(request, fastActiveKey);
     done();
   });
 };

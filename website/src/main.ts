@@ -527,13 +527,17 @@ const renderSearchModal = (): string => {
 };
 
 const executePlayground = async (): Promise<void> => {
+  const editor = document.querySelector("#pg-editor");
+  const code = editor instanceof HTMLTextAreaElement ? editor.value : state.playgroundCode;
+  state.playgroundCode = code;
   const seq = state.playgroundRunSeq + 1;
   state.playgroundRunSeq = seq;
   state.playgroundRunning = true;
   state.playgroundLoadedFromShare = false;
   render();
   const { runPlaygroundCode } = await import("./playground-runner.js");
-  const result = await runPlaygroundCode(state.playgroundCode);
+  if (state.playgroundRunSeq !== seq) return;
+  const result = await runPlaygroundCode(code);
   if (state.playgroundRunSeq !== seq) return;
   state.playgroundResult = result;
   state.playgroundRunning = false;

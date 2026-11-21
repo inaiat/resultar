@@ -312,4 +312,190 @@ describe('Ref, Deferred, and Queue concurrency primitives', () => {
     deepEqual(emptyQueue.size().runSync(), ok(0))
     deepEqual(emptyQueue.isShutdown().runSync(), ok(false))
   })
+
+  it('interrupts async waiters and pending map continuations when runSync or runSyncExit encounters async work', async () => {
+    for (const mode of ['runSync', 'runSyncExit'] as const) {
+      const queue = Queue.bounded<string>(2)
+      let queueMapCalls = 0
+      const takeAndMap = queue.take().map((value) => {
+        queueMapCalls += 1
+        return value.toUpperCase()
+      })
+      throws(
+        () => (mode === 'runSync' ? takeAndMap.runSync() : takeAndMap.runSyncExit()),
+        /cannot execute an asynchronous task/u,
+      )
+      deepEqual(queue.offer('kept').runSync(), ok(true))
+      deepEqual(queue.poll().runSync(), ok('kept'))
+      equal(queueMapCalls, 0)
+
+      let promiseMapCalls = 0
+      const asyncMapped = ResultTask.tryPromise({
+        try: () =>
+          new Promise<number>((resolve) => {
+            setTimeout(() => {
+              resolve(21)
+            }, 10)
+          }),
+        catch: String,
+      }).map((value) => {
+        promiseMapCalls += 1
+        return value * 2
+      })
+      throws(
+        () => (mode === 'runSync' ? asyncMapped.runSync() : asyncMapped.runSyncExit()),
+        /cannot execute an asynchronous task/u,
+      )
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 30)
+      })
+      equal(promiseMapCalls, 0)
+    }
+  })
+
+  it('keeps Queue.bounded storage bounded across 310,000 non-empty cycles while preserving FIFO order', () => {
+    const queue = Queue.bounded<number>(2)
+    deepEqual(queue.offer(0).runSync(), ok(true))
+    deepEqual(queue.offer(1).runSync(), ok(true))
+
+    v8.setFlagsFromString('--expose-gc')
+    const runGc = vm.runInNewContext('gc') as () => void
+    runGc()
+    const heapBefore = process.memoryUsage().heapUsed
+
+    const cycles = 310_000
+    for (let index = 0; index < cycles; index += 1) {
+      deepEqual(queue.take().runSync(), ok(index))
+      deepEqual(queue.offer(index + 2).runSync(), ok(true))
+    }
+
+    runGc()
+    const heapAfter = process.memoryUsage().heapUsed
+    deepEqual(queue.size().runSync(), ok(2))
+    deepEqual(queue.takeAll().runSync(), ok([cycles, cycles + 1]))
+    // Ring buffer stays at O(capacity); heap delta must remain small (well under 8 MB).
+    equal(heapAfter - heapBefore < 8 * 1024 * 1024, true)
+  })
+
+  it('isolates Deferred failure span traces per observer while preserving origin traces', async () => {
+    // 1. Failure recorded outside any span: independent observers under A and B get isolated traces
+    const gate = Deferred.make<number, 'boom'>()
+    await gate.fail('boom').runPromise()
+
+    const exitA = await gate.await().withSpan('A').runExit()
+    const exitB = await gate.await().withSpan('B').runExit()
+    equal(exitA._tag, 'Failure')
+    equal(exitB._tag, 'Failure')
+    if (exitA._tag === 'Failure' && exitB._tag === 'Failure') {
+      notStrictEqual(exitA.cause, exitB.cause)
+      deepEqual(
+        Cause.spans(exitB.cause).map((frame) => frame.name),
+        ['B'],
+      )
+      // Re-read first trace after second observation
+      deepEqual(
+        Cause.spans(exitA.cause).map((frame) => frame.name),
+        ['A'],
+      )
+    }
+
+    // 2. Concurrent waiters woken by a single fail() outside any span also get isolated traces
+    const liveGate = Deferred.make<number, 'boom'>()
+    const bothExits = await ResultTask.gen(function* () {
+      const f1 = yield* liveGate.await().withSpan('waiter-A').forkChild()
+      const f2 = yield* liveGate.await().withSpan('waiter-B').forkChild()
+      yield* ResultTask.sleep(0)
+      yield* liveGate.fail('boom')
+      return [yield* f1.await(), yield* f2.await()] as const
+    })
+      .scoped()
+      .runPromise()
+
+    const [w1, w2] = bothExits
+    equal(w1._tag, 'Failure')
+    equal(w2._tag, 'Failure')
+    if (w1._tag === 'Failure' && w2._tag === 'Failure') {
+      deepEqual(
+        Cause.spans(w2.cause).map((frame) => frame.name),
+        ['waiter-B'],
+      )
+      deepEqual(
+        Cause.spans(w1.cause).map((frame) => frame.name),
+        ['waiter-A'],
+      )
+    }
+
+    // 3. Failure that already carries an origin span trace preserves that origin trace
+    const tracedGate = Deferred.make<number, 'origin-fail'>()
+    await tracedGate
+      .complete(ResultTask.fail('origin-fail' as const).withSpan('origin'))
+      .runPromise()
+    const obs1 = await tracedGate.await().withSpan('A').runExit()
+    const obs2 = await tracedGate.await().withSpan('B').runExit()
+    equal(obs1._tag, 'Failure')
+    equal(obs2._tag, 'Failure')
+    if (obs1._tag === 'Failure' && obs2._tag === 'Failure') {
+      deepEqual(
+        Cause.spans(obs1.cause).map((frame) => frame.name),
+        ['origin'],
+      )
+      deepEqual(
+        Cause.spans(obs2.cause).map((frame) => frame.name),
+        ['origin'],
+      )
+    }
+  })
+
+  it('snapshots mutable arrays in raceAll and raceFirstAll at construction time', async () => {
+    const tasksForAll = [ResultTask.ok(42)]
+    const racedAll = ResultTask.raceAll(tasksForAll)
+    tasksForAll.length = 0
+    deepEqual(await racedAll.runExit(), { _tag: 'Success', value: 42 })
+
+    const tasksForFirst = [ResultTask.ok(42)]
+    const racedFirst = ResultTask.raceFirstAll(tasksForFirst)
+    tasksForFirst.length = 0
+    deepEqual(await racedFirst.runExit(), { _tag: 'Success', value: 42 })
+  })
+
+  it('interrupts blocked producers on Queue.shutdown while rejecting subsequent offers with false', async () => {
+    const queue = Queue.bounded<string>(1)
+    deepEqual(queue.offer('buffered').runSync(), ok(true))
+
+    const producerExits = await ResultTask.gen(function* () {
+      const p1 = yield* queue.offer('blocked-1').withSpan('producer-1').forkChild()
+      const p2 = yield* queue.offer('blocked-2').withSpan('producer-2').forkChild()
+      yield* ResultTask.sleep(0)
+      yield* queue.shutdown()
+      return [yield* p1.await(), yield* p2.await()] as const
+    })
+      .scoped()
+      .runPromise()
+
+    const [p1Exit, p2Exit] = producerExits
+    equal(p1Exit._tag, 'Failure')
+    equal(p2Exit._tag, 'Failure')
+    if (p1Exit._tag === 'Failure' && p2Exit._tag === 'Failure') {
+      notStrictEqual(p1Exit.cause, p2Exit.cause)
+      equal(Cause.isInterruptedOnly(p1Exit.cause), true)
+      equal(Cause.isInterruptedOnly(p2Exit.cause), true)
+      deepEqual(p1Exit.cause, { _tag: 'Interrupt', reason: 'Queue shut down' })
+      deepEqual(p2Exit.cause, { _tag: 'Interrupt', reason: 'Queue shut down' })
+      deepEqual(
+        Cause.spans(p2Exit.cause).map((frame) => frame.name),
+        ['producer-2'],
+      )
+      deepEqual(
+        Cause.spans(p1Exit.cause).map((frame) => frame.name),
+        ['producer-1'],
+      )
+    }
+
+    // Subsequent offers after shutdown resolve with Success(false)
+    deepEqual(queue.offer('after-shutdown').runSync(), ok(false))
+    deepEqual(await queue.offerAll(['after-1', 'after-2']).runResult(), ok(false))
+    // Already buffered item remains drainable
+    deepEqual(queue.take().runSync(), ok('buffered'))
+  })
 })

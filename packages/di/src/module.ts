@@ -594,12 +594,25 @@ class RuntimeScope {
     path: readonly Resolution[] = [],
   ): Readonly<Record<string, () => RuntimeTask>> {
     const map: Record<string, () => RuntimeTask> = {};
+    const setResolver = (key: string): void => {
+      const resolver = () => this.resolve(key, requestedBy, path);
+      if (key === "__proto__") {
+        Object.defineProperty(map, key, {
+          value: resolver,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      } else {
+        map[key] = resolver;
+      }
+    };
     for (const key of this.definitions.keys()) {
-      map[key] = () => this.resolve(key, requestedBy, path);
+      setResolver(key);
     }
     for (const key of this.root.localNames) {
-      if (!(key in map)) {
-        map[key] = () => this.resolve(key, requestedBy, path);
+      if (!Object.hasOwn(map, key)) {
+        setResolver(key);
       }
     }
     return map;
@@ -959,6 +972,151 @@ const createInterruptScopeError = (signal: AbortSignal): Error => {
   return new Error("Request scope failed", { cause: { _tag: "Interrupt", reason } });
 };
 
+const attachFastStreamLifecycle = (
+  runtime: RuntimeScope,
+  signal: AbortSignal,
+  response: Response,
+): Response => {
+  const responseBody = response.body;
+  if (responseBody === null) {
+    runtime.endChild();
+    return response;
+  }
+  const source: ReadableStreamDefaultReader<Uint8Array> = responseBody.getReader();
+  let output: ReadableStreamDefaultController<Uint8Array> | undefined = undefined;
+  let cancelPromise: Promise<void> | undefined = undefined;
+  let settled = false;
+  let aborted = false;
+  let canceling = false;
+
+  const finish = (): void => {
+    if (settled) return;
+    settled = true;
+    signal.removeEventListener("abort", onAbort);
+    try {
+      source.releaseLock();
+    } catch {
+      /* Reader lock already released or canceled. */
+    }
+    runtime.endChild();
+  };
+
+  const cancelSource = (reason: unknown): Promise<void> => {
+    canceling = true;
+    if (cancelPromise !== undefined) return cancelPromise;
+    const deferred = Promise.withResolvers<void>();
+    cancelPromise = deferred.promise;
+    try {
+      Promise.resolve(source.cancel(reason)).then(
+        () => {
+          finish();
+          deferred.resolve();
+        },
+        (error: unknown) => {
+          finish();
+          deferred.reject(error);
+        },
+      );
+    } catch (error) {
+      finish();
+      deferred.reject(error);
+    }
+    return cancelPromise;
+  };
+
+  const onAbort = (): void => {
+    aborted = true;
+    canceling = true;
+    const reason: unknown = signal.reason;
+    const error = createInterruptScopeError(signal);
+    if (output !== undefined) {
+      try {
+        output.error(error);
+      } catch {
+        /* Stream already closed or errored. */
+      }
+    }
+    cancelSource(reason).catch(() => {
+      /* Abort completion does not surface an unhandled rejection. */
+    });
+  };
+
+  signal.addEventListener("abort", onAbort, { once: true });
+
+  const body = new ReadableStream<Uint8Array>(
+    {
+      start(controller) {
+        output = controller;
+      },
+      pull(controller) {
+        return source.read().then(
+          (chunk) => {
+            if (aborted || canceling) return;
+            if (chunk.done) {
+              finish();
+              controller.close();
+            } else {
+              controller.enqueue(chunk.value);
+            }
+          },
+          (error: unknown) => {
+            const alreadyCanceling = aborted || canceling;
+            return cancelSource(error)
+              .catch(() => {
+                /* Preserve the original stream error. */
+              })
+              .then(() => {
+                if (!alreadyCanceling) {
+                  controller.error(error);
+                }
+              });
+          },
+        );
+      },
+      cancel(reason) {
+        return cancelSource(reason);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+
+  if (signal.aborted) {
+    onAbort();
+  }
+
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+};
+
+const settleFastResponse = (
+  runtime: RuntimeScope,
+  signal: AbortSignal,
+  response: Response,
+): Promise<Response> => {
+  if (signal.aborted) {
+    return Promise.resolve()
+      .then(() => response.body?.cancel(signal.reason))
+      .catch(() => {
+        /* Preserve the request interruption error if the body is locked or fails to cancel. */
+      })
+      .finally(() => {
+        runtime.endChild();
+      })
+      .then(() => {
+        throw createInterruptScopeError(signal);
+      });
+  }
+  try {
+    return Promise.resolve(attachFastStreamLifecycle(runtime, signal, response));
+  } catch (error) {
+    runtime.endChild();
+    return Promise.reject(new Error("Request scope failed", { cause: error }));
+  }
+};
+
 const runFastFetch = (
   runtime: RuntimeScope,
   plan: CompiledSyncPlan,
@@ -986,24 +1144,10 @@ const runFastFetch = (
     return Promise.reject(new Error("Request scope failed", { cause: error }));
   }
   if (!isPromiseLike(responseOrPromise)) {
-    runtime.endChild();
-    if (request.signal.aborted) {
-      return Promise.resolve(responseOrPromise.body?.cancel(request.signal.reason)).then(() => {
-        throw createInterruptScopeError(request.signal);
-      });
-    }
-    return Promise.resolve(responseOrPromise);
+    return settleFastResponse(runtime, request.signal, responseOrPromise);
   }
   return responseOrPromise.then(
-    (response) => {
-      runtime.endChild();
-      if (request.signal.aborted) {
-        return Promise.resolve(response.body?.cancel(request.signal.reason)).then(() => {
-          throw createInterruptScopeError(request.signal);
-        });
-      }
-      return response;
-    },
+    (response) => settleFastResponse(runtime, request.signal, response),
     (error: unknown) => {
       runtime.endChild();
       throw new Error("Request scope failed", { cause: error });

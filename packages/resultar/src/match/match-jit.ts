@@ -392,17 +392,31 @@ const emitTagSetCase = (
   const propExpr = builder.emitPropertyRead('v', item.key)
   const ret = emitInvokeReturn(ctx, item.handler)
   if (item.tags.length <= 4) {
-    const checks = item.tags.map((tag) => builder.emitLiteralCheck(discTemp, tag)).join(' || ')
+    const checks = item.tags
+      .map((tag) =>
+        typeof tag === 'number' && Number.isNaN(tag)
+          ? `Number.isNaN(${discTemp})`
+          : builder.emitLiteralCheck(discTemp, tag),
+      )
+      .join(' || ')
     return `  if ((typeof v === "object" || typeof v === "function") && v !== null) {\n    ${discTemp} = ${propExpr};\n    if (${checks}) ${ret}\n  }`
   }
-  const cases = item.tags
+  const hasNaN = item.tags.some((tag) => typeof tag === 'number' && Number.isNaN(tag))
+  const nonNaNTags = hasNaN
+    ? item.tags.filter((tag) => !(typeof tag === 'number' && Number.isNaN(tag)))
+    : item.tags
+  const nanCheck = hasNaN ? `    if (Number.isNaN(${discTemp})) ${ret}\n` : ''
+  if (nonNaNTags.length === 0) {
+    return `  if ((typeof v === "object" || typeof v === "function") && v !== null) {\n    ${discTemp} = ${propExpr};\n${nanCheck}  }`
+  }
+  const cases = nonNaNTags
     .map((tag) => {
       if (typeof tag === 'string') return `      case ${serializeStringLiteral(tag)}:`
-      if (typeof tag === 'number' && !Number.isNaN(tag)) return `      case ${String(tag)}:`
+      if (typeof tag === 'number') return `      case ${String(tag)}:`
       return `      case ${builder.bind(tag)}:`
     })
     .join('\n')
-  return `  if ((typeof v === "object" || typeof v === "function") && v !== null) {\n    ${discTemp} = ${propExpr};\n    switch (${discTemp}) {\n${cases}\n        ${ret}\n    }\n  }`
+  return `  if ((typeof v === "object" || typeof v === "function") && v !== null) {\n    ${discTemp} = ${propExpr};\n${nanCheck}    switch (${discTemp}) {\n${cases}\n        ${ret}\n    }\n  }`
 }
 
 // fallow-ignore-next-line complexity

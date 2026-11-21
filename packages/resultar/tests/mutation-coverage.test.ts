@@ -1,10 +1,15 @@
+import { getEventListeners } from 'node:events'
+
 import { describe, expect, it, vi } from 'vite-plus/test'
 
 import {
   Cause,
   Clock,
+  createTaggedError,
+  flow,
   ok,
   pipe,
+  redact,
   ResultAsync,
   ResultTask,
   Retry,
@@ -558,6 +563,141 @@ describe('mutation coverage for new ergonomics, retry/repeat, and observability 
       const tracer = Tracer.memory()
       expect(ResultTask.ok('hi').withSpan('sync.span').runSync({ tracer }).unwrapOr('')).toBe('hi')
       expect(tracer.spans.map((s) => s.name)).toEqual(['sync.span'])
+    })
+
+    it('disposes parent AbortSignal listeners on sync return, sync option error, and async step abort', async () => {
+      // 1. Sync completion disposes listener
+      const syncController = new AbortController()
+      expect(ResultTask.ok(1).runSyncExit({ signal: syncController.signal })).toEqual({
+        _tag: 'Success',
+        value: 1,
+      })
+      expect(getEventListeners(syncController.signal, 'abort')).toHaveLength(0)
+
+      // 2. Synchronous option validation throw disposes listener
+      const errController = new AbortController()
+      expect(() =>
+        ResultTask.ok(1).runSyncExit({ signal: errController.signal, yieldEvery: 0 }),
+      ).toThrow(RangeError)
+      expect(getEventListeners(errController.signal, 'abort')).toHaveLength(0)
+
+      // 3. Asynchronous step aborts with exact reason and disposes listener after settling
+      const asyncController = new AbortController()
+      let observedAbortReason: unknown = undefined
+      const settled = Promise.withResolvers<void>()
+      const asyncTask = ResultTask.fromCallback<number, never>({
+        subscribe: ({ signal }) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              observedAbortReason = signal.reason
+              settled.resolve()
+            },
+            { once: true },
+          )
+          return () => undefined
+        },
+      })
+
+      expect(() => asyncTask.runSyncExit({ signal: asyncController.signal })).toThrow(
+        'ResultTask.runSync cannot execute an asynchronous task',
+      )
+      await settled.promise
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(observedAbortReason).toBe('ResultTask.runSync encountered an asynchronous step')
+      expect(getEventListeners(asyncController.signal, 'abort')).toHaveLength(0)
+    })
+  })
+
+  describe('pipe, tagged-error fallback, and ResultTask catch continuation mutation coverage', () => {
+    it('throws TypeError with exact message when runPipe (>8 args) receives undefined transform', () => {
+      const inc = (n: number) => n + 1
+      const callPipe = pipe as unknown as (...args: readonly unknown[]) => unknown
+      expect(() => callPipe(1, inc, inc, inc, inc, inc, inc, inc, inc, undefined)).toThrow(
+        new TypeError('pipe requires transformation functions'),
+      )
+      const callFlow = flow as unknown as (...args: readonly unknown[]) => (n: number) => unknown
+      const invalidFlow = callFlow(inc, inc, inc, inc, inc, inc, inc, inc, inc, undefined)
+      expect(() => invalidFlow(1)).toThrow(new TypeError('pipe requires transformation functions'))
+    })
+
+    it('covers tagged-error fallback interpolator with undefined, null, and object/redacted values', () => {
+      const previous = process.env['RESULTAR_JIT']
+      process.env['RESULTAR_JIT'] = '0'
+      try {
+        const FallbackErr = createTaggedError({
+          name: 'FallbackErr',
+          message: 'item $id: $meta ($secret)',
+        })
+        const BareDefaultErr = createTaggedError({ name: 'BareDefaultErr' })
+        const RawFallbackErr = FallbackErr as unknown as new (props?: unknown) => Error
+
+        // Undefined and null constructor props keep the raw template verbatim in fallback mode.
+        const fromUndefined = new RawFallbackErr()
+        // eslint-disable-next-line unicorn/no-null -- Verify null props handling in fallback interpolator.
+        const fromNull = new RawFallbackErr(null)
+        const fromValues = new RawFallbackErr({
+          id: 7,
+          meta: { ok: true },
+          secret: redact('top-secret'),
+        })
+        const fromObjectDefault = new (BareDefaultErr as unknown as new (props?: unknown) => Error)(
+          { message: { nested: 1 } },
+        )
+
+        expect(fromUndefined.message).toBe('item $id: $meta ($secret)')
+        expect(fromNull.message).toBe('item $id: $meta ($secret)')
+        expect(fromValues.message).toBe('item 7: {"ok":true} (<redacted>)')
+        expect(fromObjectDefault.message).toBe('{"nested":1}')
+      } finally {
+        if (previous === undefined) delete process.env['RESULTAR_JIT']
+        else process.env['RESULTAR_JIT'] = previous
+      }
+    })
+
+    it('turns synchronous throws in catchTag/catchTags into Die and preserves ok() recovery into downstream map', () => {
+      const defectA = new Error('catchTag-throw')
+      const defectB = new Error('catchTags-throw')
+
+      const tagDefect = ResultTask.ok(1)
+        .andThen(() => ResultTask.err({ _tag: 'Boom' as const }))
+        .catchTag('Boom', () => {
+          throw defectA
+        })
+        .runSyncExit()
+      expect(tagDefect).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: defectA } })
+
+      const tagsDefect = ResultTask.ok(1)
+        .andThen(() => ResultTask.err({ _tag: 'Boom' as const }))
+        .catchTags({
+          Boom: () => {
+            throw defectB
+          },
+        })
+        .runSyncExit()
+      expect(tagsDefect).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: defectB } })
+
+      // Non-tap failure continuations (like mapErr) must be bypassed on Success in runTaskLoop.
+      expect(
+        ResultTask.ok(1)
+          .map((n) => n + 1)
+          .mapErr(() => 'unused')
+          .runSyncExit(),
+      ).toEqual({ _tag: 'Success', value: 2 })
+
+      // Recovering with a synchronous Result ok(...) must transition hasSuccess=true for subsequent map().
+      const recoveredAll = ResultTask.err('fail')
+        .orElse(() => ok(10))
+        .map((n) => n + 5)
+        .runSyncExit()
+      expect(recoveredAll).toEqual({ _tag: 'Success', value: 15 })
+
+      const recoveredTag = ResultTask.err({ _tag: 'Boom' as const })
+        .catchTag('Boom', () => ok(20))
+        .map((n) => n + 2)
+        .runSyncExit()
+      expect(recoveredTag).toEqual({ _tag: 'Success', value: 22 })
     })
   })
 })

@@ -74,7 +74,7 @@ Use Node's `--env-file` option if needed; this adapter does no dotenv file loadi
 
 Validation uses TypeBox's closed object schema. An AJV normalization pass enables
 `allErrors`, `coerceTypes`, `useDefaults`, `removeAdditional`, `strictNumbers`, and
-`allowUnionTypes`. A second, non-coercing `env-schema`/AJV validation of the same schema rejects
+`allowUnionTypes`. A second, non-coercing AJV validation of the same schema rejects
 infinity introduced by numeric coercion (including `1e309`), aggregated with other
 invalid or missing fields even if the normalization pass failed. Required fields,
 bounds, integer constraints, defaults and optional fields follow the schema.
@@ -88,9 +88,8 @@ keywords/formats and schema compilation failures are defects.
 `ConfigError.issues` is a frozen readonly collection of `{ path, category, message }`.
 Paths use JSON Pointer; categories are `missing`, `type`, or `constraint`. Messages
 are controlled and never include rejected values. The error retains neither the
-source map, validator messages nor the validator exception/cause. Only exceptions
-whose `errors` array is the current AJV validation array are classified as input
-failures; schema and unexpected faults remain defects.
+source map, validator messages nor the validator exception/cause. Schema compilation
+and unexpected faults remain defects.
 
 Startup resources must depend directly or transitively on `appConfig`. Merging
 alone does not block unrelated resources. The executable
@@ -102,5 +101,11 @@ also verify zero acquisitions for invalid input and rollback after later failure
 pnpm --filter resultar-config smoke:package
 ```
 
-Node.js 24+, ESM. No remote secrets, reloads, async providers, precedence engine,
-Zod entry point, or edge runtime compatibility is implied.
+Node.js 24+, ESM. Importing `resultar-config` and defining or merging lazy
+`defineAppConfig` modules perform no dynamic code generation (`new Function`),
+so the package imports cleanly under `--disallow-code-generation-from-strings`.
+Resolving `appConfig` (`load()` or `use(["appConfig"], ...)`) compiles schemas
+with AJV v8, which requires dynamic code generation at resolution time (and
+surfaces `EvalError` as a `Die` defect if code generation is disabled). No remote
+secrets, reloads, async providers, precedence engine, Zod entry point, or edge
+runtime compatibility is implied.

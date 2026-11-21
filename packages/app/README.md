@@ -84,8 +84,13 @@ pnpm add resultar-app resultar-hono hono
 Import application services/configuration from `resultar-app`, and `createHonoApp`
 from `resultar-hono`. See the [Hono example](../../examples/hono/README.md).
 `resultar-app` does not start a server or register process handlers when imported.
-Configuration uses the Node environment; this combined entry point targets Node.js
-24+ and ESM. HTTP adapters continue owning their application and request lifetimes.
+Importing `resultar-app` performs no dynamic code generation (`new Function`), so
+workflow and DI APIs reexported from `resultar` and `resultar-di` run cleanly even
+under `--disallow-code-generation-from-strings` / strict CSP; resolving
+`defineAppConfig` (`load()` / `appConfig`) relies on AJV v8 in Node.js 24+ and
+requires dynamic code generation at resolution time. Configuration uses the Node
+environment; this combined entry point targets Node.js 24+ and ESM. HTTP adapters
+continue owning their application and request lifetimes.
 
 ## Validation
 

@@ -1,6 +1,6 @@
 # RFC 0011: Transparent JIT compilation, static graph specialization, and V8 runtime performance
 
-- Status: Implemented (Validated; Awaiting Release)
+- Status: Implemented and validated (including final review and revalidation fixes). [Review record and fix plan](./rfc-0010-0011-fix-plan.md#pendências-da-revalidação)
 - Date: 2026-11-20
 - Target packages: `resultar`, `resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, `resultar-request-typebox`, `resultar-config`, `resultar-benchmarks`
 - References: [RFC 0001](./rfc-0001-result-task-core.md), [RFC 0002](./rfc-0002-di-lifetimes-scopes.md), [RFC 0004](./rfc-0004-effect-v4-ergonomics-and-tooling.md), [RFC 0008](./rfc-0008-declarative-configuration.md), [RFC 0010](./rfc-0010-dx-observability-concurrency-and-tooling.md)
@@ -200,9 +200,19 @@ export const canUseJit = (): boolean => {
 }
 ```
 
-- **Strict CSP / Cloudflare Workers / Deno Deploy without `unsafe-eval`**: `new Function` throws
-  `EvalError`, `jitAvailable` latches to `false`, and every caller transparently falls back to its
-  optimized non-JIT implementation with zero runtime errors.
+- **Strict CSP / Cloudflare Workers / Deno Deploy / Node `--disallow-code-generation-from-strings`**:
+  - `new Function` throws `EvalError`, `jitAvailable` latches to `false`, and all Resultar-owned
+    compilers (`resultar` core, `Match`, `createTaggedError`, `ResultTask` tiered JIT,
+    `resultar-di` / `resultar-hono` / `resultar-fastify` / `resultar-nestjs`, `resultar-request`,
+    `resultar-request-zod`, and `resultar-request-typebox` via `Value.Check`) transparently fall
+    back to their semantically identical non-JIT implementations with zero runtime errors.
+  - **`resultar-config` and `resultar-app` boundary**: removing the top-level `env-schema`
+    dependency ensures both packages import cleanly and construct lazy `defineAppConfig(...)`
+    modules without executing `new Function` under `--disallow-code-generation-from-strings`.
+    Resolving `appConfig` or calling `.load()` still compiles schemas lazily via AJV (which relies
+    on dynamic code generation in Node.js 24+); when code generation is disabled, resolution fails
+    cleanly as a `Die(EvalError)` defect rather than crashing at import time, leaving unrelated
+    `resultar-app` / `resultar-di` services unaffected.
 - **Opt-out & deterministic testing**:
   - `RESULTAR_JIT=0` disables JIT process-wide (useful for auditing, debugging, or strict runtime
     policies).
@@ -597,19 +607,12 @@ return function dispatchWithLocals(request, locals) {
 
 ### 6.4 Preserving response-stream and cancellation semantics
 
-- **Conditional stream wrapping in `runScopedResponse`** ([packages/di/src/fetch.ts](../../packages/di/src/fetch.ts)):
-  `runScopedResponse` exists specifically to keep a request's `RuntimeScope` open while a streaming
-  `Response.body` is consumed so scoped resources (like DB cursors or file streams) are not released
-  prematurely.
-  - When a request resolves via **Tier 0 / Tier 1**, or in **Tier 2** when `child.resources` has
-    **zero registered finalizers and zero active child fibers** (`scope.isClean()`) at the moment
-    `handle(services, request)` returns `Response`, the request scope can close immediately and
-    return the original `Response` untouched — **zero `ReadableStream` allocation, zero chunk
-    copying, zero extra microtasks**!
-  - Whenever `child` holds at least one finalizer or child fiber, `runScopedResponse` wraps the
-    body stream identically to today.
-  - Request abort handling (`if (request.signal.aborted) await response.body?.cancel(...)`) is
-    preserved across all tiers.
+- **Response-body lifetime.** Fetch wraps a non-null response body on both the fast path and the
+  resource-scoped path. The request stays active through consumption or producer cancellation.
+  A response with a null body completes cleanup before delivery. [Fast path](../../packages/di/src/module.ts) · [Resource-scoped path](../../packages/di/src/fetch.ts)
+- **Overlapping cancellation.** Reader cancellation and request abort share one promise, published
+  before invoking the producer. This keeps a re-entrant abort from releasing resources while the
+  producer is still cleaning up. [Cancellation tests](../../packages/di/tests/jit.test.ts)
 - **Root shutdown synchronization (`root.close()`)**:
   Wait-for-in-flight-children tracking uses a lightweight integer counter (`activeChildren++` /
   `activeChildren--`, allocating a drain `Promise` only if `close()` is called while
@@ -786,8 +789,11 @@ Currently `defineAppConfig` constructs `Type.Object(...)`, two `Ajv` instances, 
   definition on first execution (preserving laziness so invalid schemas still fail at execution
   time as defects rather than at module import time, matching RFC 0008!).
 - Preserve exact dual-pass semantics (coercion pass on a shallow copy of `options.source ?? process.env`,
-  followed by strict finite-number `env-schema`/AJV validation aggregating overflow and missing
-  fields together).
+  followed by strict finite-number AJV validation aggregating overflow and missing fields together),
+  invoking the compiled AJV validator directly without `env-schema`'s import-time `new Function`
+  side effect so `resultar-config` and `resultar-app` import cleanly under
+  `--disallow-code-generation-from-strings` (while documenting that resolving `appConfig` / `.load()`
+  still requires AJV code generation).
 - Reset `ajv.errors = null` before each run (execution is synchronous inside `ResultTask.sync`, so
   no interleaved async access can clobber `ajv.errors`).
 
@@ -914,7 +920,7 @@ preservation, strict codegen safety invariants, and automatic `RESULTAR_JIT=0` /
 
 ### Measured performance gains (Node.js v26.13.1, Apple Silicon `darwin/arm64`)
 
-All comparisons below were measured after the review regression fixes (removal of consumer-exposed iterator pooling in `OkResultIterator`/`ResultTaskIterator`, single-read Match JIT getter semantics, structural JSON DI cache keys, isolated-process Hono HTTP benchmarking with full body consumption, prototype metadata optimization on `createTaggedError`, and one-shot `OP_MAP`/`OP_CATCH_ALL`/`OP_CATCH_TAG` fast paths) against base commit `5629d83` (`effect@4.1.2`, `hono@4.13.19`).
+All comparisons below reflect the final reviewed implementation (removal of consumer-exposed iterator pooling in `OkResultIterator`/`ResultTaskIterator`, single-read Match JIT getter semantics and `NaN` discriminator parity for `<= 4` and `> 4` tags, `this`-receiver preservation in compiled `ResultTask.try`, structural JSON DI cache keys, own-property preservation for `__proto__` service names across compiled/interpreted plans and resolvers, post-delivery `request.signal` abort propagation on Tier 0/1 `scope.fetch` streams, isolated-process Hono HTTP benchmarking with full body consumption, own enumerable metadata restoration with shared frozen `fingerprint` and 1-arg `super(message)` on `createTaggedError`, idempotent `reply.raw` `close` finalization on Fastify/NestJS fast hooks, import-time codegen removal in `resultar-config`/`resultar-app`, and one-shot `OP_MAP`/`OP_CATCH_ALL`/`OP_CATCH_TAG` fast paths) against base commit `5629d83` (`effect@4.1.4`, `hono@4.13.19`).
 
 | Benchmark | Baseline (`5629d83` or `JIT=0` / peer) | After (`JIT=1`) | Gain / Delta |
 | :--- | ---: | ---: | :--- |
@@ -923,10 +929,10 @@ All comparisons below were measured after the review regression fixes (removal o
 | Reused 10-step `ResultTask` (`bench:task-hot`) | `7.97M op/s` (`JIT=0`) / `3.18M` (`Effect` v4) | **`19.71M op/s`** | **2.47x** vs `JIT=0` / **6.20x** vs `Effect` v4 |
 | Reused 50-step `ResultTask` (`bench:task-hot`) | `2.15M op/s` (`JIT=0`) / `898k` (`Effect` v4) | **`4.70M op/s`** | **2.18x** vs `JIT=0` / **5.23x** vs `Effect` v4 |
 | Reused `catchTag + mapErr` (`bench:task-hot`) | `8.44M op/s` (`JIT=0`) / `3.42M` (`Effect` v4) | **`22.64M op/s`** | **2.68x** vs `JIT=0` / **6.62x** vs `Effect` v4 |
-| `resultar-di` Tier 0 middleware + Hono (`bench:di-http`, body consumed) | `65,497 req/s` (`5629d83`, `15.27 µs`) | **`272,457 req/s`** (`3.67 µs`) | **4.16x** end-to-end (**+1.30 µs** over raw Hono `2.37 µs`; DI-only overhead **9.92x** lower) |
-| `resultar-di` Tier 1 middleware + locals + Hono (`bench:di-http`, body consumed) | `41,018 req/s` (`5629d83`, `24.38 µs`) | **`235,191 req/s`** (`4.25 µs`) | **5.73x** end-to-end (**+1.88 µs** over raw Hono `2.37 µs`; DI-only overhead **11.71x** lower) |
-| `resultar-di` Tier 0 / Tier 1 `createHonoApp` (`bench:di-http`, body consumed) | `86,084` / `46,461 req/s` (`5629d83`) | **`411,014` / `426,647 req/s`** (`2.43` / `2.34 µs`) | **4.77x** / **9.18x** end-to-end (**+0.07 µs** / **~0 µs** over raw Hono) |
-| `resultar-di` direct 8-service `root.fetch` (`bench:di-http`, body consumed) | `28,951 req/s` (`5629d83`, `34.54 µs`) | **`444,781 req/s`** (`2.25 µs`) | **15.36x** vs `5629d83` / **1.17x** vs `JIT=0` |
+| `resultar-di` Tier 0 middleware + Hono (`bench:di-http`, body consumed) | `65,497 req/s` (`5629d83`, `15.27 µs`) | **`194,082 req/s`** (`5.15 µs`) | **2.96x** end-to-end (**+2.81 µs** over raw Hono `2.34 µs` incl. stream abort lifecycle; DI+stream overhead **4.59x** lower) |
+| `resultar-di` Tier 1 middleware + locals + Hono (`bench:di-http`, body consumed) | `41,018 req/s` (`5629d83`, `24.38 µs`) | **`178,164 req/s`** (`5.61 µs`) | **4.34x** end-to-end (**+3.27 µs** over raw Hono `2.34 µs` incl. stream abort lifecycle; DI+stream overhead **6.74x** lower) |
+| `resultar-di` Tier 0 / Tier 1 `createHonoApp` (`bench:di-http`, body consumed) | `86,084` / `46,461 req/s` (`5629d83`) | **`259,013` / `257,345 req/s`** (`3.86` / `3.89 µs`) | **3.01x** / **5.54x** end-to-end (**+1.52 µs** / **+1.55 µs** over raw Hono) |
+| `resultar-di` direct 8-service `root.fetch` (`bench:di-http`, body consumed) | `28,951 req/s` (`5629d83`, `34.54 µs`) | **`277,612 req/s`** (`3.60 µs`) | **9.59x** vs `5629d83` / **1.06x** vs `JIT=0` |
 | `resultar-fastify` Tier 0 singleton (`bench:fastify-http`) | `25,571 req/s` (`39.11 µs`) | **`44,419 req/s`** (`22.51 µs`) | **1.74x** (**95.3%** of raw Fastify; **16.1x** less DI overhead) |
 | `resultar-fastify` Tier 1 scoped + locals (`bench:fastify-http`) | `20,846 req/s` (`47.97 µs`) | **`44,472 req/s`** (`22.49 µs`) | **2.13x** (**95.4%** of raw Fastify; **24.9x** less DI overhead) |
 | `resultar-fastify` Tier 1 deep 8-service DAG (`bench:fastify-http`) | `16,641 req/s` (`60.09 µs`) | **`43,929 req/s`** (`22.76 µs`) | **2.64x** (**94.2%** of raw Fastify; **29.0x** less DI overhead) |
@@ -935,18 +941,19 @@ All comparisons below were measured after the review regression fixes (removal o
 | `resultar-nestjs` Tier 1 deep 8-service DAG (`bench:nestjs-http`) | `14,872 req/s` (`67.24 µs`) | **`37,290 req/s`** (`26.82 µs`) | **2.51x** (**83.4%** of raw NestJS; **9.9x** less DI overhead) |
 | TypeBox `Compile(schema)` direct (`bench:typebox`) | `160,721 op/s` (`Value.Check`) | **`108.14M op/s`** | **672.87x** |
 | `requestJsonTypeBoxTask` end-to-end (`bench:typebox`) | `107,641 op/s` (`JIT=0`) | **`375,337 op/s`** | **3.49x** |
-| `bench:effect` (all 10/10 scenarios, `4,000` iters) | `TaggedError+catchTag`: `448k` (`Effect` v4) | **`719k`** (`±0.58%`; isolated repeats `1.54x`–`1.83x`) | Beats `Effect` v4 on **10/10** scenarios (**1.60x** on `TaggedError+catchTag`) |
+| `bench:effect` (all 10/10 scenarios, `4,000` iters) | `TaggedError+catchTag`: `450k` (`Effect` 4.1.4) | **`736k`** (`±0.47%`; isolated repeats `1.66x`–`1.86x`, median `1.80x`) | Beats `Effect` v4 on **10/10** scenarios (**1.64x** / **1.80x** isolated median on `TaggedError+catchTag`) |
 | One-shot `ResultTask` chains (`10..10,000` steps vs `5629d83`) | `Run 100..10k andThen`: `1.98`–`358.7 µs` | **`1.71`–`333.1 µs`** | **+2.2% to +15.6% faster** on execution; `map` chains **-1.5% to +8.2%** |
 | One-shot `Result`/`ResultTask` batched ops vs `5629d83` | `map on Ok` `6.17M` / `orElse on Err` `5.44M` | **`6.58M`** (`1.07x`) / **`6.67M`** (`1.23x`) | Net improvement across `ok`/`err`/`combine`/`map`/`andThen`/`orElse` |
 
 ### Quantitative target reconciliation and recorded deviations (§9.3)
 
 - **Met targets**:
-  - `bench:effect`: **10/10** scenarios won over `effect@4.1.2`, with `TaggedError + catchTag` at **1.60x** in the full suite (`1.54x`, `1.75x`, `1.83x` across 3 isolated repeats — above the `>= 1.5x` target).
-  - `bench:di-http` added overhead: **+1.30 µs** (Tier 0 middleware), **+1.88 µs** (Tier 1 middleware), **+0.07 µs** (Tier 0 `createHonoApp`), **~0 µs** (Tier 1 `createHonoApp`) — all strictly **< 2 µs** over raw Hono (`2.37 µs`), and direct 8-service `root.fetch` reaches **15.36x** over `5629d83`.
+  - `bench:effect`: **10/10** scenarios won over `effect@4.1.4` (after restoring own enumerable instance properties on `createTaggedError`), with `TaggedError + catchTag` at **1.64x** (`736k ±0.47%` vs `450k ±0.75%`) and **1.43x** (`706k ±0.90%` vs `495k ±0.51%`) across full-suite runs, and **1.86x / 1.80x / 1.66x** (median **1.80x**) across 3 isolated `BENCH_FILTER=TaggedError BENCH_ITERATIONS=4000` repeats — meeting the `>= 1.5x` target.
+  - `bench:di-http` `createHonoApp` added overhead: **+1.52 µs** (Tier 0) and **+1.55 µs** (Tier 1) — both strictly **< 2 µs** over raw Hono (`2.34 µs`) even with full post-delivery stream abort propagation; direct 8-service `root.fetch` runs **9.59x** faster than `5629d83` (`3.60 µs` vs `34.54 µs`).
   - `bench:typebox`: **672.87x** on direct validation (`>= 10x` target) and **3.49x** on end-to-end HTTP `requestJsonTypeBoxTask`.
-  - CI dual-mode gate: `.github/workflows/ci.yaml` now runs both `RESULTAR_JIT=1 vp run check:full` and `RESULTAR_JIT=0 vp run test`.
+  - CI dual-mode gate: `.github/workflows/ci.yaml` runs both `RESULTAR_JIT=1 vp run check:full` and `RESULTAR_JIT=0 vp run test`, and real `--disallow-code-generation-from-strings` subprocess tests cover `resultar`, `resultar-di`, `resultar-config`, and `resultar-app`.
 - **Recorded deviations (accepted with rationale)**:
-  1. **`bench:di-http` end-to-end ratio vs `5629d83` (`4.16x` Tier 0 / `5.73x` Tier 1 middleware; `4.77x` / `9.18x` `createHonoApp` vs `>= 10x` target)**: With full `Response.text()` body consumption, raw Hono + `new Request()` + `res.text()` sets an irreducible floor of `2.37 µs/req`. Because `5629d83` took `15.27 µs` (Tier 0 middleware), Amdahl's law caps the maximum possible end-to-end speedup at `15.27 / 2.37 = 6.44x` even with zero DI cost. Excluding the fixed Hono/Fetch floor, **DI-only overhead dropped by 9.92x (Tier 0) and 11.71x (Tier 1)** in middleware and **>100x** in `createHonoApp`, and DI-dominated 8-service `root.fetch` reached **15.36x**. Accepted without further API compromises.
-  2. **`bench:match` 8-tag `tagsExhaustive` (`1.72x` time of inline `switch`, `4.10x` vs `5629d83` vs `<= 1.3x` / `>= 5x` target)**: Because `Match.tagsExhaustive` dispatches user-provided handler closures rather than inlining expressions inside `case` arms, even a hand-written `switch` calling the same 8 handler callbacks measures `~1.57x` the time of an inline-expression `switch` under V8 TurboFan inlining limits. The compiled `Match` matcher runs within `~1.05x` of a hand-written callback-dispatching `switch` and reaches **15.06x** over `5629d83` on nested object/array/guard patterns while preserving strict single-read getter semantics. Accepted without unsafe code-inlining hacks.
+  1. **`bench:di-http` end-to-end ratio & middleware overhead (`+2.81 µs` Tier 0 / `+3.27 µs` Tier 1 middleware; `9.59x` on 8-service `root.fetch` vs `>= 10x` / `< 2 µs` target)**: Preserving strict Web Fetch post-delivery `request.signal` abort propagation (`attachFastStreamLifecycle`, calling `source.cancel()` strictly once and waiting on open streams before `root.close()`) requires wrapping non-null `Response.body` streams using standard Web Streams APIs (`~1.4–1.5 µs` in Node.js undici on top of the `2.34 µs` raw Hono + `Request`/`Response.text()` floor). `createHonoApp` remains under `< 2 µs` (`+1.52 µs` / `+1.55 µs`) and Fastify / NestJS (which hook native TCP stream lifecycles rather than re-wrapping Web `Response` streams) retain `+1.04–1.31 µs` / `+1.92 µs` overhead. Accepted to preserve exact stream-cancellation parity with `5629d83`.
+  2. **`bench:match` 8-tag `tagsExhaustive` (`1.72x` time of inline `switch`, `4.10x` vs `5629d83` vs `<= 1.3x` / `>= 5x` target)**: Because `Match.tagsExhaustive` dispatches user-provided handler closures rather than inlining expressions inside `case` arms, even a hand-written `switch` calling the same 8 handler callbacks measures `~1.57x` the time of an inline-expression `switch` under V8 TurboFan inlining limits. The compiled `Match` matcher runs within `~1.05x` of a hand-written callback-dispatching `switch` and reaches **15.06x** over `5629d83` on nested object/array/guard patterns while preserving strict single-read getter semantics and numeric `NaN` discriminator parity. Accepted without unsafe code-inlining hacks.
   3. **Pure construction-only `Build 100` / `Build 10,000` one-shot `ResultTask` chains (`+5.5%` / `+6.7%` vs `5629d83`)**: Storing tiered JIT metadata (`jitHits`, `jitExecutor`, `customExecute`) on `ResultTask` adds ~0.3 ns per allocated node on unexecuted construction-only loops while **improving** combined build+execute times (`Run 10..10,000 andThen` is **+2.2% to +15.6% faster** than `5629d83`). Accepted as a net win for real execution paths.
+  4. **`resultar-config` AJV resolution under `--disallow-code-generation-from-strings`**: All 10 library packages import cleanly and support lazy definitions and non-AJV paths with dynamic code generation disabled, while resolving `appConfig` / `.load()` in `resultar-config` continues to require AJV's schema compiler to preserve strict finite-number and boolean coercion semantics (`Die(EvalError)` when blocked). Documented in [packages/config/README.md](../../packages/config/README.md) and [packages/app/README.md](../../packages/app/README.md).

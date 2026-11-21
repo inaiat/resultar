@@ -333,6 +333,113 @@ describe('tagged errors', async () => {
     equal(error.id, '123')
     equal(error.source, 'users')
   })
+
+  it('defines _tag, fingerprint, messageTemplate, and name as own enumerable properties preserved by spread', () => {
+    const Missing = createTaggedError({ name: 'Missing' })
+    const missingA = new Missing({ message: 'first missing' })
+    const missingB = new Missing({ message: 'second missing' })
+    const staticA = new StaticMessageError()
+    const staticB = new StaticMessageError()
+    const expectedKeys = ['_tag', 'fingerprint', 'messageTemplate', 'name'] as const
+
+    for (const key of expectedKeys) {
+      isTrue(Object.hasOwn(missingA, key))
+      isTrue(Object.hasOwn(staticA, key))
+      const desc = Object.getOwnPropertyDescriptor(missingA, key)
+      isTrue(desc)
+      deepEqual(
+        { configurable: desc.configurable, enumerable: desc.enumerable, writable: desc.writable },
+        { configurable: true, enumerable: true, writable: true },
+      )
+    }
+
+    deepEqual(Object.keys(missingA), [...expectedKeys])
+    deepEqual(Object.keys(staticA), [...expectedKeys])
+    isTrue(Object.isFrozen(missingA.fingerprint))
+    equal(missingA.fingerprint, missingB.fingerprint)
+    equal(staticA.fingerprint, staticB.fingerprint)
+
+    /* eslint-disable oxc/no-rest-spread-properties, typescript/no-misused-spread -- Explicitly testing object-spread cloning of tagged error instances. */
+    deepEqual(
+      { ...missingA },
+      {
+        _tag: 'Missing',
+        fingerprint: ['Missing', '$message'],
+        messageTemplate: '$message',
+        name: 'Missing',
+      },
+    )
+    deepEqual(
+      { ...new UserNotFoundError({ id: '99', source: 'db' }) },
+      {
+        _tag: 'UserNotFoundError',
+        fingerprint: ['UserNotFoundError', 'User $id not found in $source'],
+        id: '99',
+        messageTemplate: 'User $id not found in $source',
+        name: 'UserNotFoundError',
+        source: 'db',
+      },
+    )
+    /* eslint-enable oxc/no-rest-spread-properties, typescript/no-misused-spread */
+    deepEqual(missingA.toJSON(), {
+      _tag: 'Missing',
+      fingerprint: ['Missing', '$message'],
+      message: 'first missing',
+      messageTemplate: '$message',
+      name: 'Missing',
+    })
+  })
+
+  it('preserves own enumerable metadata descriptors, spread, cause, and toJSON on custom base error classes', () => {
+    const rootCause = new Error('policy denied')
+    const forbiddenA = new ForbiddenError({ permission: 'admin:write' })
+    const forbiddenB = new ForbiddenError({ cause: rootCause, permission: 'admin:read' })
+
+    for (const key of ['_tag', 'fingerprint', 'messageTemplate', 'name'] as const) {
+      isTrue(Object.hasOwn(forbiddenA, key))
+      const desc = Object.getOwnPropertyDescriptor(forbiddenA, key)
+      isTrue(desc)
+      deepEqual(
+        { configurable: desc.configurable, enumerable: desc.enumerable, writable: desc.writable },
+        { configurable: true, enumerable: true, writable: true },
+      )
+    }
+
+    deepEqual(Object.keys(forbiddenA), [
+      'statusCode',
+      '_tag',
+      'fingerprint',
+      'messageTemplate',
+      'name',
+      'permission',
+    ])
+    isTrue(Object.isFrozen(forbiddenA.fingerprint))
+    equal(forbiddenA.fingerprint, forbiddenB.fingerprint)
+    equal(forbiddenB.cause, rootCause)
+    /* eslint-disable oxc/no-rest-spread-properties, typescript/no-misused-spread -- Explicitly testing object-spread cloning of custom-base tagged errors. */
+    deepEqual(
+      { ...forbiddenA },
+      {
+        _tag: 'ForbiddenError',
+        fingerprint: ['ForbiddenError', 'Missing permission $permission'],
+        messageTemplate: 'Missing permission $permission',
+        name: 'ForbiddenError',
+        permission: 'admin:write',
+        statusCode: 403,
+      },
+    )
+    /* eslint-enable oxc/no-rest-spread-properties, typescript/no-misused-spread */
+    deepEqual(forbiddenB.toJSON(), {
+      _tag: 'ForbiddenError',
+      cause: { message: 'policy denied', name: 'Error', stack: rootCause.stack },
+      fingerprint: ['ForbiddenError', 'Missing permission $permission'],
+      message: 'Missing permission admin:read',
+      messageTemplate: 'Missing permission $permission',
+      name: 'ForbiddenError',
+      permission: 'admin:read',
+      statusCode: 403,
+    })
+  })
 })
 
 describe('tagged error types', async () => {

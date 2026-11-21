@@ -561,4 +561,216 @@ describe('cooperative task scheduling', () => {
       host.clearImmediate = savedClearImmediate
     }
   })
+
+  it('interrupts task and releases scoped resources when VirtualClock.runToCompletion hits maxSteps', async () => {
+    const clock = Clock.virtual(0)
+    let releases = 0
+
+    const program = ResultTask.scoped(
+      ResultTask.gen(function* () {
+        yield* ResultTask.acquireRelease({
+          acquire: ResultTask.ok('handle'),
+          release: () =>
+            ResultTask.sync(() => {
+              releases += 1
+            }),
+        })
+        yield* ResultTask.sleep(100)
+        return 'never'
+      }),
+    )
+
+    await rejects(clock.runToCompletion(program, { maxSteps: 0 }), RangeError)
+    equal(clock.pending, 0)
+    equal(releases, 1)
+
+    // Also verify partial progress (maxSteps: 1) interrupts the second timer and still releases once.
+    const clock2 = Clock.virtual(0)
+    let releases2 = 0
+    const twoSteps = ResultTask.scoped(
+      ResultTask.gen(function* () {
+        yield* ResultTask.acquireRelease({
+          acquire: ResultTask.ok('handle-2'),
+          release: () =>
+            ResultTask.sync(() => {
+              releases2 += 1
+            }),
+        })
+        yield* ResultTask.sleep(50)
+        yield* ResultTask.sleep(50)
+        return 'never'
+      }),
+    )
+
+    await rejects(clock2.runToCompletion(twoSteps, { maxSteps: 1 }), RangeError)
+    equal(clock2.now(), 50)
+    equal(clock2.pending, 0)
+    equal(releases2, 1)
+
+    // Finite virtual-clock sleeps inside a resource release must complete cleanly under maxSteps: 0.
+    const clock3 = Clock.virtual(0)
+    let releases3 = 0
+    const asyncRelease = ResultTask.scoped(
+      ResultTask.gen(function* () {
+        yield* ResultTask.acquireRelease({
+          acquire: ResultTask.ok('handle-3'),
+          release: () =>
+            ResultTask.gen(function* () {
+              yield* ResultTask.sleep(1)
+              releases3 += 1
+            }),
+        })
+        yield* ResultTask.sleep(100)
+        return 'never'
+      }),
+    )
+
+    await rejects(clock3.runToCompletion(asyncRelease, { maxSteps: 0 }), RangeError)
+    equal(clock3.now(), 1)
+    equal(clock3.pending, 0)
+    equal(releases3, 1)
+  })
+
+  it('completes virtual-clock finalizers with delayed sleeps and >10,000 finite sleeps under maxSteps: 0', async () => {
+    // 1. Finalizer awaiting an external Promise before registering a virtual sleep(1) finishes without manual advanceBy.
+    const clockDelayed = Clock.virtual(0)
+    let delayedReleases = 0
+    const releaseEntered = Promise.withResolvers<void>()
+    const externalGate = Promise.withResolvers<void>()
+    const delayedSleepRelease = ResultTask.scoped(
+      ResultTask.gen(function* () {
+        yield* ResultTask.acquireRelease({
+          acquire: ResultTask.ok('handle-delayed'),
+          release: () =>
+            ResultTask.gen(function* () {
+              releaseEntered.resolve()
+              yield* ResultTask.tryPromise({
+                try: () => externalGate.promise,
+                catch: (error) => error,
+              })
+              yield* ResultTask.sleep(1)
+              delayedReleases += 1
+            }),
+        })
+        yield* ResultTask.sleep(100)
+        return 'never'
+      }),
+    )
+
+    const delayedFailure = rejects(
+      clockDelayed.runToCompletion(delayedSleepRelease, { maxSteps: 0 }),
+      RangeError,
+    )
+    await releaseEntered.promise
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10)
+    })
+    equal(delayedReleases, 0)
+    externalGate.resolve()
+    await delayedFailure
+    equal(clockDelayed.now(), 1)
+    equal(clockDelayed.pending, 0)
+    equal(delayedReleases, 1)
+
+    // 2. Finalizer with 10,001 finite virtual sleeps does not truncate at 10,000 steps.
+    const clockMany = Clock.virtual(0)
+    let manyReleases = 0
+    const manySleepsRelease = ResultTask.scoped(
+      ResultTask.gen(function* () {
+        yield* ResultTask.acquireRelease({
+          acquire: ResultTask.ok('handle-many'),
+          release: () =>
+            ResultTask.gen(function* () {
+              for (let step = 0; step < 10_001; step += 1) {
+                yield* ResultTask.sleep(1)
+              }
+              manyReleases += 1
+            }),
+        })
+        yield* ResultTask.sleep(100)
+        return 'never'
+      }),
+    )
+
+    await rejects(clockMany.runToCompletion(manySleepsRelease, { maxSteps: 0 }), RangeError)
+    equal(clockMany.now(), 10_001)
+    equal(clockMany.pending, 0)
+    equal(manyReleases, 1)
+  })
+
+  it('automatically advances finalizer sleeps scheduled after external promises during normal runToCompletion', async () => {
+    const runScenario = async (outcome: 'success' | 'failure'): Promise<void> => {
+      const clock = Clock.virtual(0)
+      let releases = 0
+      const releaseEntered = Promise.withResolvers<void>()
+      const externalGate = Promise.withResolvers<void>()
+
+      const program = ResultTask.scoped(
+        ResultTask.gen(function* () {
+          yield* ResultTask.acquireRelease({
+            acquire: ResultTask.ok(`handle-${outcome}`),
+            release: () =>
+              ResultTask.gen(function* () {
+                releaseEntered.resolve()
+                yield* ResultTask.tryPromise({
+                  try: () => externalGate.promise,
+                  catch: (error) => error,
+                })
+                yield* ResultTask.sleep(1)
+                releases += 1
+              }),
+          })
+          for (let tick = 0; tick < 5; tick += 1) {
+            yield* ResultTask.sleep(1)
+          }
+          if (outcome === 'failure') {
+            return yield* ResultTask.err('domain-failure')
+          }
+          return 42
+        }),
+      )
+
+      const pendingExit = clock.runToCompletion(program)
+      await releaseEntered.promise
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10)
+      })
+      equal(clock.now(), 5)
+      equal(releases, 0)
+
+      externalGate.resolve()
+      const exit = await pendingExit
+      equal(clock.now(), 6)
+      equal(clock.pending, 0)
+      equal(releases, 1)
+      if (outcome === 'success') {
+        deepEqual(exit, { _tag: 'Success', value: 42 })
+      } else {
+        equal(exit._tag, 'Failure')
+        if (exit._tag === 'Failure') {
+          equal(exit.cause._tag, 'Fail')
+          if (exit.cause._tag === 'Fail') {
+            equal(exit.cause.error, 'domain-failure')
+          }
+        }
+      }
+    }
+
+    await runScenario('success')
+    await runScenario('failure')
+
+    // A task that awaits only an external promise (0 virtual clock steps) succeeds under maxSteps: 0.
+    const zeroClock = Clock.virtual(0)
+    const zeroGate = Promise.withResolvers<number>()
+    const zeroExit = zeroClock.runToCompletion(
+      ResultTask.tryPromise({ try: () => zeroGate.promise, catch: (error) => error }),
+      { maxSteps: 0 },
+    )
+    setTimeout(() => {
+      zeroGate.resolve(7)
+    }, 5)
+    deepEqual(await zeroExit, { _tag: 'Success', value: 7 })
+    equal(zeroClock.now(), 0)
+    equal(zeroClock.pending, 0)
+  })
 })
