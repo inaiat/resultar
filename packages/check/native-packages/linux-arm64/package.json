@@ -1,6 +1,6 @@
 {
   "name": "resultar-check-linux-arm64",
-  "version": "5.0.1",
+  "version": "6.0.0-beta.0",
   "description": "Native resultar-check binary for Linux ARM64",
   "license": "MIT",
   "repository": {

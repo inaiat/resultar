@@ -1,5 +1,9 @@
 # resultar-check-linux-arm64
 
+## 6.0.0-beta.0
+
+No changes in this release.
+
 ## 5.0.1
 
 No changes in this release.

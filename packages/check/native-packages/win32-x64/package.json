@@ -1,6 +1,6 @@
 {
   "name": "resultar-check-win32-x64",
-  "version": "5.0.1",
+  "version": "6.0.0-beta.0",
   "description": "Native resultar-check binary for Windows x64",
   "license": "MIT",
   "repository": {
