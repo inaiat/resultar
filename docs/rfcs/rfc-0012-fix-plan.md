@@ -90,7 +90,7 @@ O contrato inferido de `factory` é `Promise<ResultTask<number>>`. O consumidor 
 
 ## Notas da versão
 
-- [x] Corrigir a seção 9 da RFC e o changeset. Ambos dizem que os helpers estáticos de orquestração foram removidos. O pacote oferece `ResultAsync.retry` e `ResultAsync.withResource` pelo import `resultar/async`. Documentar que os helpers eager da v4 seguem disponíveis nesse subpath como APIs depreciadas durante a v5.x, conforme o guia de migração. [Registro da implementação](./rfc-0012-v5-async-model-unification.md) · [Changeset](../../.changeset/v5-async-model-unification.md) · [Guia de migração](../migrations/v5.md)
+- [x] Corrigir a seção 9 da RFC e o changeset. Ambos dizem que os helpers estáticos de orquestração foram removidos. O pacote oferece `ResultAsync.retry` e `ResultAsync.withResource` pelo import `resultar/async`. Documentar que os helpers eager da v4 seguem disponíveis nesse subpath como APIs depreciadas durante a v5.x, conforme o guia de migração. [Registro da implementação](./rfc-0012-v5-async-model-unification.md) · [Changeset](https://github.com/inaiat/resultar/blob/ba1b3819c0c772e02fff538fd96db0527f79c752/.changeset/v5-async-model-unification.md) · [Guia de migração](../migrations/v5.md)
 
 ## Como validar o fechamento
 

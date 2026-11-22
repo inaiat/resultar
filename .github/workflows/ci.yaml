@@ -65,7 +65,7 @@ jobs:
         run: vp run test:website
 
   release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next')
     needs: validate
     runs-on: ubuntu-latest
 
@@ -97,11 +97,16 @@ jobs:
       - name: Install dependencies
         run: vp install --frozen-lockfile
 
+      - name: Check Changesets prerelease mode
+        if: github.ref == 'refs/heads/next'
+        run: |
+          node -e 'if (require("./.changeset/pre.json").mode !== "pre") throw new Error("Enter Changesets prerelease mode on next before releasing.")'
+
       - name: Version packages or publish
         uses: changesets/action@v1
         with:
           version: vp run version:packages
-          publish: vp run release:publish
+          publish: ${{ github.ref == 'refs/heads/next' && 'vp run release:next' || 'vp run release:publish' }}
           commit: "Version packages"
           title: "Version packages"
           createGithubReleases: false

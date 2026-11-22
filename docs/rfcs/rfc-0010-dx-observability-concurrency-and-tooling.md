@@ -49,7 +49,7 @@ generated declarations remain authoritative for delivered APIs.
 | Searchable docs portal & live playground | Single-source-of-truth static site in [website/](../../website/index.html) generated directly from repository Markdown (28 code-split pages, 42 rules, 972 search entries, Cmd+K instant search, Light/Dark themes) plus a zero-backend browser playground running real bundled `resultar` with 6 curated presets, shareable hash URLs, and visual `Tracer.memory()` span waterfalls. Verified by [content.test.ts](../../website/tests/content.test.ts) and [playground.test.ts](../../website/tests/playground.test.ts); Pages deploy workflow in [.github/workflows/docs.yaml](../../.github/workflows/docs.yaml). |
 | Docs hygiene, Effect guide & drift checks | Added [docs/coming-from-effect.md](../coming-from-effect.md), updated [README.md](../../README.md), [DOCUMENTATION.md](../../DOCUMENTATION.md), [llms.txt](../../llms.txt), package READMEs, [skills/resultar/](../../skills/resultar/SKILL.md), and core JSDoc `@example` blocks; regenerated [docs/api-inventory.md](../api-inventory.md); added automated drift assertions to [scripts/test-documentation.mjs](../../scripts/test-documentation.mjs). |
 
-Implementation and publication are separate: [.changeset/dx-docs-observability-tooling.md](../../.changeset/dx-docs-observability-tooling.md)
+Implementation and publication are separate: [.changeset/dx-docs-observability-tooling.md](https://github.com/inaiat/resultar/blob/cacb7290bc9b1f8cbe625d4bf6bb121d83051daa/.changeset/dx-docs-observability-tooling.md)
 and regenerated documentation artifacts are included; no registry publication has been performed.
 
 ## 1. Baseline and motivation

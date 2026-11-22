@@ -6,6 +6,7 @@ import { setTimeout } from "node:timers/promises";
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const dryRun = process.argv.includes("--dry-run");
+const publishNext = process.argv.includes("--next");
 
 const packages = [
   "packages/check/native-packages/darwin-arm64",
@@ -27,6 +28,8 @@ const packages = [
   "packages/request-zod",
 ];
 const registry = "https://registry.npmjs.org";
+const prereleaseVersion =
+  /^\d+\.\d+\.\d+-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -102,21 +105,31 @@ function removeStalePrereleaseTags(name, version) {
   }
 }
 
+const manifests = [];
+for (const packageDir of packages) {
+  const packageJsonPath = join(rootDir, packageDir, "package.json");
+  const { name, version } = JSON.parse(await readFile(packageJsonPath, "utf8"));
+  if (publishNext && !prereleaseVersion.test(version)) {
+    throw new Error(
+      `Cannot publish ${name}@${version} to next. Every package must have a prerelease version.`,
+    );
+  }
+  manifests.push({ packageDir, name, version });
+}
+
 run("pnpm", ["--filter", "resultar-check", "native:build:all"]);
 const pending = new Map();
 
-for (const packageDir of packages) {
-  const packageJsonPath = join(rootDir, packageDir, "package.json");
-  const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
-  const id = `${packageJson.name}@${packageJson.version}`;
-  const publishTag = publishTagForVersion(packageJson.version);
+for (const { packageDir, name, version } of manifests) {
+  const id = `${name}@${version}`;
+  const publishTag = publishNext ? "next" : publishTagForVersion(version);
 
-  if (!dryRun && packageExists(packageJson.name, packageJson.version)) {
+  if (!dryRun && packageExists(name, version)) {
     console.log(`${id} already exists on npm; ensuring dist-tag ${publishTag}`);
-    ensureDistTag(packageJson.name, packageJson.version, publishTag);
+    ensureDistTag(name, version, publishTag);
 
     if (publishTag === "latest") {
-      removeStalePrereleaseTags(packageJson.name, packageJson.version);
+      removeStalePrereleaseTags(name, version);
     }
 
     continue;
@@ -154,8 +167,7 @@ for (const packageDir of packages) {
       cause: result.error,
     });
   }
-  if (!dryRun)
-    pending.set(id, { name: packageJson.name, version: packageJson.version, publishTag });
+  if (!dryRun) pending.set(id, { name, version, publishTag });
 }
 
 // Upload acceptance does not guarantee availability while npm scans a release.

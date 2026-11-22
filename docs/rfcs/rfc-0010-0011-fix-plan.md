@@ -2,7 +2,7 @@
 
 ## Revisão final
 
-**21/11/2026 · Todas as pendências da revalidação das RFCs 0010 e 0011 foram corrigidas e validadas** (incluindo o caso de timer registrado pelo finalizador após promessa externa durante a execução normal de `VirtualClock.runToCompletion`, além dos 12 cenários originais, dos 5 casos anteriores, dos 2 bloqueadores de ciclo de vida e do score de 100.00% no Stryker). Os pacotes foram recompilados e validados com `RESULTAR_JIT=0` e `1`. [Correções da segunda revisão](./rfc-0010-0011-fix-follow-up.md) · [Changeset das correções](../../.changeset/fix-rfc-0010-0011-final-review.md)
+**21/11/2026 · Todas as pendências da revalidação das RFCs 0010 e 0011 foram corrigidas e validadas** (incluindo o caso de timer registrado pelo finalizador após promessa externa durante a execução normal de `VirtualClock.runToCompletion`, além dos 12 cenários originais, dos 5 casos anteriores, dos 2 bloqueadores de ciclo de vida e do score de 100.00% no Stryker). Os pacotes foram recompilados e validados com `RESULTAR_JIT=0` e `1`. [Correções da segunda revisão](./rfc-0010-0011-fix-follow-up.md) · [Changeset das correções](https://github.com/inaiat/resultar/blob/8cd6a0cad0c3c0765c2aab0a759a63ef60cdb9c8/.changeset/fix-rfc-0010-0011-final-review.md)
 
 ### Pendências da revalidação
 
@@ -84,7 +84,7 @@ Medições repetidas após os fixes de semântica da primeira e segunda revisõe
 ## Ordem de entrega e fechamento
 
 1. **Concluído:** Playground isolado em iframe sandbox de origem opaca sem auto-execução de links compartilhados, com teste em Chrome real integrado ao `pnpm run test:website`.
-2. **Concluído:** Correções de `VirtualClock`/`Scheduler`, `Queue`, iteradores de `Ok`/`ResultTask`, `Match` JIT e cache de `resultar-di` (+ otimização de `resultar-hono`), com testes de regressão e changeset em [.changeset/fix-rfc-0010-0011-regressions.md](../../.changeset/fix-rfc-0010-0011-regressions.md).
+2. **Concluído:** Correções de `VirtualClock`/`Scheduler`, `Queue`, iteradores de `Ok`/`ResultTask`, `Match` JIT e cache de `resultar-di` (+ otimização de `resultar-hono`), com testes de regressão e changeset em [.changeset/fix-rfc-0010-0011-regressions.md](https://github.com/inaiat/resultar/blob/7348f02dd63bb617dc12669a98adf83a66c386d0/.changeset/fix-rfc-0010-0011-regressions.md).
 3. **Concluído:** [CI](../../.github/workflows/ci.yaml) atualizado com `RESULTAR_JIT=1 vp run check:full` e `RESULTAR_JIT=0 vp run test`; suíte completa validada sequencialmente.
 4. **Concluído:** Benchmark HTTP Hono corrigido com isolamento por processo e comparações pareadas contra a base `5629d83` executadas e reconciliadas.
 5. **Concluído:** Registros de implementação da RFC 0010, RFC 0011 e `benchmarks/README.md` atualizados com os resultados e desvios documentados.

@@ -39,6 +39,6 @@
 ## Fechamento
 
 - [x] Cada cenário tem um teste que falha com o código de `7348f02` e passa com o respectivo fix.
-- [x] As mudanças de comportamento incluem os changesets dos pacotes afetados ([.changeset/fix-rfc-0010-0011-follow-up.md](../../.changeset/fix-rfc-0010-0011-follow-up.md) cobrindo `resultar`, `resultar-fastify` e `resultar-nestjs`).
+- [x] As mudanças de comportamento incluem os changesets dos pacotes afetados ([.changeset/fix-rfc-0010-0011-follow-up.md](https://github.com/inaiat/resultar/blob/8cd6a0cad0c3c0765c2aab0a759a63ef60cdb9c8/.changeset/fix-rfc-0010-0011-follow-up.md) cobrindo `resultar`, `resultar-fastify` e `resultar-nestjs`).
 - [x] Passaram `RESULTAR_JIT=1 pnpm run check:full`, `RESULTAR_JIT=0 pnpm run test`, `pnpm run build`, `pnpm run smoke:package`, `pnpm run test:examples`, `pnpm run test:docs`, `pnpm run test:agents`, `check:vscode`/`build:vscode`/`test:vscode` e `pnpm run test:website` com o bundle de produção e Chrome.
 - [x] O registro desta revisão inclui o commit de base validado (`1b553ed` sobre `7348f02`), os resultados red-green dos três cenários (+ espelho em `resultar-nestjs`) e a nova medição de `TaggedError + catchTag`.
