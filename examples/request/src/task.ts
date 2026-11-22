@@ -1,11 +1,11 @@
 import { createTaggedError, ResultTask } from "resultar";
 import {
-  requestJsonTask,
+  requestJson,
   type RequestJsonDecodeResult,
   type RequestJsonMapError,
 } from "resultar-request";
-import { requestJsonTypeBoxTask } from "resultar-request-typebox";
-import { requestJsonZodTask } from "resultar-request-zod";
+import { requestJsonTypeBox } from "resultar-request-typebox";
+import { requestJsonZod } from "resultar-request-zod";
 
 import { closeServer, startAccountExampleServer } from "./account-server.js";
 import { accountTypeBoxSchema } from "./typebox.js";
@@ -74,7 +74,7 @@ const mapTaskAccountError = {
 } satisfies RequestJsonMapError;
 
 export const loadAccountWithPlainTask = (baseUrl: string) =>
-  requestJsonTask({
+  requestJson({
     decode: decodeAccount,
     mapError: mapTaskAccountError,
     request: (signal) => fetch(`${baseUrl}/accounts/team`, { signal }),
@@ -82,7 +82,7 @@ export const loadAccountWithPlainTask = (baseUrl: string) =>
   });
 
 export const loadAccountWithZodTask = (baseUrl: string) =>
-  requestJsonZodTask({
+  requestJsonZod({
     mapError: mapTaskAccountError,
     request: (signal) => fetch(`${baseUrl}/accounts/team`, { signal }),
     retry: { delayMs: 25, times: 1 },
@@ -90,7 +90,7 @@ export const loadAccountWithZodTask = (baseUrl: string) =>
   });
 
 export const loadAccountWithTypeBoxTask = (baseUrl: string) =>
-  requestJsonTypeBoxTask({
+  requestJsonTypeBox({
     mapError: mapTaskAccountError,
     request: (signal) => fetch(`${baseUrl}/accounts/team`, { signal }),
     retry: { delayMs: 25, times: 1 },
@@ -101,8 +101,8 @@ const runTaskExampleWorkflow = () =>
   ResultTask.scoped(
     ResultTask.gen(function* () {
       const { baseUrl } = yield* ResultTask.acquireRelease({
-        acquire: ResultTask.fromResultAsync(() => startAccountExampleServer()),
-        release: ({ server }) => ResultTask.fromResultAsync(() => closeServer(server)),
+        acquire: startAccountExampleServer(),
+        release: ({ server }) => closeServer(server),
       });
 
       const plain = yield* loadAccountWithPlainTask(baseUrl);

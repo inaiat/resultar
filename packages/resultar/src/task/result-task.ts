@@ -25,14 +25,10 @@ import type { Result } from '../result/result.js'
 import { createEmptyResultsCollectionError, err, ok } from '../result/result.js'
 import { getReason } from '../result/result-helpers.js'
 import { AbortError } from '../core/abort-error.js'
-import { createResultAsync } from '../result-async/result-async-adapter.js'
-import '../result-async/result-async.js'
-import type { ResultAsync } from '../result-async/result-async.js'
 import { TaskScope } from './scope.js'
 import { Cause } from './cause.js'
 import { Clock } from './task-clock.js'
 import type { TaskClock } from './task-clock.js'
-import { isRetryPolicy } from '../core/retry.js'
 import type { RetryPolicy } from '../core/retry.js'
 import { createScheduling, recoverScheduling, schedulerCheckpoint } from './task-scheduler.js'
 import type { TaskScheduler } from './task-scheduler.js'
@@ -68,7 +64,6 @@ import {
   isObjectLike,
   isPlainRecord,
   isResultTask,
-  legacyRetryDelay,
   repeatDelayPlan,
   ResultTaskCauseError,
   ResultTaskTypeId,
@@ -83,8 +78,6 @@ import type {
   ResultTaskConcurrencyOptions,
   ResultTaskMatchOptions,
   ResultTaskRepeatInput,
-  ResultTaskRetryInput,
-  ResultTaskRetryOptions,
   ResultTaskZipOptions,
 } from './task-helpers.js'
 import { registerRuntimeTaskBridge } from './task-runtime-bridge.js'
@@ -162,7 +155,6 @@ export type {
   ResultTaskMatchOptions,
   ResultTaskRepeatInput,
   ResultTaskRepeatOptions,
-  ResultTaskRetryOptions,
   ResultTaskZipOptions,
 } from './task-helpers.js'
 export {
@@ -200,9 +192,7 @@ export type Exit<A, E> =
 
 interface TaskRetryState {
   readonly task: ResultTask<unknown, unknown, unknown>
-  readonly canonical: boolean
   readonly policy: RetryPolicy<unknown>
-  readonly options: ResultTaskRetryOptions<unknown>
   readonly clock: TaskClock
   readonly signal: AbortSignal
   readonly context: ResultTaskRuntimeContext
@@ -1431,28 +1421,6 @@ export class ResultTask<out A, out E = never, out R = never> {
     return new ResultTask<A, E>(OP_FAIL, error)
   }
 
-  /** @deprecated Use `ResultTask.ok`. Execution and error behavior are unchanged. */
-  declare public static succeed: typeof ResultTask.ok
-
-  static {
-    // Function-valued declarations avoid TS 7's recursive inference for deprecated methods.
-    function succeed<Value>(value: Value): ResultTask<Value, never>
-    function succeed<Value, Error>(value: Value): ResultTask<Value, Error>
-    function succeed<Value, Error = never>(value: Value): ResultTask<Value, Error> {
-      return ResultTask.ok<Value, Error>(value)
-    }
-    Object.defineProperty(ResultTask, 'succeed', {
-      configurable: true,
-      writable: true,
-      value: succeed satisfies typeof ResultTask.ok,
-    })
-  }
-
-  /** @deprecated Use `ResultTask.err`. Execution and error behavior are unchanged. */
-  public static fail<const E>(error: E): ResultTask<never, E> {
-    return ResultTask.err<E>(error)
-  }
-
   /** Lifts an already computed Result into a lazy task. */
   public static fromResult<A, E>(result: Result<A, E>): ResultTask<A, E> {
     return result.isOk() ? ResultTask.ok<A, E>(result.value) : ResultTask.err<A, E>(result.error)
@@ -2301,33 +2269,6 @@ export class ResultTask<out A, out E = never, out R = never> {
     return new ResultTask<B, E | E2, R | R2>(OP_FLAT_MAP, this, f)
   }
 
-  /** @deprecated Use andThen. Execution and error behavior are unchanged. */
-  declare public flatMap: <B = never, E2 = never, R2 = never>(
-    f: (value: A) => ResultTask<B, E2, R2>,
-  ) => ResultTask<B, E | E2, R | R2>
-
-  static {
-    // Preserve the shared writable method and dynamic receiver while avoiding the TS 7 bug.
-    function flatMap<
-      Value,
-      Error,
-      Requirements,
-      NextValue = never,
-      NextError = never,
-      NextRequirements = never,
-    >(
-      this: ResultTask<Value, Error, Requirements>,
-      f: (value: Value) => ResultTask<NextValue, NextError, NextRequirements>,
-    ): ResultTask<NextValue, Error | NextError, Requirements | NextRequirements> {
-      return this.andThen(f)
-    }
-    Object.defineProperty(ResultTask.prototype, 'flatMap', {
-      configurable: true,
-      writable: true,
-      value: flatMap,
-    })
-  }
-
   /**
    * Recovers a single typed failure with another task or synchronous Result. Composite causes
    * become a Die(ResultTaskCauseError) so the removed E cannot escape through runExit; the original
@@ -2337,13 +2278,6 @@ export class ResultTask<out A, out E = never, out R = never> {
     f: (error: E) => ResultTask<B, E2, R2> | Result<B, E2>,
   ): ResultTask<A | B, E2, R | R2> {
     return new ResultTask<A | B, E2, R | R2>(OP_CATCH_ALL, this, f)
-  }
-
-  /** @deprecated Use orElse. Execution and error behavior are unchanged. */
-  public catchAll<B = never, E2 = never, R2 = never>(
-    f: (error: E) => ResultTask<B, E2, R2>,
-  ): ResultTask<A | B, E2, R | R2> {
-    return this.orElse(f)
   }
 
   /** Recovers a single typed failure with a plain success value. */
@@ -2594,11 +2528,6 @@ export class ResultTask<out A, out E = never, out R = never> {
     return new ResultTask<A, E2, R>(OP_MAP_ERROR, this, f)
   }
 
-  /** @deprecated Use mapErr. Execution and error behavior are unchanged. */
-  public mapError<E2>(f: (error: E) => E2): ResultTask<A, E2, R> {
-    return this.mapErr(f)
-  }
-
   /**
    * Executes a side effect on the success value without modifying it.
    * If the callback returns a `ResultTask`, its requirements and errors are merged.
@@ -2787,20 +2716,20 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
 
   /**
-   * Retries this task according to a portable `RetryPolicy` or retry options object, closing the
-   * attempt's scope before starting the next retry.
+   * Retries this task according to a portable {@link RetryPolicy}, closing the attempt's scope
+   * before starting the next retry.
    *
    * @example
    * ```ts
    * import { ResultTask, Retry } from 'resultar'
    *
-   * const retried = ResultTask.fail('transient' as const).retry(Retry.policy({ times: 2, delayMs: 10 }))
+   * const retried = ResultTask.err('transient' as const).retry(Retry.policy({ times: 2, delayMs: 10 }))
    * ```
    */
   public retry(
-    options: ResultTaskRetryInput<E | ScopeError<R>>,
+    policy: RetryPolicy<E | ScopeError<R>>,
   ): ResultTask<A, E | ScopeError<R>, WithoutScope<R>> {
-    return ResultTask.retry(this, options)
+    return ResultTask.retry(this, policy)
   }
 
   /**
@@ -3083,15 +3012,6 @@ export class ResultTask<out A, out E = never, out R = never> {
         ),
       ),
     )
-  }
-
-  /**
-   * Converts this task into one eagerly started ResultAsync execution.
-   *
-   * @deprecated Since v4. Use task.runResult() instead.
-   */
-  public toResultAsync(this: ResultTask<A, E, never>): ResultAsync<A, E> {
-    return this.runResult()
   }
 
   /** Provides one required service and removes it from the task's requirements. */
@@ -3733,30 +3653,24 @@ export class ResultTask<out A, out E = never, out R = never> {
    */
   public static retry<A, E, R>(
     task: ResultTask<A, E, R>,
-    options: ResultTaskRetryInput<E | ScopeError<R>>,
+    policy: RetryPolicy<E | ScopeError<R>>,
   ): ResultTask<A, E | ScopeError<R>, WithoutScope<R>>
   public static retry<E>(
     policy: RetryPolicy<E>,
   ): <A, Error extends E, R>(
     task: ResultTask<A, Error, R> & ([ScopeError<R>] extends [E] ? unknown : never),
   ) => ResultTask<A, Error | ScopeError<R>, WithoutScope<R>>
-  public static retry<E>(
-    options: ResultTaskRetryOptions<E>,
-  ): <A, R>(task: ResultTask<A, E, R>) => ResultTask<A, E | ScopeError<R>, WithoutScope<R>>
   public static retry(...args: readonly unknown[]): unknown {
     if (!isResultTask(args[0]))
       return (task: ResultTask<unknown, unknown, unknown>) =>
-        ResultTask.retry(task, args[0] as ResultTaskRetryInput<unknown>)
+        ResultTask.retry(task, args[0] as RetryPolicy<unknown>)
     const task = args[0]
-    const options = args[1] as ResultTaskRetryInput<unknown>
-    validateTaskRetry(options)
-    const canonical = isRetryPolicy(options)
+    const policy = args[1] as RetryPolicy<unknown>
+    validateTaskRetry(policy)
     return new ResultTask((context) =>
       ResultTask.#retryLoop({
         task,
-        canonical,
-        policy: options as RetryPolicy<unknown>,
-        options: options as ResultTaskRetryOptions<unknown>,
+        policy,
         clock: context.clock,
         signal: context.signal,
         context,
@@ -3818,11 +3732,9 @@ export class ResultTask<out A, out E = never, out R = never> {
   static #retryPlan(state: TaskRetryState, exit: Exit<unknown, unknown>): TaskRetryStep {
     const { context, retry } = state
     if (context.signal.aborted) return interruptSuccess(exit, context.signal)
-    if (exit._tag === 'Success' || exit.cause._tag !== 'Fail' || retry >= state.options.times)
+    if (exit._tag === 'Success' || exit.cause._tag !== 'Fail' || retry >= state.policy.times)
       return exit
-    const pending = state.canonical
-      ? canonicalRetryDelay(exit.cause.error, retry, state)
-      : success<number | undefined, never>(legacyRetryDelay(exit.cause.error, retry, state))
+    const pending = canonicalRetryDelay(exit.cause.error, retry, state)
     return isPromiseExit(pending)
       ? pending.then(
           (plan) => ResultTask.#retryWait(state, exit, plan) ?? ResultTask.#retryLoop(state),
@@ -4202,7 +4114,9 @@ export class ResultTask<out A, out E = never, out R = never> {
         recordOutcome(index, isPromiseExit(closed) ? await closed : closed)
       }
     }
-    await Promise.all(Array.from({ length: workerCount }, () => worker()))
+    const workers: Promise<void>[] = []
+    for (let index = 0; index < workerCount; index += 1) workers.push(worker())
+    await Promise.all(workers)
     // Stryker disable next-line all: listener cleanup prevents parent AbortSignal memory leaks after collection completes.
     fiberSignal.dispose()
     // Stryker disable next-line ConditionalExpression: fast-path when all items succeeded.
@@ -4499,61 +4413,6 @@ export class ResultTask<out A, out E = never, out R = never> {
       | (<A2, R2>(task: ResultTask<A2, E, R2>) => ResultTask<A2, E2, R2>)
   }
 
-  /** @deprecated Use mapErr. Execution and error behavior are unchanged. */
-  public static mapError<A, E, R, E2>(
-    task: ResultTask<A, E, R>,
-    f: (error: E) => E2,
-  ): ResultTask<A, E2, R>
-  /** @deprecated Use mapErr. Execution and error behavior are unchanged. */
-  public static mapError<E, E2>(
-    f: (error: E) => E2,
-  ): <A, R>(task: ResultTask<A, E, R>) => ResultTask<A, E2, R>
-  /** @deprecated Use mapErr. Execution and error behavior are unchanged. */
-  public static mapError<A, E, R, E2>(
-    taskOrF: ResultTask<A, E, R> | ((error: E) => E2),
-    f?: (error: E) => E2,
-  ): ResultTask<A, E2, R> | (<A2, R2>(task: ResultTask<A2, E, R2>) => ResultTask<A2, E2, R2>) {
-    return dual(
-      (args) => typeof args[0] !== 'function',
-      (task: ResultTask<A, E, R>, callback: typeof f) => {
-        if (callback === undefined)
-          throw new TypeError('ResultTask.mapError requires an error mapping function')
-        return task.mapErr(callback)
-      },
-    )(taskOrF, f) as
-      | ResultTask<A, E2, R>
-      | (<A2, R2>(task: ResultTask<A2, E, R2>) => ResultTask<A2, E2, R2>)
-  }
-
-  /** Chains a task using the canonical functional form or curried for `pipe`. */
-  /** @deprecated Use andThen. Execution and error behavior are unchanged. */
-  public static flatMap<A, E, R, B = never, E2 = never, R2 = never>(
-    task: ResultTask<A, E, R>,
-    f: (value: A) => ResultTask<B, E2, R2>,
-  ): ResultTask<B, E | E2, R | R2>
-  /** @deprecated Use andThen. Execution and error behavior are unchanged. */
-  public static flatMap<A, B = never, E2 = never, R2 = never>(
-    f: (value: A) => ResultTask<B, E2, R2>,
-  ): <E, R>(task: ResultTask<A, E, R>) => ResultTask<B, E | E2, R | R2>
-  /** @deprecated Use andThen. Execution and error behavior are unchanged. */
-  public static flatMap<A, E, R, B = never, E2 = never, R2 = never>(
-    taskOrF: ResultTask<A, E, R> | ((value: A) => ResultTask<B, E2, R2>),
-    f?: (value: A) => ResultTask<B, E2, R2>,
-  ):
-    | ResultTask<B, E | E2, R | R2>
-    | (<E3, R3>(task: ResultTask<A, E3, R3>) => ResultTask<B, E3 | E2, R3 | R2>) {
-    return dual(
-      (args) => typeof args[0] !== 'function',
-      (task: ResultTask<A, E, R>, callback: typeof f) => {
-        if (callback === undefined)
-          throw new TypeError('ResultTask.flatMap requires a continuation function')
-        return task.andThen(callback)
-      },
-    )(taskOrF, f) as
-      | ResultTask<B, E | E2, R | R2>
-      | (<E3, R3>(task: ResultTask<A, E3, R3>) => ResultTask<B, E3 | E2, R3 | R2>)
-  }
-
   /** Chains a task or synchronous Result using the canonical functional form or curried for `pipe`. */
   public static andThen<A, E, R, B = never, E2 = never, R2 = never>(
     task: ResultTask<A, E, R>,
@@ -4599,34 +4458,6 @@ export class ResultTask<out A, out E = never, out R = never> {
       (task: ResultTask<A, E, R>, callback: typeof f) => {
         if (callback === undefined)
           throw new TypeError('ResultTask.orElse requires a recovery function')
-        return task.orElse(callback)
-      },
-    )(taskOrF, f) as
-      | ResultTask<A | B, E2, R | R2>
-      | (<A2, R3>(task: ResultTask<A2, E, R3>) => ResultTask<A2 | B, E2, R3 | R2>)
-  }
-
-  /** @deprecated Use orElse. Execution and error behavior are unchanged. */
-  public static catchAll<A, E, R, B = never, E2 = never, R2 = never>(
-    task: ResultTask<A, E, R>,
-    f: (error: E) => ResultTask<B, E2, R2>,
-  ): ResultTask<A | B, E2, R | R2>
-  /** @deprecated Use orElse. Execution and error behavior are unchanged. */
-  public static catchAll<E, B = never, E2 = never, R2 = never>(
-    f: (error: E) => ResultTask<B, E2, R2>,
-  ): <A, R>(task: ResultTask<A, E, R>) => ResultTask<A | B, E2, R | R2>
-  /** @deprecated Use orElse. Execution and error behavior are unchanged. */
-  public static catchAll<A, E, R, B = never, E2 = never, R2 = never>(
-    taskOrF: ResultTask<A, E, R> | ((error: E) => ResultTask<B, E2, R2>),
-    f?: (error: E) => ResultTask<B, E2, R2>,
-  ):
-    | ResultTask<A | B, E2, R | R2>
-    | (<A2, R3>(task: ResultTask<A2, E, R3>) => ResultTask<A2 | B, E2, R3 | R2>) {
-    return dual(
-      (args) => typeof args[0] !== 'function',
-      (task: ResultTask<A, E, R>, callback: typeof f) => {
-        if (callback === undefined)
-          throw new TypeError('ResultTask.catchAll requires a recovery function')
         return task.orElse(callback)
       },
     )(taskOrF, f) as
@@ -6084,15 +5915,6 @@ export class ResultTask<out A, out E = never, out R = never> {
     })
   }
 
-  /**
-   * Starts one requirement-free task execution for awaitable Async consumers.
-   *
-   * @deprecated Since v4. Use ResultTask.runResult(task) instead.
-   */
-  public static toResultAsync<A, E>(task: ResultTask<A, E, never>): ResultAsync<A, E> {
-    return ResultTask.runResult(task)
-  }
-
   static #idleRunContext: ResultTaskRuntimeContext | undefined
 
   private static runExitSyncOrAsync<A, E, R>(
@@ -6311,10 +6133,8 @@ export class ResultTask<out A, out E = never, out R = never> {
   private static runResultInternal<A, E, R>(
     task: ResultTask<A, E, R>,
     options?: ResultTaskRunOptions<R>,
-  ): ResultAsync<A, E | ScopeError<R>> {
-    return createResultAsync<ResultAsync<A, E | ScopeError<R>>>(
-      ResultTask.runResultPromiseInternal(task, options),
-    )
+  ): Promise<Result<A, E | ScopeError<R>>> {
+    return ResultTask.runResultPromiseInternal(task, options)
   }
 
   private static runPromiseInternal<A, E, R>(
@@ -6322,6 +6142,9 @@ export class ResultTask<out A, out E = never, out R = never> {
     options?: ResultTaskRunOptions<R>,
   ): Promise<A> {
     try {
+      if (options === undefined && task.op === OP_SUCCESS) {
+        return Promise.resolve(task.value as A)
+      }
       const outcome = ResultTask.runExitSyncOrAsync(task, options)
       if (isPromiseExit(outcome)) {
         return outcome.then((exit) => ResultTask.exitToValue(exit))
@@ -6335,7 +6158,7 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
 
   /**
-   * Executes this task and returns simple typed failures as `Err` wrapped in `ResultAsync`.
+   * Executes this task and resolves simple typed failures as `Err` in a native `Promise<Result>`.
    * Defects, interruptions, and composite causes reject, just as with `ResultTask.runResult`.
    * Each call starts a new execution; required services must be supplied in the run options.
    *
@@ -6347,7 +6170,7 @@ export class ResultTask<out A, out E = never, out R = never> {
   public runResult(
     this: ResultTask<A, E, R>,
     ...args: ResultTaskRunArguments<R>
-  ): ResultAsync<A, E | ScopeError<R>> {
+  ): Promise<Result<A, E | ScopeError<R>>> {
     return ResultTask.runResultInternal(this, args[0])
   }
 
@@ -6541,8 +6364,8 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
 
   /**
-   * Runs a task and returns single typed failures as `Err<E>` wrapped in `ResultAsync`; rejects defects (`Die`),
-   * interruptions (`AbortError`), and composite causes (`ResultTaskCauseError`).
+   * Runs a task and resolves single typed failures as `Err<E>` in a native `Promise<Result>`;
+   * rejects defects (`Die`), interruptions (`AbortError`), and composite causes (`ResultTaskCauseError`).
    *
    * @example
    * ```ts
@@ -6554,20 +6377,20 @@ export class ResultTask<out A, out E = never, out R = never> {
   public static runResult<Task>(
     task: Task & (Task extends ResultTask<unknown, unknown, unknown> ? unknown : never),
     ...args: NoInfer<ResultTaskRunArguments<TaskRequirements<Task>>>
-  ): ResultAsync<TaskSuccess<Task>, TaskError<Task> | ScopeError<TaskRequirements<Task>>>
-  public static runResult<A, E>(task: ResultTask<A, E, never>): ResultAsync<A, E>
+  ): Promise<Result<TaskSuccess<Task>, TaskError<Task> | ScopeError<TaskRequirements<Task>>>>
+  public static runResult<A, E>(task: ResultTask<A, E, never>): Promise<Result<A, E>>
   public static runResult<A, E, R>(
     task: ResultTask<A, E, R> & ([WithoutScope<R>] extends [never] ? unknown : never),
     options?: NoInfer<ResultTaskRunOptions<R>>,
-  ): ResultAsync<A, E | ScopeError<R>>
+  ): Promise<Result<A, E | ScopeError<R>>>
   public static runResult<A, E, R>(
     task: ResultTask<A, E, R>,
     options: NoInfer<ResultTaskRunOptions<R>>,
-  ): ResultAsync<A, E | ScopeError<R>>
+  ): Promise<Result<A, E | ScopeError<R>>>
   public static runResult<A, E, R>(
     task: ResultTask<A, E, R>,
     options?: ResultTaskRunOptions<R>,
-  ): ResultAsync<A, E | ScopeError<R>> {
+  ): Promise<Result<A, E | ScopeError<R>>> {
     return ResultTask.runResultInternal(task, options)
   }
 
@@ -6809,3 +6632,6 @@ const runTryPromiseResult = <A, E>(
   }
 }
 /* Stryker restore all */
+
+/** `ResultTask` convention that restricts the error channel to real `Error` instances. */
+export type StrictResultTask<T, E extends Error = Error, R = never> = ResultTask<T, E, R>

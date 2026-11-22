@@ -1,5 +1,5 @@
 /* eslint-disable unicorn/no-await-expression-member */
-import { errAsync, okAsync } from "resultar";
+import { ResultTask } from "resultar";
 import { expect, expectTypeOf, test } from "vite-plus/test";
 import { createApplication } from "../../../examples/nestjs/src/main.js";
 import { createServices, UserReadError } from "../../../examples/nestjs/src/services.js";
@@ -35,8 +35,8 @@ test("the actual NestJS example infers all bindings and serves its native routes
 
 test("the NestJS example maps an overridden repository failure to 503", async () => {
   const repository = {
-    findById: () => errAsync(new UserReadError({ id: "1" })),
-    remove: () => okAsync(false),
+    findById: () => ResultTask.err(new UserReadError({ id: "1" })),
+    remove: () => ResultTask.ok(false),
   };
   const app = createApplication(createServices().override("repository", repository));
   expect((await app.inject("/users/1")).statusCode).toBe(503);

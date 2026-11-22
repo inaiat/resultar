@@ -11,26 +11,29 @@ pnpm add resultar-config resultar resultar-di
 ```
 
 ```ts
-import { defineAppConfig, t } from 'resultar-config'
-import { createModule } from 'resultar-di'
-import { ResultTask } from 'resultar'
+import { defineAppConfig, t } from "resultar-config";
+import { createModule } from "resultar-di";
+import { ResultTask } from "resultar";
 
 const properties = {
   PORT: t.Integer({ default: 8080, minimum: 1, maximum: 65535 }),
   DATABASE_URL: t.String({ minLength: 1 }),
   FEATURE_ENABLED: t.Boolean({ default: false }),
-}
-const appConfig = defineAppConfig({ properties })
-const createServices = (config = appConfig) => createModule()
-  .merge(config)
-  .singleton('httpConfig', ['appConfig'], ({ appConfig }) => ({ port: appConfig.PORT }))
-const services = createServices(defineAppConfig({
-  properties,
-  source: { DATABASE_URL: 'postgresql://localhost/test', PORT: '9000' },
-}))
-const exit = await services.use(['httpConfig'], ({ httpConfig }) =>
-  ResultTask.ok(httpConfig.port),
-).runExit()
+};
+const appConfig = defineAppConfig({ properties });
+const createServices = (config = appConfig) =>
+  createModule()
+    .merge(config)
+    .singleton("httpConfig", ["appConfig"], ({ appConfig }) => ({ port: appConfig.PORT }));
+const services = createServices(
+  defineAppConfig({
+    properties,
+    source: { DATABASE_URL: "postgresql://localhost/test", PORT: "9000" },
+  }),
+);
+const exit = await services
+  .use(["httpConfig"], ({ httpConfig }) => ResultTask.ok(httpConfig.port))
+  .runExit();
 ```
 
 `t` is a direct reexport of TypeBox's `Type`, so schema builders and inferred types
@@ -43,12 +46,12 @@ The alias adds no framework-specific schema builders or validation behavior.
 For direct loading at startup or in scripts, use the module's `load()` helper:
 
 ```ts
-const config = await appConfig.load().runResult()
+const config = await appConfig.load().runResult();
 if (config.isErr()) {
-  console.error('Invalid application configuration', config.error.issues)
-  process.exitCode = 1
+  console.error("Invalid application configuration", config.error.issues);
+  process.exitCode = 1;
 } else {
-  console.log(config.value.PORT) // number
+  console.log(config.value.PORT); // number
 }
 ```
 

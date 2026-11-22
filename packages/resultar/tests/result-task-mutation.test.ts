@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vite-plus/test'
 
-import { err, ok, ResultTask } from '../src/index.js'
+import { err, ok, ResultTask, Retry } from '../src/index.js'
 import type { Exit, Result } from '../src/index.js'
 import type { ResultTaskRuntimeContext } from '../src/task/task-service.js'
 
@@ -182,11 +182,11 @@ describe('ResultTask mutation regressions', () => {
   it('executes uninterruptible synchronous retries in the synchronous retry loop', async () => {
     let attempts = 0
     const task = ResultTask.ok(0)
-      .flatMap(() => {
+      .andThen(() => {
         attempts += 1
         return attempts < 3 ? ResultTask.err('retry') : ResultTask.ok(attempts)
       })
-      .retry({ times: 2 })
+      .retry(Retry.policy({ times: 2 }))
 
     const pending = ResultTask.runExit(task)
     expect(attempts).toBe(3)

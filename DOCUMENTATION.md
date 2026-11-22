@@ -8,26 +8,23 @@ their usage examples, checker configuration, editor tooling, and workspace valid
 
 Resultar is a small TypeScript library for explicit error handling.
 
-Its core primitives are `Result` (synchronous value), `ResultTask` (lazy async workflow), and
-`ResultAsync` (in-flight `Result` returned by `task.runResult()`):
+Its core primitives are `Result` (synchronous value) and `ResultTask` (lazy async workflow,
+executing to a native `Promise<Result<T, E>>` via `task.runResult()`):
 
 ```ts
 Result<T, E>;
 ResultTask<T, E, R>;
-ResultAsync<T, E>;
 ```
 
 Use them when a function can fail and that failure should be visible in the type signature instead
 of hidden behind `throw`, rejected promises, nullable returns, or ad hoc `T | Error` unions.
 
-Use `Result` for synchronous domain code and prefer `ResultTask` for new asynchronous
+Use `Result` for synchronous domain code and `ResultTask` for all asynchronous
 workflows. Tasks are lazy and repeatable, with explicit runners; add service requirements
 (`R`), time, retry, concurrency and resources as needed. Executing a task with `task.runResult()`
-returns `ResultAsync<T, E>` — an in-flight `Result` (`PromiseLike<Result<T, E>>`) that can be
-awaited directly or transformed and folded with the same methods as `Result`. In-flight constructors
-(`okAsync`, `errAsync`, `unitAsync`, `tryResultAsync`, `fromPromise`, `fromSafePromise`) are active in
-`resultar`; deprecated eager orchestration helpers on `ResultAsync` also remain exported from
-`resultar` for gradual migration.
+returns a native `Promise<Result<T, E>>` directly at your imperative boundary. Legacy eager
+`ResultAsync` and `StrictResultAsync` compatibility constructors live in the opt-in `"resultar/async"`
+subpath; root `"resultar"` has zero `ResultAsync` imports.
 Adoption can happen one function or workflow at a time.
 
 ## Install
@@ -103,14 +100,13 @@ If you are new to Resultar, read these sections in order:
 6. [Handling results at boundaries](#handling-results-at-boundaries)
 7. [Task concurrency](#structured-task-concurrency-fibers-and-semaphores) and [retry](#retrying-async-work)
 
-Existing eager code has a separate [in-flight `ResultAsync` and eager compatibility reference](#in-flight-resultasync--deprecated-eager-compatibility).
-Its constructors, policies, terminal Promises and callback contracts remain supported during v4.
+Existing eager code has an [opt-in `"resultar/async"` compatibility reference](#opt-in-eager-compatibility-resultarasync).
+Upgrading from v4? See the [v5 migration guide](docs/migrations/v5.md) and run `resultar-check migrate-v5`.
 
 Start with `Result<T, E>` and stop wherever the current workflow's needs are met.
-Prefer `ResultTask<T, E, R>` for new async code: `E` tracks expected errors and `R` tracks
+Use `ResultTask<T, E, R>` for async code: `E` tracks expected errors and `R` tracks
 service and scope requirements. Add `Clock`, `Retry.policy` or owned Fibers as needed.
-Existing eager `ResultAsync<T, E>` boundaries remain awaitable to `Result<T, E>` during
-migration. Synchronous domain functions can keep returning `Result` throughout.
+Synchronous domain functions can keep returning `Result` throughout.
 
 If you already know Result-style error handling, jump to:
 
@@ -146,11 +142,11 @@ If you already know Result-style error handling, jump to:
 | Choose the right error-catching API         | [Catching And Recovering Errors](#catching-and-recovering-errors)                                         | `tryResult`, `ResultTask.tryPromise`, `mapErr`, `orElse`, `catchTag`, `matchError`                   |
 | Convert results into responses              | [Handling Results At Boundaries](#handling-results-at-boundaries)                                         | `match`, `matchTags`, `matchTagsPartial`                                                             |
 | Match an error value directly               | [Handling Results At Boundaries](#handling-results-at-boundaries)                                         | `matchError`, `matchErrorPartial`                                                                    |
-| Write linear result code                    | [Result Generators](#result-generators)                                                                   | `Result.gen`, `ResultTask.gen`, supported `safeTry`, `yield* result`                                 |
+| Write linear result code                    | [Result Generators](#result-generators)                                                                   | `Result.gen`, `Result.fn`, `ResultTask.gen`, `ResultTask.fn`, `yield* result`                        |
 | Branch without throwing                     | [Conditional Helpers](#conditional-helpers)                                                               | `Result.if`, `Result.when`, `Result.unless`, `ResultTask.if`, `ResultTask.when`, `ResultTask.unless` |
 | Combine many independent results            | [Combining And Iterating](#combining-and-iterating)                                                       | `all`, `combine`, `ResultTask.all`, `ResultTask.validateAll`                                         |
 | Control async traversal concurrency         | [Async Concurrency Mapping](#async-concurrency-mapping)                                                   | `ResultTask.forEach`, `ResultTask.validateAll`, `{ concurrency }`                                    |
-| Coordinate fibers, semaphores, and yields   | [Structured Task Concurrency, Fibers, And Semaphores](#structured-task-concurrency-fibers-and-semaphores) | `ResultTask.forkChild`, `task.runFork`, `Fiber`, `Semaphore`, `Scheduler`, `yieldEvery`               |
+| Coordinate fibers, semaphores, and yields   | [Structured Task Concurrency, Fibers, And Semaphores](#structured-task-concurrency-fibers-and-semaphores) | `ResultTask.forkChild`, `task.runFork`, `Fiber`, `Semaphore`, `Scheduler`, `yieldEvery`              |
 | Race concurrent async work                  | [Concurrent Racing And Timeouts](#concurrent-racing-and-timeouts)                                         | `ResultTask.race`, `raceFirst`, `timeout`, `Clock.virtual`                                           |
 | Retry transient async work                  | [Retrying Async Work](#retrying-async-work)                                                               | `Retry.policy`, `ResultTask.retry`; eager compatibility: `ResultAsync.retry`                         |
 | Pair async acquisition with cleanup         | [Resourceful Async Iterables](#resourceful-async-iterables)                                               | `ResultTask.acquireRelease`, `acquireDisposable`, `scoped`                                           |
@@ -175,13 +171,10 @@ type Result<T, E> = Ok<T> | Err<E>;
 execution, including when `R = never`; Task has no `.then` method. Providing services
 or closing a required scope leaves a Task. Prefer `task.runResult()`, `task.runPromise()`,
 `task.runExit()`, or `task.runFork()` in new recipes; equivalent static runners remain supported.
+`task.runResult()` returns a native `Promise<Result<T, E>>`.
 
-`ResultAsync<T, E>` (exported from `resultar`) is the in-flight `Result`
-(`PromiseLike<Result<T, E>>`), returned by `task.runResult()` / `ResultTask.runResult(task)` and
-async `Result` chains. Repeated awaits on the same `ResultAsync` observe the same execution, and
-it shares the transformation and consumption surface of `Result`. Active in-flight constructors
-(`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) are exported
-from `resultar`; static orchestration methods on `ResultAsync` remain deprecated for existing eager contracts.
+Legacy eager `ResultAsync<T, E>` compatibility constructors live in the opt-in `"resultar/async"` subpath
+(`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`, `ResultAsync.gen` / `fn`, `asyncMap`, `asyncAndThen`).
 
 Across these APIs:
 
@@ -193,9 +186,8 @@ Across these APIs:
 
 For local code, `Result<T, E>` can use strings, enums, or small domain objects as `E`.
 
-At synchronous application boundaries, `StrictResult<T, E extends Error>` constrains
-failures to real Error instances. For new async application methods, return `ResultTask<T, DomainError>`
-with a concrete Error union; `task.runResult()` returns `StrictResultAsync<T, DomainError>`.
+At application boundaries, `StrictResult<T, E extends Error>` and `StrictResultTask<T, E extends Error, R>`
+constrain failures to real Error instances; `task.runResult()` returns `Promise<Result<T, DomainError>>`.
 
 ## Promise boundaries and application contracts
 
@@ -203,32 +195,32 @@ Choose the adapter from the **input** type, and keep the application's **output*
 contract explicit. A callback accepting a Promise-returning driver does not make
 its enclosing function Promise-returning.
 
-| Role / input | Recommended output or adaptation |
-| --- | --- |
-| Synchronous domain computation | `Result<T, E>` |
-| New asynchronous repository, service, or use case | `ResultTask<T, E, R>`; the factory itself is not `async` |
-| Outbound HTTP JSON in a lazy workflow | `requestJsonTask` / `requestJsonZodTask` / `requestJsonTypeBoxTask` returns `ResultTask<T, E>` directly |
-| External driver / SDK returning `Promise<T>` with expected failures | `ResultTask.tryPromise({ try: signal => driver(signal), catch: mapError })` returns a Task |
-| Raw Promise factory whose unexpected failures are defects | `ResultTask.fromPromise(signal => driver(signal))` returns `ResultTask<T, never>`; rejection becomes `Die` |
-| Existing typed adapter returning `ResultAsync<T, E>` or `PromiseLike<Result<T, E>>` | `ResultTask.fromResultAsync(signal => existingAdapter(signal))` preserves the typed channel |
-| Existing eager public application API | Preserve `ResultAsync<T, E>` / `StrictResultAsync<T, E>` during migration |
-| Native route, SDK callback, CLI entrypoint, or test runner | Execute at that boundary; a native Promise is appropriate when required by the host |
+| Role / input                                                                         | Recommended output or adaptation                                                                           |
+| ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| Synchronous domain computation                                                       | `Result<T, E>`                                                                                             |
+| Asynchronous repository, service, or use case                                        | `ResultTask<T, E, R>`; the factory itself is not `async`                                                   |
+| Outbound HTTP JSON in a lazy workflow                                                | `requestJson` / `requestJsonZod` / `requestJsonTypeBox` returns `ResultTask<T, E>` directly                |
+| External driver / SDK returning `Promise<T>` with expected failures                  | `ResultTask.tryPromise({ try: signal => driver(signal), catch: mapError })` returns a Task                 |
+| Raw Promise factory whose unexpected failures are defects                            | `ResultTask.fromPromise(signal => driver(signal))` returns `ResultTask<T, never>`; rejection becomes `Die` |
+| Existing typed adapter returning `PromiseLike<Result<T, E>>` (e.g. `resultar/async`) | `ResultTask.fromResultAsync(signal => existingAdapter(signal))` preserves the typed channel                |
+| Legacy eager public application API (opt-in `"resultar/async"`)                      | Preserve `ResultAsync<T, E>` / `StrictResultAsync<T, E>` during migration                                  |
+| Native route, SDK callback, CLI entrypoint, or test runner                           | Execute with `await task.runResult()` (`Promise<Result<T, E>>`) or `runExit()` / `runPromise()`            |
 
-Do not add `async` to a Result or Task factory: `Promise<ResultTask<T, E, R>>` awaits only
-construction without executing the Task (replace with a direct `ResultTask<T, E, R>`), while
-`Promise<Result<T, E>>` / `Promise<StrictResult<T, E>>` wraps an eager Result in an outer Promise
-(replace with a direct `ResultAsync<T, E>` / `StrictResultAsync<T, E>` without `async`). Enable
-`"noPromiseResultar": "error"` in `resultar-check` to reject both shapes—including when
-`"preferResultAsync": "off"`. Do not call a runner inside a reusable repository method just to
-obtain a Promise. `runPromise` returns `Promise<T>` and can reject; `runExit` returns
-`Promise<Exit<T, E>>`; `runResult` returns `ResultAsync<T, E>`. Existing Async
-instance terminals such as `match` also return native Promises at consumption.
+Do not add `async` to a Task factory: `Promise<ResultTask<T, E, R>>` awaits only
+construction without executing the Task (replace with a direct `ResultTask<T, E, R>`).
+`resultar-check` defaults `"noPromiseResultar": "error"` (rejecting `Promise<ResultTask>` and
+`Promise<StrictResultTask>`, while allowing `Promise<Result>` execution boundaries) and
+`"noAwaitResultTask": "error"` (preventing accidental `await task` without a runner).
+`"preferResultAsync"` defaults to `"off"` in v5 and can be opted back in for legacy `"resultar/async"`
+codebases. Do not call a runner inside a reusable repository method just to obtain a Promise.
+`runResult` returns native `Promise<Result<T, E>>`; `runPromise` returns `Promise<T>` and can reject;
+`runExit` returns `Promise<Exit<T, E>>`.
 
-For new raw Promise adapters, use `tryPromise` for expected failures or `fromPromise`
-when rejection is deliberately a defect. For new lazy HTTP calls use
-`requestJsonTask` (or `requestJsonZodTask` / `requestJsonTypeBoxTask`). Constructing
+For raw Promise adapters, use `tryPromise` for expected failures or `fromPromise`
+when rejection is deliberately a defect. For HTTP calls use
+`requestJson` / `requestJsonZod` / `requestJsonTypeBox` directly. Constructing
 `ResultAsync.try(...)` solely to wrap it with `fromResultAsync` adds an unnecessary
-conversion. `fromResultAsync` remains the right bridge for existing typed `ResultAsync`
+conversion. `fromResultAsync` remains the right bridge for existing typed `PromiseLike<Result>`
 operations; it does not accept a raw `Promise<T>` in place of a Result.
 These factories defer work until each Task run; capturing an already-started Promise
 cannot defer or replay the underlying operation.
@@ -457,16 +449,15 @@ fiber interruption; races still distinguish first-success from first-completion.
 
 ### Execution compatibility
 
-`ResultAsync<T, E>` represents an in-flight `Result` (`PromiseLike<Result<T, E>>`), returned by
-`task.runResult()` / `ResultTask.runResult(task)` and async `Result` chains. `fromResultAsync(existing)`
-reuses an already-started execution; `fromResultAsync(factory)` invokes the factory on each Task run.
-The bridge is structural: it accepts `PromiseLike<Result<T, E>>` without requiring an instance of
-`ResultAsync`. For a raw `Promise<T>`, use `ResultTask.tryPromise` directly. Static and instance `ResultTask.toResultAsync` and `ResultAsync.fromTask(task)` remain
-supported as deprecated aliases of `runResult()`.
+`task.runResult()` / `ResultTask.runResult(task)` returns a native `Promise<Result<T, E | ScopeError<R>>>`.
+`ResultTask.fromResultAsync(existing)` reuses an already-started `PromiseLike<Result<T, E>>`;
+`ResultTask.fromResultAsync(factory)` invokes the factory on each Task run.
+The bridge is structural: it accepts any `PromiseLike<Result<T, E>>` (including native `Promise<Result<T, E>>`
+and opt-in `ResultAsync` from `"resultar/async"`) without importing `ResultAsync` into core `"resultar"`.
+For a raw `Promise<T>`, use `ResultTask.tryPromise` directly.
 
 Scope-owned fibers, task `race` / `raceFirst` / `timeout`, bounded collections and
-`Cause.Parallel` belong to Task. Existing Async policies retain their own Promise
-and best-effort resource contracts. `Retry.policy` is shared configuration.
+`Cause.Parallel` belong to Task. `Retry.policy` configures Task retries.
 
 Task children finish before parent resources are released. Races and timeouts await losing child
 cleanup, preserving cleanup failures. Retry closes each attempt scope and applies only to simple
@@ -496,12 +487,12 @@ Diagnostics do not consume owned child failures; use `join` or `await` to compos
 
 Return `ResultTask<T, E, R>` directly from lazy services and execute at an outer boundary:
 
-| Instance runner             | Equivalent static runner                | Output and failure behavior                                                                                                               |
-| --------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `task.runResult(options?)`  | `ResultTask.runResult(task, options?)`  | `ResultAsync<T, E>`; an in-flight `Result` where a single typed failure becomes `Err` and defects, interruption, or composite causes reject |
-| `task.runPromise(options?)` | `ResultTask.runPromise(task, options?)` | `Promise<T>`; resolves success or rejects any failure                                                                                     |
-| `task.runExit(options?)`    | `ResultTask.runExit(task, options?)`    | `Promise<Exit<T, E>>`; never rejects and preserves all causes as values                                                                   |
-| `task.runFork(options?)`    | `ResultTask.runFork(task, options?)`    | Starts a root execution immediately and returns its `FiberHandle<T, E>`                                                                   |
+| Instance runner             | Equivalent static runner                | Output and failure behavior                                                                                                                  |
+| --------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `task.runResult(options?)`  | `ResultTask.runResult(task, options?)`  | `Promise<Result<T, E>>`; a native `Promise` where a single typed failure becomes `Err` and defects, interruption, or composite causes reject |
+| `task.runPromise(options?)` | `ResultTask.runPromise(task, options?)` | `Promise<T>`; resolves success or rejects any failure                                                                                        |
+| `task.runExit(options?)`    | `ResultTask.runExit(task, options?)`    | `Promise<Exit<T, E>>`; never rejects and preserves all causes as values                                                                      |
+| `task.runFork(options?)`    | `ResultTask.runFork(task, options?)`    | Starts a root execution immediately and returns its `FiberHandle<T, E>`                                                                      |
 
 Both forms accept the same `ResultTaskRunOptions<R>`, including `services`, `signal`, `clock`,
 `scheduler`, and `yieldEvery`, and enforce the same service requirements. Root scope release errors
@@ -518,11 +509,8 @@ and there is no public `task.run()` runner. `ResultTask.gen` / `fn` use plain su
 `return yield* step` executes a final step, whereas `return step` succeeds with the unexecuted task
 as its value.
 
-Prefer Task's `ok` / `err`, `mapErr`, `andThen`, and `orElse` in new code. Deprecated `succeed` /
-`fail`, `mapError`, `flatMap`, and `catchAll` retain their original signatures and behavior.
-Task retry accepts both `RetryPolicy` and the older retry options, whose callbacks use a
-one-based retry index and boolean jitter. Matching supports `{ ok, err }`, `{ ok, error }`,
-`{ onSuccess, onFailure }`, and positional handlers; prefer the first shape in new recipes.
+Task uses `ok` / `err`, `mapErr`, `andThen`, and `orElse`, `Retry.policy(...)` for retries,
+and `{ ok, err }` or positional handlers for matching.
 
 Long task instruction chains yield every 2048 instructions using `Scheduler.live`. Run options
 `yieldEvery` and `scheduler` configure this policy; `yieldEvery` is a positive safe integer or
@@ -647,10 +635,10 @@ Async is PromiseLike and works with Promise combinators. Task is not thenable:
 
 ## Strict Results
 
-`StrictResult<T, E extends Error>` and `StrictResultAsync<T, E extends Error>` are type-only
-aliases for synchronous and in-flight Error-only failure channels. New async workflow definitions
-use `ResultTask<T, E>` with concrete domain errors, and `task.runResult()` returns
-`StrictResultAsync<T, E>`.
+`StrictResult<T, E extends Error>` and `StrictResultTask<T, E extends Error, R>` are type-only
+aliases for synchronous and lazy async Error-only failure channels. Calling `task.runResult()`
+on a `StrictResultTask<T, E>` returns `Promise<Result<T, E>>`. (`StrictResultAsync<T, E>` lives
+in opt-in `"resultar/async"`.)
 
 ```ts
 import { createTaggedError, err, ok, ResultTask } from "resultar";
@@ -808,55 +796,51 @@ const response = await responseTask.runPromise();
 `map` and `mapErr` are synchronous transformations. Use `andThen` with another Task,
 or `yield*` inside `ResultTask.gen(function* () { ... })`, for asynchronous work.
 Task `match` is a lazy fold; `runPromise` above unwraps its output. Use `runResult`
-for an in-flight `ResultAsync<T, E>` (which can be awaited or chained with `.match(...)`),
+for a native `Promise<Result<T, E>>` (await and match on `Result`),
 or `runExit` to inspect all causes as values. Task has no `.then` method, including when `R = never`.
 
-### Adapt request helpers and existing Async operations
+### Task-native HTTP requests and bridging existing Async operations
 
-For new lazy HTTP JSON calls, `resultar-request` and its schema adapters expose Task-native
-entrypoints (`requestJsonTask`, `requestJsonZodTask`, `requestJsonTypeBoxTask`) that return
-`ResultTask<T, E>` directly without an `async` wrapper or manual bridge:
+`resultar-request` and its schema adapters (`requestJson`, `requestJsonZod`, `requestJsonTypeBox`)
+return `ResultTask<T, E>` directly without an `async` wrapper or manual bridge:
 
 ```ts
-import { requestJsonTask } from "resultar-request";
+import { requestJson } from "resultar-request";
 
 const loadUser = (id: string) =>
-  requestJsonTask({
+  requestJson({
     request: (signal) => fetch(`/users/${id}`, { signal }),
     validator: (value): value is { readonly id: string } =>
-      typeof value === "object" &&
-      value !== null &&
-      "id" in value &&
-      typeof value.id === "string",
+      typeof value === "object" && value !== null && "id" in value && typeof value.id === "string",
   });
 
 const result = await loadUser("usr_123").runResult();
 ```
 
-When composing an existing helper that already returns eager `ResultAsync` (such as `requestJson`
-or async `Result.gen`), preserve its contract and bridge it inside `ResultTask.fromResultAsync((signal) => existingOperation(signal))`.
+When composing a legacy helper that returns eager `ResultAsync` (from `"resultar/async"`) or
+`Promise<Result<T, E>>`, bridge it inside `ResultTask.fromResultAsync((signal) => existingOperation(signal))`.
 `fromResultAsync(existing)` instead captures one already-started execution and reuses
 it on every Task run. `task.runResult()` starts a requirement-free Task execution and returns
-`ResultAsync` (`ResultAsync.fromTask(task)` and `task.toResultAsync()` remain deprecated aliases).
+a native `Promise<Result<T, E>>`.
 
 <a id="resultasync"></a>
 <a id="deprecated-resultasync-compatibility"></a>
 <a id="in-flight-resultasync--deprecated-eager-compatibility"></a>
+<a id="opt-in-eager-compatibility-resultarasync"></a>
 
-## In-Flight `ResultAsync` & Deprecated Eager Compatibility
+## Opt-In Eager Compatibility (`resultar/async`)
 
-`ResultAsync<T, E>` (and `StrictResultAsync<T, E>`) is the official in-flight `Result`
-(`PromiseLike<Result<T, E>>`), returned by `task.runResult()` / `ResultTask.runResult(task)` and
-async `Result` chains. Active in-flight constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) are exported from `resultar`, while static orchestration methods on `ResultAsync` remain deprecated for existing eager contracts. Prefer `ResultTask<T, E, R>` for new asynchronous
-workflows and execute it explicitly. Install `resultar` once:
-
-```sh
-pnpm add resultar
-```
+Eager `ResultAsync<T, E>` and `StrictResultAsync<T, E>` live in the `@deprecated` `"resultar/async"`
+compatibility subpath in v5 (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`,
+`tryResultAsync`, `ResultAsync.gen` / `ResultAsync.fn`, `asyncMap`, `asyncAndThen`, `safeTry`,
+`DisposableResultAsync`, and the v4 `@deprecated` static helpers such as `all`, `retry`, `timeout`,
+`race`, `forEach`, `withResource`, `fromCallback`, `fromThrowable`, and `fromTask`) for incremental
+migration — use `ResultTask<T, E, R>` from `"resultar"` for all new asynchronous workflow
+orchestration.
 
 ```ts
-import { createTaggedError, fromPromise, ok, tryResultAsync } from "resultar";
-import type { StrictResult, StrictResultAsync } from "resultar";
+import { createTaggedError, ok, type StrictResult } from "resultar";
+import { fromPromise, tryResultAsync, type StrictResultAsync } from "resultar/async";
 
 type User = {
   readonly id: string;
@@ -1869,7 +1853,7 @@ Use this section as the decision map.
 | Error source or goal                                     | API                                          | What it catches or handles                                                               |
 | -------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | New asynchronous work may throw or reject                | `ResultTask.tryPromise({ try, catch })`      | Defers work to each run and maps expected failures.                                      |
-| Raw Promise factory may fail unexpectedly | `ResultTask.fromPromise(factory)` | Preserves throws and rejections as `Die`; no typed error mapper. |
+| Raw Promise factory may fail unexpectedly                | `ResultTask.fromPromise(factory)`            | Preserves throws and rejections as `Die`; no typed error mapper.                         |
 | Synchronous code may throw now                           | `tryResult(fn, toError?)`                    | Runs `fn` immediately and catches thrown values into `Err`.                              |
 | Synchronous code should be wrapped for later calls       | `fromThrowable(fn, toError?)`                | Returns a reusable function that catches thrown values.                                  |
 | Existing eager Promise may reject (compatibility)        | `fromPromise(promise, toError)`              | Converts rejection into a typed `Err`.                                                   |
@@ -2712,7 +2696,7 @@ const task = ResultTask.fromResultAsync(() => saveUserLegacy("person@example.com
 The factory bridge creates a fresh eager workflow on each Task run. An existing
 Async passed directly to the bridge is shared instead.
 
-### Result generator error mapping and legacy safeTry
+### Result generator error mapping
 
 The object form lets you map unexpected throws from inside the generator:
 
@@ -2751,22 +2735,11 @@ const result = Result.gen({
 result;
 ```
 
-Prefer `yield* result`. `result.safeUnwrap()` remains callable with a deprecation annotation, but new code usually does
-not need it.
-
-`ResultAsync#safeUnwrap()` and `safeTryAsync()` are not public APIs. Inside
-`Result.gen(async function* () { ... })`, use `yield* resultAsync`.
-
-`Result.gen` / `Result.fn` accept synchronous and asynchronous generators with plain success returns.
-A plain return is wrapped in Ok without inspecting the payload; use `yield*`
-for final fallible steps or early errors. Returning a Result, Async or Task as a final
-fallible step instead of delegating it is rejected by the modern signatures.
-
-`safeTry` from `resultar` retains the legacy sync and async final-Result signatures and behavior
-separately from modern `Result.gen`. Task workflows use `ResultTask.gen`, with no `ResultTask.safeTry` alias.
-Object forms use `ResultGenOptions` / `SafeTryOptions` for sync bodies
-and `AsyncResultGenOptions` / `SafeTryAsyncOptions` for async bodies.
-`ResultGenerator`, `ResultAsyncGenerator`, `ResultTaskGenerator` and `ResultTaskYieldOf` are available from `resultar`.
+Use `yield* result` inside `Result.gen` / `Result.fn` (synchronous-only in v5).
+A plain return is wrapped in `Ok` without inspecting the payload; use `return yield* step`
+for final fallible steps or early errors. For lazy async workflows, use `ResultTask.gen` / `ResultTask.fn`.
+For opt-in eager async generators (`async function*`), import `ResultAsync.gen` / `ResultAsync.fn` from `"resultar/async"`.
+`ResultGenerator`, `ResultTaskGenerator`, and `ResultTaskYieldOf` are available from `"resultar"`; `ResultAsyncGenerator` and `AsyncResultGenOptions` are available from `"resultar/async"`.
 
 An early yielded Err returns without closing a Result/Async generator, so `finally`
 does not run on that path. `ResultTask.gen` closes its generator and executes yielded
@@ -2933,14 +2906,14 @@ const parsed = tryResult(
   (cause) => new ParseConfigError({ cause }),
 );
 
-// Lazy Task HTTP adapter: requestJsonTask returns ResultTask<Payload, RequestError> directly.
-const loaded = requestJsonTask({
+// Lazy Task HTTP adapter: requestJson returns ResultTask<Payload, RequestError> directly.
+const loaded = requestJson({
   request: (signal) => fetch(url, { signal }),
   validator: isPayload,
 });
 ```
 
-For the HTTP example, import `requestJsonTask` (or eager `requestJson`) from `resultar-request` and provide
+For the HTTP example, import `requestJson` from `resultar-request` and provide
 `isPayload: (value: unknown) => value is Payload` with real runtime validation.
 The helper maps transport, HTTP, JSON, and validation failures to `RequestError`.
 Do not assert `response.json()` to `Promise<Payload>`: a type assertion does not
@@ -3226,7 +3199,7 @@ editor actions.
 Both commands accept `--file`, `--format human|json`, and `--json`, and leave files unchanged.
 They exit `0` after valid analysis even when fixes exist; configuration/compiler failures exit `1`.
 Use the default `pnpm exec resultar-check --project tsconfig.json` command for the CI diagnostic gate.
-See the [checker reference](packages/check/README.md#command-line) for configuration and exit policy, and the [Anti-Patterns & `resultar-check` Elimination Guide](skills/resultar/references/anti-patterns.md) for configuration, severity thresholds, and repair guidance linked to all 42 rules.
+See the [checker reference](packages/check/README.md#command-line) for configuration and exit policy, and the [Anti-Patterns & `resultar-check` Elimination Guide](skills/resultar/references/anti-patterns.md) for configuration, severity thresholds, and repair guidance linked to all 43 rules.
 
 ## Testing Resultar Code
 
@@ -3277,67 +3250,67 @@ clearer. Avoid them in application code.
 
 Use this as the first stop when choosing an operation:
 
-| Need                                                 | Use                                                                 |
-| ---------------------------------------------------- | ------------------------------------------------------------------- |
-| Create a sync success                                | `ok(value)`                                                         |
-| Create a sync failure                                | `err(error)` or `ErrorClass.err(props)`                             |
-| Create an async success                              | `ResultTask.ok(value)`                                              |
-| Create an async failure                              | `ResultTask.err(error)` / `ErrorClass.taskErr(props)`               |
-| Create an `Ok(undefined)`                            | `unit()` / `ResultTask.ok(undefined)`                               |
-| Convert a throwing sync function now                 | `tryResult(fn, toError?)`                                           |
-| Convert a throwing sync function with named handlers | `tryResult({ try, catch })`                                         |
-| Convert a throwing function for later use            | `fromThrowable(fn, toError?)`                                       |
-| Preserve an existing eager Promise execution         | `tryResultAsync(promise, toError?)` (compatibility)                 |
-| Preserve an existing eager Async boundary            | `fromPromise(promise, toError)` (compatibility)                     |
-| Preserve an infallible eager Promise boundary        | `fromSafePromise(promise)` (compatibility)                          |
-| Convert a Promise factory that may throw             | `ResultTask.tryPromise({ try, catch })`                             |
-| Convert a Promise factory with defect semantics | `ResultTask.fromPromise(factory)` |
-| Convert a reusable async function                    | Return `ResultTask.tryPromise({ try, catch })` from a function      |
-| Reject a Task failure at an edge                     | `task.runPromise()`                                                 |
-| Transform an `Ok` value                              | `map(fn)`                                                           |
-| Replace an `Ok` value                                | `as(value)`                                                         |
-| Transform an `Err` value                             | `mapErr(fn)`                                                        |
-| Validate an `Ok` value                               | `filterOrElse(predicate, onFalse)`                                  |
-| Continue with sync fallible work                     | `andThen(fn)`                                                       |
-| Continue from sync to async fallible work            | `ResultTask.gen` / `ResultTask.fromResult(result).andThen(fn)`      |
-| Recover from an error                                | `orElse(fn)`                                                        |
-| Replace an error with another error                  | `mapErr(fn)`                                                        |
-| Replace an error with success                        | `orElseSucceed(() => defaultValue)`                                 |
-| Recover one tagged error locally                     | `catchTag(tag, fn)`                                                 |
-| Recover several tagged errors locally                | `catchTags(handlers)`                                               |
-| Recover one nested tagged reason                     | `catchReason(parentTag, reasonTag, fn)`                             |
-| Recover several nested tagged reasons                | `catchReasons(parentTag, handlers)`                                 |
-| Move nested reasons into the error channel           | `unwrapReason(parentTag)`                                           |
-| Handle a simple boundary                             | `match(okFn, errFn)`                                                |
-| Handle a simple boundary with named handlers         | `match({ ok, error })`                                              |
-| Handle every tagged boundary error                   | `matchTags(okFn, handlers)`                                         |
-| Handle selected boundary errors                      | `matchTagsPartial(okFn, handlers, fallback)`                        |
-| Write linear result code                             | Sync: `Result.gen`; async: `ResultTask.gen` / `fn`                  |
-| Map unexpected throws inside linear code             | `Result.gen({ try, catch })`                                        |
-| Run one of two result branches                       | `Result.if` / `ResultTask.if`                                       |
-| Run optional work                                    | `when`, `unless`, `whenResult`, `unlessResult`                      |
-| Combine two independent results                      | `zip`                                                               |
-| Combine many independent results                     | `all`, `combine`, `combineWithAllErrors`                            |
-| Combine named independent results                    | `all({ key: result })` or `combine({ key: result })`                |
-| Collect all validation failures                      | `validateAll` or `combineWithAllErrors`                             |
-| Try fallback candidates                              | `firstSuccessOf`                                                    |
-| Bound lazy async traversal                           | `ResultTask.forEach(items, fn, { concurrency })`                    |
-| Bound lazy async validation                          | `ResultTask.validateAll(items, fn, { concurrency })`                |
-| Race two async tasks for first success               | `ResultTask.race(left, right)`                                      |
-| Preserve an eager multi-provider race                | `ResultAsync.raceAll(factories)` (compatibility)                    |
-| Race two async tasks for first completion            | `ResultTask.raceFirst(left, right)`                                 |
-| Preserve a custom eager race policy                  | `ResultAsync.raceWith(left, right, handlers)` (compatibility)       |
-| Add a cooperative timeout                            | `task.timeout(ms, onTimeout)`                                       |
-| Retry transient async work                           | `task.retry(Retry.policy(...))`             |
-| Recover after retry exhaustion                       | `task.retry(policy).orElse(fallback)`                               |
-| Pair async acquisition with cleanup                  | `ResultTask.acquireRelease` + `ResultTask.scoped`                   |
-| Detect abort-shaped failures                         | `isAbortError(value)`                                               |
-| Create lightweight tagged unions                     | `taggedEnum<Members>()`                                             |
-| Redact secrets from error output                     | `redact(value, label?)`                                             |
-| Loop without throwing                                | `loop`, `iterate`, `forEach`                                        |
-| Throw intentionally at an edge                       | Result: `unwrapOrThrow()`; Task: `task.runPromise()`                |
+| Need                                                 | Use                                                                  |
+| ---------------------------------------------------- | -------------------------------------------------------------------- |
+| Create a sync success                                | `ok(value)`                                                          |
+| Create a sync failure                                | `err(error)` or `ErrorClass.err(props)`                              |
+| Create an async success                              | `ResultTask.ok(value)`                                               |
+| Create an async failure                              | `ResultTask.err(error)` / `ErrorClass.taskErr(props)`                |
+| Create an `Ok(undefined)`                            | `unit()` / `ResultTask.ok(undefined)`                                |
+| Convert a throwing sync function now                 | `tryResult(fn, toError?)`                                            |
+| Convert a throwing sync function with named handlers | `tryResult({ try, catch })`                                          |
+| Convert a throwing function for later use            | `fromThrowable(fn, toError?)`                                        |
+| Preserve an existing eager Promise execution         | `tryResultAsync(promise, toError?)` (compatibility)                  |
+| Preserve an existing eager Async boundary            | `fromPromise(promise, toError)` (compatibility)                      |
+| Preserve an infallible eager Promise boundary        | `fromSafePromise(promise)` (compatibility)                           |
+| Convert a Promise factory that may throw             | `ResultTask.tryPromise({ try, catch })`                              |
+| Convert a Promise factory with defect semantics      | `ResultTask.fromPromise(factory)`                                    |
+| Convert a reusable async function                    | Return `ResultTask.tryPromise({ try, catch })` from a function       |
+| Reject a Task failure at an edge                     | `task.runPromise()`                                                  |
+| Transform an `Ok` value                              | `map(fn)`                                                            |
+| Replace an `Ok` value                                | `as(value)`                                                          |
+| Transform an `Err` value                             | `mapErr(fn)`                                                         |
+| Validate an `Ok` value                               | `filterOrElse(predicate, onFalse)`                                   |
+| Continue with sync fallible work                     | `andThen(fn)`                                                        |
+| Continue from sync to async fallible work            | `ResultTask.gen` / `ResultTask.fromResult(result).andThen(fn)`       |
+| Recover from an error                                | `orElse(fn)`                                                         |
+| Replace an error with another error                  | `mapErr(fn)`                                                         |
+| Replace an error with success                        | `orElseSucceed(() => defaultValue)`                                  |
+| Recover one tagged error locally                     | `catchTag(tag, fn)`                                                  |
+| Recover several tagged errors locally                | `catchTags(handlers)`                                                |
+| Recover one nested tagged reason                     | `catchReason(parentTag, reasonTag, fn)`                              |
+| Recover several nested tagged reasons                | `catchReasons(parentTag, handlers)`                                  |
+| Move nested reasons into the error channel           | `unwrapReason(parentTag)`                                            |
+| Handle a simple boundary                             | `match(okFn, errFn)`                                                 |
+| Handle a simple boundary with named handlers         | `match({ ok, error })`                                               |
+| Handle every tagged boundary error                   | `matchTags(okFn, handlers)`                                          |
+| Handle selected boundary errors                      | `matchTagsPartial(okFn, handlers, fallback)`                         |
+| Write linear result code                             | Sync: `Result.gen`; async: `ResultTask.gen` / `fn`                   |
+| Map unexpected throws inside linear code             | `Result.gen({ try, catch })`                                         |
+| Run one of two result branches                       | `Result.if` / `ResultTask.if`                                        |
+| Run optional work                                    | `when`, `unless`, `whenResult`, `unlessResult`                       |
+| Combine two independent results                      | `zip`                                                                |
+| Combine many independent results                     | `all`, `combine`, `combineWithAllErrors`                             |
+| Combine named independent results                    | `all({ key: result })` or `combine({ key: result })`                 |
+| Collect all validation failures                      | `validateAll` or `combineWithAllErrors`                              |
+| Try fallback candidates                              | `firstSuccessOf`                                                     |
+| Bound lazy async traversal                           | `ResultTask.forEach(items, fn, { concurrency })`                     |
+| Bound lazy async validation                          | `ResultTask.validateAll(items, fn, { concurrency })`                 |
+| Race two async tasks for first success               | `ResultTask.race(left, right)`                                       |
+| Preserve an eager multi-provider race                | `ResultAsync.raceAll(factories)` (compatibility)                     |
+| Race two async tasks for first completion            | `ResultTask.raceFirst(left, right)`                                  |
+| Preserve a custom eager race policy                  | `ResultAsync.raceWith(left, right, handlers)` (compatibility)        |
+| Add a cooperative timeout                            | `task.timeout(ms, onTimeout)`                                        |
+| Retry transient async work                           | `task.retry(Retry.policy(...))`                                      |
+| Recover after retry exhaustion                       | `task.retry(policy).orElse(fallback)`                                |
+| Pair async acquisition with cleanup                  | `ResultTask.acquireRelease` + `ResultTask.scoped`                    |
+| Detect abort-shaped failures                         | `isAbortError(value)`                                                |
+| Create lightweight tagged unions                     | `taggedEnum<Members>()`                                              |
+| Redact secrets from error output                     | `redact(value, label?)`                                              |
+| Loop without throwing                                | `loop`, `iterate`, `forEach`                                         |
+| Throw intentionally at an edge                       | Result: `unwrapOrThrow()`; Task: `task.runPromise()`                 |
 | Default intentionally at an edge                     | Result: `unwrapOr(value)`; Task: `task.unwrapOr(value).runPromise()` |
-| Add observation without changing the result          | `inspect`, `inspectError`, `inspectBoth`, `log`                     |
+| Add observation without changing the result          | `inspect`, `inspectError`, `inspectBoth`, `log`                      |
 
 ## Combining And Iterating
 
@@ -3721,24 +3694,23 @@ import {
   AbortError,
   Cause,
   Clock,
+  Deferred,
   Fiber,
   Match,
+  Queue,
+  Ref,
+  Result,
+  ResultTask,
   Retry,
   Scheduler,
   Semaphore,
+  TaskLocal,
+  Tracer,
   VirtualClock,
-  Result,
-  ResultAsync,
-  ResultTask,
   createTaggedError,
   err,
-  errAsync,
   findCause,
-  fromCallback,
-  fromPromise,
-  fromSafePromise,
   fromThrowable,
-  fromThrowableAsync,
   isAbortError,
   isError,
   isRedacted,
@@ -3746,66 +3718,61 @@ import {
   matchError,
   matchErrorPartial,
   ok,
-  okAsync,
   redact,
   revealRedacted,
-  runPromise,
   runSync,
-  safeTry,
   serviceTag,
   taggedEnum,
   tryResult,
-  tryResultAsync,
   unit,
-  unitAsync,
 } from "resultar";
 
 import type {
-  TaskClock,
-  TaskScheduler,
-  RetryContext,
-  RetryPolicy,
-  RetryPolicyOptions,
-  ResultAsyncGenerator,
-  ResultGenerator,
-  ResultTaskGenerator,
-  ResultTaskYieldOf,
-  ResultTaskConcurrencyOptions,
-  ResultTaskYieldable,
-  ResultTaskZipOptions,
   DisposableResult,
-  DisposableResultAsync,
   ErrResult,
   OkResult,
   Redacted,
-  ResultAsyncAbortSignal,
-  ResultAsyncConcurrency,
-  ResultAsyncRaceHandle,
-  ResultAsyncRaceTask,
-  ResultAsyncTimeoutOptions,
+  ResultGenerator,
   ResultOperations,
+  ResultTaskConcurrencyOptions,
+  ResultTaskGenerator,
+  ResultTaskYieldOf,
+  ResultTaskYieldable,
+  ResultTaskZipOptions,
+  RetryContext,
+  RetryPolicy,
+  RetryPolicyOptions,
   StrictResult,
-  StrictResultAsync,
+  StrictResultTask,
   TaggedEnum,
   TaggedEnumFactory,
   TaggedErrorClass,
   TaggedErrorInstance,
   TaggedErrorOptions,
+  TaskClock,
+  TaskScheduler,
 } from "resultar";
+
+// Opt-in eager compatibility subpath (zero transitive imports in core "resultar"):
+import {
+  ResultAsync,
+  asyncAndThen,
+  asyncMap,
+  errAsync,
+  fromPromise,
+  fromSafePromise,
+  okAsync,
+  tryResultAsync,
+  unitAsync,
+  type StrictResultAsync,
+} from "resultar/async";
 ```
 
-Core `tryResult`, `try` and the default export are the same synchronous helper;
-`tryCatch` remains its deprecated alias. Core `Result.gen` / `Result.fn` support sync and async
-bodies with modern plain returns; `safeTry` supports both forms with final-Result returns.
-
-`tryResultAsync` is the active in-flight constructor; `tryAsync` and `tryCatchAsync` retain their
-deprecated eager alias behavior. `ResultAsync.fromTask(task)` eagerly starts one Task run;
-static/instance `ResultTask.toResultAsync` and tagged `.errAsync` methods also remain supported.
-Prefer `errAsync(new DomainError(props))` in new eager recipes.
-
-`Result#finally`, `ResultAsync#finally`, `ResultAsync#safeUnwrap` and `safeTryAsync`
-remain absent. Use observers, disposables and compatibility `safeTry(async function* () {})`
-where an existing eager contract requires them.
+Core `Result.gen` / `Result.fn` are purely synchronous with plain return values.
+`@deprecated` eager `ResultAsync` constructors, `ResultAsync.gen` / `ResultAsync.fn`, `safeTry`,
+`DisposableResultAsync`, and standalone `asyncMap` / `asyncAndThen` live in `"resultar/async"`.
+`Result#finally`, `ResultAsync#finally`, `Result#safeUnwrap`, `ResultAsync#safeUnwrap`, and
+`safeTryAsync` are absent in v5.
 
 ## Concurrency Primitives (`Ref`, `Deferred`, `Queue`)
 
@@ -3829,6 +3796,7 @@ Every library package declares `"sideEffects": false`. In addition to the root `
 
 - `resultar/result` — synchronous `Result`, `ok`, `err`, `tryResult`, `fromThrowable`, `redact`
 - `resultar/task` — `ResultTask`, `Cause`, `Exit`, `Fiber`, `Semaphore`, `Ref`, `Deferred`, `Queue`, `TaskLocal`, `Tracer`, `Clock`, `Scheduler`, `serviceTag`, `Retry`
+- `resultar/async` — opt-in eager `ResultAsync`, `StrictResultAsync`, `okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`, `ResultAsync.gen` / `fn`, `asyncMap`, `asyncAndThen`
 - `resultar/match` — exhaustive `Match` pattern matcher
 - `resultar/tagged` — `createTaggedError`, `taggedEnum`, `matchError`, `matchErrorPartial`, `findCause`, `redact`
 - `resultar/retry` — `Retry` policy builder and types
@@ -3878,7 +3846,7 @@ releasing dependencies. Its deadline applies to HTTP work, not arbitrary finaliz
 
 The [generated public inventory](docs/api-inventory.md) lists every exported value/type
 and public member across the library packages. The checker uses a CLI/LSP surface;
-its [diagnostic table](packages/check/README.md#diagnostics) covers all 42 rules.
+its [diagnostic table](packages/check/README.md#diagnostics) covers all 43 rules.
 [Executable recipes](docs/recipes.md) are compiled and tested by `vp run test:docs`.
 Run `vp run docs:generate` after building when the public surface changes.
 
@@ -3943,7 +3911,7 @@ Run `vp run docs:generate` after building when the public surface changes.
 - `ResultTask.loop(initial, options)` / `ResultTask.loop(options)(initial)`
 - `ResultTask.iterate(initial, options)` / `ResultTask.iterate(options)(initial)`
 - `ResultTask.tryPromise({ try, catch, interruption: 'wait' | 'detach' })`
-- `task.runResult(options?)` / `ResultTask.runResult(task, options?)` returns `ResultAsync<T, E | ScopeError<R>>`
+- `task.runResult(options?)` / `ResultTask.runResult(task, options?)` returns native `Promise<Result<T, E | ScopeError<R>>>`
 - `task.runPromise(options?)` / `ResultTask.runPromise(task, options?)` returns `Promise<T>`
 - `task.runExit(options?)` / `ResultTask.runExit(task, options?)` returns `Promise<Exit<T, E>>`
 - `task.runSync(options?)` / `ResultTask.runSync(task, options?)` executes synchronous tasks and returns `Result<T, E | ScopeError<R>>` (throws if an async step, defect, interruption, or composite cause occurs)
@@ -3989,13 +3957,10 @@ These helpers do not execute tasks or change `runExit`, `runResult`, or `runProm
 - `unit()`
 - `tryResult(fn, toError?)`
 - `tryResult({ try, catch? })`
-- `try(fn, toError?)` (deprecated alias)
-- `tryCatch(fn, toError?)` (deprecated alias)
 - `fromThrowable(fn, toError?)`
 - `Result.gen(generator)`
 - `Result.gen({ try, catch? })`
 - `Result.fn(generator, ...ops)`
-- `safeTry(generator)` / `safeTry({ try, catch? })` (separate deprecated helper, original final-Result signatures and behavior)
 - `redact(value, label?)`
 - `isRedacted(value)`
 - `revealRedacted(value)`
@@ -4006,7 +3971,6 @@ These helpers do not execute tasks or change `runExit`, `runResult`, or `runProm
 - `isOk()`
 - `isErr()`
 - `map(fn)`
-- `asyncMap(fn)`
 - `as(value)`
 - `asVoid()`
 - `mapErr(fn)`
@@ -4014,7 +3978,6 @@ These helpers do not execute tasks or change `runExit`, `runResult`, or `runProm
 - `when(condition)`
 - `unless(condition)`
 - `andThen(fn)`
-- `asyncAndThen(fn)`
 - `orElse(fn)`
 - `orElseSucceed(fn)`
 - `catchTag(tag, fn)`
@@ -4029,25 +3992,20 @@ These helpers do not execute tasks or change `runExit`, `runResult`, or `runProm
 - `inspect(fn)`
 - `inspectError(fn)`
 - `inspectBoth(handlers)`
-- `tap(fn)` / `tapError(fn)` (deprecated; same best-effort observation)
 - `log(fn)`
 - `toDisposable(fn)`
 - `unwrapOr(defaultValue)`
 - `unwrapOrThrow()`
 - `_unsafeUnwrap()`
 - `_unsafeUnwrapErr()`
-- `safeUnwrap()` (deprecated; prefer `yield* result`)
 
 ### Result static methods
 
 - `Result.ok(value)`
 - `Result.err(error)`
 - `Result.unit()`
-- `Result.asyncMap(result, fn)` / `Result.asyncMap(fn)(result)`
-- `Result.asyncAndThen(result, fn)` / `Result.asyncAndThen(fn)(result)`
 - `Result.asVoid(result)` / `Result.asVoid()`
 - `Result.try(fn, toError?)` / `Result.try({ try, catch? })`
-- `Result.tryCatch(fn, toError?)` (deprecated alias)
 - `Result.fromThrowable(fn, toError?)`
 - `Result.fromNullishOr(value, onNullish)` / `Result.fromNullishOr(onNullish)(value)`
 - `Result.liftPredicate(value, predicateOrRefinement, onFalse)`
@@ -4057,14 +4015,7 @@ These helpers do not execute tasks or change `runExit`, `runResult`, or `runProm
 - `Result.catchReason(result, parentTag, reasonTag, fn)` / `Result.catchReason(parentTag, reasonTag, fn)(result)`
 - `Result.catchReasons(result, parentTag, handlers)` / `Result.catchReasons(parentTag, handlers)(result)`
 - `Result.unwrapReason(result, parentTag)` / `Result.unwrapReason(parentTag)(result)`
-- `Result.zip(left, right)`
 - `Result.all(results)` / `Result.all(record)` / `Result.all(iterable)`
-- `Result.combine(results)`
-- `Result.combine(record)`
-- `Result.combine(iterable)`
-- `Result.combineWithAllErrors(results)`
-- `Result.combineWithAllErrors(record)`
-- `Result.combineWithAllErrors(iterable)`
 - `Result.validateAll(results)`
 - `Result.validateAll(iterable, fn)`
 - `Result.firstSuccessOf(candidates)`
@@ -4079,121 +4030,51 @@ These helpers do not execute tasks or change `runExit`, `runResult`, or `runProm
 
 <a id="resultasync-helpers"></a>
 
-### ResultAsync helpers
+### ResultAsync helpers (`resultar/async`, `@deprecated`)
 
-In-flight `ResultAsync` constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`) and deprecated eager compatibility helpers (`fromCallback`, `fromThrowableAsync`, `tryAsync`, `tryCatchAsync`, `safeTry`, `runPromise`) are exported from `resultar`; prefer `ResultTask` for new async workflows.
+All eager `ResultAsync` compatibility exports live exclusively in `"resultar/async"` (marked `@deprecated` throughout v5.x, not re-exported from root `"resultar"`):
 
-- `safeTry(body)` / object form (deprecated; legacy sync and async final-Result bodies)
-- `runPromise(resultAsync)` (deprecated)
-- `AsyncResultGenOptions`, `ResultAsyncGenerator`, `SafeTryAsyncOptions`
-- `okAsync(value)`
-- `errAsync(error)`
-- `unitAsync()`
-- `fromPromise(promise, toError)`
-- `fromSafePromise(promise)`
-- `fromCallback(options)` (deprecated)
-- `fromThrowableAsync(fn, toError?)` (deprecated)
-- `tryResultAsync(promiseOrFactory, toError?)`
-- `tryResultAsync({ try, catch? })`
-- `tryAsync(promiseOrFactory, toError?)` (deprecated alias)
-- `tryCatchAsync(promiseOrFactory, toError?)` (deprecated alias)
-- `AbortError`
-- `isAbortError(value)`
-- `StrictResultAsync<T, E extends Error>`
-- `ResultAsyncAbortSignal`
-- `ResultAsyncConcurrency`
-- `ResultAsyncRaceTask<T, E>`
-- `ResultAsyncRaceHandle<T, E>`
-- `ResultAsyncTimeoutOptions<E>`
-- `ResultAsyncRetryContext`
-- `ResultAsyncRetryTask<T, E>`
-- `ResultAsyncRetryOptions<E>`
-- `ResultAsyncRetryOrElseOptions<E, F, U>`
+- `ResultAsync`, `StrictResultAsync<T, E extends Error>`, `DisposableResultAsync`
+- `okAsync(value)`, `errAsync(error)`, `unitAsync()`
+- `fromPromise(promise, toError)`, `fromSafePromise(promise)`
+- `tryResultAsync(promiseOrFactory, toError?)` / `tryResultAsync({ try, catch? })`, `tryCatchAsync`, `tryAsync`
+- `fromCallback`, `fromThrowableAsync`, `runPromise`, `safeTry`
+- `asyncMap(result, fn)` / `asyncMap(fn)(result)`
+- `asyncAndThen(result, fn)` / `asyncAndThen(fn)(result)`
+- `AsyncResultGenOptions`, `ResultAsyncGenerator`, `SafeTryOptions`, `SafeTryAsyncOptions`, and `ResultAsync*` option/context types
 
 <a id="resultasync-methods"></a>
 
-### ResultAsync methods
+### ResultAsync methods (`resultar/async`)
 
-`ResultAsync` is the active in-flight `Result` (`PromiseLike<Result<T, E>>`). `map` / `mapErr` await Promise-returning callbacks; `filterOrElse` supports async
+`ResultAsync` is a `@deprecated` eager `PromiseLike<Result<T, E>>` compatibility type. `map` / `mapErr` await Promise-returning callbacks; `filterOrElse` supports async
 callbacks. `match`, `matchTags`, `matchTagsPartial`, and `unwrapOr` return native
 Promises containing the unwrapped output.
 
-- `map(fn)`
-- `as(value)`
-- `asVoid()`
-- `mapErr(fn)`
-- `when(condition)`
-- `unless(condition)`
-- `andThen(fn)`
-- `orElse(fn)`
-- `orElseSucceed(fn)`
-- `catchTag(tag, fn)`
-- `catchTags(handlers)`
-- `catchReason(parentTag, reasonTag, fn)`
-- `catchReasons(parentTag, handlers)`
-- `unwrapReason(parentTag)`
-- `match(okFn, errFn)`
-- `matchTags(okFn, handlers)`
-- `matchTagsPartial(okFn, handlers, fallback)`
-- `pipe(fn, ...)`
-- `inspect(fn)`
-- `inspectError(fn)`
-- `inspectBoth(handlers)`
-- `tap(fn)` / `tapError(fn)` (deprecated best-effort aliases of `inspect` / `inspectError`)
-- `log(fn)`
-- `toAsyncDisposable(fn)`
-- `unwrapOr(defaultValue)`
-- `unwrapOrThrow()`
+- `map(fn)`, `as(value)`, `asVoid()`, `mapErr(fn)`
+- `when(condition)`, `unless(condition)`
+- `andThen(fn)`, `orElse(fn)`, `orElseSucceed(fn)`
+- `catchTag(tag, fn)`, `catchTags(handlers)`
+- `catchReason(parentTag, reasonTag, fn)`, `catchReasons(parentTag, handlers)`, `unwrapReason(parentTag)`
+- `match(okFn, errFn)` / `match({ ok, err })` (retains legacy `{ ok, error }`), `matchTags(okFn, handlers)`, `matchTagsPartial(okFn, handlers, fallback)`
+- `pipe(fn, ...)`, `inspect(fn)`, `inspectError(fn)`, `inspectBoth(handlers)`, `log(fn)`
+- `tap(fn)` / `tapError(fn)` (`@deprecated` best-effort aliases of `inspect` / `inspectError`)
+- `toAsyncDisposable(fn)`, `unwrapOr(defaultValue)`, `unwrapOrThrow()`
 
 <a id="resultasync-static-methods"></a>
 
-### ResultAsync static methods
+### ResultAsync static methods (`resultar/async`)
 
-`ResultAsync.ok`, `ResultAsync.err`, `ResultAsync.unit`, `ResultAsync.okAsync`, `ResultAsync.errAsync`, `ResultAsync.unitAsync`, `ResultAsync.fromPromise`, `ResultAsync.fromSafePromise`, and `ResultAsync.try` are active in-flight constructors; `ResultAsync.tryCatch`, `ResultAsync.fromTask`, `ResultAsync.fromThrowable`, `ResultAsync.fromCallback`, and the static orchestration methods below remain deprecated for existing eager contracts (prefer `ResultTask` for new workflows):
+`resultar/async` preserves the full v4 eager static API (including `@deprecated` orchestration helpers `all`, `combine`, `combineWithAllErrors`, `validateAll`, `zip`, `race`, `raceAll`, `raceFirst`, `raceWith`, `timeout`, `retry`, `retryOrElse`, `withResource`, `firstSuccessOf`, `forEach`, `loop`, `iterate`, `fromCallback`, `fromThrowable`, `fromTask`) throughout v5.x for backwards compatibility. Prefer `ResultTask` for all new asynchronous workflows.
 
-- `ResultAsync.ok(value)`
-- `ResultAsync.err(error)`
-- `ResultAsync.unit()`
-- `ResultAsync.okAsync(value)`
-- `ResultAsync.errAsync(error)`
-- `ResultAsync.unitAsync()`
-- `ResultAsync.asVoid(result)` / `ResultAsync.asVoid()`
+- `ResultAsync.ok(value)`, `ResultAsync.err(error)`, `ResultAsync.unit()`
+- `ResultAsync.okAsync(value)`, `ResultAsync.errAsync(error)`, `ResultAsync.unitAsync()`
+- `ResultAsync.fromSafePromise(promise)`, `ResultAsync.fromPromise(promise, toError)`
 - `ResultAsync.try(promiseOrFactory, toError?)` / `ResultAsync.try({ try, catch? })`
-- `ResultAsync.tryCatch(promiseOrFactory, toError?)` (deprecated alias)
-- `ResultAsync.fromSafePromise(promise)`
-- `ResultAsync.fromPromise(promise, toError)`
-- `ResultAsync.fromTask(task)` (deprecated compatibility bridge; eagerly executes once)
-- `ResultAsync.fromThrowable(fn, toError?)` (deprecated)
-- `ResultAsync.fromCallback(options)` (deprecated)
-- `ResultAsync.zip(left, right)`
-- `ResultAsync.all(results)` / `ResultAsync.all(record)` / `ResultAsync.all(iterable)`
-- `ResultAsync.combine(results)`
-- `ResultAsync.combine(record)`
-- `ResultAsync.combine(iterable)`
-- `ResultAsync.combineWithAllErrors(results)`
-- `ResultAsync.combineWithAllErrors(record)`
-- `ResultAsync.combineWithAllErrors(iterable)`
-- `ResultAsync.race(left, right)`
-- `ResultAsync.raceAll(tasks)`
-- `ResultAsync.raceFirst(left, right)`
-- `ResultAsync.raceWith(left, right, handlers)`
-- `ResultAsync.timeout(task, options)`
-- `ResultAsync.retry(task, options)`
-- `ResultAsync.retryOrElse(task, options)`
-- `ResultAsync.withResource(options)`
-- `ResultAsync.validateAll(results)`
-- `ResultAsync.validateAll(iterable, fn)`
-- `ResultAsync.validateAll(iterable, fn, { concurrency })`
-- `ResultAsync.firstSuccessOf(candidates)`
-- `ResultAsync.if(condition, { onTrue, onFalse })`
-- `ResultAsync.when(condition, body)` / `ResultAsync.when(condition)(result)`
-- `ResultAsync.whenResult(conditionResult, body)`
-- `ResultAsync.unless(condition, body)` / `ResultAsync.unless(condition)(result)`
-- `ResultAsync.unlessResult(conditionResult, body)`
-- `ResultAsync.loop(initial, options)`
-- `ResultAsync.iterate(initial, options)`
-- `ResultAsync.forEach(iterable, fn, options?)`
-- `ResultAsync.forEach(iterable, fn, { concurrency, discard? })`
+- `ResultAsync.gen(generator)` / `ResultAsync.gen({ try, catch? })`
+- `ResultAsync.fn(generator, ...ops)`
+- `ResultAsync.asVoid(result)` / `ResultAsync.asVoid()`
+- `ResultAsync.if`, `ResultAsync.when`, `ResultAsync.whenResult`, `ResultAsync.unless`, `ResultAsync.unlessResult`
 
 ### Tagged error helpers
 

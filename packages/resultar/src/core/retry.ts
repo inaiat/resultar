@@ -103,8 +103,7 @@ export const validateRetryPolicy = <E>(options: RetryPolicyOptions<E>): void => 
  */
 export const Retry: {
   /**
-   * Validates and freezes a portable {@link RetryPolicy} that can be passed to `ResultTask.retry`,
-   * `ResultAsync.retry`, and `ResultAsync.retryOrElse`.
+   * Validates and freezes a portable {@link RetryPolicy} for `ResultTask.retry` and `ResultTask.repeat`.
    */
   readonly policy: <E = unknown>(options: RetryPolicyOptions<E>) => RetryPolicy<E>
 } = Object.freeze({
@@ -121,7 +120,7 @@ export const isRetryPolicy = <E>(value: unknown): value is RetryPolicy<E> =>
   value !== null &&
   (value as Partial<RetryPolicy<E>>)[RetryPolicyTypeId] === RetryPolicyTypeId
 
-/** Internal context construction shared by both execution models. */
+/** Internal context construction for retry and repeat scheduling. */
 export const retryContext = (attempt: number, times: number): RetryContext => ({
   attempt,
   nextAttempt: attempt + 1,

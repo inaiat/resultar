@@ -2,15 +2,16 @@ import { equal, ok as isTrue, rejects } from 'node:assert'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
+import type { AbortError } from '../src/index.js'
 import type {
-  AbortError,
   ResultAsync as ResultAsyncType,
   ResultAsyncAbortSignal,
   ResultAsyncCallbackCleanup,
   ResultAsyncFromCallbackOptions,
-} from '../src/index.js'
+} from '../src/entries/async.js'
 
-import { ResultAsync, fromCallback, isAbortError } from '../src/index.js'
+import { isAbortError } from '../src/index.js'
+import { ResultAsync, fromCallback } from '../src/entries/async.js'
 
 class CallbackError extends Error {
   public constructor(cause: unknown) {

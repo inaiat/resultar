@@ -1,25 +1,24 @@
 # Adopt Resultar gradually
 
 Start by making one expected failure explicit with `Result<T, E>`. Keep existing
-Promise APIs at their boundaries and prefer `ResultTask` for new asynchronous
+Promise APIs at their boundaries and use `ResultTask` for asynchronous
 workflows. Add time policies, service requirements or owned concurrent work as
-needed. `ResultAsync` represents an in-flight `Result` returned at execution boundaries (`runResult()`) and by active in-flight constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`), while deprecated eager orchestration helpers remain available in `resultar` to preserve legacy boundaries during migration.
-Each step is useful on its own; an application can keep all three models.
+needed. `task.runResult()` returns a native `Promise<Result<T, E>>` directly at your imperative boundary, while legacy eager `ResultAsync` compatibility lives in the opt-in `"resultar/async"` subpath.
+Each step is useful on its own; an application can adopt them incrementally.
 
 `Result<T, E>` uses `T` for success and `E` for expected errors.
 `ResultTask<T, E, R>` adds a third parameter, `R`, for required services and
 resource scopes.
 
 This guide describes the APIs in this checkout. Check the installed package's
-types before adopting capabilities from a newer release. The
-[v4 migration reference](migrations/v4.md) lists retained deprecated APIs and
-their preferred names; changing those spellings is independent of adopting tasks.
+types before adopting capabilities from a newer release. Upgrading from v4? See the
+[v5 migration guide](migrations/v5.md) and run `resultar-check migrate-v5`.
 
-| Adopt when you need | Contract | When work starts |
-| --- | --- | --- |
-| One synchronous validation or domain operation | `Result<T, E>` | When the function is called |
-| New async work, with optional service/scope requirements (`R`) and runtime options | `ResultTask<T, E, R>` | At an explicit `run*` boundary, again on each run |
-| An in-flight async `Result` (`task.runResult()`) or existing eager async contract | `ResultAsync<T, E>` | Immediately when `runResult()` (or an in-flight constructor) is called; repeated awaits observe one execution |
+| Adopt when you need                                                                | Contract              | When work starts                                                                                  |
+| ---------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------- |
+| One synchronous validation or domain operation                                     | `Result<T, E>`        | When the function is called                                                                       |
+| Any async work, with optional service/scope requirements (`R`) and runtime options | `ResultTask<T, E, R>` | At an explicit `run*` boundary (`task.runResult()` -> `Promise<Result<T, E>>`), again on each run |
+| Legacy eager compatibility boundary (opt-in `"resultar/async"`)                    | `ResultAsync<T, E>`   | Immediately when constructed; repeated awaits observe one execution                               |
 
 The TypeScript blocks below are independent examples. Copy one into an ESM
 module; blocks using `await` use top-level await.
@@ -100,10 +99,7 @@ console.log(parseAddress("localhost", "8080").unwrapOr({ host: "localhost", port
 ```
 
 The inferred error channel contains both validation errors. This still executes
-synchronously and needs no Clock, services or Fibers. Existing `safeTry` workflows
-keep their Result-returning generator contract while migrating to `Result.gen` plain-value returns.
-These helpers are separate functions; the modern generator wraps its plain return
-without inspecting the payload.
+synchronously and needs no Clock, services or Fibers.
 Do not rely on generator `finally` for cleanup after an early `Err` in this model;
 use task resource scopes when cleanup becomes part of the workflow contract.
 
@@ -146,12 +142,11 @@ const greeting = (id: string) =>
     return `Hello, ${user.name}`;
   });
 
-const response = await greeting("user_123")
-  .runResult()
-  .match({
-    ok: (message) => ({ status: 200, body: { message } }),
-    err: (error) => ({ status: 503, body: { message: error.message } }),
-  });
+const result = await greeting("user_123").runResult();
+const response = result.match({
+  ok: (message) => ({ status: 200, body: { message } }),
+  err: (error) => ({ status: 503, body: { message: error.message } }),
+});
 
 console.log(response);
 ```
@@ -159,7 +154,7 @@ console.log(response);
 `ResultTask.gen` uses a synchronous generator even when its steps perform async I/O.
 Return a plain success value, and compose fallible Results or Tasks with `yield*`.
 Use `andThen` and `tryPromise` for an asynchronous transformation; Task `map` is
-synchronous. At the outer boundary, `runResult` returns `ResultAsync<T, E>` (`PromiseLike<Result<T, E>>`);
+synchronous. At the outer boundary, `runResult` returns a native `Promise<Result<T, E>>`;
 `runExit` preserves every failure cause as a value and `runPromise` resolves the
 success value or rejects.
 
@@ -168,16 +163,14 @@ Runnable examples: [task resilience](../examples/cookbook/src/task-resilience.ts
 
 ## 4. Bridge existing eager APIs during migration
 
-`ResultAsync` and `StrictResultAsync` represent an in-flight `Result` (`PromiseLike<Result<T, E>>`)
-and are exported from `resultar`. Active in-flight constructors
-such as `tryResultAsync` and `fromPromise` are also exported from `resultar` to keep
-their eager, single-execution behavior where existing callers
-depend on that contract. For a new Task workflow, adapt the existing operation with
-`fromResultAsync`; a factory creates fresh work on each run. The following
-`loadUser` represents such an existing eager adapter.
+Opt-in `ResultAsync` and `StrictResultAsync` live in `"resultar/async"` for codebases
+preserving legacy eager, single-execution contracts during migration. Inside a `ResultTask`
+workflow, adapt any `PromiseLike<Result<T, E>>` (including `ResultAsync` or `Promise<Result<T, E>>`)
+with `ResultTask.fromResultAsync`; a factory creates fresh work on each run.
 
 ```ts
-import { ResultTask, createTaggedError, ok, tryResultAsync, type Result, type ResultAsync } from "resultar";
+import { ResultTask, createTaggedError, ok, type Result } from "resultar";
+import { tryResultAsync } from "resultar/async";
 
 class InvalidIdError extends createTaggedError({
   name: "InvalidIdError",
@@ -205,20 +198,12 @@ const greetingTask = (input: string) =>
     return `Hello, ${user.name}`;
   });
 
-// runResult() eagerly starts one execution and returns ResultAsync for existing callers.
-const greeting = (id: string): ResultAsync<string, InvalidIdError | LoadUserError> =>
-  greetingTask(id).runResult();
-
-console.log(await greeting("user_123").unwrapOr("Unavailable"));
-
-// Callers can also pass runtime options at the execution boundary.
-const task = greetingTask("user_123");
-const result = await task.runResult();
+// runResult() starts one execution and returns a native Promise<Result<...>>.
+const result = await greetingTask("user_123").runResult();
 console.log(result.unwrapOr("Unavailable"));
 ```
 
-`task.runResult()` (and its deprecated aliases `ResultAsync.fromTask(task)` and `task.toResultAsync()`)
-starts the task once and captures that execution in a `ResultAsync` facade. Provide
+`task.runResult()` starts the task once and returns a native `Promise<Result<T, E>>`. Provide
 services and wrap scope-dependent work with `ResultTask.scoped` before running, or pass `{ services }` to `runResult({ services })`.
 The `runResult` boundary can still reject on defects, interruption or
 composite causes. A Task itself has no `.then`; awaiting it does not execute it.
@@ -230,13 +215,13 @@ only the external driver or the explicit native execution boundary returns a Pro
 Do not mark a Task-producing factory `async`. See the
 [boundary decision table](../DOCUMENTATION.md#promise-boundaries-and-application-contracts).
 
-| Bridge | Execution behavior |
-| --- | --- |
-| `ResultTask.fromResult(result)` | Wraps a synchronous `Result` that has already been computed |
-| `ResultTask.fromResultAsync(existing)` | Reuses an existing eager `ResultAsync` execution on every task run |
-| `ResultTask.fromResultAsync(signal => load(signal))` | Evaluates the factory with the active `AbortSignal` on each task run |
-| `ResultTask.tryPromise({ try, catch })` | Calls the Promise factory on each task run |
-| `task.runResult(options?)` | Starts the task once and returns an in-flight `ResultAsync` (`ResultAsync.fromTask` / `toResultAsync` are deprecated aliases) |
+| Bridge                                               | Execution behavior                                                         |
+| ---------------------------------------------------- | -------------------------------------------------------------------------- |
+| `ResultTask.fromResult(result)`                      | Wraps a synchronous `Result` that has already been computed                |
+| `ResultTask.fromResultAsync(existing)`               | Reuses an existing `PromiseLike<Result<T, E>>` execution on every task run |
+| `ResultTask.fromResultAsync(signal => load(signal))` | Evaluates the factory with the active `AbortSignal` on each task run       |
+| `ResultTask.tryPromise({ try, catch })`              | Calls the Promise factory on each task run                                 |
+| `task.runResult(options?)`                           | Starts the task once and returns a native `Promise<Result<T, E>>`          |
 
 Capturing an already-started `Promise` via `fromPromise` cannot undo its execution; use
 `ResultTask.tryPromise` directly for raw Promise work so each task run and retry
@@ -244,10 +229,9 @@ creates a fresh operation. Reserve `fromResultAsync(factory)` for existing typed
 factory overload; defer a Result-producing call inside `ResultTask.gen` as above.
 
 The incoming bridge accepts any `PromiseLike<Result<T, E>>`. Core `Result.gen` and
-`Result.fn` accept synchronous and asynchronous generators with plain return values;
-legacy `safeTry` preserves the final Result. Existing eager imports remain supported
-in `resultar`; see the
-[v4 migration table](migrations/v4.md).
+`Result.fn` are purely synchronous with plain return values; opt-in eager async generators live in
+`ResultAsync.gen` / `ResultAsync.fn` from `"resultar/async"`. See the
+[v5 migration guide](migrations/v5.md).
 
 ## 5. Add services where a task needs them
 
@@ -305,8 +289,7 @@ A DI container is optional; see the
 ## 6. Reuse retry policy and make time deterministic
 
 Introduce retry around an operation that is safe to repeat, such as a read.
-Use `Retry.policy` on the Task representing that operation. The same policy can
-also be reused by existing eager ResultAsync factories during migration.
+Use `Retry.policy` on the Task representing that operation.
 
 ```ts
 import { Clock, ResultTask, Retry, createTaggedError } from "resultar";
@@ -371,22 +354,29 @@ import { Clock, Fiber, ResultTask } from "resultar";
 
 const released: string[] = [];
 const read = (name: string, milliseconds: number) =>
-  ResultTask.scoped(ResultTask.gen(function* () {
-    const connection = yield* ResultTask.acquireRelease({
-      acquire: ResultTask.ok(name),
-      release: (resource) => ResultTask.sync(() => { released.push(resource); }),
-    });
-    yield* ResultTask.sleep(milliseconds);
-    return connection;
-  }));
+  ResultTask.scoped(
+    ResultTask.gen(function* () {
+      const connection = yield* ResultTask.acquireRelease({
+        acquire: ResultTask.ok(name),
+        release: (resource) =>
+          ResultTask.sync(() => {
+            released.push(resource);
+          }),
+      });
+      yield* ResultTask.sleep(milliseconds);
+      return connection;
+    }),
+  );
 
-const program = ResultTask.scoped(ResultTask.gen(function* () {
-  const primary = yield* ResultTask.forkChild(read("primary", 10));
-  const secondary = yield* ResultTask.forkChild(read("secondary", 20));
-  const first = yield* Fiber.join(primary);
-  const second = yield* Fiber.join(secondary);
-  return { first, second };
-}));
+const program = ResultTask.scoped(
+  ResultTask.gen(function* () {
+    const primary = yield* ResultTask.forkChild(read("primary", 10));
+    const secondary = yield* ResultTask.forkChild(read("secondary", 20));
+    const first = yield* Fiber.join(primary);
+    const second = yield* Fiber.join(secondary);
+    return { first, second };
+  }),
+);
 
 const clock = Clock.virtual();
 const running = program.runExit({ clock });
@@ -427,7 +417,7 @@ remain checked; pending release errors join the boundary error union (`E | Scope
 Every call executes the Task again. There is no public `task.run()` method, and awaiting a Task
 without a runner leaves it unexecuted.
 
-Use `runResult` when a boundary wants an in-flight `ResultAsync<T, E>` (`PromiseLike<Result<T, E>>`)
+Use `runResult` when a boundary wants a native `Promise<Result<T, E>>`
 and already has a rejection policy for unexpected failures. It turns a single typed failure
 into `Err`; defects, interruption and composite causes reject.
 

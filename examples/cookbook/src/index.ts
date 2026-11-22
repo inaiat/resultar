@@ -39,18 +39,16 @@ const errorCode = (error: unknown): string => {
  * JSON-serializable summary.
  */
 export const runCookbook = async () => {
-  const user = await loadUserWithTimeout("usr_123", 1)
-    .runResult()
-    .match(
-      (value) => value,
-      (error) => ({ code: errorCode(error) }),
-    );
-  const catalog = await loadCatalogWithFallback("sku_123")
-    .runResult()
-    .match(
-      (value) => value,
-      (error) => ({ code: errorCode(error) }),
-    );
+  const userResult = await loadUserWithTimeout("usr_123", 1).runResult();
+  const user = userResult.match(
+    (value) => value,
+    (error) => ({ code: errorCode(error) }),
+  );
+  const catalogResult = await loadCatalogWithFallback("sku_123").runResult();
+  const catalog = catalogResult.match(
+    (value) => value,
+    (error) => ({ code: errorCode(error) }),
+  );
   const price = await fastestPrice("sku_123").runResult();
   const imported = await importRowsWithCleanup(["one", "two"]);
   const payment = settlePayment(decidePaymentState(1_900, 10));

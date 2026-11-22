@@ -2,7 +2,8 @@ import { deepEqual, equal, ok as isOk } from 'node:assert'
 import { describe, it } from 'vite-plus/test'
 
 /* eslint-disable require-yield */
-import { Result, type ResultAsync, err, errAsync, ok, okAsync, safeTry } from '../src/index.js'
+import { Result, err, ok } from '../src/index.js'
+import { ResultAsync, errAsync, okAsync, safeTry } from '../src/entries/async.js'
 
 describe('safeTry', async () => {
   const fooValue = okAsync('foo')
@@ -94,13 +95,13 @@ describe("Returns the first occurence of Err instance as yiled*'s operand", asyn
     const okValues = new Array<string>()
 
     const result = safeTry(function* () {
-      const okFoo = yield* ok('foo').safeUnwrap()
+      const okFoo = yield* ok('foo')
       okValues.push(okFoo)
 
-      const okBar = yield* ok('bar').safeUnwrap()
+      const okBar = yield* ok('bar')
       okValues.push(okBar)
 
-      yield* err(errVal).safeUnwrap()
+      yield* err(errVal)
 
       throw new Error('This line should not be executed')
     })
@@ -422,14 +423,14 @@ describe('existing generator contracts', () => {
     )
     equal(
       (
-        await Result.gen(async function* () {
+        await ResultAsync.gen(async function* () {
           return payload
         })
       )._unsafeUnwrap(),
       payload,
     )
     equal(
-      await Result.gen(async function* () {
+      await ResultAsync.gen(async function* () {
         return yield* failure
       }),
       failure,
@@ -447,7 +448,7 @@ describe('existing generator contracts', () => {
         syncFinally = true
       }
     })
-    const async = await Result.gen(async function* () {
+    const async = await ResultAsync.gen(async function* () {
       try {
         yield* errAsync('async failure')
         return 1

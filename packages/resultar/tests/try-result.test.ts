@@ -2,14 +2,8 @@ import { equal, strictEqual, throws } from 'node:assert'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import tryResultDefault, {
-  type Result,
-  type ResultAsync,
-  tryCatch,
-  tryCatchAsync,
-  tryResult,
-  tryResultAsync,
-} from '../src/index.js'
+import { ResultAsync, tryResultAsync } from '../src/entries/async.js'
+import { type Result, tryResult } from '../src/index.js'
 import * as result from '../src/index.js'
 
 class WrappedError extends Error {
@@ -73,12 +67,8 @@ describe('tryResult', async () => {
     strictEqual(actual._unsafeUnwrapErr(), original)
   })
 
-  it('exposes sync aliases and the default export as the same function', () => {
-    strictEqual(tryCatch, tryResult)
-    strictEqual(result.try, tryResult)
+  it('exposes Result.try as the same function as tryResult', () => {
     strictEqual(result.Result.try, tryResult)
-    strictEqual(tryResultDefault, tryResult)
-    strictEqual(result.default, tryResult)
   })
 
   it('supports Result.try with positional and object signatures', () => {
@@ -177,20 +167,18 @@ describe('tryResultAsync', async () => {
     strictEqual(actual._unsafeUnwrapErr(), original)
   })
 
-  it('exposes async aliases as the same function and supports ResultAsync.try and ResultAsync.unit', async () => {
-    strictEqual(tryCatchAsync, tryResultAsync)
-    strictEqual(result.tryAsync, tryResultAsync)
-    strictEqual(result.ResultAsync.try, tryResultAsync)
+  it('supports ResultAsync.try and ResultAsync.unit', async () => {
+    strictEqual(ResultAsync.try, tryResultAsync)
 
     const original = new Error('boom')
-    const okPending = await result.ResultAsync.try(async () => 7)
-    const errPending = await result.ResultAsync.try(
+    const okPending = await ResultAsync.try(async () => 7)
+    const errPending = await ResultAsync.try(
       async (): Promise<number> => {
         throw original
       },
       (error) => new WrappedError(error),
     )
-    const unitPending = await result.ResultAsync.unit()
+    const unitPending = await ResultAsync.unit()
 
     equal(okPending._unsafeUnwrap(), 7)
     strictEqual(errPending._unsafeUnwrapErr().wrappedCause, original)

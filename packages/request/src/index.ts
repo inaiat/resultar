@@ -12,7 +12,6 @@ export {
   integrationErrorHandler,
   isHttpResponseError,
   requestJson,
-  requestJsonTask,
 } from "./request-json.js";
 
 /** Compatibility alias for `HttpResponseErrorCauseError`. */
@@ -41,15 +40,6 @@ export type {
   RequestJsonResponseData,
   RequestJsonRetry,
   RequestJsonRetryContext,
-  RequestJsonSource,
-  RequestJsonTaskBaseInput,
-  RequestJsonTaskDecodeInput,
-  RequestJsonTaskInput,
-  RequestJsonTaskMappedDecodeInput,
-  RequestJsonTaskMappedInput,
-  RequestJsonTaskMappedValidatorInput,
-  RequestJsonTaskRetry,
-  RequestJsonTaskValidatorInput,
   RequestJsonValidationError,
   RequestJsonValidationErrorContext,
   RequestJsonValidationIssue,

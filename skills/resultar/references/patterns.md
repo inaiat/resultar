@@ -33,15 +33,16 @@ const policy = Retry.policy<LoadError>({
   delayMs: 100,
   backoff: 2,
   jittered: 0.1,
-  while: error => error.retryable,
-})
-const resilient = loadTask.retry(policy)
+  while: (error) => error.retryable,
+});
+const resilient = loadTask.retry(policy);
 ```
 
-The initial execution plus two retries permits three attempts. For request clients,
-place the request call inside `ResultTask.fromResultAsync(signal => requestJson(...))`
-and forward `signal` to the transport. Reusing an already-started Async value will
-not repeat the request. Decide which layer owns retries to avoid multiplying attempts.
+The initial execution plus two retries permits three attempts. `requestJson` / `requestJsonZod` /
+`requestJsonTypeBox` return `ResultTask` directly, so `.retry(policy)` composes lazily and repeats
+each request cleanly (forward `signal` to `fetch`). When bridging a legacy `"resultar/async"` helper,
+place the call inside `ResultTask.fromResultAsync(signal => legacyCall(signal))` so it repeats on
+each attempt. Decide which layer owns retries to avoid multiplying attempts.
 See [retry contracts](../../../DOCUMENTATION.md#portable-retry-policies-and-resulttask-retry).
 
 ## Resource ownership and shutdown
@@ -66,9 +67,9 @@ boundary and account for the lifetime of any returned resource.
 ## Bounded concurrency and races
 
 ```ts
-const semaphore = ResultTask.makeSemaphore(4)
-const limited = semaphore.withPermit(loadTask)
-const batch = ResultTask.forEach(ids, id => load(id), { concurrency: 4 })
+const semaphore = ResultTask.makeSemaphore(4);
+const limited = semaphore.withPermit(loadTask);
+const batch = ResultTask.forEach(ids, (id) => load(id), { concurrency: 4 });
 ```
 
 A semaphore bounds concurrent work, not requests per second. Choose a time-based

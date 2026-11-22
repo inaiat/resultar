@@ -26,6 +26,8 @@ const requiredFiles = [
   'dist/retry.js',
   'dist/function.d.ts',
   'dist/function.js',
+  'dist/async.d.ts',
+  'dist/async.js',
   'dist/llms.txt',
   'dist/agent/SKILL.md',
   'dist/agent/versions.json',
@@ -93,14 +95,12 @@ const expectedExports = [
   'Clock',
   'Deferred',
   'DisposableResult',
-  'DisposableResultAsync',
   'Fiber',
   'Match',
   'MissingServiceError',
   'Queue',
   'Ref',
   'Result',
-  'ResultAsync',
   'ResultTask',
   'ResultTaskCauseError',
   'ResultTaskTypeId',
@@ -114,16 +114,10 @@ const expectedExports = [
   'VirtualClock',
   'constant',
   'createTaggedError',
-  'default',
   'err',
-  'errAsync',
   'findCause',
   'flow',
-  'fromCallback',
-  'fromPromise',
-  'fromSafePromise',
   'fromThrowable',
-  'fromThrowableAsync',
   'identity',
   'isAbortError',
   'isError',
@@ -133,23 +127,14 @@ const expectedExports = [
   'matchError',
   'matchErrorPartial',
   'ok',
-  'okAsync',
   'pipe',
   'redact',
   'revealRedacted',
-  'runPromise',
   'runSync',
-  'safeTry',
   'serviceTag',
   'taggedEnum',
-  'try',
-  'tryAsync',
-  'tryCatch',
-  'tryCatchAsync',
   'tryResult',
-  'tryResultAsync',
   'unit',
-  'unitAsync',
 ] as const
 const actualExports = Object.keys(entrypoint).toSorted()
 
@@ -157,6 +142,40 @@ if (JSON.stringify(actualExports) !== JSON.stringify(expectedExports)) {
   throw new Error(
     `Unexpected public exports:\nactual: ${actualExports.join(', ')}\nexpected: ${expectedExports.join(', ')}`,
   )
+}
+
+const asyncEntrypoint = (await import(
+  pathToFileURL(path.join(rootDir, 'dist/async.js')).href
+)) as Record<string, unknown>
+const expectedAsyncExports = [
+  'DisposableResultAsync',
+  'ResultAsync',
+  'asyncAndThen',
+  'asyncMap',
+  'errAsync',
+  'fromCallback',
+  'fromPromise',
+  'fromSafePromise',
+  'fromThrowableAsync',
+  'okAsync',
+  'runPromise',
+  'safeTry',
+  'tryAsync',
+  'tryCatchAsync',
+  'tryResultAsync',
+  'unitAsync',
+] as const
+const actualAsyncExports = Object.keys(asyncEntrypoint).toSorted()
+
+if (JSON.stringify(actualAsyncExports) !== JSON.stringify(expectedAsyncExports)) {
+  throw new Error(
+    `Unexpected async subpath exports:\nactual: ${actualAsyncExports.join(', ')}\nexpected: ${expectedAsyncExports.join(', ')}`,
+  )
+}
+
+const asyncDeclarations = readFileSync(path.join(rootDir, 'dist/async.d.ts'), 'utf8')
+if (!asyncDeclarations.includes('@deprecated')) {
+  throw new Error('Expected @deprecated JSDoc annotations in dist/async.d.ts')
 }
 
 const packOutput = execFileSync('npm', ['pack', '--dry-run', '--json'], {
@@ -193,7 +212,8 @@ execFileSync(
     '-e',
     `import assert from 'node:assert/strict';
 import * as resultar from './dist/index.js';
-import {Cause, constant, createTaggedError, Fiber, flow, identity, Match, ok, pipe, Result, ResultAsync, ResultTask, Retry, safeTry, Scheduler} from './dist/index.js';
+import {Cause, constant, createTaggedError, Fiber, flow, identity, Match, ok, pipe, Result, ResultTask, Retry, Scheduler} from './dist/index.js';
+import {ResultAsync, asyncAndThen, asyncMap, okAsync} from './dist/async.js';
 const UntypedMissing = createTaggedError({ name: 'Missing', message: 'Missing $id' });
 const TypedMissing = UntypedMissing.withProps();
 const missing = new TypedMissing({ id: 'user_1', details: { source: 'database' } });
@@ -209,22 +229,15 @@ assert.equal(getterMissing.id, 'user_getter');
 assert.equal(getterMissing.message, 'Missing user_getter');
 assert.equal(TypedMissing.is(getterMissing), true);
 assert.equal(getterMissing.toJSON().id, 'user_getter');
-assert.equal(resultar.default, resultar.tryResult);
-assert.equal(resultar.try, resultar.tryResult);
-assert.equal(resultar.tryCatch, resultar.tryResult);
-assert.equal(resultar.tryAsync, resultar.tryResultAsync);
-assert.equal(resultar.tryCatchAsync, resultar.tryResultAsync);
+assert.equal(resultar.Result.try, resultar.tryResult);
 const returned = ok('same-result');
 assert.equal(Result.gen(function* () { return 'plain-success'; })._unsafeUnwrap(), 'plain-success');
-assert.equal((await Result.gen(async function* () { const value = yield* resultar.okAsync('async-success'); return value; }))._unsafeUnwrap(), 'async-success');
+assert.equal((await ResultAsync.gen(async function* () { const value = yield* okAsync('async-success'); return value; }))._unsafeUnwrap(), 'async-success');
 assert.equal(Result.gen(function* () { yield* resultar.err('early-error'); return 'unreachable'; })._unsafeUnwrapErr(), 'early-error');
 assert.equal(Result.gen(function* () { return yield* returned; })._unsafeUnwrap(), 'same-result');
-assert.equal(safeTry(function* () { return returned; }), returned);
-assert.equal(returned.tap(() => { throw new Error('observer'); }), returned);
 assert.equal(returned.inspect(() => { throw new Error('observer'); }), returned);
-assert.equal(await ResultTask.runPromise(ResultTask.ok(1).flatMap(value => ResultTask.ok(value + 1))), 2);
-assert.equal(await ResultTask.runPromise(ResultTask.err('old').catchAll(() => ResultTask.ok('kept'))), 'kept');
-assert.equal((await ResultAsync.fromTask(ResultTask.ok('eager')))._unsafeUnwrap(), 'eager');
+assert.equal(await ResultTask.runPromise(ResultTask.ok(1).andThen(value => ResultTask.ok(value + 1))), 2);
+assert.equal(await ResultTask.runPromise(ResultTask.err('old').orElse(() => ResultTask.ok('kept'))), 'kept');
 assert.equal(Result.fromNullishOr(undefined, () => 'missing')._unsafeUnwrapErr(), 'missing');
 assert.equal(pipe(0, Result.fromNullishOr(() => 'missing'))._unsafeUnwrap(), 0);
 assert.equal(Result.liftPredicate(2, (value) => value > 0, () => 'invalid')._unsafeUnwrap(), 2);
@@ -237,16 +250,19 @@ assert.equal(Cause.findError(cause)._unsafeUnwrap(), 'query');
 assert.equal(Cause.pretty(cause), 'Fail: query\\nDie: close');
 assert.equal(pipe(ok(2), Result.map(value => value * 3), Result.andThen(value => ok(String(value))), Result.match({ok: value => value, err: () => 'failed'})), '6');
 assert.equal((await pipe(ResultAsync.ok(2), ResultAsync.map(value => value * 3), ResultAsync.andThen(value => ok(String(value)))))._unsafeUnwrap(), '6');
+assert.equal((await asyncMap(ok(2), async value => value * 3))._unsafeUnwrap(), 6);
+assert.equal((await asyncAndThen(ok(2), value => okAsync(value * 4)))._unsafeUnwrap(), 8);
 assert.equal(await ResultAsync.err('boom').match({ok: () => 'ok', err: error => error}), 'boom');
 import {account, welcome} from './dist/agent/examples/workflow.mjs';
 assert.equal(account('invalid').isErr(), true);
-const result = await ResultTask.runResult(welcome(' ADA@EXAMPLE.COM '), {services: {greeting: 'Hello'}});
+const pendingWelcome = ResultTask.runResult(welcome(' ADA@EXAMPLE.COM '), {services: {greeting: 'Hello'}});
+assert.equal(pendingWelcome instanceof Promise, true);
+const result = await pendingWelcome;
 assert.equal(result.isOk(), true);
 assert.equal(result.value, 'Hello, ada@example.com');
 const normalize = flow((value) => value.trim(), (value) => value.toLowerCase());
 assert.equal(pipe(' ADA ', normalize), 'ada');
 assert.equal(ok('Ready').match({ok: identity, err: constant('Unavailable')}), 'Ready');
-assert.equal(ok('Ready').match({ok: identity, error: constant('Unavailable')}), 'Ready');
 assert.equal(Match.value('Ada').pipe(Match.when(Match.string, (value) => value.length), Match.exhaustive), 3);
 const label = Match.fn((prefix, input) => input).pipe(Match.tagsExhaustive({Created: (event, prefix) => prefix + event.id}));
 assert.equal(label('id:', {_tag: 'Created', id: '1'}), 'id:1');
@@ -273,7 +289,6 @@ const retryPolicy = Retry.policy({times: 1, delayMs: 0, backoff: 2, jittered: 0.
 assert.equal(Object.isFrozen(retryPolicy), true);
 let taskAttempts = 0;
 assert.equal(await ResultTask.runPromise(ResultTask.sync(() => ++taskAttempts).andThen(attempt => attempt === 1 ? ResultTask.err('retry') : ResultTask.ok('ready')).retry(retryPolicy)), 'ready');
-assert.equal((await ResultAsync.retry(attempt => attempt === 0 ? resultar.errAsync('retry') : resultar.okAsync('ready'), retryPolicy))._unsafeUnwrap(), 'ready');
 const timeoutClock = resultar.Clock.virtual();
 const detached = ResultTask.tryPromise({try: () => new Promise(() => {}), catch: () => 'unexpected', interruption: 'detach'}).timeout(1, () => 'timed-out');
 const detachedRun = ResultTask.runResult(detached, {clock: timeoutClock});
@@ -404,6 +419,86 @@ if (false) {
   )
   execFileSync(process.execPath, [consumer], { stdio: 'inherit' })
   process.stdout.write('Packed ResultTask instance runners passed types and execution.\n')
+
+  // Isolated ESM subpath smoke executions (each in its own Node process without importing root `resultar`).
+  const isolatedSubpaths: readonly Readonly<{ readonly name: string; readonly code: string }>[] = [
+    {
+      name: 'resultar/task',
+      code: `import assert from 'node:assert/strict';
+import { ResultTask } from 'resultar/task';
+const pending = ResultTask.ok(42).runResult();
+assert.equal(pending instanceof Promise, true);
+const result = await pending;
+assert.equal(result.isOk(), true);
+assert.equal(result.value, 42);`,
+    },
+    {
+      name: 'resultar/result',
+      code: `import assert from 'node:assert/strict';
+import { ok, Result } from 'resultar/result';
+const result = Result.gen(function* () {
+  const a = yield* ok(20);
+  const b = yield* ok(22);
+  return a + b;
+});
+assert.equal(result.isOk(), true);
+assert.equal(result.value, 42);`,
+    },
+    {
+      name: 'resultar/async',
+      code: `import assert from 'node:assert/strict';
+import { ok } from 'resultar/result';
+import { ResultTask } from 'resultar/task';
+import { ResultAsync, okAsync, errAsync, asyncMap, safeTry } from 'resultar/async';
+const genResult = await ResultAsync.gen(async function* () {
+  const a = yield* okAsync(20);
+  const b = yield* ok(22);
+  return a + b;
+});
+assert.equal(genResult.isOk(), true);
+assert.equal(genResult.value, 42);
+const mapped = await asyncMap(ok(2), async (x) => x * 3);
+assert.equal(mapped.isOk(), true);
+assert.equal(mapped.value, 6);
+const fromTaskRes = await ResultAsync.fromTask(ResultTask.ok(99));
+assert.equal(fromTaskRes.isOk() && fromTaskRes.value, 99);
+let attempts = 0;
+const retried = await ResultAsync.retry(() => (++attempts < 2 ? errAsync('retry') : okAsync('ok')), { times: 1 });
+assert.equal(retried.isOk() && retried.value, 'ok');
+let released = false;
+const withRes = await ResultAsync.withResource({
+  acquire: () => okAsync('conn'),
+  use: (conn) => okAsync(conn + ':used'),
+  release: () => { released = true; },
+});
+assert.equal(withRes.isOk() && withRes.value, 'conn:used');
+assert.equal(released, true);
+const cbRes = await ResultAsync.fromCallback({
+  subscribe: (ctx) => { ctx.resolve('cb'); },
+  catch: (e) => String(e),
+});
+assert.equal(cbRes.isOk() && cbRes.value, 'cb');
+let tapped = 0;
+const tapRes = await okAsync(5).tap((v) => { tapped += v; }).tapError(() => { tapped = -1; });
+assert.equal(tapRes.isOk() && tapRes.value, 5);
+assert.equal(tapped, 5);
+const safeRes = await safeTry(async function* () {
+  const v = yield* okAsync(12);
+  return ok(v + 3);
+});
+assert.equal(safeRes.isOk() && safeRes.value, 15);`,
+    },
+  ]
+
+  for (const subpath of isolatedSubpaths) {
+    execFileSync(process.execPath, ['--input-type=module', '-e', subpath.code], {
+      cwd: consumerDirectory,
+      stdio: 'inherit',
+    })
+  }
+  process.stdout.write(
+    `Isolated ESM subpath smoke passed for: ${isolatedSubpaths.map((item) => item.name).join(', ')}.\n`,
+  )
 } finally {
   rmSync(consumerDirectory, { recursive: true, force: true })
 }

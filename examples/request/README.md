@@ -3,9 +3,9 @@
 Runnable examples for `resultar-request`, `resultar-request-typebox`, and
 `resultar-request-zod`.
 
-For new async code, prefer lazy `ResultTask` workflows with explicit runners. The request adapters
-and this server fixture retain eager `ResultAsync` compatibility contracts.
-Calling an adapter starts one shared execution; wrap the call in a Task factory to defer it.
+All request adapters (`requestJson`, `requestJsonTypeBox`, `requestJsonZod`) and this server
+fixture return lazy, repeatable `ResultTask` workflows directly. Compose retries, timeouts, and
+cancellation on the task, then execute explicitly with `.runResult()`.
 
 Run it from the repository root:
 
@@ -28,7 +28,7 @@ Installation does not build packages. The execution and smoke scripts build thei
 dependencies explicitly; run `build:deps` before a standalone `check`.
 
 The `src/` files start a real local HTTP server, call it with `fetch`, and release it through
-`ResultAsync.withResource`. The `start` script runs `src/server.ts` separately for manual
+`ResultTask.acquireRelease` + `ResultTask.scoped`. The `start` script runs `src/server.ts` separately for manual
 requests. The server script is only an HTTP fixture; TypeBox and Zod request usage stays in `src/`
 and `scripts/smoke.ts`.
 
@@ -37,9 +37,9 @@ The files are split by validator:
 - [`src/typebox.ts`](src/typebox.ts) shows one direct TypeBox request example.
 - [`src/zod.ts`](src/zod.ts) shows one direct Zod transform example.
 - [`src/account-server.ts`](src/account-server.ts) defines the local HTTP fixture with typed Resultar
-  boundaries.
+  boundaries (`ResultTask.fromCallback` and `ResultTask.acquireRelease`).
 - [`src/server.ts`](src/server.ts) runs that fixture and manages its lifecycle with
-  `ResultAsync.withResource`.
+  `ResultTask.scoped`.
 - [`scripts/smoke.ts`](scripts/smoke.ts) executes the TypeBox and Zod examples together.
 
 The `src/typebox.ts` and `src/zod.ts` files are executable with `vpx` and always manage their local
@@ -55,38 +55,37 @@ It shows:
 The smoke script checks the expected success and failure branches, including the server-backed fetch
 flow.
 
-## New Task workflows
+## Task-native requests
 
-For a server that is already running, compose a fresh request per Task execution:
+`requestJson`, `requestJsonTypeBox`, and `requestJsonZod` return `ResultTask` directly:
 
 ```ts
-import { ResultTask } from 'resultar'
-import { requestJson, t } from 'resultar-request-typebox'
+import { Retry } from "resultar";
+import { requestJsonTypeBox, t } from "resultar-request-typebox";
 
 const accountSchema = t.Object({
   email: t.String(),
   id: t.String(),
-  plan: t.Union([t.Literal('free'), t.Literal('team')]),
+  plan: t.Union([t.Literal("free"), t.Literal("team")]),
   seats: t.Number(),
-})
+});
 
-const loadAccount = (baseUrl: string) => ResultTask.fromResultAsync(() =>
-  requestJson({
-    request: () => fetch(`${baseUrl}/accounts/team`),
+const loadAccount = (baseUrl: string) =>
+  requestJsonTypeBox({
+    request: (signal) => fetch(`${baseUrl}/accounts/team`, { signal }),
     schema: accountSchema,
-  }),
-)
+  }).retry(Retry.policy({ times: 2, delayMs: 100 }));
 
-const result = await loadAccount('http://127.0.0.1:3000').runResult()
-const label = result.match(account => account.email, error => error.message)
+const result = await loadAccount("http://127.0.0.1:3000").runResult();
+const label = result.match(
+  (account) => account.email,
+  (error) => error.message,
+);
 ```
 
-The factory starts a new adapter call on every run. `fromResultAsync(existingAsync)` reuses an
-already-started operation instead. Task has no `.then`, its `map` is synchronous, and its `match`
-returns a Task; use a runner or match the `Result` after `runResult` as above. The adapter's JSON
-validation and error mapping stay unchanged. For new server ownership code, use
-`ResultTask.acquireRelease` inside `ResultTask.scoped`; the source fixture keeps its original
-eager `withResource` bracket for compatibility coverage.
+Each `.runResult()` starts a fresh, cancelable HTTP request. Task has no `.then`, its `map` is synchronous, and its `match`
+returns a Task; execute at the boundary with `.runResult()` and match the resolved `Result` as above. Server ownership uses
+`ResultTask.acquireRelease` inside `ResultTask.scoped`.
 
 ## Limitations
 

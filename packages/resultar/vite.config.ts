@@ -27,6 +27,7 @@ export default defineConfig({
       tagged: 'src/entries/tagged.ts',
       retry: 'src/entries/retry.ts',
       function: 'src/entries/function.ts',
+      async: 'src/entries/async.ts',
     },
     format: ['esm'],
     outExtensions: () => ({ dts: '.d.ts', js: '.js' }),
@@ -98,7 +99,7 @@ export default defineConfig({
     },
     overrides: [
       {
-        files: ['src/result-async/**/*.ts'],
+        files: ['src/result-async/**/*.ts', 'src/entries/async.ts', 'scripts/smoke-package.ts'],
         rules: {
           '@typescript-eslint/no-explicit-any': 'allow',
           '@typescript-eslint/no-deprecated': 'allow',

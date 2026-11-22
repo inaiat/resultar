@@ -23,6 +23,7 @@ const SECTIONS = [
         source: "docs/coming-from-effect.md",
       },
       { slug: "gradual-adoption", title: "Gradual Adoption", source: "docs/gradual-adoption.md" },
+      { slug: "v5-migration", title: "v5 Migration Guide", source: "docs/migrations/v5.md" },
       { slug: "v4-migration", title: "v4 Migration Guide", source: "docs/migrations/v4.md" },
     ],
   },
@@ -32,6 +33,11 @@ const SECTIONS = [
       { slug: "full-reference", title: "Complete Guide", source: "DOCUMENTATION.md" },
       { slug: "recipes", title: "Executable Recipes", source: "docs/recipes.md" },
       { slug: "api-inventory", title: "Public API Inventory", source: "docs/api-inventory.md" },
+      {
+        slug: "benchmarks",
+        title: "Benchmarks",
+        source: "benchmarks/results/2026-11-22.md",
+      },
     ],
   },
   {
@@ -187,8 +193,14 @@ const highlightTs = (code) => {
 
 const highlightJson = (code) =>
   escapeHtml(code)
-    .replaceAll(/(&quot;(?:\\.|[^&]|&(?!quot;))*?&quot;)(\s*:)/g, '<span class="tok-type">$1</span>$2')
-    .replaceAll(/(:\s*)(&quot;(?:\\.|[^&]|&(?!quot;))*?&quot;)/g, '$1<span class="tok-str">$2</span>')
+    .replaceAll(
+      /(&quot;(?:\\.|[^&]|&(?!quot;))*?&quot;)(\s*:)/g,
+      '<span class="tok-type">$1</span>$2',
+    )
+    .replaceAll(
+      /(:\s*)(&quot;(?:\\.|[^&]|&(?!quot;))*?&quot;)/g,
+      '$1<span class="tok-str">$2</span>',
+    )
     .replaceAll(/\b(true|false|null)\b/g, '<span class="tok-kw">$1</span>')
     .replaceAll(/\b(\d+(?:\.\d+)?)\b/g, '<span class="tok-num">$1</span>');
 
@@ -307,7 +319,7 @@ const splitTableRow = (line) => {
 };
 
 const renderMarkdown = (rawMarkdown, sourceFileAbs) => {
-  const markdown = stripFrontmatter(rawMarkdown).replaceAll('\r\n', "\n");
+  const markdown = stripFrontmatter(rawMarkdown).replaceAll("\r\n", "\n");
   const lines = markdown.split("\n");
   const html = [];
   const toc = [];
@@ -547,7 +559,7 @@ for (const line of inventoryRaw.split("\n")) {
   });
 }
 
-// Parse all 42 resultar-check rules from packages/check/README.md into search index.
+// Parse all 43 resultar-check rules from packages/check/README.md into search index.
 const checkReadme = readFileSync(join(repoRoot, "packages/check/README.md"), "utf8");
 let ruleCount = 0;
 for (const match of checkReadme.matchAll(

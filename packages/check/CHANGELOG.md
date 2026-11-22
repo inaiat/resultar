@@ -72,23 +72,24 @@
   Add best-effort task observation with inspect/inspectError. Retain unrelated
   deprecated synchronous method names with equivalent replacements. Result/ResultAsync tap remains
   best-effort observation; inspect provides the same behavior under the new name.
-  
+
   Add scope-owned child fibers, structured races and timeouts, bounded task
   collections, per-attempt scoped retries, live/virtual clocks, and parallel causes.
   Preserve eager ResultAsync and lazy, repeatable ResultTask execution.
-  
+
   Keep new static asynchronous matching compositional while preserving legacy instance terminals,
   retain errors for optional tagged recovery handlers and preserve union-table outputs,
   add typed Match contexts, and improve finite object-pattern exhaustiveness.
   Preserve native Hono response unions and Fastify response contracts.
-  
+
   Recognize yielded Results and task collection/fiber consumers in the checker,
   and expose Match coverage in hover. Update companion cause inspection for
   parallel failures. Preserve existing `resultar` exports and Async-producing methods; exhaustive Cause consumers
   must handle the new Parallel branch, and corrected tagged recovery types retain
   errors that optional handlers do not guarantee to recover.
+
 - 7b4a41e: Expand `resultar-check` analyzer coverage, add `tsgo`-inspired rules and LSP refactors, and upgrade the native analyzer to Go 1.27 with the latest `github.com/microsoft/TypeScript/tsc` compiler package:
-  
+
   - Upgrade `packages/check/native` to Go 1.27 (`go1.27`) and migrate from `github.com/microsoft/typescript-go` to `github.com/microsoft/TypeScript/tsc` (`v0.0.0-20261015232437-0e081d6fb33d`).
   - Complete Stage 1 branch feature coverage across `no-discard`, `no-unsafe-await`, `typed-catch-mapper`, `no-run-inside-gen`, `prefer-first-success-of`, `prefer-result-for-each`, `prefer-map`, `prefer-and-then`, `prefer-map-err`, `prefer-catch-reason`, `no-useless-recovery`, and `no-result-in-task-gen` (including `ResultAsync`, `MatchMatcher` finalizers, `Semaphore`, `Fiber`, `Result.fn`, `ResultTask.try` / `ResultTask.tryPromise`, `ResultAsync.fromTask`, `ResultTask.firstSuccessOf`, `ResultTask.forEach`, and static/curried `Result` / `ResultAsync` / `ResultTask` / `TaggedError` operators and constructors).
   - Add 11 new `tsgo`-inspired rules with autofixes: `prefer-or-else-succeed`, `prefer-tap`, `prefer-tap-error`, `prefer-as-void`, `prefer-filter-or-else`, `prefer-acquire-disposable`, `no-fn-iife`, `require-return-yield-star`, `no-unnecessary-err-wrap-in-gen`, `unnecessary-pipe`, and `no-run-inside-gen`.
@@ -98,7 +99,7 @@
 ### Minor Changes
 
 - 37e8a0f: Unify `ok` and `err` across core `Result`, `ResultTask`, and `ResultAsync`, generator workflows, and `.match` object handlers:
-  
+
   - Change `Result.gen` to return plain success values (wrapping in `Ok` automatically) and require `yield*` for fallible steps, matching `ResultTask.gen`. Result supports sync and eager async bodies; separate legacy `safeTry` preserves final-Result returns in both modes.
   - Add `ResultTask.ok` and `ResultTask.err` as the task constructors and `ResultAsync.ok` and `ResultAsync.err` static constructors alongside `okAsync` and `errAsync`.
   - Support `{ ok, err }` object handlers throughout while retaining the existing matching forms.
@@ -121,28 +122,30 @@
 - bfe38b4: Preserve existing Async root exports and module paths while keeping the eager
   implementation organized under `src/resultar-async`. Restore asynchronous Result
   composition, generator support, tagged-error helpers and explicit Task bridges.
-  
+
   Retain Task composition aliases, supported matching and retry forms, and internal
   execution contracts. Handle interruption after captured Result promises resolve.
   Prevent execution options from widening the task's declared service requirements.
   Keep checker recognition aligned with the supported API without treating a Task
   as awaitable unless its type actually exposes a `then` method.
+
 - bfe38b4: Preserve eager shared execution, awaited mapping and validation callbacks, best-effort
   observation, and Promise-returning boundary matching in `resultar`, along with explicit Task bridges.
-  
+
   Keep tasks lazy and non-thenable, with explicit runners and a structural incoming bridge.
   Preserve the concurrent runtime and create complete clock and scheduler contexts at
   the public execution boundaries.
-  
+
   Preserve the legacy fluent partial-match fallback type. Avoid generator diagnostics when
   the inferred success channel does not contain a nested Result or async workflow.
   Recognize `ResultTask.fromResultAsync` as consuming its eager async input in the checker.
+
 - 37e8a0f: Recognize createTaggedError(...).withProps<Props>() class bases in the
   tagged-error-name-match and no-tagged-error-constructor-override rules.
   Preserve the existing checks for factory options without treating unrelated
   withProps methods or unsupported transformations as Resultar tagged errors.
 - c6aed8b: Return `ResultAsync<A, E | ScopeError<R>>` from `ResultTask.runResult` and `task.runResult` as the official in-flight `Result` representation (`PromiseLike<Result<T, E>>`).
-  
+
   - Un-deprecate `ResultAsync` and `StrictResultAsync` for consuming and transforming in-flight `Result` values before `await`, as well as in-flight value/Promise constructors (`ResultAsync.ok`, `ResultAsync.err`, `ResultAsync.unit`, `ResultAsync.fromPromise`, `ResultAsync.fromSafePromise`, `ResultAsync.try`, `okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, and `tryResultAsync`).
   - Unify `.try` across namespaces (`Result.try`, `ResultAsync.try`, `ResultTask.try`, `ResultTask.tryPromise`) supporting both positional `(fn, catchFn)` and object `{ try, catch }` signatures, while marking `*tryCatch*` (`Result.tryCatch`, `ResultAsync.tryCatch`, `tryCatch`, `tryCatchAsync`, `tryAsync`) as `@deprecated`.
   - Make `task.toResultAsync()`, `ResultTask.toResultAsync(task)`, and `ResultAsync.fromTask(task)` deprecated aliases of `runResult()`.
@@ -157,13 +160,13 @@
 ### Minor Changes
 
 - 631fea2: Add root pipe, flow, identity, and constant helpers; share private direct/curried dispatch and pipeline execution. Add lazy ResultTask.fn, typed catchTag/catchTags recovery, and scoped acquireDisposable with awaited cleanup.
-  
+
   Protect task requirements from unknown/any types and unsafe assertions, and report unused suppression entries (both new rules default to suggestion). Analyze unsaved editor buffers with versioned UTF-16 fixes, channel/service hover, and conservative recovery/generator refactors. Add read-only overview and quickfixes CLI previews.
-  
+
   Preserve eager ResultAsync, repeatable lazy ResultTask, runners, and existing cause/cleanup policies. Fibers and task concurrency remain deferred.
-  
+
   Expand the executable checker examples to all 30 rules, covering requirement erasure, obsolete suppressions, parameterized generators, and native disposable scopes alongside zero-diagnostic corrected patterns. Compile all three fixture projects with the installed TypeScript compiler before the native CLI checks in smoke tests and CI.
-  
+
   Compose the checker configuration schema with the standard tsconfig schema, preserving editor completion and validation for TypeScript options alongside Resultar rules. Add JSON language-service tests to the checker validation suite.
 
 ## 3.2.0
@@ -214,24 +217,24 @@
   and `no-unsafe-await`, plus ResultTask-aware diagnostics including
   `yield-star-in-result-task-gen`, full tsconfig option parity, tests, development
   commands, and a comparative benchmark.
-  
+
   Add the lazy `ResultTask<A, E, R>` core with explicit execution boundaries,
   typed services, generator composition, and `Result.gen` as an exact alias for
   `safeTry`.
-  
+
   Make the native TypeScript-Go executable the public `resultar-check` CLI with
   platform-specific optional npm packages for macOS, Linux, and Windows.
-  
+
   Remove the legacy JavaScript checker, editor plugin implementation,
   programmatic API, and syntax-only host adapters. The Go
   analyzer is now the single implementation of Resultar diagnostics, and the npm
   package exposes only the native CLI launcher and configuration schema. The
   package no longer has a TypeScript peer dependency or JSR release.
-  
+
   Replace the former lint-adapter example with a native `examples/check` fixture
   that asserts exact counts for all 22 Resultar rules and verifies a separate
   clean project produces no diagnostics.
-  
+
   Add shared diagnostic output formats (JSON Lines, SARIF, and JUnit), stable
   severity maps with file overrides and CI `failOn` policy, local line
   suppression comments, and a stdio LSP surface with inline diagnostics and

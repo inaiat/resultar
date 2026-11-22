@@ -1,6 +1,6 @@
 import { strictEqual } from "node:assert";
 import { performance } from "node:perf_hooks";
-import { requestJsonTypeBoxTask, t } from "resultar-request-typebox";
+import { requestJsonTypeBox, t } from "resultar-request-typebox";
 import { Compile } from "typebox/compile";
 import { Value } from "typebox/value";
 
@@ -99,14 +99,14 @@ const directValueOps = benchSync("TypeBox Value.Check (uncompiled baseline)", va
 console.log(`  -> Direct Compile vs Value.Check: ${(directCompiledOps / directValueOps).toFixed(2)}x\n`);
 
 const makeRequestTask = () =>
-  requestJsonTypeBoxTask({
+  requestJsonTypeBox({
     request: async () => new Response(payloadJson, { status: 200 }),
     schema: payloadSchema,
   });
 
 process.env.RESULTAR_JIT = "1";
 const jitTask = makeRequestTask();
-const reqJitOps = await benchAsync("requestJsonTypeBoxTask end-to-end (JIT=1)", requestIterations, async () => {
+const reqJitOps = await benchAsync("requestJsonTypeBox end-to-end (JIT=1)", requestIterations, async () => {
   for (let i = 0; i < requestIterations; i += 1) {
     const res = await jitTask.runPromise();
     strictEqual(res.id, "usr_123456789");
@@ -116,7 +116,7 @@ const reqJitOps = await benchAsync("requestJsonTypeBoxTask end-to-end (JIT=1)", 
 process.env.RESULTAR_JIT = "0";
 const fallbackTask = makeRequestTask();
 const reqFallbackOps = await benchAsync(
-  "requestJsonTypeBoxTask end-to-end (JIT=0)",
+  "requestJsonTypeBox end-to-end (JIT=0)",
   requestIterations,
   async () => {
     for (let i = 0; i < requestIterations; i += 1) {
@@ -127,4 +127,4 @@ const reqFallbackOps = await benchAsync(
 );
 delete process.env.RESULTAR_JIT;
 
-console.log(`  -> requestJsonTypeBoxTask JIT=1 vs JIT=0: ${(reqJitOps / reqFallbackOps).toFixed(2)}x`);
+console.log(`  -> requestJsonTypeBox JIT=1 vs JIT=0: ${(reqJitOps / reqFallbackOps).toFixed(2)}x`);

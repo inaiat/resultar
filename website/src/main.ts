@@ -146,9 +146,10 @@ const renderTopbar = (route: Route): string => {
           <span class="version-pill">v${escapeHtml(SITE_META.version)}</span>
         </a>
         <nav class="nav-links" aria-label="Main navigation">
-          <a class="nav-link ${isDocs && route.slug !== "coming-from-effect" && route.slug !== "resultar-check" && route.slug !== "api-inventory" ? "active" : ""}" href="#/docs/overview">Docs</a>
+          <a class="nav-link ${isDocs && route.slug !== "coming-from-effect" && route.slug !== "resultar-check" && route.slug !== "api-inventory" && route.slug !== "benchmarks" ? "active" : ""}" href="#/docs/overview">Docs</a>
           <a class="nav-link ${isDocs && route.slug === "coming-from-effect" ? "active" : ""}" href="#/docs/coming-from-effect">From Effect</a>
           <a class="nav-link ${isDocs && route.slug === "api-inventory" ? "active" : ""}" href="#/docs/api-inventory">API</a>
+          <a class="nav-link ${isDocs && route.slug === "benchmarks" ? "active" : ""}" href="#/docs/benchmarks">Benchmarks</a>
           <a class="nav-link ${isDocs && route.slug === "resultar-check" ? "active" : ""}" href="#/docs/resultar-check">resultar-check</a>
           <a class="nav-link nav-link-play ${isPlay ? "active" : ""}" href="#/playground">▶ Playground</a>
         </nav>
@@ -201,6 +202,7 @@ const greet = ResultTask.fn("users.greet", function* (id: string) {
             <a class="btn btn-primary" href="#/docs/overview">Get Started</a>
             <a class="btn" href="#/playground">▶ Interactive Playground</a>
             <a class="btn" href="#/docs/coming-from-effect">Coming from Effect</a>
+            <a class="btn" href="#/docs/benchmarks">Benchmarks</a>
           </div>
           <div class="install-box">
             <div class="install-tabs">
@@ -492,7 +494,7 @@ const renderSearchModal = (): string => {
             class="modal-input"
             type="text"
             value="${escapeHtml(state.searchQuery)}"
-            placeholder="Search guides, API symbols (Deferred, TaskLocal…), or 42 rules…"
+            placeholder="Search guides, API symbols (Deferred, TaskLocal…), or 43 rules…"
             autocomplete="off"
           />
           <span class="kbd">ESC</span>

@@ -1,9 +1,11 @@
 import { equal, ok as isTrue } from 'node:assert'
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import type { Result, StrictResult, StrictResultAsync } from '../src/index.js'
+import type { StrictResultAsync } from '../src/entries/async.js'
+import { errAsync, okAsync } from '../src/entries/async.js'
+import type { Result, StrictResult, StrictResultTask } from '../src/index.js'
 
-import { createTaggedError, err, errAsync, ok, okAsync } from '../src/index.js'
+import { ResultTask, createTaggedError, err, ok } from '../src/index.js'
 
 class DomainError extends createTaggedError({
   message: 'Domain failure $code',
@@ -120,6 +122,59 @@ describe('StrictResultAsync', () => {
       equal(stringFailure, undefined)
       equal(objectFailure, undefined)
       equal(fromGenericResult, undefined)
+    }
+  })
+})
+
+describe('StrictResultTask', () => {
+  it('is a type-only ResultTask alias that keeps normal runtime behavior', async () => {
+    const Config = ResultTask.service<{ readonly multiplier: number }>()('config')
+    const success: StrictResultTask<number, DomainError, typeof Config> = ResultTask.gen(
+      function* () {
+        const config = yield* Config
+        return 21 * config.multiplier
+      },
+    )
+    const failure: StrictResultTask<number, DomainError> = DomainError.taskErr({ code: 'invalid' })
+
+    const successResult = await success.runResult({ services: { config: { multiplier: 2 } } })
+    const failureResult = await failure.runResult()
+
+    isTrue(successResult.isOk())
+    equal(successResult.value, 42)
+    isTrue(failureResult.isErr())
+    isTrue(failureResult.error instanceof DomainError)
+    equal(failureResult.error.code, 'invalid')
+  })
+
+  it('accepts regular Error subclasses, service requirements, and default Error channel', () => {
+    const domainFailure: StrictResultTask<number, DomainError> = ResultTask.err(
+      new DomainError({ code: 'domain' }),
+    )
+    const infrastructureFailure: StrictResultTask<number, InfrastructureError> = ResultTask.err(
+      new InfrastructureError('database unavailable'),
+    )
+    const genericFailure: StrictResultTask<number> = ResultTask.err(new Error('generic'))
+
+    expectTypeOf(domainFailure).toExtend<StrictResultTask<number, Error>>()
+    expectTypeOf(infrastructureFailure).toExtend<StrictResultTask<number, Error>>()
+    expectTypeOf(genericFailure).toExtend<StrictResultTask<number, Error>>()
+  })
+
+  it('rejects non-Error task failure channels at compile time', () => {
+    if (false) {
+      // @ts-expect-error StrictResultTask error types must extend Error.
+      const stringFailure: StrictResultTask<number, string> = ResultTask.err('invalid')
+      // @ts-expect-error StrictResultTask error types must extend Error.
+      const objectFailure: StrictResultTask<number, { readonly code: string }> = ResultTask.err({
+        code: 'invalid',
+      })
+      // @ts-expect-error ResultTask with a string error channel is not assignable to StrictResultTask.
+      const fromGenericTask: StrictResultTask<number, Error> = ResultTask.err('invalid')
+
+      equal(stringFailure, undefined)
+      equal(objectFailure, undefined)
+      equal(fromGenericTask, undefined)
     }
   })
 })

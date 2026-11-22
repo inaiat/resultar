@@ -6,19 +6,7 @@ import Fastify, {
   type RawServerDefault,
 } from "fastify";
 import fp from "fastify-plugin";
-// Lifecycle sessions retain their eager ResultAsync compatibility boundary.
-/* eslint-disable typescript/no-deprecated */
-import {
-  err,
-  fromSafePromise,
-  Result,
-  ResultTask,
-  ResultTaskCauseError,
-  tryResult,
-  unit,
-  unitAsync,
-  type ResultAsync,
-} from "resultar";
+import { err, ResultTask, ResultTaskCauseError, tryResult, unit, type Result } from "resultar";
 import {
   useServiceAccess,
   inspectModule,
@@ -97,26 +85,25 @@ type Selection<M, Local extends object, Keys extends readonly string[]> = [Keys]
 // Fastify owns the external error contract; retain identity, status codes and attached metadata.
 const preserveNativeError = (error: unknown): unknown => error;
 
-function closeApplication(
+async function closeApplication(
   root: RuntimeScope,
   session?: ServiceSession,
   startup?: ServiceTaskSession,
-): ResultAsync<void, AggregateError> {
+): Promise<Result<void, AggregateError>> {
   // Acquisition failures are reported through ready; singleton finalizers belong to the root.
   const errors: unknown[] = [];
-  return (startup?.close() ?? unitAsync())
-    .orElse((error) => {
-      errors.push(error);
-      return unit();
-    })
-    .andThen(() => session?.finish() ?? unitAsync())
-    .andThen(() => fromSafePromise(ResultTask.runExit(root.close())))
-    .andThen((exit) => {
-      if (exit._tag === "Failure") errors.push(new ResultTaskCauseError(exit.cause));
-      return errors.length > 0
-        ? err(new AggregateError(errors, "Application service cleanup failed"))
-        : unit();
-    });
+  if (startup !== undefined) {
+    const startupClose = await startup.close();
+    if (startupClose.isErr()) errors.push(startupClose.error);
+  }
+  if (session !== undefined) {
+    await session.finish();
+  }
+  const exit = await ResultTask.runExit(root.close());
+  if (exit._tag === "Failure") errors.push(new ResultTaskCauseError(exit.cause));
+  return errors.length > 0
+    ? err(new AggregateError(errors, "Application service cleanup failed"))
+    : unit();
 }
 
 type LocalsFactory = (request: FastifyRequest) => object | Promise<object>;
@@ -273,91 +260,93 @@ function buildFastifyPlugin(options: FastifyServicesOptions): FastifyPluginAsync
     const application: {
       session?: ServiceSession;
       startup?: ServiceTaskSession;
-      closing?: ResultAsync<void, AggregateError>;
+      closing?: Promise<Result<void, AggregateError>>;
       rolledBack?: boolean;
     } = {};
-    const close = () => {
+    const close = (): Promise<Result<void, AggregateError>> => {
       application.closing ??= closeApplication(root, application.session, application.startup);
       return application.closing;
     };
-    const rollback = (error: unknown) =>
-      close()
-        .mapErr((cleanupError) => {
-          application.rolledBack = true;
-          return new AggregateError(
-            [error, cleanupError],
-            "Service initialization and cleanup failed",
-            { cause: cleanupError },
-          );
-        })
-        .andThen(() => {
-          application.rolledBack = true;
-          return err(error);
-        });
+    const rollback = async (error: unknown): Promise<Result<never, unknown>> => {
+      const cleanup = await close();
+      application.rolledBack = true;
+      if (cleanup.isErr()) {
+        return err(
+          new AggregateError([error, cleanup.error], "Service initialization and cleanup failed", {
+            cause: cleanup.error,
+          }),
+        );
+      }
+      return err(error);
+    };
+    const mapError = options.mapError ?? preserveNativeError;
     // Register ownership before awaiting providers, including Fastify plugin-timeout failures.
     app.addHook("onClose", async () => {
       if (application.rolledBack === true && options.rethrowRollbackOnClose === false) return;
-      await close()
-        .mapErr(options.mapError ?? preserveNativeError)
-        .unwrapOrThrow();
+      const closed = await close();
+      closed.mapErr(mapError).unwrapOrThrow();
     });
-    return (
-      Result.asyncAndThen(
-        tryResult(() => {
-          application.session = startSession((hold) =>
-            exposeApplication === undefined
-              ? root.useSingletons(options.appBindings ?? [], hold)
-              : useServiceAccess(
-                  root,
-                  (access) => hold(exposeApplication(access, app) as RuntimeServices),
-                  { application: true, initialize: options.appBindings },
-                ),
-          );
-          return application.session;
-        }, preserveNativeError),
-        (session) => session.ready,
-      )
-        .andThen((appServices) =>
-          tryResult(() => {
-            if (application.closing !== undefined)
-              // Native plugin initialization failure, not a domain Result error.
-              // resultar-check-disable-next-line prefer-tagged-error
-              throw new Error("Fastify services closed during initialization");
-            app.decorate("services", appServices);
-            app.decorateRequest("services");
+    const init = async (): Promise<Result<void, unknown>> => {
+      const started = tryResult(() => {
+        application.session = startSession((hold) =>
+          exposeApplication === undefined
+            ? root.useSingletons(options.appBindings ?? [], hold)
+            : useServiceAccess(
+                root,
+                (access) => hold(exposeApplication(access, app) as RuntimeServices),
+                { application: true, initialize: options.appBindings },
+              ),
+        );
+        return application.session;
+      }, preserveNativeError);
+      if (started.isErr()) return err(started.error);
 
-            if (options.startup !== undefined)
-              app.addHook("onReady", async () => {
-                const startup = ResultTask.gen(function* initializeApplication() {
-                  const task =
-                    typeof options.startup === "function" ? options.startup(app) : options.startup;
-                  if (task !== undefined) yield* task;
-                });
-                application.startup = startServiceTask(
-                  (task) => root.useSingletons([], () => task as RuntimeTask),
-                  startup,
-                );
-                await application.startup.ready
-                  .orElse(rollback)
-                  .mapErr(options.mapError ?? preserveNativeError)
-                  .unwrapOrThrow();
-              });
+      const ready = await started.value.ready;
+      if (ready.isErr()) return err(ready.error);
 
-            registerRequestHooks(app, {
-              root,
-              bindings,
-              requestHook: options.requestHook ?? "preHandler",
-              locals: options.locals,
-              exposeRequest,
-              mapError: options.mapError ?? preserveNativeError,
+      return tryResult(() => {
+        if (application.closing !== undefined)
+          // Native plugin initialization failure, not a domain Result error.
+          // resultar-check-disable-next-line prefer-tagged-error
+          throw new Error("Fastify services closed during initialization");
+        app.decorate("services", ready.value);
+        app.decorateRequest("services");
+
+        if (options.startup !== undefined)
+          app.addHook("onReady", async () => {
+            const startup = ResultTask.gen(function* initializeApplication() {
+              const task =
+                typeof options.startup === "function" ? options.startup(app) : options.startup;
+              if (task !== undefined) yield* task;
             });
-          }, preserveNativeError),
-        )
-        .orElse(rollback)
-        .mapErr(options.mapError ?? preserveNativeError)
-        // Plugin registration deliberately rejects at the Fastify boundary.
-        .unwrapOrThrow()
-    );
+            application.startup = startServiceTask(
+              (task) => root.useSingletons([], () => task as RuntimeTask),
+              startup,
+            );
+            const startupReady = await application.startup.ready;
+            if (startupReady.isErr()) {
+              const rolled = await rollback(startupReady.error);
+              rolled.mapErr(mapError).unwrapOrThrow();
+            }
+          });
+
+        registerRequestHooks(app, {
+          root,
+          bindings,
+          requestHook: options.requestHook ?? "preHandler",
+          locals: options.locals,
+          exposeRequest,
+          mapError,
+        });
+      }, preserveNativeError);
+    };
+
+    const result = await init();
+    if (result.isErr()) {
+      const rolled = await rollback(result.error);
+      // Plugin registration deliberately rejects at the Fastify boundary.
+      rolled.mapErr(mapError).unwrapOrThrow();
+    }
   };
   return fp(plugin, { name: options.name ?? "resultar-fastify", fastify: "5.x" });
 }

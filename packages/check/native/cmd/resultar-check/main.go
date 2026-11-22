@@ -24,6 +24,7 @@ Commands:
   doctor                    Check the project, binary, pnpm, and editor setup.
   overview                  Inventory exported workflows, errors, and services.
   quickfixes                Preview diagnostic fixes without writing files.
+  migrate-v5                Preview or apply mechanical v4 -> v5 migration edits.
 
 Flags:
   --fix                     Apply safe correction fixes in place (never intentional-discard).
@@ -54,6 +55,8 @@ func run(args []string) int {
 			return 0
 		case "lsp":
 			return runLSP(args[1:])
+		case "migrate-v5":
+			return runMigrateV5(args[1:])
 		case "check":
 			fmt.Fprintln(os.Stderr, "The check subcommand was removed. Use resultar-check.")
 			return 1
@@ -126,7 +129,8 @@ func run(args []string) int {
 	}
 
 	ctx := context.Background()
-	opened, options, tsFindings, exitCode := openProjectForAnalysis(ctx, projectPath, mode, failOnName, command, format)
+	allowSemanticErrors := fixMode || fixDryRun || command == "quickfixes"
+	opened, options, tsFindings, exitCode := openProjectForAnalysis(ctx, projectPath, mode, failOnName, command, format, allowSemanticErrors)
 	if exitCode != 0 {
 		return exitCode
 	}
@@ -160,7 +164,7 @@ func run(args []string) int {
 			if passSummary.TotalFixes == 0 {
 				break
 			}
-			opened, options, tsFindings, exitCode = openProjectForAnalysis(ctx, projectPath, mode, failOnName, command, format)
+			opened, options, tsFindings, exitCode = openProjectForAnalysis(ctx, projectPath, mode, failOnName, command, format, true)
 			if exitCode != 0 {
 				printFixSummary(totalSummary, mustGetwd(), false)
 				return exitCode
@@ -184,7 +188,7 @@ func run(args []string) int {
 			return 1
 		}
 	}
-	if hasFailingFindings(findings, options.FailOn) {
+	if len(tsFindings) > 0 || hasFailingFindings(findings, options.FailOn) {
 		return 1
 	}
 	return 0
@@ -197,6 +201,7 @@ func openProjectForAnalysis(
 	failOnName string,
 	command string,
 	format output.Format,
+	allowSemanticErrors bool,
 ) (*project.Opened, config.Options, []output.Diagnostic, int) {
 	opened, diagnostics, err := project.Open(projectPath)
 	if err != nil {
@@ -225,8 +230,20 @@ func openProjectForAnalysis(
 		options.FailOn = config.Severity(failOnName)
 	}
 
-	tsFindings := collectTypeScriptDiagnostics(ctx, opened.Program, opened.Program.SourceFiles())
-	if len(tsFindings) > 0 {
+	synFindings := collectSyntacticDiagnostics(ctx, opened.Program, opened.Program.SourceFiles())
+	if len(synFindings) > 0 {
+		if command != "" {
+			printHumanDiagnostics(synFindings)
+			return nil, config.Options{}, nil, 1
+		}
+		if err := writeDiagnostics(format, synFindings); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		return nil, config.Options{}, nil, 1
+	}
+
+	tsFindings := collectSemanticAndGlobalDiagnostics(ctx, opened.Program, opened.Program.SourceFiles())
+	if len(tsFindings) > 0 && !allowSemanticErrors {
 		if command != "" {
 			printHumanDiagnostics(tsFindings)
 			return nil, config.Options{}, nil, 1
@@ -302,18 +319,29 @@ func printHumanDiagnostics(diagnostics []output.Diagnostic) {
 	}
 }
 
-func collectTypeScriptDiagnostics(ctx context.Context, program *compiler.Program, files []*ast.SourceFile) []output.Diagnostic {
+func collectSyntacticDiagnostics(ctx context.Context, program *compiler.Program, files []*ast.SourceFile) []output.Diagnostic {
 	findings := make([]output.Diagnostic, 0)
 	for _, file := range files {
 		diagnostics := program.GetSyntacticDiagnostics(ctx, file)
 		findings = append(findings, tsDiagnostics(diagnostics)...)
 	}
+	return findings
+}
+
+func collectSemanticAndGlobalDiagnostics(ctx context.Context, program *compiler.Program, files []*ast.SourceFile) []output.Diagnostic {
+	findings := make([]output.Diagnostic, 0)
 	semantic := program.GetSemanticDiagnosticsForIncremental(ctx, files)
 	for _, file := range files {
 		diagnostics := compiler.FilterNoEmitSemanticDiagnostics(semantic[file], program.Options())
 		findings = append(findings, tsDiagnostics(diagnostics)...)
 	}
 	findings = append(findings, tsDiagnostics(program.GetGlobalDiagnostics(ctx))...)
+	return findings
+}
+
+func collectTypeScriptDiagnostics(ctx context.Context, program *compiler.Program, files []*ast.SourceFile) []output.Diagnostic {
+	findings := collectSyntacticDiagnostics(ctx, program, files)
+	findings = append(findings, collectSemanticAndGlobalDiagnostics(ctx, program, files)...)
 	return findings
 }
 

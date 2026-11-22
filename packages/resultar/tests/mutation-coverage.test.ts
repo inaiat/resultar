@@ -10,7 +10,6 @@ import {
   ok,
   pipe,
   redact,
-  ResultAsync,
   ResultTask,
   Retry,
   serviceTag,
@@ -21,74 +20,6 @@ import { createTaskLocalsCell, normalizeRuntimeContext } from '../src/task/task-
 import type { ResultTaskRuntimeContext } from '../src/task/task-service.js'
 
 describe('mutation coverage for new ergonomics, retry/repeat, and observability paths', () => {
-  describe('ResultAsync.retry maxElapsedMs boundaries', () => {
-    it('stops before onRetry when attempt already exceeded maxElapsedMs', async () => {
-      let attempts = 0
-      let onRetryCalls = 0
-      const policy = Retry.policy<string>({
-        times: 5,
-        delayMs: 1,
-        maxElapsedMs: 10,
-        onRetry: () => {
-          onRetryCalls += 1
-        },
-      })
-
-      const result = await ResultAsync.retry(
-        () =>
-          ResultAsync.fromSafePromise(
-            new Promise((resolve) => {
-              attempts += 1
-              setTimeout(() => resolve(ok('never')), 25)
-            }),
-          ).andThen(() => ResultAsync.err('slow-fail')),
-        policy,
-      )
-
-      expect(result.isErr()).toBe(true)
-      expect(attempts).toBe(1)
-      expect(onRetryCalls).toBe(0)
-    })
-
-    it('stops after onRetry when elapsed + nextDelayMs exceeds maxElapsedMs without sleeping', async () => {
-      let attempts = 0
-      let onRetryCalls = 0
-      const policy = Retry.policy<string>({
-        times: 5,
-        delayMs: 500,
-        maxElapsedMs: 50,
-        onRetry: () => {
-          onRetryCalls += 1
-        },
-      })
-
-      const started = performance.now()
-      const result = await ResultAsync.retry(() => {
-        attempts += 1
-        return ResultAsync.err('fast-fail')
-      }, policy)
-      const elapsed = performance.now() - started
-
-      expect(result.isErr()).toBe(true)
-      expect(attempts).toBe(1)
-      expect(onRetryCalls).toBe(1)
-      expect(elapsed).toBeLessThan(200)
-    })
-
-    it('retries and succeeds when within maxElapsedMs budget', async () => {
-      let attempts = 0
-      const policy = Retry.policy<string>({ times: 3, delayMs: 1, maxElapsedMs: 5000 })
-
-      const result = await ResultAsync.retry(() => {
-        attempts += 1
-        return attempts < 3 ? ResultAsync.err('transient') : ResultAsync.ok('recovered')
-      }, policy)
-
-      expect(result.unwrapOr('')).toBe('recovered')
-      expect(attempts).toBe(3)
-    })
-  })
-
   describe('normalizeRuntimeContext locals preservation', () => {
     it('creates a locals cell when absent and preserves an existing locals cell', () => {
       const partialWithoutLocals = {
@@ -122,8 +53,8 @@ describe('mutation coverage for new ergonomics, retry/repeat, and observability 
     })
   })
 
-  describe('legacy ResultTask.retry maxDelayMs / maxElapsedMs and canonical pre-onRetry elapsed check', () => {
-    it('caps exponential backoff at maxDelayMs and stops at maxElapsedMs on legacy retry options', async () => {
+  describe('ResultTask.retry maxDelayMs / maxElapsedMs and canonical pre-onRetry elapsed check', () => {
+    it('caps exponential backoff at maxDelayMs and stops at maxElapsedMs on Retry.policy', async () => {
       const clock = Clock.virtual()
       const timestamps: number[] = []
       const task = ResultTask.sync(() => {
@@ -131,7 +62,9 @@ describe('mutation coverage for new ergonomics, retry/repeat, and observability 
       }).andThen(() => ResultTask.err('boom' as const))
 
       const exit = await clock.runToCompletion(
-        task.retry({ times: 5, delayMs: 100, backoff: 2, maxDelayMs: 150, maxElapsedMs: 400 }),
+        task.retry(
+          Retry.policy({ times: 5, delayMs: 100, backoff: 2, maxDelayMs: 150, maxElapsedMs: 400 }),
+        ),
       )
 
       expect(exit._tag).toBe('Failure')
@@ -140,9 +73,9 @@ describe('mutation coverage for new ergonomics, retry/repeat, and observability 
       expect(timestamps).toEqual([0, 100, 250, 400])
     })
 
-    it('rejects negative maxDelayMs and maxElapsedMs on legacy retry options', () => {
-      expect(() => ResultTask.ok(1).retry({ times: 1, maxDelayMs: -1 })).toThrow(RangeError)
-      expect(() => ResultTask.ok(1).retry({ times: 1, maxElapsedMs: -1 })).toThrow(RangeError)
+    it('rejects negative maxDelayMs and maxElapsedMs on Retry.policy', () => {
+      expect(() => Retry.policy({ times: 1, maxDelayMs: -1 })).toThrow(RangeError)
+      expect(() => Retry.policy({ times: 1, maxElapsedMs: -1 })).toThrow(RangeError)
     })
 
     it('stops before onRetry in canonical Retry.policy when attempt already exceeded maxElapsedMs', async () => {

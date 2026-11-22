@@ -16,7 +16,6 @@ import {
   Result,
   ResultTask,
   ResultTaskCauseError,
-  safeTry,
   taggedEnum,
 } from '../src/index.js'
 
@@ -115,14 +114,6 @@ describe('JIT runtime controls and Workstream A micro-optimizations', () => {
       return a + b
     })
     expect(genRes).toEqual(ok(42))
-
-    // eslint-disable-next-line typescript/no-deprecated -- Verify legacy safeTry compatibility.
-    const legacyRes = safeTry(function* () {
-      const a = yield* ok(10)
-      const b = yield* ok(32)
-      return ok(a + b)
-    })
-    expect(legacyRes).toEqual(ok(42))
   })
 
   it('does not alias or mutate retained ResultTask iterator results across iterations', () => {
@@ -605,7 +596,7 @@ describe('Workstream E: ResultTask tiered JIT parity, bailout, abort, and safety
       const errMapChain = ResultTask.err({ _tag: 'Initial' as const, code: 1 })
         .mapErr((e) => ({ _tag: 'Mapped' as const, code: e.code + 10 }))
         .catchTags({ Mapped: (e) => err(e.code * 2) })
-        .catchAll((n) => ResultTask.ok(n + 1))
+        .orElse((n) => ResultTask.ok(n + 1))
 
       // Run each 3 times: run #1 (cold), run #2 (triggers JIT compile), run #3 (hot compiled)
       const syncRuns = [
@@ -675,7 +666,7 @@ describe('Workstream E: ResultTask tiered JIT parity, bailout, abort, and safety
             }
             return ResultTask.err('should-interrupt-before-fail')
           })
-          .catchAll(() => ResultTask.ok(999))
+          .orElse(() => ResultTask.ok(999))
 
         await ResultTask.runExit(abortTask)
         await ResultTask.runExit(abortTask)
@@ -687,7 +678,7 @@ describe('Workstream E: ResultTask tiered JIT parity, bailout, abort, and safety
             throw new Error('b')
           })
           .map((value: never) => value)
-          .catchAll(() => ResultTask.ok('unreachable'))
+          .orElse(() => ResultTask.ok('unreachable'))
         await ResultTask.runExit(compositeTask)
         const compositeHotExit = await ResultTask.runExit(compositeTask)
 

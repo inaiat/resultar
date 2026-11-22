@@ -336,6 +336,33 @@ class HeadlessBrowser {
 const encodeShareCode = (code: string): string =>
   encodeURIComponent(Buffer.from(code, "utf8").toString("base64"));
 
+void test("the home page links to the full benchmark report", async (context) => {
+  const { server, url } = await startStaticServer(distDir);
+  context.after(async () => {
+    await new Promise<void>((resolveClose) => {
+      server.close(() => {
+        resolveClose();
+      });
+    });
+  });
+  const browser = await HeadlessBrowser.launch();
+  context.after(async () => {
+    await browser.close();
+  });
+
+  await browser.navigate(url);
+  await browser.evalJs(
+    `document.querySelector('.hero-actions a[href="#/docs/benchmarks"]').click()`,
+  );
+  await browser.waitFor(`document.querySelector(".doc-prose table") !== null`);
+  const headings = await browser.evalJs<string[]>(
+    `Array.from(document.querySelectorAll(".doc-prose h2"), (heading) => heading.textContent)`,
+  );
+  assert.equal(headings.length, 12);
+  assert.match(headings[0] ?? "", /v5 versus published 4\.1\.1/u);
+  assert.deepEqual(browser.uncaughtExceptions, []);
+});
+
 void test(
   "real browser verifies shared-link manual run, opaque iframe sandbox isolation, and all production presets",
   { timeout: 60_000 },

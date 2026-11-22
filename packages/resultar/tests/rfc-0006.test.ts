@@ -1,8 +1,8 @@
 import { expect, expectTypeOf, test, vi } from 'vite-plus/test'
+import { ResultAsync } from '../src/entries/async.js'
 import {
   Cause,
   Fiber,
-  ResultAsync,
   ResultTask,
   err,
   ok,
@@ -84,7 +84,7 @@ for (const release of ['typed', 'throw', 'task-defect'] as const) {
       release: () => {
         if (release === 'throw') throw defect
         return release === 'typed'
-          ? ResultTask.fail('release')
+          ? ResultTask.err('release')
           : ResultTask.sync(() => {
               throw defect
             })
@@ -243,7 +243,7 @@ for (const outcome of ['late', 'after-registration', 'failure'] as const) {
         if (outcome === 'after-registration') controller.abort('stop')
         return value
       })
-      .andThen(() => ResultTask.fail('use'))
+      .andThen(() => ResultTask.err('use'))
     const running = task.runExit({ signal: controller.signal })
     if (outcome === 'late') controller.abort('stop')
     pending.resolve(ok(1))
@@ -261,12 +261,12 @@ test('never is lazy, independently cancellable, removes listeners, and preserves
   const task = ResultTask.never()
   expectTypeOf(task).toEqualTypeOf<ResultTask<never, never, never>>()
   expectTypeOf(ResultTask.race(task, ResultTask.ok(42))).toEqualTypeOf<ResultTask<number>>()
-  expectTypeOf(ResultTask.raceFirst(task, ResultTask.fail('failure' as const))).toEqualTypeOf<
+  expectTypeOf(ResultTask.raceFirst(task, ResultTask.err('failure' as const))).toEqualTypeOf<
     ResultTask<never, 'failure'>
   >()
   const owned = ResultTask.acquireRelease({
     acquire: ResultTask.ok(1),
-    release: () => ResultTask.fail('release' as const),
+    release: () => ResultTask.err('release' as const),
   }).andThen(() => task)
   expectTypeOf(owned).toEqualTypeOf<ResultTask<never, never, ResultTaskScope<'release'>>>()
   for (let run = 0; run < 2; run += 1) {
@@ -308,7 +308,7 @@ test('never fiber interruption awaits scoped asynchronous cleanup and retains cl
           expect(signal.aborted).toBe(false)
           releasing.resolve()
           await release.promise
-        }).andThen(() => ResultTask.fail('release')),
+        }).andThen(() => ResultTask.err('release')),
     }).andThen(() => ResultTask.never()),
   )
   const fiber = task.runFork()
@@ -343,7 +343,7 @@ for (const mode of ['success', 'failure-first', 'failure-until-abort'] as const)
     }).andThen(() => ResultTask.never())
     const settled = Promise.withResolvers<void>()
     const other = ResultTask.tryPromise(() => entered.promise)
-      .andThen(() => (mode === 'success' ? ResultTask.ok(42) : ResultTask.fail('failure')))
+      .andThen(() => (mode === 'success' ? ResultTask.ok(42) : ResultTask.err('failure')))
       .onExit(() => {
         settled.resolve()
       })
@@ -392,7 +392,7 @@ test('cause recovery handles defects with E=never but cannot swallow external in
           ready.resolve()
           return 1
         }),
-        release: () => (cleanupFails ? ResultTask.fail('cleanup') : ResultTask.ok(undefined)),
+        release: () => (cleanupFails ? ResultTask.err('cleanup') : ResultTask.ok(undefined)),
       }).andThen(() => ResultTask.never()),
     ).catchCause(recovered)
     const running = task.runExit({ signal: controller.signal })

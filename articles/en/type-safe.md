@@ -7,25 +7,27 @@ new asynchronous workflows. `ResultAsync` and `StrictResultAsync` represent in-f
 `Result` values (returned by `task.runResult()`) and remain supported in `resultar` for existing eager contracts.
 
 ```typescript
-import { createTaggedError, ResultTask } from 'resultar';
+import { createTaggedError, ResultTask } from "resultar";
 
 class ReadTextError extends createTaggedError({
-  name: 'ReadTextError',
-  message: 'Could not read $url',
+  name: "ReadTextError",
+  message: "Could not read $url",
 }) {}
 
-const readText = (url: string) => ResultTask.tryPromise({
-  try: (signal) => fetch(url, { signal }).then((response) => response.text()),
-  catch: (cause) => new ReadTextError({ url, cause }),
-});
+const readText = (url: string) =>
+  ResultTask.tryPromise({
+    try: (signal) => fetch(url, { signal }).then((response) => response.text()),
+    catch: (cause) => new ReadTextError({ url, cause }),
+  });
 
-const summarize = (url: string) => ResultTask.gen(function* () {
-  const text = yield* readText(url);
-  return { length: text.length };
-});
+const summarize = (url: string) =>
+  ResultTask.gen(function* () {
+    const text = yield* readText(url);
+    return { length: text.length };
+  });
 
 // Building the workflow is lazy. Execute it explicitly at the application boundary.
-const result = await summarize('https://example.com').runResult();
+const result = await summarize("https://example.com").runResult();
 console.log(result.match({ ok: (summary) => summary, err: (error) => error.message }));
 ```
 
@@ -45,22 +47,24 @@ in the adapter or the [request packages](../../packages/request/README.md).
 
 JavaScript, like many dynamic languages, allows exceptions to be thrown at virtually any point in the code. This behavior, while flexible, can create several problems:
 
-   - Uncontrolled Exceptions
-   - Unexpected crashes in production
-   - Confusing stack traces
-   - Difficult error origin tracking
+- Uncontrolled Exceptions
+- Unexpected crashes in production
+- Confusing stack traces
+- Difficult error origin tracking
 
 Let's examine some of the problems mentioned above:
 
 ### 1. Swallowing Errors:
+
 Silent errors can hide bugs and make debugging difficult. Additionally, they can hide important information about the cause of the failure.
+
 ```typescript
 function parseJSONSafe(jsonString: string) {
-    try {
-        return JSON.parse(jsonString);
-    } catch (error) {
-        return null; // Error disappears and we lose debugging information
-    }
+  try {
+    return JSON.parse(jsonString);
+  } catch (error) {
+    return null; // Error disappears and we lose debugging information
+  }
 }
 
 const result = parseJSONSafe("{ invalid json }");
@@ -68,29 +72,32 @@ console.log(result); // null (but we don't know why it failed)
 ```
 
 ### 2. Unhandled Promises
+
 Unhandled promises are still a source of many problems today, though we can minimize them with proper linting tools.
+
 ```typescript
 // ❌ Problem: Try/catch doesn't capture promise rejections
 try {
-    Promise.reject(new Error('Failure'));
-    // Code continues executing...
-    console.log('Got here!');
+  Promise.reject(new Error("Failure"));
+  // Code continues executing...
+  console.log("Got here!");
 } catch (error) {
-    // Never reaches here!
-    console.error('Error:', error);
+  // Never reaches here!
+  console.error("Error:", error);
 }
 ```
 
 ### 3. Asynchronous Callbacks
+
 ```typescript
 // ❌ Problem: Try/catch doesn't work with callbacks
 try {
-    setTimeout(() => {
-        throw new Error('Callback error');
-    }, 1000);
+  setTimeout(() => {
+    throw new Error("Callback error");
+  }, 1000);
 } catch (error) {
-    // Never catches the error!
-    console.error('Error:', error);
+  // Never catches the error!
+  console.error("Error:", error);
 }
 ```
 
@@ -98,60 +105,61 @@ try {
 
 ```typescript
 type HttpError =
-     | { type: 'Http Client Error', value: number }
-     | { type: 'Infra Error', value: string}
-     | { type: 'Json parser Error', value: string}
+  | { type: "Http Client Error"; value: number }
+  | { type: "Infra Error"; value: string }
+  | { type: "Json parser Error"; value: string };
 
 class HttpErrorHandler extends Error {
-    constructor(readonly httpError: HttpError) {
-        super(JSON.stringify(httpError))
-    }
+  constructor(readonly httpError: HttpError) {
+    super(JSON.stringify(httpError));
+  }
 }
 
 // ❌ Problem: Nested try/catch blocks
 const getPosts = async (url: string) => {
-    try {
-        const response = await fetch(url)
-        if (response.status>=400) {
-            // HTTP client error handling
-            throw new HttpErrorHandler({type:'Http Client Error', value: response.status})
-        }
-        try {
-            const data = await response.json() as Comments
-            return data
-        } catch (error) {
-            // JSON parsing error handling
-            throw new HttpErrorHandler({type:'Json parser Error', value: `${error}`})
-        }
-    } catch (error) {
-      // Outer catch - Can capture unexpected errors
-      // This outer catch masks the HTTP client error, for example,
-      // if a bad request occurs (Http Client Error), the returned error
-      // will be an infrastructure error
-        throw new HttpErrorHandler({type:'Infra Error', value: `${error}`})
+  try {
+    const response = await fetch(url);
+    if (response.status >= 400) {
+      // HTTP client error handling
+      throw new HttpErrorHandler({ type: "Http Client Error", value: response.status });
     }
-}
+    try {
+      const data = (await response.json()) as Comments;
+      return data;
+    } catch (error) {
+      // JSON parsing error handling
+      throw new HttpErrorHandler({ type: "Json parser Error", value: `${error}` });
+    }
+  } catch (error) {
+    // Outer catch - Can capture unexpected errors
+    // This outer catch masks the HTTP client error, for example,
+    // if a bad request occurs (Http Client Error), the returned error
+    // will be an infrastructure error
+    throw new HttpErrorHandler({ type: "Infra Error", value: `${error}` });
+  }
+};
 ```
 
 ### 5. Inconsistent Null Handling
+
 ```typescript
 // ❌ Problem: Mixing null checks with try/catch
 function processData(data: any) {
-    try {
-        if (!data) return null;
+  try {
+    if (!data) return null;
 
-        if (!data.user) {
-            throw new Error('User not found');
-        }
-
-        if (!data.user.profile) {
-            return null; // Why not throw?
-        }
-
-        return data.user.profile.preferences;
-    } catch (error) {
-        return null; // We lose the original error
+    if (!data.user) {
+      throw new Error("User not found");
     }
+
+    if (!data.user.profile) {
+      return null; // Why not throw?
+    }
+
+    return data.user.profile.preferences;
+  } catch (error) {
+    return null; // We lose the original error
+  }
 }
 ```
 
@@ -169,46 +177,55 @@ Let's start with a fully functional paradigm:
 
 ```typescript
 class FetchPostsError extends createTaggedError({
-  name: 'FetchPostsError',
-  message: 'Could not fetch posts',
+  name: "FetchPostsError",
+  message: "Could not fetch posts",
 }) {}
 
 class FetchCommentsError extends createTaggedError({
-  name: 'FetchCommentsError',
-  message: 'Could not fetch comments',
+  name: "FetchCommentsError",
+  message: "Could not fetch comments",
 }) {}
 
 class ParsePostsError extends createTaggedError({
-  name: 'ParsePostsError',
-  message: 'Could not parse posts',
+  name: "ParsePostsError",
+  message: "Could not parse posts",
 }) {}
 
 class ParseCommentsError extends createTaggedError({
-  name: 'ParseCommentsError',
-  message: 'Could not parse comments',
+  name: "ParseCommentsError",
+  message: "Could not parse comments",
 }) {}
 
 class NoPostsFoundError extends createTaggedError({
-  name: 'NoPostsFoundError',
-  message: 'No posts found',
+  name: "NoPostsFoundError",
+  message: "No posts found",
 }) {}
 
 const fetchPosts = () =>
-  fromPromise(fetch("https://jsonplaceholder.typicode.com/posts"), (cause) => new FetchPostsError({ cause }))
+  fromPromise(
+    fetch("https://jsonplaceholder.typicode.com/posts"),
+    (cause) => new FetchPostsError({ cause }),
+  );
 
 const fetchComments = (id: number) =>
-  fromPromise(fetch(`https://jsonplaceholder.typicode.com/posts/${id}/comments`), (cause) => new FetchCommentsError({ cause }))
+  fromPromise(
+    fetch(`https://jsonplaceholder.typicode.com/posts/${id}/comments`),
+    (cause) => new FetchCommentsError({ cause }),
+  );
 
 fetchPosts()
-        .andThen((r) => fromPromise(r.json() as Promise<Posts>, (cause) => new ParsePostsError({ cause })))
-        .map((posts) => posts.at(-1)?.userId)
-        .andThen((id) =>
-            id ? fetchComments(id) : NoPostsFoundError.err()
-        )
-        .andThen((comments) => fromPromise(comments.json() as Promise<Comments>, (cause) => new ParseCommentsError({ cause })))
-        .match((comments) => console.log(comments),
-            (e) => console.error("Error retrieving comments", e)
-        )
+  .andThen((r) =>
+    fromPromise(r.json() as Promise<Posts>, (cause) => new ParsePostsError({ cause })),
+  )
+  .map((posts) => posts.at(-1)?.userId)
+  .andThen((id) => (id ? fetchComments(id) : NoPostsFoundError.err()))
+  .andThen((comments) =>
+    fromPromise(comments.json() as Promise<Comments>, (cause) => new ParseCommentsError({ cause })),
+  )
+  .match(
+    (comments) => console.log(comments),
+    (e) => console.error("Error retrieving comments", e),
+  );
 ```
 
 I find this code elegant and efficient as it uses the Result Pattern, which makes the code easier to read and maintain. It's an extremely safe and efficient code that uses a functional pattern to handle errors.
@@ -219,29 +236,27 @@ Let's rewrite the same code following a more imperative pattern, using error pro
 ```typescript
 const result = await safeTry(async function* () {
   const reqPosts = yield* tryResultAsync(
-      fetch(`https://jsonplaceholder.typicode.com/posts`),
-      (cause) => new FetchPostsError({ cause }),
+    fetch(`https://jsonplaceholder.typicode.com/posts`),
+    (cause) => new FetchPostsError({ cause }),
   );
   const posts = yield* tryResultAsync(reqPosts.json() as Promise<Posts>);
 
   const lastPost = posts.at(-1)?.userId;
   if (!lastPost) {
-      return NoPostsFoundError.err();
+    return NoPostsFoundError.err();
   }
   const reqComments = yield* tryResultAsync(
-      fetch(`https://jsonplaceholder.typicode.com/posts/${lastPost}/comments`),
-      (cause) => new FetchCommentsError({ cause }),
+    fetch(`https://jsonplaceholder.typicode.com/posts/${lastPost}/comments`),
+    (cause) => new FetchCommentsError({ cause }),
   );
-  const comments = yield* tryResultAsync(
-      reqComments.json() as Promise<Comments>,
-  );
+  const comments = yield* tryResultAsync(reqComments.json() as Promise<Comments>);
   return ok(comments);
 });
 
 result.match(
   (comments) => console.log(comments),
   (error) => console.error("Error retrieving comments", error.message),
-)
+);
 ```
 
 Okay, this approach is simpler to read and easier to understand for those not familiar with functional code, yet it's still efficient and secure as all blocks that can throw exceptions are handled consistently.
@@ -250,40 +265,40 @@ Now let's look at a completely imperative approach that's very similar to Golang
 
 ```typescript
 const reqPostsResult = await tryResultAsync(
-    fetch(`https://jsonplaceholder.typicode.com/posts`),
-    (cause) => new FetchPostsError({ cause }),
+  fetch(`https://jsonplaceholder.typicode.com/posts`),
+  (cause) => new FetchPostsError({ cause }),
 );
 if (reqPostsResult.isErr()) {
-    return errAsync(reqPostsResult.error);
+  return errAsync(reqPostsResult.error);
 }
 
 const postsResult = await tryResultAsync(
-    reqPostsResult.value.json() as Promise<Posts>,
-    (cause) => new ParsePostsError({ cause }),
+  reqPostsResult.value.json() as Promise<Posts>,
+  (cause) => new ParsePostsError({ cause }),
 );
 if (postsResult.isErr()) {
-    return errAsync(postsResult.error);
+  return errAsync(postsResult.error);
 }
 
 const lastPost = postsResult.value.at(-1)?.userId;
 if (!lastPost) {
-    return errAsync(new NoPostsFoundError());
+  return errAsync(new NoPostsFoundError());
 }
 
 const reqCommentsResult = await tryResultAsync(
-    fetch(`https://jsonplaceholder.typicode.com/posts/${lastPost}/comments`),
-    (cause) => new FetchCommentsError({ cause }),
+  fetch(`https://jsonplaceholder.typicode.com/posts/${lastPost}/comments`),
+  (cause) => new FetchCommentsError({ cause }),
 );
 if (reqCommentsResult.isErr()) {
-    return errAsync(reqCommentsResult.error);
+  return errAsync(reqCommentsResult.error);
 }
 
 const commentsResult = await tryResultAsync(
-    reqCommentsResult.value.json() as Promise<Comments>,
-    (cause) => new ParseCommentsError({ cause }),
+  reqCommentsResult.value.json() as Promise<Comments>,
+  (cause) => new ParseCommentsError({ cause }),
 );
 if (commentsResult.isErr()) {
-    return errAsync(commentsResult.error);
+  return errAsync(commentsResult.error);
 }
 return okAsync(commentsResult.value);
 ```
@@ -295,6 +310,7 @@ The tradeoffs between the three styles look like this.
 ## Comparative Analysis
 
 ### 1. Imperative Style
+
 - ✅ Explicit validations
 - ✅ Easy to understand flow
 - ✅ Specific error messages
@@ -303,6 +319,7 @@ The tradeoffs between the three styles look like this.
 - ❌ Can lead to lots of boilerplate code
 
 ### 2. SafeTry
+
 - ✅ Concise code
 - ✅ Easy to implement
 - ✅ Good for simple cases
@@ -310,6 +327,7 @@ The tradeoffs between the three styles look like this.
 - ❌ Can mask specific errors
 
 ### 3. Functional Approach
+
 - ✅ Elegant composition
 - ✅ Type-safe
 - ✅ Granular validations
@@ -326,110 +344,111 @@ To finish, let's look at some examples of how simple it is to make code safer us
 ```typescript
 // ❌ Problem: Try/catch doesn't capture promise rejections
 function parseJSONSafe(jsonString: string) {
-    try {
-        return JSON.parse(jsonString);
-    } catch (error) {
-        return null; // Error disappears and we lose debugging information
-    }
+  try {
+    return JSON.parse(jsonString);
+  } catch (error) {
+    return null; // Error disappears and we lose debugging information
+  }
 }
 
 // ✅ Resultar
 class JsonParseError extends createTaggedError({
-  name: 'JsonParseError',
-  message: 'Could not parse JSON',
+  name: "JsonParseError",
+  message: "Could not parse JSON",
 }) {}
 
 const result = tryResult(
   () => JSON.parse("{'a'}"),
   (cause) => new JsonParseError({ cause }),
-)
+);
 
-assert.ok(result.isErr())
+assert.ok(result.isErr());
 if (result.isErr()) {
-  assert.ok(result.error instanceof JsonParseError)
+  assert.ok(result.error instanceof JsonParseError);
 }
 ```
 
 ### 2. Unhandled Promises
+
 ```typescript
 // ❌ Problem: Unhandled promises can cause security issues
 try {
-  Promise.reject(new Error('Failure'));
+  Promise.reject(new Error("Failure"));
   // Code continues executing...
-  console.log('Should not get here!');
+  console.log("Should not get here!");
 } catch (error) {
   // Never reaches here!
-  console.error('Error:', error);
+  console.error("Error:", error);
 }
 
 // ✅ Resultar
-const result = await tryResultAsync(
-        Promise.reject(new Error('Failure')), String
-    );
-assert.ok(result.isErr())
+const result = await tryResultAsync(Promise.reject(new Error("Failure")), String);
+assert.ok(result.isErr());
 ```
 
 ### 3. Asynchronous Callbacks
+
 ```typescript
 try {
-    setTimeout(() => {
-        throw new Error('Callback error');
-    }, 1000);
+  setTimeout(() => {
+    throw new Error("Callback error");
+  }, 1000);
 } catch (error) {
-    // Never catches the error!
-    console.error('Error:', error);
+  // Never catches the error!
+  console.error("Error:", error);
 }
 
 // ✅ Resultar
 const result = await tryResultAsync(
-    new Promise((resolve, reject) => {
-        setTimeout(() => {
-            reject(new Error('Callback error'));
-        }, 1000);
-    })
+  new Promise((resolve, reject) => {
+    setTimeout(() => {
+      reject(new Error("Callback error"));
+    }, 1000);
+  }),
 );
-assert.ok(result.isErr())
+assert.ok(result.isErr());
 ```
 
 ### 4. Nested Try/Catch
 
 Given this test:
+
 ```typescript
 type HttpError =
-     | { type: 'Http Client Error', value: number }
-     | { type: 'Infra Error', value: string}
-     | { type: 'Json parser Error', value: string}
+  | { type: "Http Client Error"; value: number }
+  | { type: "Infra Error"; value: string }
+  | { type: "Json parser Error"; value: string };
 
 class HttpErrorHandler extends Error {
-    constructor(readonly httpError: HttpError) {
-        super(JSON.stringify(httpError))
-    }
+  constructor(readonly httpError: HttpError) {
+    super(JSON.stringify(httpError));
+  }
 }
 
 const getPosts = async (url: string) => {
   try {
-      const response = await fetch(url)
-      if (response.status>=400) {
-          throw new HttpErrorHandler({type:'Http Client Error', value: response.status})
-      }
-      try {
-          const data = await response.json() as Comments
-          return data
-      } catch (error) {
-          throw new HttpErrorHandler({type:'Json parser Error', value: `${error}`})
-      }
+    const response = await fetch(url);
+    if (response.status >= 400) {
+      throw new HttpErrorHandler({ type: "Http Client Error", value: response.status });
+    }
+    try {
+      const data = (await response.json()) as Comments;
+      return data;
+    } catch (error) {
+      throw new HttpErrorHandler({ type: "Json parser Error", value: `${error}` });
+    }
   } catch (error) {
-      throw new HttpErrorHandler({type:'Infra Error', value: `${error}`})
+    throw new HttpErrorHandler({ type: "Infra Error", value: `${error}` });
   }
-}
+};
 
 try {
-  const posts = await getPosts("https://httpbin.org/status/400")
-  console.log(posts)
+  const posts = await getPosts("https://httpbin.org/status/400");
+  console.log(posts);
 } catch (error) {
   if (error instanceof HttpErrorHandler) {
-      assert.ok(error.httpError.type==='Http Client Error')
-      assert.equal(error.httpError.value, 400)
+    assert.ok(error.httpError.type === "Http Client Error");
+    assert.equal(error.httpError.value, 400);
   }
 }
 ```
@@ -437,22 +456,29 @@ try {
 This test will always fail because the thrown error will always be an infrastructure error, as the error is masked by the outer catch. Let's modify the code for a more type-safe approach:
 
 ```typescript
-const safeGetPosts = (url: string) => tryResultAsync(fetch(url))
-  .mapErr(e => ({ type: 'Infra Error', value: `${e}` } satisfies HttpError))
-  .andThen(r => {
+const safeGetPosts = (url: string) =>
+  tryResultAsync(fetch(url))
+    .mapErr((e) => ({ type: "Infra Error", value: `${e}` }) satisfies HttpError)
+    .andThen((r) => {
       if (r.status >= 400) {
-          return err({
-              type: 'Http Client Error', value: r.status
-          } satisfies HttpError)
+        return err({
+          type: "Http Client Error",
+          value: r.status,
+        } satisfies HttpError);
       }
-      return ok(r)
-  })
-  .andThen(r => tryResultAsync(r.json() as Promise<Posts>, e => ({ type: 'Json parser Error', value: `${e}` } satisfies HttpError)))
-const result = await safeGetPosts("https://httpbin.org/status/400")
-assert.ok(result.isErr())
+      return ok(r);
+    })
+    .andThen((r) =>
+      tryResultAsync(
+        r.json() as Promise<Posts>,
+        (e) => ({ type: "Json parser Error", value: `${e}` }) satisfies HttpError,
+      ),
+    );
+const result = await safeGetPosts("https://httpbin.org/status/400");
+assert.ok(result.isErr());
 if (result.isErr()) {
-  assert.ok(result.error.type === 'Http Client Error')
-  assert.equal(result.error.value, 400)
+  assert.ok(result.error.type === "Http Client Error");
+  assert.equal(result.error.value, 400);
 }
 ```
 
@@ -461,36 +487,46 @@ The Result Pattern not only makes the code more testable and predictable but als
 It's still possible to use error-propagation (a.k.a Rust's ? operator) to propagate infrastructure errors to the outermost level of the code, ensuring that all errors are handled consistently and predictably. I believe this way is even easier to understand for developers not familiar with Railway Programming.
 
 ```typescript
-const safeGetPosts = (url: string) => safeTry(async function* () {
-    const response = yield* tryResultAsync(fetch(url), e=> ({ type: 'Infra Error', value: `${e}` } satisfies HttpError))
+const safeGetPosts = (url: string) =>
+  safeTry(async function* () {
+    const response = yield* tryResultAsync(
+      fetch(url),
+      (e) => ({ type: "Infra Error", value: `${e}` }) satisfies HttpError,
+    );
     if (response.status >= 400) {
-        return err({ type: 'Http Client Error', value: response.status } satisfies HttpError)
+      return err({ type: "Http Client Error", value: response.status } satisfies HttpError);
     }
-    return tryResultAsync(response.json() as Promise<Posts>, e => ({ type: 'Json parser Error', value: `${e}` } satisfies HttpError))
-})
-const result = await safeGetPosts("https://httpbin.org/status/400")
-assert.ok(result.isErr())
+    return tryResultAsync(
+      response.json() as Promise<Posts>,
+      (e) => ({ type: "Json parser Error", value: `${e}` }) satisfies HttpError,
+    );
+  });
+const result = await safeGetPosts("https://httpbin.org/status/400");
+assert.ok(result.isErr());
 if (result.isErr()) {
-  assert.ok(result.error.type === 'Http Client Error')
-  assert.ok(result.error.value === 400)
+  assert.ok(result.error.type === "Http Client Error");
+  assert.ok(result.error.value === 400);
 }
 ```
 
 To summarize the main advantages of the Result Pattern:
 
 1. **Type Safety**:
+
 - Explicit contracts via types
-- Errors are treated as ***first-class values*** (values that can be manipulated, passed, and transformed like any other data in the system)
+- Errors are treated as _**first-class values**_ (values that can be manipulated, passed, and transformed like any other data in the system)
 - Compile-time guarantees
 - No implicit undefined/null
 
 2. **Error Handling**:
+
 - Mandatory error handling
 - Expressive pattern matching
 - Type-safe error transformations
 - Precise error tracking
 
 3. **Composability**:
+
 - Fluent chaining
 - Functional transformations
 - Operation combination
@@ -499,19 +535,23 @@ To summarize the main advantages of the Result Pattern:
 ## References
 
 ### Articles and Documentation
+
 - [Railway Oriented Programming](https://fsharpforfunandprofit.com/rop/) - Scott Wlaschin
 - [Rust Error Handling](https://doc.rust-lang.org/book/ch09-00-error-handling.html) - Official Rust Documentation
 - [Error Handling in Go](https://go.dev/blog/error-handling-and-go) - Official Go Documentation
 - [TypeScript Handbook](https://www.typescriptlang.org/docs/handbook/intro.html) - Official TypeScript Documentation
 
 ### Libraries
+
 - [Resultar](https://github.com/inaiat/resultar) - Type-safe error handling library for TypeScript
 - [Neverthrow](https://github.com/supermacro/neverthrow) - Resultar began as an initial fork of this project
 
 ### Examples and APIs Used
+
 - [JSONPlaceholder](https://jsonplaceholder.typicode.com/) - Test API used in examples
 - [HTTPBin](https://httpbin.org/) - HTTP test service used in examples
 
 ### Additional Reading
+
 - [Making Illegal States Unrepresentable](https://fsharpforfunandprofit.com/posts/designing-with-types-making-illegal-states-unrepresentable/)
 - [Functional Error Handling](https://www.typescriptlang.org/docs/handbook/typescript-in-5-minutes-func.html#error-handling)

@@ -117,13 +117,13 @@ test("default selection propagates acquisition failure and releases acquired req
   let released = 0;
   let handled = 0;
   const Lease = resource("lease", {
-    acquire: ResultTask.succeed("open"),
+    acquire: ResultTask.ok("open"),
     release: () =>
       ResultTask.sync(() => {
         released += 1;
       }),
   });
-  const Broken = service("broken", ResultTask.fail(new Error("offline")));
+  const Broken = service("broken", ResultTask.err(new Error("offline")));
 
   @Controller("health")
   class HealthController {

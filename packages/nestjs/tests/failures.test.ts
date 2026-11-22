@@ -13,7 +13,7 @@ import {
   type LoggerService,
 } from "@nestjs/common";
 import { expect, test, vi } from "vite-plus/test";
-import { ResultTask, tryResultAsync } from "resultar";
+import { ResultTask } from "resultar";
 import { createModule, resource, service } from "resultar-di";
 import { createNestApp, Services, type NestRequest } from "../src/index.js";
 
@@ -89,7 +89,7 @@ test("a native registration failure waits for rollback and retains its identity"
   const release = Promise.withResolvers<void>();
   let releases = 0;
   const Shared = resource("shared", {
-    acquire: ResultTask.succeed(1),
+    acquire: ResultTask.ok(1),
     release: () =>
       ResultTask.tryPromise({
         try: async () => {
@@ -109,17 +109,17 @@ test("a native registration failure waits for rollback and retains its identity"
     throw failure;
   });
   let settled = false;
-  const ready = tryResultAsync(async () => {
-    await app.ready();
-  }).match(
-    () => {
-      settled = true;
+  const ready = ResultTask.tryPromise({
+    try: async () => {
+      await app.ready();
     },
-    (error) => {
+    catch: (error) => error,
+  })
+    .runResult()
+    .then((result) => {
       settled = true;
-      return error;
-    },
-  );
+      return result.isErr() ? result.error : undefined;
+    });
   await releasing.promise;
   expect(settled).toBe(false);
   expect(releases).toBe(0);
@@ -145,8 +145,8 @@ test("request release failures are logged once after the native response is sent
     },
   };
   const Local = resource("local", {
-    acquire: ResultTask.succeed(1),
-    release: () => ResultTask.fail("cleanup"),
+    acquire: ResultTask.ok(1),
+    release: () => ResultTask.err("cleanup"),
   });
 
   @Controller()
@@ -173,13 +173,13 @@ test("request release failures are logged once after the native response is sent
 test("root cleanup failure rejects close and preserves startup failure alongside rollback failure", async () => {
   let releases = 0;
   const Shared = resource("shared", {
-    acquire: ResultTask.succeed(1),
+    acquire: ResultTask.ok(1),
     release: () =>
       ResultTask.sync(() => {
         releases += 1;
-      }).flatMap(() => ResultTask.fail("release failed")),
+      }).andThen(() => ResultTask.err("release failed")),
   });
-  const Failing = service("failing", ResultTask.fail("startup failed"));
+  const Failing = service("failing", ResultTask.err("startup failed"));
   const app = createNestApp({
     services: createModule().singleton(Shared),
     appBindings: ["shared"],
@@ -303,7 +303,7 @@ test("a client abort during acquisition waits for and releases the acquired reso
 test("stream transport errors release resources without relying on finish", async () => {
   let released = 0;
   const Local = resource("local", {
-    acquire: ResultTask.succeed(1),
+    acquire: ResultTask.ok(1),
     release: () =>
       ResultTask.sync(() => {
         released += 1;

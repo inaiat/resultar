@@ -1,6 +1,5 @@
 import {
   isRetryElapsedExceeded,
-  isRetryPolicy,
   observeRetry,
   retryContext,
   retryPolicyDelay,
@@ -26,19 +25,6 @@ export interface ResultTaskConcurrencyOptions {
 export interface ResultTaskZipOptions {
   readonly concurrent?: boolean
 }
-
-/** Retries count additional attempts; only simple typed failures are retried. */
-export interface ResultTaskRetryOptions<E> {
-  readonly times: number
-  readonly delayMs?: number | ((retry: number, error: E) => number)
-  readonly backoff?: number
-  readonly maxDelayMs?: number
-  readonly maxElapsedMs?: number
-  readonly jittered?: boolean
-  readonly while?: (error: E, retry: number) => boolean
-}
-
-export type ResultTaskRetryInput<E> = ResultTaskRetryOptions<E> | RetryPolicy<E>
 
 /** Rejection used when a simplified boundary cannot represent multiple failures. */
 export class ResultTaskCauseError extends Error {
@@ -77,22 +63,18 @@ export class ResultTaskCauseError extends Error {
 }
 
 /** Handlers for matching both success and failure cases of a ResultTask. */
-export type ResultTaskMatchOptions<A, E, B, C = B> =
-  | { readonly ok: (value: A) => B; readonly err: (error: E) => C }
-  | { readonly ok: (value: A) => B; readonly error: (error: E) => C }
-  | { readonly onSuccess: (value: A) => B; readonly onFailure: (error: E) => C }
+export type ResultTaskMatchOptions<A, E, B, C = B> = {
+  readonly ok: (value: A) => B
+  readonly err: (error: E) => C
+}
 
 export const taskSuccessHandler = <A, E, B, C>(
   handlers: ResultTaskMatchOptions<A, E, B, C>,
-): ((value: A) => B) => ('onSuccess' in handlers ? handlers.onSuccess : handlers.ok)
+): ((value: A) => B) => handlers.ok
 
 export const taskFailureHandler = <A, E, B, C>(
   handlers: ResultTaskMatchOptions<A, E, B, C>,
-): ((error: E) => C) => {
-  if ('onFailure' in handlers) return handlers.onFailure
-  if ('error' in handlers) return handlers.error
-  return handlers.err
-}
+): ((error: E) => C) => handlers.err
 
 /** Scheduler defects are appended once at the cleanup boundary, never to intermediate yields. */
 export const completeCleanup = <A, E>(
@@ -115,54 +97,6 @@ export const checkedConcurrency = (options?: ResultTaskConcurrencyOptions): numb
   if (!Number.isSafeInteger(concurrency) || concurrency < 1)
     throw new RangeError('Task concurrency must be a positive safe integer or unbounded')
   return concurrency
-}
-
-const checkedRandom = (clock: TaskClock): number => {
-  const random = clock.random()
-  if (!Number.isFinite(random) || random < 0 || random > 1)
-    throw new RangeError('Task clock random must return a number between zero and one')
-  return random
-}
-
-const retryDelay = (
-  retry: number,
-  error: unknown,
-  policy: { readonly options: ResultTaskRetryOptions<unknown>; readonly clock: TaskClock },
-): number => {
-  const { options, clock } = policy
-  const base =
-    typeof options.delayMs === 'function'
-      ? options.delayMs(retry + 1, error)
-      : (options.delayMs ?? 0)
-  let delay = checkedDuration(base * (options.backoff ?? 1) ** retry)
-  if (options.maxDelayMs !== undefined) {
-    delay = Math.min(delay, options.maxDelayMs)
-  }
-  return options.jittered === true ? delay * checkedRandom(clock) : delay
-}
-
-export const legacyRetryDelay = (
-  error: unknown,
-  retry: number,
-  runtime: {
-    readonly options: ResultTaskRetryOptions<unknown>
-    readonly clock: TaskClock
-    readonly startedAt: number
-  },
-): number | undefined => {
-  const { options, clock, startedAt } = runtime
-  if (options.while?.(error, retry + 1) === false) return undefined
-  const delay = retryDelay(retry, error, { options, clock })
-  if (
-    isRetryElapsedExceeded(options.maxElapsedMs, {
-      startedAt,
-      now: clock.now(),
-      nextDelayMs: delay,
-    })
-  ) {
-    return undefined
-  }
-  return delay
 }
 
 interface CanonicalRetryRuntime {
@@ -249,20 +183,8 @@ export const canonicalRetryDelay = (
   return canonicalRetryDelayAsync(retryError, retryContext(attempt, policy.times), runtime)
 }
 
-export const validateTaskRetry = (options: ResultTaskRetryInput<unknown>): void => {
-  if (isRetryPolicy(options)) {
-    validateRetryPolicy(options)
-    return
-  }
-  if (!Number.isSafeInteger(options.times) || options.times < 0) {
-    throw new RangeError('Task retries must be a non-negative safe integer')
-  }
-  if (options.backoff !== undefined && (!Number.isFinite(options.backoff) || options.backoff < 1)) {
-    throw new RangeError('Task backoff must be at least one')
-  }
-  if (options.maxDelayMs !== undefined) checkedDuration(options.maxDelayMs)
-  if (options.maxElapsedMs !== undefined) checkedDuration(options.maxElapsedMs)
-  if (typeof options.delayMs === 'number') checkedDuration(options.delayMs)
+export const validateTaskRetry = (policy: RetryPolicy<unknown>): void => {
+  validateRetryPolicy(policy)
 }
 
 /** Configuration for repeating a succeeding `ResultTask` (`task.repeat(...)` / `ResultTask.repeat(...)`). */

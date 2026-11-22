@@ -9,7 +9,8 @@
     "./match": "./src/entries/match.ts",
     "./tagged": "./src/entries/tagged.ts",
     "./retry": "./src/entries/retry.ts",
-    "./function": "./src/entries/function.ts"
+    "./function": "./src/entries/function.ts",
+    "./async": "./src/entries/async.ts"
   },
   "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }
 }

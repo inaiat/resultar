@@ -1,7 +1,7 @@
 /* eslint-disable unicorn/no-await-expression-member */
 import { Hono, type Context, type Env } from "hono";
 import { hc, type InferResponseType } from "hono/client";
-import { createTaggedError, errAsync, Match, okAsync, type ResultAsync } from "resultar";
+import { createTaggedError, Match, ResultTask } from "resultar";
 import { expect, expectTypeOf, test } from "vite-plus/test";
 import { createHonoServices, createModule } from "../src/index.js";
 
@@ -11,10 +11,10 @@ class MissingError extends createTaggedError({
 }).withProps<{ id: string }>() {}
 class OfflineError extends createTaggedError({ name: "OfflineError", message: "Offline" }) {}
 type User = { id: string; name: string };
-const find = (id: string): ResultAsync<User, MissingError | OfflineError> => {
-  if (id === "1") return okAsync({ id, name: "Ada" });
-  if (id === "offline") return errAsync(new OfflineError());
-  return errAsync(new MissingError({ id }));
+const find = (id: string): ResultTask<User, MissingError | OfflineError> => {
+  if (id === "1") return ResultTask.ok({ id, name: "Ada" });
+  if (id === "offline") return OfflineError.taskErr();
+  return MissingError.taskErr({ id });
 };
 
 type AppEnv = Env & {
@@ -41,10 +41,10 @@ test("Match.context preserves Hono variables, RPC payloads and statuses with asy
       return next();
     })
     .get("/users/:id", di.middleware(["users"]), async (c) => {
-      const result = await c.var.services.users.find(c.req.param("id"));
+      const result = await c.var.services.users.find(c.req.param("id")).runResult();
       return result.match({
         ok: (user) => c.json(user, 200),
-        error: (error) => respondError(error, c),
+        err: (error) => respondError(error, c),
       });
     });
   const client = hc<typeof app>("http://localhost", {

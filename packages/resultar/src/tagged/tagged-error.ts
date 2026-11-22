@@ -2,8 +2,6 @@ import type { ErrResult } from '../result/result.js'
 
 import { compileJitFunction, formatPropertyAccess, serializeStringLiteral } from '../core/jit.js'
 import { isRedacted, stringifyRedacted, type Redacted } from '../core/redacted.js'
-import type { ResultAsync } from '../result-async/result-async.js'
-import { createResultAsync } from '../result-async/result-async-adapter.js'
 import { ResultTask } from '../task/result-task.js'
 import { err as resultErr } from '../result/result.js'
 import { isError } from './tagged-match.js'
@@ -251,16 +249,6 @@ export type TaggedErrorClass<
     this: This,
     ...args: TaggedErrorConstructorArgs<MessageTemplate, Props>
   ) => ErrResult<never, ErrorClassInstance<This>>
-  /**
-   * Creates a failed ResultAsync containing this tagged error.
-   * @deprecated Use taskErr for new Task workflows; the eager legacy contract is retained.
-   */
-  errAsync: <
-    This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate, Props>) => Error,
-  >(
-    this: This,
-    ...args: TaggedErrorConstructorArgs<MessageTemplate, Props>
-  ) => ResultAsync<never, ErrorClassInstance<This>>
   /**
    * Creates a failed ResultTask containing this tagged error.
    */
@@ -768,22 +756,6 @@ const createTaggedErrorClass = <
     ): ErrResult<never, InstanceType<This>> {
       const error = new this(...args) as InstanceType<This>
       return resultErr<never, InstanceType<This>>(error)
-    }
-
-    /**
-     * Creates a failed ResultAsync containing this tagged error.
-     * @deprecated Use taskErr for Task workflows, or errAsync(new DomainError(props)) for in-flight ResultAsync values.
-     */
-    public static errAsync<
-      This extends new (...args: TaggedErrorConstructorArgs<MessageTemplate>) => Error,
-    >(
-      this: This,
-      ...args: TaggedErrorConstructorArgs<MessageTemplate>
-    ): ResultAsync<never, InstanceType<This>> {
-      const error = new this(...args) as InstanceType<This>
-      return createResultAsync<ResultAsync<never, InstanceType<This>>>(
-        Promise.resolve(resultErr<never, InstanceType<This>>(error)),
-      )
     }
 
     /**

@@ -1,15 +1,14 @@
-/* eslint-disable @typescript-eslint/no-deprecated -- These regressions verify gradual generator migration. */
 /* eslint-disable require-yield -- Final-return-only generators verify completion without yielded operations. */
 import { deepEqual, equal, rejects, throws } from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import { Result, err, errAsync, ok, okAsync, safeTry } from '../src/index.js'
-import type { ResultAsync } from '../src/index.js'
+import { ResultAsync, errAsync, okAsync } from '../src/entries/async.js'
+import { Result, err, ok } from '../src/index.js'
 
-describe('Result.gen value return regressions', () => {
-  it('delegates via yield* in Result.gen and keeps native and structural final Results intact in safeTry', async () => {
+describe('Result.gen and ResultAsync.gen value return regressions', () => {
+  it('delegates native and structural Results via yield* in Result.gen and ResultAsync.gen', async () => {
     const payload = { id: 'user-1' }
     const native = ok(payload)
     const structural: Result<{ id: string }, never> = new Proxy(native, {
@@ -29,14 +28,8 @@ describe('Result.gen value return regressions', () => {
       payload,
     )
     equal(
-      safeTry(function* () {
-        return structural
-      }),
-      structural,
-    )
-    equal(
       (
-        await Result.gen(async function* () {
+        await ResultAsync.gen(async function* () {
           return yield* structural
         })
       )._unsafeUnwrap(),
@@ -50,18 +43,19 @@ describe('Result.gen value return regressions', () => {
     equal(yielded, failure)
   })
 
-  it('unwraps Results from a separate module instance via yield* and preserves them in safeTry', () => {
+  it('unwraps Results from a separate module instance via yield*', () => {
     const resultUrl = new URL('../src/result/result.ts', import.meta.url).href
     const indexUrl = new URL('../src/index.ts', import.meta.url).href
+    const asyncUrl = new URL('../src/entries/async.ts', import.meta.url).href
     const script = `
       import { equal } from 'node:assert/strict';
-      const { Result, safeTry } = await import(${JSON.stringify(indexUrl)});
+      const { Result } = await import(${JSON.stringify(indexUrl)});
+      const { ResultAsync } = await import(${JSON.stringify(asyncUrl)});
       const foreign = await import(${JSON.stringify(`${resultUrl}?independent-copy`)});
       const success = foreign.ok(42);
       const failure = foreign.err('foreign failure');
       equal(Result.gen(function* () { return yield* success; })._unsafeUnwrap(), 42);
-      equal(safeTry(function* () { return failure; }), failure);
-      equal(await Result.gen(async function* () { return yield* failure; }), failure);
+      equal(await ResultAsync.gen(async function* () { return yield* failure; }), failure);
     `
     const output = execFileSync(
       process.execPath,
@@ -96,21 +90,7 @@ describe('Result.gen value return regressions', () => {
     equal(domainResult.unwrapOrThrow(), domain)
   })
 
-  it('preserves explicit nested Result data in safeTry and infers mixed plain/delegated Result.gen returns', () => {
-    const inner = err('inner error')
-    const outer = ok(inner)
-    equal(
-      safeTry(function* () {
-        return outer
-      }),
-      outer,
-    )
-    equal(
-      safeTry(function* () {
-        return outer
-      }).unwrapOrThrow(),
-      inner,
-    )
+  it('infers mixed plain and delegated Result.gen returns', () => {
     const choose = (accepted: boolean) =>
       Result.gen(function* () {
         yield* ok<number, 'validation'>(1)
@@ -133,7 +113,7 @@ describe('Result.gen value return regressions', () => {
       }
     })
     const asyncFailure = err('async failure')
-    const pending = Result.gen(async function* () {
+    const pending = ResultAsync.gen(async function* () {
       try {
         yield* errAsync(asyncFailure.error)
         return 42
@@ -165,7 +145,7 @@ describe('Result.gen value return regressions', () => {
       catch: (error) => (error === defect ? ('mapped' as const) : ('unexpected' as const)),
     })
     deepEqual(sync, err('mapped'))
-    const pending = Result.gen({
+    const pending = ResultAsync.gen({
       async *try() {
         yield* okAsync(1)
         return fail()
@@ -185,7 +165,7 @@ describe('Result.gen value return regressions', () => {
     )
     await rejects(
       Promise.resolve(
-        Result.gen({
+        ResultAsync.gen({
           async *try() {
             return fail()
           },
@@ -196,31 +176,17 @@ describe('Result.gen value return regressions', () => {
     )
   })
 
-  it('awaits async return thenables in Result.gen and retains legacy async final Result returns in safeTry', async () => {
+  it('awaits async return thenables in ResultAsync.gen', async () => {
     const thenable = {
       then: (resolve: (value: number) => void): void => {
         resolve(42)
       },
     }
-    const pending = Result.gen(async function* () {
+    const pending = ResultAsync.gen(async function* () {
       return thenable
     })
     expectTypeOf(pending).toEqualTypeOf<ResultAsync<number, never>>()
     deepEqual(await pending, ok(42))
-    const success = ok(42)
-    const legacy = safeTry(async function* () {
-      return okAsync(42)
-    })
-    expectTypeOf(legacy).toEqualTypeOf<ResultAsync<number, never>>()
-    deepEqual(await legacy, success)
-    const failure = err('returned failure')
-    const returned = Promise.resolve(failure)
-    equal(
-      await safeTry(async function* () {
-        return returned
-      }),
-      failure,
-    )
   })
 
   it('does not read incomplete Result protocol getters on ordinary domain data', () => {
@@ -271,7 +237,7 @@ describe('Result.gen value return regressions', () => {
         return undefined
       },
     }
-    const pending = Result.gen(async function* () {
+    const pending = ResultAsync.gen(async function* () {
       return domain
     })
     expectTypeOf(pending).toEqualTypeOf<ResultAsync<typeof domain, never>>()
@@ -288,7 +254,7 @@ describe('Result.gen value return regressions', () => {
       { id: 'opaque' },
       { getPrototypeOf: failQuery, has: failQuery, get: failQuery },
     )
-    const wrapped = await Result.gen(async function* () {
+    const wrapped = await ResultAsync.gen(async function* () {
       return { opaque }
     })
     equal(wrapped.unwrapOrThrow().opaque, opaque)
@@ -299,12 +265,24 @@ describe('Result.gen value return regressions', () => {
     const sync = Result.gen(function* () {
       yield* ok(1)
     })
-    const pending = Result.gen(async function* () {
+    const pending = ResultAsync.gen(async function* () {
       yield* okAsync(1)
     })
     expectTypeOf(sync).toEqualTypeOf<Result<void, never>>()
     expectTypeOf(pending).toEqualTypeOf<ResultAsync<void, never>>()
     deepEqual(sync, ok(undefined))
     deepEqual(await pending, ok(undefined))
+  })
+
+  it('ignores own catch property on async generator functions passed to ResultAsync.gen', async () => {
+    const boom = new Error('unmapped boom')
+    const generatorWithCatch = Object.assign(
+      // eslint-disable-next-line require-await -- Throws synchronously inside async generator body.
+      async function* () {
+        throw boom
+      },
+      { catch: () => 'should-not-run' },
+    )
+    await rejects(Promise.resolve(ResultAsync.gen(generatorWithCatch)), (error) => error === boom)
   })
 })

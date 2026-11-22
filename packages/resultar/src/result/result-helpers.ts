@@ -38,7 +38,7 @@ export const getMatchErrorHandler = <T, E, A, B>(
   fnErr: MatchErrorHandler<E, B> | undefined,
 ): MatchErrorHandler<E, B> => {
   if (typeof input !== 'function') {
-    return 'err' in input ? input.err : input.error
+    return input.err
   }
 
   if (fnErr === undefined) {

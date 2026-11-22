@@ -3,18 +3,7 @@ import { inspect } from 'node:util'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import {
-  Cause,
-  Clock,
-  err,
-  errAsync,
-  ok,
-  okAsync,
-  ResultAsync,
-  ResultTask,
-  ResultTaskCauseError,
-  Retry,
-} from '../src/index.js'
+import { Cause, Clock, err, ok, ResultTask, ResultTaskCauseError, Retry } from '../src/index.js'
 
 describe('DX ergonomics and asymmetries', () => {
   it('provides Cause constructors and isInterruptedOnly', () => {
@@ -68,7 +57,7 @@ describe('DX ergonomics and asymmetries', () => {
     const task = ResultTask.suspend(() => {
       attempts += 1
       if (attempts <= 3) {
-        return ResultTask.fail<RateLimited>({ retryAfterMs: 50 })
+        return ResultTask.err<RateLimited>({ retryAfterMs: 50 })
       }
       return ResultTask.ok('ok')
     }).retry(policy)
@@ -88,7 +77,7 @@ describe('DX ergonomics and asymmetries', () => {
 
     const task = ResultTask.suspend(() => {
       attempts += 1
-      return ResultTask.fail('unavailable' as const)
+      return ResultTask.err('unavailable' as const)
     }).retry(policy)
 
     const exit = await clock.runToCompletion(task)
@@ -96,26 +85,6 @@ describe('DX ergonomics and asymmetries', () => {
     // t=0 fail -> sleep 60 (total 60 <= 150); t=60 fail -> sleep 60 (total 120 <= 150); t=120 fail -> +60=180 > 150 -> stop
     equal(attempts, 3)
     equal(clock.now(), 120)
-  })
-
-  it('passes error into Retry.policy delayMs in ResultAsync.retry', async () => {
-    const seenErrors: string[] = []
-    let attempts = 0
-    const policy = Retry.policy<string>({
-      times: 2,
-      delayMs: (_ctx, error) => {
-        seenErrors.push(error)
-        return 0
-      },
-    })
-
-    const result = await ResultAsync.retry(() => {
-      attempts += 1
-      return attempts < 3 ? errAsync(`fail-${attempts}`) : okAsync('done')
-    }, policy)
-
-    deepEqual(result, ok('done'))
-    deepEqual(seenErrors, ['fail-1', 'fail-2'])
   })
 
   it('repeats succeeding tasks with until, while, delay, and scope cleanup', async () => {
@@ -155,7 +124,7 @@ describe('DX ergonomics and asymmetries', () => {
     let failCalls = 0
     const failing = ResultTask.suspend(() => {
       failCalls += 1
-      return failCalls === 2 ? ResultTask.fail('boom' as const) : ResultTask.ok(failCalls)
+      return failCalls === 2 ? ResultTask.err('boom' as const) : ResultTask.ok(failCalls)
     }).repeat({ times: 5 })
 
     deepEqual(failing.runSync(), err('boom'))
@@ -195,11 +164,11 @@ describe('DX ergonomics and asymmetries', () => {
     })
 
     deepEqual(syncWorkflow.runSync({ services: { Config: { factor: 2 } } }), ok(6000))
-    deepEqual(ResultTask.runSyncExit(ResultTask.fail('nope' as const)), {
+    deepEqual(ResultTask.runSyncExit(ResultTask.err('nope' as const)), {
       _tag: 'Failure',
       cause: Cause.fail('nope'),
     })
-    deepEqual(ResultTask.runSync(ResultTask.fail('nope' as const)), err('nope'))
+    deepEqual(ResultTask.runSync(ResultTask.err('nope' as const)), err('nope'))
 
     throws(
       () => ResultTask.sleep(10).runSync(),
@@ -218,7 +187,7 @@ describe('DX ergonomics and asymmetries', () => {
           ResultTask.sync(() => {
             cancelled.push(name)
           }),
-      }).flatMap(() => ResultTask.sleep(ms).as(name))
+      }).andThen(() => ResultTask.sleep(ms).as(name))
 
     const winnerExit = await clock.runToCompletion(
       ResultTask.raceAll([
@@ -237,7 +206,7 @@ describe('DX ergonomics and asymmetries', () => {
     const firstFailureClock = Clock.virtual(0)
     const firstExit = await firstFailureClock.runToCompletion(
       ResultTask.raceFirstAll([
-        ResultTask.sleep(10).flatMap(() => ResultTask.fail('early-err' as const)),
+        ResultTask.sleep(10).andThen(() => ResultTask.err('early-err' as const)),
         ResultTask.sleep(50).as('late-ok'),
       ]),
     )

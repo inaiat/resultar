@@ -2,7 +2,8 @@ import { equal, ok as assertOk, strictEqual, throws } from 'node:assert'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import { type Result, type ResultAsync, err, errAsync, ok, okAsync, safeTry } from '../src/index.js'
+import { type Result, err, ok } from '../src/index.js'
+import { type ResultAsync, errAsync, okAsync, safeTry } from '../src/entries/async.js'
 
 class ParseConfigError extends Error {
   public readonly parseCause: unknown

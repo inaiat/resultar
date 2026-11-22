@@ -1,7 +1,8 @@
 import { equal } from 'node:assert'
 import { describe, it } from 'vite-plus/test'
 
-import { errAsync, okAsync, ResultTask } from '../src/index.js'
+import { errAsync, okAsync } from '../src/entries/async.js'
+import { ResultTask } from '../src/index.js'
 
 const callbackError = new Error('side effect failed')
 

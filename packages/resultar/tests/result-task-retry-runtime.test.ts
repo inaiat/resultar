@@ -283,7 +283,7 @@ describe('ResultTask retry runtime boundaries', () => {
     'preserves a synchronous predicate %s as a defect before observer and delay',
     async (mode) => {
       const defect = new Error('predicate failed')
-      const observer = vi.fn()
+      const observer = vi.fn<() => void>()
       const delay = vi.fn(() => 0)
       const task = ResultTask.err('offline').retry(
         Retry.policy({

@@ -316,7 +316,7 @@ test("early guard responses skip acquisition and exception filters retain live r
 
 test("rolls back partial startup and rejects scoped application bindings", async () => {
   const { services, events } = fixture();
-  const Failing = service("failing", ResultTask.fail("offline"));
+  const Failing = service("failing", ResultTask.err("offline"));
   const app = createNestApp({
     services: services.singleton(Failing),
     appBindings: ["shared", "failing"],
@@ -332,7 +332,7 @@ test("rolls back partial startup and rejects scoped application bindings", async
 });
 
 test("request acquisition failures use the native exception filter and preserve the cause", async () => {
-  const Failing = service("failing", ResultTask.fail("offline"));
+  const Failing = service("failing", ResultTask.err("offline"));
 
   @Catch()
   class AcquisitionFilter implements ExceptionFilter {

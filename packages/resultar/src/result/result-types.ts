@@ -20,8 +20,6 @@ import type {
   TagsOf,
   TagsWithReasonOf,
 } from '../tagged/tagged-types.js'
-import type { ResultAsyncOperations } from '../result-async/async-types.js'
-import type { AsyncResultFnGuard, AsyncResultFnOutput } from '../result-async/generator-types.js'
 import type { ResultTask } from '../task/result-task.js'
 import type { Result } from './result.js'
 import type { DisposableResult } from './result-helpers.js'
@@ -106,9 +104,10 @@ export type WidenLiteral<T> = T extends string
         ? bigint
         : T
 
-export type MatchHandlers<T, E, A, B = A> =
-  | { readonly err: MatchErrorHandler<E, B>; readonly ok: MatchOkHandler<T, A> }
-  | { readonly error: MatchErrorHandler<E, B>; readonly ok: MatchOkHandler<T, A> }
+export type MatchHandlers<T, E, A, B = A> = {
+  readonly err: MatchErrorHandler<E, B>
+  readonly ok: MatchOkHandler<T, A>
+}
 
 export type FirstSuccessOf<Candidates extends Iterable<ResultCandidate>> = Result<
   InferOkTypes<ReturnType<IterableElement<Candidates>>>,
@@ -251,7 +250,7 @@ export interface Resultable<T, E> {
 }
 
 /** Operations shared by the Ok and Err variants of `Result<T, E>`. */
-export interface ResultOperations<T, E> extends ResultAsyncOperations<T, E> {
+export interface ResultOperations<T, E> {
   /**
    * Narrows this result to the Ok variant.
    */
@@ -469,16 +468,12 @@ export interface ResultOperations<T, E> extends ResultAsyncOperations<T, E> {
    * Exceptions thrown by the side effect are swallowed.
    */
   inspect: (fn: (t: T) => void) => this
-  /** @deprecated Use inspect; callback failures remain best-effort. */
-  tap: (fn: (t: T) => void) => this
   /**
    * Runs a side effect only when this result is Err and returns this same Result.
    *
    * Exceptions thrown by the side effect are swallowed.
    */
   inspectError: (fn: (e: E) => void) => this
-  /** @deprecated Use inspectError; callback failures remain best-effort. */
-  tapError: (fn: (e: E) => void) => this
   /**
    * Runs a side effect for either variant and returns this same Result.
    *
@@ -499,14 +494,9 @@ export interface ResultOperations<T, E> extends ResultAsyncOperations<T, E> {
    */
   unwrapOrThrow: () => T
   /**
-   * Enables `yield* result` inside `safeTry` generators.
+   * Enables `yield* result` inside `Result.gen` and `ResultTask.gen` generators.
    */
   [Symbol.iterator]: () => Generator<Result<never, E>, T>
-  /**
-   * Compatibility generator for `safeTry`. Prefer `yield* result` in new code.
-   * @deprecated Use `yield* result` inside Result.gen.
-   */
-  safeUnwrap: () => Generator<Result<never, E>, T>
 }
 
 /** Successful `Result` variant carrying a value of type `T`. */
@@ -569,16 +559,10 @@ export type SyncResultGenGuard<Returned> = [
 ] extends [never]
   ? unknown
   : never
-export type ResultGeneratorReturn<GeneratorValue> = GeneratorValue extends
-  | Generator<unknown, infer Returned>
-  | AsyncGenerator<unknown, infer Returned>
-  ? Returned
-  : never
-export type ResultGeneratorError<GeneratorValue> = GeneratorValue extends
-  | Generator<infer Yielded, unknown>
-  | AsyncGenerator<infer Yielded, unknown>
-  ? InferErrTypes<Yielded>
-  : never
+export type ResultGeneratorReturn<GeneratorValue> =
+  GeneratorValue extends Generator<unknown, infer Returned> ? Returned : never
+export type ResultGeneratorError<GeneratorValue> =
+  GeneratorValue extends Generator<infer Yielded, unknown> ? InferErrTypes<Yielded> : never
 export type ResultGeneratorCatch<Input> = Input extends unknown
   ? 'catch' extends keyof Input
     ? Input extends { readonly catch?: (e: unknown) => infer CatchErr }
@@ -586,17 +570,13 @@ export type ResultGeneratorCatch<Input> = Input extends unknown
       : never
     : never
   : never
-export type ResultFnBody =
-  | ((...args: never[]) => Generator<Result<never, unknown>, unknown>)
-  | ((...args: never[]) => AsyncGenerator<Result<never, unknown>, unknown>)
+export type ResultFnBody = (...args: never[]) => Generator<Result<never, unknown>, unknown>
 export type ResultFnOutput<Body extends (...args: never[]) => unknown> =
   ReturnType<Body> extends Generator<infer Yielded, infer Returned>
     ? Result<Returned, InferErrTypes<Yielded>>
-    : AsyncResultFnOutput<Body>
+    : never
 export type ResultFnGuard<Body extends (...args: never[]) => unknown> =
-  ReturnType<Body> extends Generator<unknown, infer Returned>
-    ? SyncResultGenGuard<Returned>
-    : AsyncResultFnGuard<Body>
+  ReturnType<Body> extends Generator<unknown, infer Returned> ? SyncResultGenGuard<Returned> : never
 
 export interface ResultFromNullishOr {
   <T, E>(this: void, value: T, onNullish: (value: T) => E): Result<NonNullable<T>, E>

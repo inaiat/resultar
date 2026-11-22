@@ -40,9 +40,7 @@ and use these samples for new code:
 These are independent adoption steps. Every asynchronous recipe uses `ResultTask`: it is lazy
 and repeatable, has no `.then`, and runs through explicit runners. Synchronous recipes retain
 `Result`. Native Promise boundaries use `task.runPromise()`, while callers that need typed
-results use `task.runResult()`, which returns an in-flight `ResultAsync<T, E>` (`PromiseLike<Result<T, E>>`)
-that resolves to `Result<T, E>` when awaited and also supports direct `Result`-style chaining
-(`.match(...)`, `.matchTags(...)`, `.unwrapOr(...)`, etc.). Use `task.runExit()` to inspect
+results use `task.runResult()`, which returns a native `Promise<Result<T, E>>`. Use `task.runExit()` to inspect
 cancellation, defects and cleanup failures.
 Construct promises and mutable per-run state inside the Task so repeated runs create fresh work.
 
@@ -50,7 +48,7 @@ Construct promises and mutable per-run state inside the Task so repeated runs cr
   tagged errors (`createTaggedError`, `.is()`), redacted props (`redact`, `revealRedacted`,
   `isRedacted`), untrusted payload decoding (`decodeSignupPayload`), and HTTP-style boundary mapping.
 - [`src/domain-workflow.ts`](src/domain-workflow.ts): a linear domain flow using `andThen`, `mapErr`,
-  synchronous `Result.gen`, lazy `ResultTask.gen`, deprecated synchronous `safeTry`, `findCause`,
+  synchronous `Result.gen`, lazy `ResultTask.gen`, `findCause`,
   and `.matchTags()` with typed error unions.
 - [`src/tagged-enum.ts`](src/tagged-enum.ts): lightweight tagged unions with `taggedEnum`, `$is`,
   and exhaustive `$match`.
@@ -96,7 +94,7 @@ The `src/index.ts` barrel re-exports every sample except `application-lifecycle.
 them together via `runCookbook`. The smoke scripts check the expected `Ok` and `Err` branches
 so this example stays executable as the library evolves.
 
-## Recommended v4 workflows
+## Recommended v5 workflows
 
 Promise-returning helpers in this cookbook have explicit roles: `readConfigText`
 and the transport delay stub simulate external drivers; `run*`, resource-cleanup,
@@ -106,9 +104,8 @@ New reusable asynchronous application methods return `ResultTask` without `async
 use `tryPromise` to adapt a raw driver and `fromResultAsync` only for an existing
 typed Async operation. See the [boundary decision table](../../DOCUMENTATION.md#promise-boundaries-and-application-contracts).
 
-`Result.gen` returns plain success values and uses `yield*` for fallible steps and early
-errors; deprecated `safeTry` retains its original Result-returning signatures as a separate helper.
-Synchronous recipes use `Result.gen` and `Result.fn`. Asynchronous recipes use
+`Result.gen` and `Result.fn` are purely synchronous with plain success returns and `yield*`
+for fallible steps and early errors. Asynchronous recipes use
 `ResultTask.gen` or `ResultTask.fn`, including those with no services or resources yet.
 
 ```ts
@@ -123,8 +120,7 @@ const task = ResultTask.gen(function* () {
 
 const result = await task.runResult();
 
-// Or chain Result methods directly on the in-flight ResultAsync returned by runResult():
-const status = await task.runResult().match(
+const status = result.match(
   (response) => response.status,
   () => 503,
 );
@@ -133,12 +129,11 @@ const status = await task.runResult().match(
 Task `map` is synchronous; compose another async step with `andThen` and `tryPromise`.
 Task uses `ok`, `err`, `mapErr`, `andThen`, and `orElse`; retries take a `Retry.policy(...)`.
 Task `match` returns a lazy Task (with `{ ok, err }` handlers), whereas `task.runResult()` starts
-execution and returns an in-flight `ResultAsync` (`PromiseLike<Result<T, E>>`), so you can either
-chain `.runResult().match(...)` directly, `await task.runResult()` to get a `Result`, or fold inside
-the lazy task and run with `runPromise`.
+execution and returns a native `Promise<Result<T, E>>`, so you can `await task.runResult()` to match
+on `Result`, or fold inside the lazy task and run with `runPromise`.
 
 See the [ResultTask package guide](../../packages/resultar/README.md#lazy-workflows-with-resulttask)
-and [major adoption guide](../../docs/migrations/v4.md) for the new runtime capabilities.
+and [v5 migration guide](../../docs/migrations/v5.md) for the v5 async model.
 
 ## Recipe adaptations
 

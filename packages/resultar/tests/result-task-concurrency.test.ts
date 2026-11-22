@@ -1,5 +1,6 @@
 import { deepEqual, equal, rejects, throws } from 'node:assert/strict'
 import { describe, expectTypeOf, it } from 'vite-plus/test'
+import { Retry } from '../src/core/retry.js'
 import { Fiber, ResultTask, ResultTaskCauseError } from '../src/task/result-task.js'
 import type { Exit, FiberHandle, ResultTaskScope } from '../src/task/result-task.js'
 import { Clock } from '../src/task/task-clock.js'
@@ -424,7 +425,7 @@ describe('ResultTask race and timeout', () => {
 
 describe('ResultTask retry', () => {
   it('closes each attempt before backoff and uses deterministic jitter', async () => {
-    const clock = Clock.virtual(0, () => 0.5)
+    const clock = Clock.virtual(0, () => 0)
     const events: string[] = []
     let attempt = 0
     const task = ResultTask.gen(function* () {
@@ -441,13 +442,15 @@ describe('ResultTask retry', () => {
       })
       if (current < 3) return yield* ResultTask.err('offline' as const)
       return current
-    }).retry({
-      times: 2,
-      delayMs: 10,
-      backoff: 2,
-      jittered: true,
-      while: (error) => error === 'offline',
-    })
+    }).retry(
+      Retry.policy({
+        times: 2,
+        delayMs: 10,
+        backoff: 2,
+        jittered: 0.5,
+        while: (error) => error === 'offline',
+      }),
+    )
     const running = ResultTask.runResult(task, { clock })
     await clock.flush()
     deepEqual(events, ['attempt:1', 'release:1'])
@@ -470,12 +473,14 @@ describe('ResultTask retry', () => {
     const defect = ResultTask.sync(() => {
       attempts += 1
       throw new Error('bug')
-    }).retry({ times: 3 })
+    }).retry(Retry.policy({ times: 3 }))
     const exit = await ResultTask.runExit(defect)
     equal(exit._tag, 'Failure')
     equal(attempts, 1)
     deepEqual(
-      await ResultTask.runResult(ResultTask.err('denied').retry({ times: 3, while: () => false })),
+      await ResultTask.runResult(
+        ResultTask.err('denied').retry(Retry.policy({ times: 3, while: () => false })),
+      ),
       err('denied'),
     )
     const clock = Clock.virtual()
@@ -486,7 +491,7 @@ describe('ResultTask retry', () => {
         attempts += 1
       })
         .andThen(() => ResultTask.err('offline'))
-        .retry({ times: 3, delayMs: 10 }),
+        .retry(Retry.policy({ times: 3, delayMs: 10 })),
       { clock, signal: controller.signal },
     )
     await clock.flush()
@@ -506,7 +511,7 @@ describe('ResultTask retry', () => {
         release: () => ResultTask.err('release'),
       })
       return yield* ResultTask.err('body')
-    }).retry({ times: 3 })
+    }).retry(Retry.policy({ times: 3 }))
     deepEqual(await ResultTask.runExit(task), {
       _tag: 'Failure',
       cause: {
@@ -654,37 +659,34 @@ describe('ResultTask collections', () => {
 })
 
 describe('ResultTask policy types', () => {
-  /* eslint-disable typescript/no-deprecated -- This regression verifies retained Task methods. */
-  it('preserves the existing composition names and both matching handler shapes', async () => {
-    const task = ResultTask.succeed<number, string>(1)
-      .flatMap((value) => ResultTask.succeed(value + 1))
+  it('preserves the canonical composition names and match handler shape', async () => {
+    const task = ResultTask.ok<number, string>(1)
       .andThen((value) => ResultTask.ok(value + 1))
-      .mapError((error) => error.length)
-      .catchAll((error) => ResultTask.succeed(error))
+      .andThen((value) => ResultTask.ok(value + 1))
+      .mapErr((error) => error.length)
+      .orElse((error) => ResultTask.ok(error))
     deepEqual(await ResultTask.runResult(task), ok(3))
     deepEqual(
       await ResultTask.runResult(
-        ResultTask.succeed(1).pipe(ResultTask.flatMap((value) => ResultTask.succeed(value + 1))),
+        ResultTask.ok(1).pipe(ResultTask.andThen((value) => ResultTask.ok(value + 1))),
       ),
       ok(2),
     )
     deepEqual(
       await ResultTask.runResult(
-        ResultTask.mapError(ResultTask.fail('missing'), (error) => error.length),
+        ResultTask.mapErr(ResultTask.err('missing'), (error) => error.length),
       ),
       err(7),
     )
     deepEqual(
       await ResultTask.runResult(
-        ResultTask.fail('missing').pipe(
-          ResultTask.catchAll((error) => ResultTask.succeed(error.length)),
-        ),
+        ResultTask.err('missing').pipe(ResultTask.orElse((error) => ResultTask.ok(error.length))),
       ),
       ok(7),
     )
     deepEqual(
       await ResultTask.runResult(
-        ResultTask.succeed(1).match({ onSuccess: (value) => value + 1, onFailure: () => 0 }),
+        ResultTask.ok(1).match({ ok: (value) => value + 1, err: () => 0 }),
       ),
       ok(2),
     )
@@ -694,24 +696,11 @@ describe('ResultTask policy types', () => {
       ),
       ok(7),
     )
-    deepEqual(
-      await ResultTask.runResult(
-        ResultTask.fail('missing').match({ ok: () => 0, error: (error) => error.length }),
-      ),
-      ok(7),
-    )
-    expectTypeOf<
-      Extract<
-        'flatMap' | 'andThen' | 'mapError' | 'catchAll' | 'mapErr' | 'orElse',
-        keyof typeof task
-      >
-    >().toEqualTypeOf<'flatMap' | 'andThen' | 'mapError' | 'catchAll' | 'mapErr' | 'orElse'>()
-    expectTypeOf<
-      Extract<'ok' | 'err' | 'succeed' | 'fail', keyof typeof ResultTask>
-    >().toEqualTypeOf<'ok' | 'err' | 'succeed' | 'fail'>()
+    expectTypeOf<Extract<'andThen' | 'mapErr' | 'orElse', keyof typeof task>>().toEqualTypeOf<
+      'andThen' | 'mapErr' | 'orElse'
+    >()
+    expectTypeOf<Extract<'ok' | 'err', keyof typeof ResultTask>>().toEqualTypeOf<'ok' | 'err'>()
   })
-
-  /* eslint-enable typescript/no-deprecated */
 
   it('preserves tuple successes, services, errors, and deferred release failures', () => {
     const Service = ResultTask.service<{ readonly value: number }>()('Service')
@@ -722,7 +711,9 @@ describe('ResultTask policy types', () => {
     })
     const timeout = task.pipe(ResultTask.timeout(10, () => 'timeout' as const))
     const retry = task.pipe(
-      ResultTask.retry({ times: 2, while: (error: 'invalid') => error === 'invalid' }),
+      ResultTask.retry(
+        Retry.policy({ times: 2, while: (error: 'invalid') => error === 'invalid' }),
+      ),
     )
     expectTypeOf(timeout).toEqualTypeOf<ResultTask<number, 'invalid' | 'timeout', typeof Service>>()
     expectTypeOf(retry).toEqualTypeOf<ResultTask<number, 'invalid', typeof Service>>()
@@ -784,7 +775,7 @@ describe('ResultTask policy types', () => {
   it('rejects invalid policy inputs before starting work', () => {
     throws(() => ResultTask.sleep(-1), RangeError)
     throws(() => ResultTask.timeout(ResultTask.ok(1), Number.NaN, () => 'timeout'), RangeError)
-    throws(() => ResultTask.ok(1).retry({ times: -1 }), RangeError)
+    throws(() => Retry.policy({ times: -1 }), RangeError)
     throws(
       // eslint-disable-next-line unicorn/no-array-for-each -- This is the ResultTask policy, not Array.forEach.
       () => ResultTask.forEach([1], (value) => ResultTask.ok(value), { concurrency: 0 }),

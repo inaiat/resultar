@@ -8,7 +8,8 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as recipes from "../packages/resultar/dist/agent/examples/contracts.mjs";
-import { Cause, Fiber, ResultAsync, ResultTask } from "../packages/resultar/dist/index.js";
+import { ResultAsync } from "../packages/resultar/dist/async.js";
+import { Cause, Fiber, ResultTask } from "../packages/resultar/dist/index.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
@@ -122,21 +123,10 @@ test("direct Promise adapter forwards interruption to the driver", async () => {
   assert.equal(Cause.hasInterrupts(exit.cause), true);
 });
 
-test("published callback bridge cleans up on completion and interruption", async () => {
-  const emitter = new EventEmitter();
-  const ready = recipes.waitForReady(emitter);
-  emitter.emit("ready", 8);
-  assert.equal((await ready).unwrapOr(0), 8);
-  assert.equal(emitter.listenerCount("ready"), 0);
-  assert.equal(emitter.listenerCount("error"), 0);
-  const controller = new AbortController();
-  const cancelled = recipes.waitForReady(emitter, controller.signal);
-  controller.abort();
-  const result = await cancelled;
-  assert.equal(result.isErr(), true);
-  assert.equal(result.error.name, "AbortError");
-  assert.equal(emitter.listenerCount("ready"), 0);
-  assert.equal(emitter.listenerCount("error"), 0);
+test("runResult returns a native Promise resolving Result directly", async () => {
+  const pending = ResultTask.ok(42).runResult();
+  assert.equal(pending instanceof Promise, true);
+  assert.equal((await pending).unwrapOr(0), 42);
 });
 
 test("published matching, redaction, fallbacks, races and causes use real APIs", async () => {
@@ -177,9 +167,7 @@ test("runResult rejects interruption while runExit retains it and awaits release
   assert.deepEqual(events, ["release"]);
   const controller = new AbortController();
   controller.abort();
-  await assert.rejects(
-    Promise.resolve(ResultTask.sleep(1).runResult({ signal: controller.signal })),
-  );
+  await assert.rejects(ResultTask.sleep(1).runResult({ signal: controller.signal }));
 });
 
 test("every documented native rule severity agrees with the implementation", () => {
@@ -229,7 +217,10 @@ test("published lazy callback recipe repeats subscriptions and releases on inter
   const controller = new AbortController();
   const pending = task.runExit({ signal: controller.signal });
   controller.abort("stop");
-  assert.deepEqual(await pending, { _tag: "Failure", cause: { _tag: "Interrupt", reason: "stop" } });
+  assert.deepEqual(await pending, {
+    _tag: "Failure",
+    cause: { _tag: "Interrupt", reason: "stop" },
+  });
   assert.equal(emitter.listenerCount("ready"), 0);
   assert.equal(emitter.listenerCount("error"), 0);
 });
@@ -242,7 +233,10 @@ test("published never recipe keeps resources alive until interruption", async ()
   const running = task.runExit({ signal: controller.signal });
   assert.deepEqual(events, ["open"]);
   controller.abort("shutdown");
-  assert.deepEqual(await running, { _tag: "Failure", cause: { _tag: "Interrupt", reason: "shutdown" } });
+  assert.deepEqual(await running, {
+    _tag: "Failure",
+    cause: { _tag: "Interrupt", reason: "shutdown" },
+  });
   assert.deepEqual(events, ["open", "close"]);
 });
 
@@ -253,7 +247,10 @@ test("published Promise defect factory preserves rejection and lazy execution", 
   assert.equal(await task.runPromise(), 1);
   assert.equal(await task.runPromise(), 2);
   const defect = new Error("SDK defect");
-  await assert.rejects(Promise.resolve(recipes.promiseDefectBoundary(() => Promise.reject(defect)).runResult()), error => error === defect);
+  await assert.rejects(
+    recipes.promiseDefectBoundary(() => Promise.reject(defect)).runResult(),
+    (error) => error === defect,
+  );
 });
 
 test("no documentation file appends content after its License section", () => {
@@ -282,7 +279,11 @@ test("llms.txt keeps Freshness rule as its final section and covers every worksp
   const freshnessIndex = llms.lastIndexOf("\n## Freshness rule\n");
   assert.notEqual(freshnessIndex, -1, "llms.txt must contain a ## Freshness rule section");
   const tail = llms.slice(freshnessIndex + "\n## Freshness rule\n".length);
-  assert.equal(/^##\s/m.test(tail), false, "llms.txt must not append headings after ## Freshness rule");
+  assert.equal(
+    /^##\s/m.test(tail),
+    false,
+    "llms.txt must not append headings after ## Freshness rule",
+  );
 
   const readme = readFileSync(join(root, "README.md"), "utf8");
   for (const dir of readdirSync(join(root, "packages"))) {
@@ -327,8 +328,10 @@ test("rule counts cited across docs and skill match packages/check/README.md", (
 test("coming-from-effect example compiles strictly and executes, and RFC 0010 links resolve", async () => {
   for (const rel of [
     "docs/coming-from-effect.md",
+    "docs/migrations/v5.md",
     "docs/rfcs/README.md",
     "docs/rfcs/rfc-0010-dx-observability-concurrency-and-tooling.md",
+    "docs/rfcs/rfc-0012-v5-async-model-unification.md",
   ]) {
     const filePath = join(root, rel);
     const content = readFileSync(filePath, "utf8");
@@ -381,7 +384,9 @@ test("coming-from-effect example compiles strictly and executes, and RFC 0010 li
         stdio: "pipe",
       });
     } catch (error) {
-      assert.fail(`Failed to compile docs/coming-from-effect.md snippet:\n${error.stdout ?? error}`);
+      assert.fail(
+        `Failed to compile docs/coming-from-effect.md snippet:\n${error.stdout ?? error}`,
+      );
     }
 
     const compiledPath = join(tempDir, "out/example.mjs");

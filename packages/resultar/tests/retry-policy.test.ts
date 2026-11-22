@@ -1,16 +1,7 @@
-import { deepEqual, equal, rejects, throws } from 'node:assert'
-import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
+import { deepEqual, equal, throws } from 'node:assert'
+import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import {
-  type AbortError,
-  Clock,
-  err,
-  isAbortError,
-  ok,
-  ResultAsync,
-  ResultTask,
-  type ResultTaskScope,
-} from '../src/index.js'
+import { Clock, err, ok, ResultTask, type ResultTaskScope } from '../src/index.js'
 import { Retry, type RetryContext, type RetryPolicy } from '../src/core/retry.js'
 
 describe('portable retry policies', () => {
@@ -35,7 +26,7 @@ describe('portable retry policies', () => {
     equal(attempts, 4)
   })
 
-  it('shares contexts and async callbacks while preserving eager and lazy execution', async () => {
+  it('passes retry contexts to async callbacks while preserving lazy execution', async () => {
     const predicates: RetryContext[] = []
     const observations: RetryContext[] = []
     const delays: RetryContext[] = []
@@ -54,26 +45,10 @@ describe('portable retry policies', () => {
         return 0
       },
     })
-    let eagerAttempts = 0
-    const eager = ResultAsync.retry((attempt) => {
-      eagerAttempts += 1
-      return attempt < 2
-        ? ResultAsync.errAsync<number, 'offline'>('offline')
-        : ResultAsync.okAsync<number, 'offline'>(attempt)
-    }, policy)
-    expectTypeOf(eager).toEqualTypeOf<ResultAsync<number, 'offline' | AbortError>>()
-    equal(eagerAttempts, 1)
-    deepEqual(await eager, ok(2))
     const expected = [
       { attempt: 0, nextAttempt: 1, retriesRemaining: 2 },
       { attempt: 1, nextAttempt: 2, retriesRemaining: 1 },
     ]
-    deepEqual(predicates, expected)
-    deepEqual(observations, expected)
-    deepEqual(delays, expected)
-    predicates.length = 0
-    observations.length = 0
-    delays.length = 0
 
     let lazyAttempts = 0
     const lazy = ResultTask.sync(() => {
@@ -91,29 +66,8 @@ describe('portable retry policies', () => {
     deepEqual(delays, expected)
   })
 
-  it('uses the same numeric jitter and backoff with each runtime random source', async () => {
-    vi.useFakeTimers()
-    vi.spyOn(Math, 'random').mockReturnValue(0.25)
-    const timeout = vi.spyOn(globalThis, 'setTimeout')
+  it('uses numeric jitter and backoff with runtime clock random source', async () => {
     const policy = Retry.policy({ times: 2, delayMs: 100, backoff: 2, jittered: 0.5 })
-    try {
-      const running = ResultAsync.retry(
-        (attempt) =>
-          attempt < 2
-            ? ResultAsync.errAsync<number, 'offline'>('offline')
-            : ResultAsync.okAsync<number, 'offline'>(attempt),
-        policy,
-      )
-      await vi.runAllTimersAsync()
-      deepEqual(await running, ok(2))
-      deepEqual(
-        timeout.mock.calls.map((call) => call[1]),
-        [75, 150],
-      )
-    } finally {
-      vi.restoreAllMocks()
-      vi.useRealTimers()
-    }
     const delays: number[] = []
     const clock = {
       randomValue: 0.25,
@@ -150,16 +104,12 @@ describe('portable retry policies', () => {
         observations += 1
       },
     })
-    deepEqual(
-      await ResultAsync.retry(() => ResultAsync.errAsync('offline'), policy),
-      err('offline'),
-    )
     deepEqual(await ResultTask.runResult(ResultTask.err('offline').retry(policy)), err('offline'))
     equal(predicates, 0)
     equal(observations, 0)
   })
 
-  it('awaits async predicates and ignores observer failures in both models', async () => {
+  it('awaits async predicates and ignores observer failures', async () => {
     const events: string[] = []
     const policy = Retry.policy({
       times: 1,
@@ -173,14 +123,6 @@ describe('portable retry policies', () => {
         throw new Error('observer')
       },
     })
-    deepEqual(
-      await ResultAsync.retry(
-        (attempt) =>
-          attempt === 0 ? ResultAsync.errAsync('offline') : ResultAsync.okAsync('ready'),
-        policy,
-      ),
-      ok('ready'),
-    )
     let attempt = 0
     const task = ResultTask.sync(() => {
       attempt += 1
@@ -189,16 +131,12 @@ describe('portable retry policies', () => {
       .andThen((current) => (current === 0 ? ResultTask.err('offline') : ResultTask.ok('ready')))
       .retry(policy)
     deepEqual(await ResultTask.runResult(task), ok('ready'))
-    deepEqual(events, ['while:0', 'observe:0', 'while:0', 'observe:0'])
+    deepEqual(events, ['while:0', 'observe:0'])
   })
 
   it('preserves unexpected predicate rejection outside the typed error channel', async () => {
     const defect = new Error('predicate')
     const policy = Retry.policy({ times: 1, while: () => Promise.reject(defect) })
-    await rejects(
-      async () => await ResultAsync.retry(() => ResultAsync.errAsync('offline'), policy),
-      defect,
-    )
     deepEqual(await ResultTask.runExit(ResultTask.err('offline').retry(policy)), {
       _tag: 'Failure',
       cause: { _tag: 'Die', defect },
@@ -414,98 +352,6 @@ describe('portable retry policies', () => {
     deepEqual(events, ['while'])
   })
 
-  it('preserves the policy brand when adding Async signal or fallback options', async () => {
-    const policy = Retry.policy({ times: 1 })
-    const controller = new AbortController()
-    controller.abort('stop')
-    const aborted = await ResultAsync.retry(() => ResultAsync.okAsync(1), {
-      // eslint-disable-next-line oxc/no-rest-spread-properties -- Verify JavaScript spread preserves the canonical policy brand.
-      ...policy,
-      signal: controller.signal,
-    })
-    equal(aborted.isErr() && isAbortError(aborted.error), true)
-    const result = ResultAsync.retryOrElse(
-      () => ResultAsync.errAsync<number, 'offline'>('offline'),
-      {
-        // eslint-disable-next-line oxc/no-rest-spread-properties -- Verify JavaScript spread preserves the canonical policy brand.
-        ...policy,
-        orElse: (error, context) => {
-          expectTypeOf(error).toEqualTypeOf<'offline'>()
-          equal(context.attempt, 1)
-          return ok('cached')
-        },
-      },
-    )
-    expectTypeOf(result).toEqualTypeOf<ResultAsync<number | string, AbortError>>()
-    deepEqual(await result, ok('cached'))
-  })
-
-  it('preserves Task legacy retry numbers, error arguments, and full boolean jitter', async () => {
-    const delays: number[] = []
-    const delayArguments: [number, string][] = []
-    const predicateArguments: [string, number][] = []
-    const clock = {
-      now: () => 0,
-      random: () => 0.25,
-      sleep: async (delay: number) => {
-        delays.push(delay)
-      },
-    }
-    let attempt = 0
-    const task = ResultTask.sync(() => {
-      attempt += 1
-      return attempt - 1
-    })
-      .andThen((current) => (current < 2 ? ResultTask.err('offline') : ResultTask.ok(current)))
-      .retry({
-        times: 2,
-        delayMs: (retry, error) => {
-          delayArguments.push([retry, error])
-          return 10
-        },
-        backoff: 2,
-        jittered: true,
-        while: (error, retry) => {
-          predicateArguments.push([error, retry])
-          return true
-        },
-      })
-    deepEqual(await ResultTask.runResult(task, { clock }), ok(2))
-    deepEqual(delayArguments, [
-      [1, 'offline'],
-      [2, 'offline'],
-    ])
-    deepEqual(predicateArguments, [
-      ['offline', 1],
-      ['offline', 2],
-    ])
-    deepEqual(delays, [2.5, 5])
-  })
-
-  it('preserves Async legacy context callbacks even on the exhausted failure', async () => {
-    const predicates: RetryContext[] = []
-    const delays: RetryContext[] = []
-    deepEqual(
-      await ResultAsync.retry(() => ResultAsync.errAsync('offline'), {
-        times: 1,
-        while: (_error, context) => {
-          predicates.push(context)
-          return true
-        },
-        delayMs: (context) => {
-          delays.push(context)
-          return 0
-        },
-      }),
-      err('offline'),
-    )
-    deepEqual(predicates, [
-      { attempt: 0, nextAttempt: 1, retriesRemaining: 1 },
-      { attempt: 1, nextAttempt: 2, retriesRemaining: 0 },
-    ])
-    deepEqual(delays, [{ attempt: 0, nextAttempt: 1, retriesRemaining: 1 }])
-  })
-
   it('preserves inferred Task errors and services with direct, instance, and curried policies', () => {
     const Service = ResultTask.service<{ readonly value: number }>()('RetryService')
     const task = ResultTask.gen(function* () {
@@ -539,17 +385,13 @@ describe('portable retry policies', () => {
     expectTypeOf(contexts).toEqualTypeOf<RetryPolicy<'offline'>>()
   })
 
-  it('validates canonical timings while preserving legacy validation boundaries', async () => {
+  it('validates canonical timings and spread policy overrides', async () => {
     throws(() => Retry.policy({ times: -1 }), RangeError)
     throws(() => Retry.policy({ times: Number.MAX_SAFE_INTEGER + 1 }), RangeError)
     throws(() => Retry.policy({ times: 1, delayMs: -1 }), RangeError)
     throws(() => Retry.policy({ times: 1, backoff: 0.5 }), RangeError)
     throws(() => Retry.policy({ times: 1, jittered: Infinity }), RangeError)
     const invalidDelay = Retry.policy({ times: 1, delayMs: () => -1 })
-    await rejects(
-      async () => await ResultAsync.retry(() => ResultAsync.errAsync('offline'), invalidDelay),
-      RangeError,
-    )
     const taskExit = await ResultTask.runExit(ResultTask.err('offline').retry(invalidDelay))
     equal(
       taskExit._tag === 'Failure' &&
@@ -560,26 +402,20 @@ describe('portable retry policies', () => {
     const policy = Retry.policy({ times: 1 })
     // eslint-disable-next-line oxc/no-rest-spread-properties -- Verify execution validates a spread policy with changed timings.
     const invalid = { ...policy, times: -1 }
-    await rejects(
-      async () => await ResultAsync.retry(() => ResultAsync.errAsync('offline'), invalid),
-      RangeError,
-    )
     throws(() => ResultTask.err('offline').retry(invalid), RangeError)
   })
 })
 
 const typeAssertions = (): void => {
   const wrong = Retry.policy<'other'>({ times: 1, while: (error) => error === 'other' })
-  // @ts-expect-error Portable predicates must accept the operation's error channel.
-  void ResultAsync.retry(() => ResultAsync.errAsync<number, 'offline'>('offline'), wrong)
   // @ts-expect-error Portable predicates must accept the Task error channel.
   void ResultTask.err('offline' as const).retry(wrong)
   // @ts-expect-error Canonical jitter uses a numeric symmetric factor, never legacy Task full jitter.
   Retry.policy({ times: 1, jittered: true })
   // @ts-expect-error Canonical delay callbacks receive context rather than the legacy retry number.
   Retry.policy({ times: 1, delayMs: (retry: number) => retry })
-  // @ts-expect-error Retry callbacks must return ResultAsync rather than an ordinary Promise.
-  void ResultAsync.retry(() => Promise.resolve(1), Retry.policy({ times: 1 }))
+  // @ts-expect-error ResultTask.retry requires a branded RetryPolicy created by Retry.policy(...).
+  void ResultTask.err('offline' as const).retry({ times: 1 })
   const scoped: ResultTask<
     number,
     'offline',

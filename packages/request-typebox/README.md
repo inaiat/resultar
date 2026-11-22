@@ -5,9 +5,8 @@ TypeBox adapter for `resultar-request`.
 Use this package when a request response should be validated with TypeBox while the transport and
 Resultar error flow stay in `resultar-request`.
 
-Prefer `requestJsonTypeBoxTask` (also exported as `requestJsonTask`) for new lazy `ResultTask`
-workflows, and `requestJsonTypeBox` (also exported as `requestJson`) when preserving an eager
-`ResultAsync` boundary.
+`requestJsonTypeBox` (also exported as `requestJson`) builds a lazy, repeatable `ResultTask<T, E>`
+that runs your request factory on execution with the active Task `AbortSignal` and `TaskClock`.
 
 For a schema-library-agnostic request, use
 [`resultar-request`](https://www.npmjs.com/package/resultar-request) directly with its `validator`
@@ -30,98 +29,67 @@ helpers. It is a direct reexport of TypeBox's `Type`, including type utilities s
 as `t.Static`. TypeBox is installed automatically as a dependency (`>=1.3.4 <2.0.0`);
 no separate installation is needed when using `t`. Direct TypeBox imports remain
 compatible; declare TypeBox in your application dependencies if you import it by name.
-The alias does not change validation or eager/lazy execution behavior.
 
-## `requestJsonTypeBoxTask` and `requestJson`
+## `requestJsonTypeBox` and `requestJson`
 
-For new lazy `ResultTask` services, return `requestJsonTypeBoxTask` directly without `async` or
-`ResultTask.fromResultAsync`:
+Return `requestJsonTypeBox` (or its package-local `requestJson` alias) directly from service
+functions without an `async` wrapper:
 
 ```ts
-import { createTaggedError, ResultTask } from 'resultar'
-import {
-  requestJsonTypeBoxTask,
-  t,
-  type RequestJsonMapError,
-} from 'resultar-request-typebox'
+import { createTaggedError, ResultTask } from "resultar";
+import { requestJsonTypeBox, t, type RequestJsonMapError } from "resultar-request-typebox";
 
 const userSchema = t.Object(
   {
     id: t.String(),
     email: t.String(),
-    plan: t.Union([t.Literal('free'), t.Literal('team')]),
+    plan: t.Union([t.Literal("free"), t.Literal("team")]),
   },
   { additionalProperties: false },
-)
+);
 
-type User = t.Static<typeof userSchema>
+type User = t.Static<typeof userSchema>;
 
 class UserApiError extends createTaggedError({
-  name: 'UserApiError',
-  message: 'User API $reason: $detail',
+  name: "UserApiError",
+  message: "User API $reason: $detail",
 }).withProps<{
-  readonly reason: 'not-found' | 'http' | 'invalid-json' | 'request' | 'validation'
-  readonly detail: string
+  readonly reason: "not-found" | "http" | "invalid-json" | "request" | "validation";
+  readonly detail: string;
 }>() {}
 
 const mapUserError = {
-  404: ({ statusCode }) =>
-    new UserApiError({ reason: 'not-found', detail: `HTTP ${statusCode}` }),
-  http: ({ statusCode }) =>
-    new UserApiError({ reason: 'http', detail: `HTTP ${statusCode}` }),
+  404: ({ statusCode }) => new UserApiError({ reason: "not-found", detail: `HTTP ${statusCode}` }),
+  http: ({ statusCode }) => new UserApiError({ reason: "http", detail: `HTTP ${statusCode}` }),
   invalidJson: ({ cause }) =>
-    new UserApiError({ cause, reason: 'invalid-json', detail: cause.message }),
-  request: ({ cause }) =>
-    new UserApiError({ cause, reason: 'request', detail: cause.message }),
+    new UserApiError({ cause, reason: "invalid-json", detail: cause.message }),
+  request: ({ cause }) => new UserApiError({ cause, reason: "request", detail: cause.message }),
   validation: ({ errors }) =>
     new UserApiError({
-      reason: 'validation',
+      reason: "validation",
       detail: `${errors.length} validation issue(s)`,
     }),
-} satisfies RequestJsonMapError
+} satisfies RequestJsonMapError;
 
-const fetchUserTask = (id: string): ResultTask<User, UserApiError> =>
-  requestJsonTypeBoxTask({
+const fetchUser = (id: string): ResultTask<User, UserApiError> =>
+  requestJsonTypeBox({
     request: (signal) => fetch(`https://example.com/users/${id}`, { signal }),
     schema: userSchema,
     mapError: mapUserError,
     retry: { times: 2, delayMs: 100, backoff: 2 },
-  })
+  });
 
-const loadUserLabelTask = ResultTask.fn(function* (id: string) {
-  const { email, plan } = yield* fetchUserTask(id)
-  return `${email} (${plan})`
-})
+const loadUserLabel = ResultTask.fn(function* (id: string) {
+  const { email, plan } = yield* fetchUser(id);
+  return `${email} (${plan})`;
+});
 
-const result = await loadUserLabelTask('123').runResult()
-```
-
-For existing eager `ResultAsync` contracts, use `requestJsonTypeBox` (aliased as `requestJson`):
-
-```ts
-import { Result, type StrictResultAsync } from 'resultar'
-import { requestJson as requestJsonTypeBox } from 'resultar-request-typebox'
-
-const fetchUser = (id: string, signal?: AbortSignal): StrictResultAsync<User, UserApiError> =>
-  requestJsonTypeBox({
-    signal,
-    request: (attemptSignal) => fetch(`https://example.com/users/${id}`, { signal: attemptSignal }),
-    schema: userSchema,
-    mapError: mapUserError,
-  })
-
-const loadUserLabel = (id: string): StrictResultAsync<string, UserApiError> =>
-  Result.gen(async function* () {
-    const { email, plan } = yield* fetchUser(id)
-    return `${email} (${plan})`
-  })
+const result = await loadUserLabel("123").runResult();
 ```
 
 `t.Static<typeof userSchema>` is the success type, while Resultar keeps request, HTTP, invalid-JSON,
-and validation failures in the typed error channel. `requestJsonTypeBox` / `requestJsonTypeBoxTask`
-are exported as named adapter helpers alongside package-local `requestJson` / `requestJsonTask`
-aliases. If an existing helper already returns `ResultAsync`, you can still bridge it lazily with
-`ResultTask.fromResultAsync((signal) => fetchUser(id, signal))`.
+and validation failures in the typed error channel. `requestJsonTypeBox` is exported alongside the
+package-local `requestJson` alias.
 
 The package also re-exports the public `resultar-request` API, including `RequestError`, map-error
 types, retry types, and structural response types.
@@ -132,16 +100,16 @@ Resultar error mapping.
 
 ## Shared Request Options
 
-| Option | Purpose |
-| --- | --- |
-| `request` | `(signal: AbortSignal) => Promise<Response>` factory (or eager `Promise` in `requestJson`) |
-| `signal` | Optional `AbortSignal` for eager `requestJson` (in `requestJsonTypeBoxTask`, use the Task runner signal) |
-| `schema` | TypeBox schema used for runtime validation and `Static` success inference |
-| `validationError` | Static or computed validation failure message |
-| `mapError` | Status-specific and category-specific domain error mapping |
-| `retry` | Attempts, delay, backoff, jitter, `when`, and `onRetry` policy inherited from `resultar-request` |
+| Option            | Purpose                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------ |
+| `request`         | `(signal: AbortSignal) => Promise<Response>` factory invoked on each Task execution and retry    |
+| `schema`          | TypeBox schema used for runtime validation and `Static` success inference                        |
+| `validationError` | Static or computed validation failure message                                                    |
+| `mapError`        | Status-specific and category-specific domain error mapping                                       |
+| `retry`           | Attempts, delay, backoff, jitter, `when`, and `onRetry` policy inherited from `resultar-request` |
 
-Use a request factory whenever `retry` is enabled. A previously created promise cannot be restarted.
+Pass an `AbortSignal` at the execution boundary via `.runResult({ signal })` / `.runExit({ signal })`,
+or compose with `ResultTask.timeout` and fiber interruption inside Task workflows.
 
 ## Requirements
 

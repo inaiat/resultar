@@ -1,8 +1,6 @@
 import { Type } from "typebox";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 
-// Fastify's plugin callback uses its native async lifecycle contract.
-// resultar-check-disable-next-line prefer-result-async
 export const usersRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get(
     "/users/:id",
@@ -16,10 +14,10 @@ export const usersRoutes: FastifyPluginAsyncTypebox = async (app) => {
         },
       },
     },
-    // Fastify awaits the HTTP reply after the Resultar channel has been matched.
-    // resultar-check-disable-next-line prefer-result-async
     async (request, reply) => {
-      const result = await request.services.users.findById(request.params.id);
+      const result = await request.services.users
+        .findById(request.params.id)
+        .runResult({ signal: request.signal });
       return result.matchTags((user) => reply.code(200).send(user), {
         UserNotFoundError: (error) => reply.code(404).send({ error: error.message }),
         UserReadError: (error) => {
@@ -31,8 +29,6 @@ export const usersRoutes: FastifyPluginAsyncTypebox = async (app) => {
   );
 };
 
-// Fastify's plugin callback uses its native async lifecycle contract.
-// resultar-check-disable-next-line prefer-result-async
 export const healthRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get(
     "/health",
@@ -44,10 +40,8 @@ export const healthRoutes: FastifyPluginAsyncTypebox = async (app) => {
         },
       },
     },
-    // Fastify awaits the HTTP reply after the Resultar channel has been matched.
-    // resultar-check-disable-next-line prefer-result-async
-    async (request, reply) => {
-      const result = await request.services.health.check();
+    async ({ signal, services }, reply) => {
+      const result = await services.health.check().runResult({ signal });
       return result.match(
         (health) => reply.code(200).send(health),
         () => reply.code(503).send({ error: "Health unavailable" }),

@@ -200,7 +200,7 @@ describe('TaskLocal and opt-in span tracing', () => {
 
   it('attaches logical span traces to failures even without an active tracer', () => {
     const charge = ResultTask.fn('payments.charge', function* () {
-      return yield* ResultTask.fail('CardDeclined' as const)
+      return yield* ResultTask.err('CardDeclined' as const)
     })
     const checkout = ResultTask.fn('checkout.submit', function* (orderId: string) {
       return yield* charge().withSpan('stripe.request', { orderId })

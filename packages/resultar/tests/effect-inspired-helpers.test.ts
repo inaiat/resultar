@@ -4,20 +4,18 @@ import { deepEqual, equal, ok as isTrue } from 'node:assert'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
+import { ResultAsync, errAsync, okAsync } from '../src/entries/async.js'
 import type { Result as ResultType, TaggedEnum } from '../src/index.js'
 
 import {
   AbortError,
   Result,
-  ResultAsync,
   ResultTask,
   createTaggedError,
   err,
-  errAsync,
   isAbortError,
   isRedacted,
   ok,
-  okAsync,
   pipe,
   redact,
   revealRedacted,
@@ -145,7 +143,7 @@ describe('record and iterable aggregation', () => {
   }
 
   it('combines sync record results by key', () => {
-    const result = Result.combine({
+    const result = Result.all({
       org: ok<Org, 'org-error'>({ id: 'o1' }),
       user: ok<User, 'user-error'>({ id: 'u1' }),
     })
@@ -157,37 +155,49 @@ describe('record and iterable aggregation', () => {
     >()
   })
 
-  it('collects sync record errors', () => {
-    const result = Result.combineWithAllErrors({
+  it('collects sync record errors and ok values with Result.validateAll', () => {
+    const failed = Result.validateAll({
       org: err<Org, 'org-error'>('org-error'),
       user: err<User, 'user-error'>('user-error'),
     })
 
-    isTrue(result.isErr())
-    deepEqual(result.error, ['org-error', 'user-error'])
+    isTrue(failed.isErr())
+    deepEqual(failed.error, ['org-error', 'user-error'])
+
+    const succeeded = Result.validateAll({
+      org: ok<Org, 'org-error'>({ id: 'o1' }),
+      user: ok<User, 'user-error'>({ id: 'u1' }),
+    })
+
+    isTrue(succeeded.isOk())
+    deepEqual(succeeded.value, { org: { id: 'o1' }, user: { id: 'u1' } })
+    expectTypeOf(succeeded).toExtend<
+      ResultType<
+        { readonly org: Org; readonly user: User },
+        readonly ('org-error' | 'user-error')[]
+      >
+    >()
   })
 
   it('combines sync iterable results into readonly arrays', () => {
-    const result = Result.combine(new Set([ok<number, string>(1), ok<number, string>(2)]))
+    const result = Result.all(new Set([ok<number, string>(1), ok<number, string>(2)]))
 
     isTrue(result.isOk())
     deepEqual(result.value, [1, 2])
     expectTypeOf(result).toExtend<ResultType<readonly number[], string>>()
   })
 
-  it('combines async record results by key', async () => {
-    const result = ResultAsync.combine({
-      org: okAsync<Org, 'org-error'>({ id: 'o1' }),
-      user: okAsync<User, 'user-error'>({ id: 'u1' }),
-    })
+  it('collects all errors or ok values from sync iterables with Result.validateAll', () => {
+    const succeeded = Result.validateAll(new Set([ok<number, string>(1), ok<number, string>(2)]))
+    isTrue(succeeded.isOk())
+    deepEqual(succeeded.value, [1, 2])
+    expectTypeOf(succeeded).toExtend<ResultType<readonly number[], readonly string[]>>()
 
-    const resolved = await result
-
-    isTrue(resolved.isOk())
-    deepEqual(resolved.value, { org: { id: 'o1' }, user: { id: 'u1' } })
-    expectTypeOf(result).toExtend<
-      ResultAsync<{ readonly org: Org; readonly user: User }, 'org-error' | 'user-error'>
-    >()
+    const failed = Result.validateAll(
+      new Set([ok<number, string>(1), err<number, string>('first'), err<number, string>('second')]),
+    )
+    isTrue(failed.isErr())
+    deepEqual(failed.error, ['first', 'second'])
   })
 })
 
@@ -475,10 +485,7 @@ describe('orElseSucceed and unwrapOr helpers', () => {
   })
 
   it('recovers with plain values via orElseSucceed and unwrapOr on ResultAsync', async () => {
-    const failed = PermissionError.errAsync({ permission: 'admin' }) as ResultAsync<
-      number,
-      PermissionError
-    >
+    const failed = errAsync<number, PermissionError>(new PermissionError({ permission: 'admin' }))
     const succeeded = okAsync<number, PermissionError>(10)
 
     const fromInstance = failed.orElseSucceed((error) => `missing:${error.permission}`)

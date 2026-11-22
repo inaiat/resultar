@@ -4,16 +4,7 @@ import type {
   FastifyRequest,
   HookHandlerDoneFunction,
 } from "fastify";
-// Lifecycle sessions retain their eager ResultAsync compatibility boundary.
-/* eslint-disable typescript/no-deprecated */
-import {
-  err,
-  ResultTaskCauseError,
-  tryResult,
-  tryResultAsync,
-  unitAsync,
-  type ResultAsync,
-} from "resultar";
+import { err, ResultTaskCauseError, tryResult, type Result } from "resultar";
 import { useServiceAccess, type ServiceAccess } from "resultar-di";
 
 import { hasFailure, startSession, type RuntimeTask, type ServiceSession } from "./session.js";
@@ -112,9 +103,10 @@ const matchesLocalKeys = (
   return count === expected.length;
 };
 
-const finishRequest = (state: RequestState): ResultAsync<void, never> => {
-  const finished: ResultAsync<unknown, never> = state.session?.finish() ?? unitAsync();
-  return finished.andThen(() => state.completion ?? unitAsync()).map(() => state.cleanup());
+const finishRequest = async (state: RequestState): Promise<void> => {
+  await state.session?.finish();
+  await state.completion;
+  state.cleanup();
 };
 
 const attachRequest = (request: FastifyRequest, reply: FastifyReply): RequestState => {
@@ -183,23 +175,20 @@ const startTier2Session = (
     state.controller.signal,
   );
   state.session = session;
-  state.completion = session.completion
-    .map((exit) => {
-      state.cleanup();
-      return exit;
-    })
-    .inspect((exit) => {
-      if (state.exposed && exit._tag === "Failure" && hasFailure(exit.cause)) {
-        request.log.error(
-          { err: new ResultTaskCauseError(exit.cause) },
-          "Request service cleanup failed",
-        );
-      }
-    });
+  state.completion = session.completion.then((exit) => {
+    state.cleanup();
+    if (state.exposed && exit._tag === "Failure" && hasFailure(exit.cause)) {
+      request.log.error(
+        { err: new ResultTaskCauseError(exit.cause) },
+        "Request service cleanup failed",
+      );
+    }
+    return exit;
+  });
   return session;
 };
 
-const runTier2WithLocals = (
+const runTier2WithLocals = async (
   ctx: Tier2RequestContext,
   request: FastifyRequest,
   replyAndLocals: { readonly reply: FastifyReply; readonly locals: RuntimeServices },
@@ -208,17 +197,26 @@ const runTier2WithLocals = (
   const { reply, locals } = replyAndLocals;
   const state = attachRequest(request, reply);
   requests.set(request, state);
-  return tryResult(() => startTier2Session(config, state, { request, locals }), preserveNativeError)
-    .asyncAndThen((session) => session.ready)
-    .andThen((services) =>
-      tryResult(() => {
-        (request as unknown as { services: unknown }).services = services;
-        state.exposed = true;
-      }, preserveNativeError),
-    )
-    .orElse((error) => finishRequest(state).andThen(() => err(error)))
-    .mapErr(config.mapError)
-    .unwrapOrThrow();
+  const outcome = await startAndExposeTier2(config, state, { request, locals });
+  if (outcome.isErr()) {
+    await finishRequest(state);
+    err(config.mapError(outcome.error)).unwrapOrThrow();
+  }
+};
+
+const startAndExposeTier2 = async (
+  config: RequestHookConfig,
+  state: RequestState,
+  target: { readonly request: FastifyRequest; readonly locals: RuntimeServices },
+): Promise<Result<void, unknown>> => {
+  const started = tryResult(() => startTier2Session(config, state, target), preserveNativeError);
+  if (started.isErr()) return err(started.error);
+  const ready = await started.value.ready;
+  if (ready.isErr()) return err(ready.error);
+  return tryResult(() => {
+    (target.request as unknown as { services: unknown }).services = ready.value;
+    state.exposed = true;
+  }, preserveNativeError);
 };
 
 type FastRequestFinalizer = () => void;
@@ -396,9 +394,10 @@ const registerDynamicFastHooks = (
     }
     settleIntoDone(
       finishRequest(state)
-        .map(() => requests.delete(request))
-        .mapErr(config.mapError)
-        .unwrapOrThrow(),
+        .then(() => {
+          requests.delete(request);
+        })
+        .catch((error: unknown) => err(config.mapError(error)).unwrapOrThrow()),
       done,
     );
   });
@@ -415,35 +414,31 @@ const registerTier2Hooks = (app: FastifyInstance, config: RequestHookConfig): vo
   app.addHook(config.requestHook, async (request, reply) => {
     const state = attachRequest(request, reply);
     requests.set(request, state);
-    return tryResultAsync(
-      async () => (await config.locals?.(request)) ?? EMPTY_SERVICES,
-      preserveNativeError,
-    )
-      .andThen((locals) =>
-        tryResult(
-          () => startTier2Session(config, state, { request, locals: locals as RuntimeServices }),
-          preserveNativeError,
-        ),
-      )
-      .andThen((session) => session.ready)
-      .andThen((services) =>
-        tryResult(() => {
-          (request as unknown as { services: unknown }).services = services;
-          state.exposed = true;
-        }, preserveNativeError),
-      )
-      .orElse((error) => finishRequest(state).andThen(() => err(error)))
-      .mapErr(config.mapError)
-      .unwrapOrThrow();
+    const resolveAndExpose = async (): Promise<Result<void, unknown>> => {
+      let locals: RuntimeServices = EMPTY_SERVICES;
+      try {
+        locals = ((await config.locals?.(request)) ?? EMPTY_SERVICES) as RuntimeServices;
+      } catch (error) {
+        return err(error);
+      }
+      return startAndExposeTier2(config, state, { request, locals });
+    };
+    const outcome = await resolveAndExpose();
+    if (outcome.isErr()) {
+      await finishRequest(state);
+      err(config.mapError(outcome.error)).unwrapOrThrow();
+    }
   });
 
   app.addHook("onResponse", async (request) => {
     const state = requests.get(request);
     if (state !== undefined) {
-      await finishRequest(state)
-        .map(() => requests.delete(request))
-        .mapErr(config.mapError)
-        .unwrapOrThrow();
+      try {
+        await finishRequest(state);
+        requests.delete(request);
+      } catch (error) {
+        err(config.mapError(error)).unwrapOrThrow();
+      }
     }
   });
 };

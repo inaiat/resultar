@@ -33,15 +33,15 @@ allowBuilds:
 # Align the Vitest runner with coverage, UI, and Vite+'s browser integrations.
 # https://viteplus.dev/guide/migrate#manual-installation-migration
 overrides:
-  vite@*: 'catalog:'
-  vitest@*: 'catalog:'
+  vite@*: "catalog:"
+  vitest@*: "catalog:"
   "vite-plus>@vitest/browser": 5.1.1
   "vite-plus>@vitest/browser-preview": 5.1.1
 
 # The Vite+ alias uses its own version instead of the bundled Vite version.
 peerDependencyRules:
   allowedVersions:
-    vitest: '*'
+    vitest: "*"
   allowAny:
     - vitest
 
@@ -110,7 +110,7 @@ minimumReleaseAgeExclude:
   - find-my-way@9.10.2
   - light-my-request@6.8.1
   - tsrs
-  - '@tsrs/*'
+  - "@tsrs/*"
 patchedDependencies:
   # Check coverage against the Vitest runner selected by the override above.
   vite-plus@1.7.0: patches/vite-plus@1.7.0.patch

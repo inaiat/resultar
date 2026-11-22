@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Res } from "@nestjs/common";
-import { createTaggedError, errAsync, Match, okAsync, type ResultAsync } from "resultar";
+import { createTaggedError, Match, ResultTask } from "resultar";
 import { expect, expectTypeOf, test } from "vite-plus/test";
 import {
   createNestApp,
@@ -23,10 +23,10 @@ interface TypedReply {
     ((code: 503) => { readonly send: (body: { error: string }) => { error: string } });
 }
 
-const find = (id: string): ResultAsync<User, MissingError | OfflineError> => {
-  if (id === "1") return okAsync({ id, name: "Ada" });
-  if (id === "offline") return errAsync(new OfflineError());
-  return errAsync(new MissingError({ id }));
+const find = (id: string): ResultTask<User, MissingError | OfflineError> => {
+  if (id === "1") return ResultTask.ok({ id, name: "Ada" });
+  if (id === "offline") return ResultTask.err(new OfflineError());
+  return ResultTask.err(new MissingError({ id }));
 };
 
 const respondError = Match.context<
@@ -53,10 +53,10 @@ test("Match.context maps typed native NestJS service errors and replies", async 
       @Res() reply: TypedReply,
     ) {
       expectTypeOf(services.users.find).toEqualTypeOf<typeof find>();
-      const result = await services.users.find(id);
+      const result = await services.users.find(id).runResult();
       return result.match({
         ok: (user) => reply.status(200).send(user),
-        error: (error) => respondError(error, reply),
+        err: (error) => respondError(error, reply),
       });
     }
   }

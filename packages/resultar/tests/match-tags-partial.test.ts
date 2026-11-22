@@ -1,9 +1,10 @@
 import { deepEqual, equal } from 'node:assert'
 import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
 
+import { ResultAsync, errAsync, okAsync } from '../src/entries/async.js'
 import type { Redacted, Result } from '../src/index.js'
 
-import { ResultAsync, createTaggedError, err, errAsync, ok, okAsync } from '../src/index.js'
+import { createTaggedError, err, ok } from '../src/index.js'
 
 class ValidationError extends createTaggedError({
   message: 'Invalid field $field',
@@ -300,7 +301,7 @@ describe('asynchronous match return contracts', () => {
     const object = errAsync<number, ValidationError>(new ValidationError({ field: 'email' })).match(
       {
         ok: () => ({ status: 200 as const }),
-        error: (error) => ({ status: 400 as const, field: error.field }),
+        err: (error) => ({ status: 400 as const, field: error.field }),
       },
     )
 

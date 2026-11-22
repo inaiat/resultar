@@ -10,16 +10,16 @@
   Add best-effort task observation with inspect/inspectError. Retain unrelated
   deprecated synchronous method names with equivalent replacements. Result/ResultAsync tap remains
   best-effort observation; inspect provides the same behavior under the new name.
-  
+
   Add scope-owned child fibers, structured races and timeouts, bounded task
   collections, per-attempt scoped retries, live/virtual clocks, and parallel causes.
   Preserve eager ResultAsync and lazy, repeatable ResultTask execution.
-  
+
   Keep new static asynchronous matching compositional while preserving legacy instance terminals,
   retain errors for optional tagged recovery handlers and preserve union-table outputs,
   add typed Match contexts, and improve finite object-pattern exhaustiveness.
   Preserve native Hono response unions and Fastify response contracts.
-  
+
   Recognize yielded Results and task collection/fiber consumers in the checker,
   and expose Match coverage in hover. Update companion cause inspection for
   parallel failures. Preserve existing `resultar` exports and Async-producing methods; exhaustive Cause consumers
@@ -29,13 +29,14 @@
 ### Patch Changes
 
 - f8458ae: Make `ResultTask` the preferred asynchronous workflow API and unify `ResultAsync` as the in-flight `Result` returned by `task.runResult()` in `resultar`.
-  
+
   - Keep tasks lazy and repeatable, with explicit `runResult`, `runExit`, `runPromise`, and `runFork` boundaries. Tasks are not thenable; `map` remains synchronous.
   - Export `ResultAsync`, `StrictResultAsync`, and eager helpers from `resultar`. Preserve shared single execution, awaited callbacks, native Promise terminals and best-effort observation.
   - Preserve Async-producing compatibility methods on Result and tagged errors, plus explicit Task bridges.
   - `Result.gen` and `Result.fn` support synchronous and eager asynchronous generators with plain returns. The retained legacy `safeTry` preserves final-Result returns in both execution modes.
   - Keep `ResultTask.fromResultAsync` as a structural bridge accepting a Result-producing thenable or signal-aware factory.
   - HTTP request and lifecycle adapters preserve their eager public behavior using `resultar`.
+
 - Updated dependencies [37e8a0f]
 - Updated dependencies [b15966d]
 - Updated dependencies [37e8a0f]
@@ -76,7 +77,7 @@
 
 - 9f5fa1f: Allow class services with `requires` to return synchronous service values directly from `make`,
   without wrapping ordinary object construction in `ResultTask.sync`.
-  
+
   Keep task-returning factories and generator-based definitions compatible. Normalize construction
   to a lazy `ResultTask`, preserving dependency inference, explicit contracts, lifetimes and cleanup.
   Reject Promise and callable-then factory returns, including unions with synchronous values.
@@ -88,7 +89,7 @@
   initialization and cleanup failures. Hono close cancels pending startup and blocks waiting requests.
   Expose `startServiceTask`, `ServiceTaskSession` and `ServiceTaskRequirements` from DI for adapters
   that need the same task lifecycle and dependency validation.
-  
+
   Consolidate the DI documentation into its README, removing the separate advanced guide and updating
   package contents and agent documentation links.
 
@@ -102,22 +103,23 @@
 ### Minor Changes
 
 - 2fc19dd: Infer literal service identifiers with `ResultTask.service<Contract>()("name")` while retaining the direct overload.
-  
+
   Add `Service.require<Contract>()("name")` and optional `Service` dependency maps through `requires`. Construction factories receive inferred readonly dependencies and return a lazy ResultTask. Existing generator-only definitions, token identity, typed requirements and scope lifetimes remain supported.
-  
+
   Require Resultar 3.9 or newer in the DI package's JSR import map so the curried service primitive is available.
-  
+
   Make the Fastify and Hono examples self-contained, with class services using explicit `requires` maps, a repository, cache and function-based health service. Import the primary DI API through each framework integration and keep matching file layouts for services, routes and server startup. Omit optional bindings in both examples to expose all registered services.
+
 - 2fc19dd: BREAKING: remove the `resultar-di/advanced` entry point. Replace all imports from
   `resultar-di/advanced` with `resultar-di` before upgrading. The pre-1.0 DI package
   ships this breaking change in its next minor release.
-  
+
   Expose one `createModule` and `ServiceModule` supporting token/class registration,
   named factories, task/resource registration, and fluent composition. Export
   `inspectModule`, `withProvider`, `useServiceAccess`, `ServiceAccessError` and their
   public types from the same entry point. Resolution, lazy initialization, lifetimes
   and resource ownership remain unchanged. No compatibility alias is retained.
-  
+
   Update Fastify and Hono to use the unified entry point while preserving their
   explicit application-facing DI reexports. External framework facades that
   imported the removed subpath must migrate their imports when adopting this release.
@@ -131,14 +133,15 @@
   but are not automatically exposed as registered services.
   Explicit selections must be literal tuples; ambiguous tuple unions and widened arrays are
   rejected so request types cannot promise services absent from the runtime selection.
-  
+
   Selected services are resolved before the handler, preserving lazy application construction,
   scope lifetimes, failure propagation and cleanup. This is not property-based lazy resolution:
   a failure acquiring any default-selected service prevents the handler from executing.
-  
+
   Use the Fastify and Hono example applications as integration cases in each package's test suite,
   covering their real service graph, native routes, overrides and application isolation without
   starting a listener. Both examples demonstrate omitted bindings and inferred application types.
+
 - Updated dependencies [2fc19dd]
   - resultar@3.9.0
 
@@ -154,6 +157,7 @@
   Allow Fastify facades to choose onRequest registration, expose application/request service views
   and map terminal lifecycle errors. Native selected-service defaults remain in preHandler. Facades
   can opt to report rollback failures only at startup without repeating them on subsequent close.
+
 - 1ffab20: Add a native Fastify plugin with typed application and request service selections, request locals,
   startup rollback, cancellation and resource cleanup through streamed responses. Add per-route
   Hono services middleware that preserves native bindings and RPC inference. Both integrations
@@ -177,14 +181,15 @@
   overrides for tests. Delegate execution and resource finalization to ResultTask scopes, preserving
   typed errors and failure causes. Add class-shaped `Service` tokens whose dependencies are resolved
   with `yield*`, including singleton, scoped, and transient lifetimes.
-  
+
   Require synchronous creation functions to declare a dependency parameter when their registration
   selects dependencies, reporting accidental zero-argument callbacks at the registration.
-  
+
   Validate registered service contracts, resolve tokens inside use callbacks and finalizers, and
   detect dependency cycles. Share concurrent singleton initialization with retry after failure,
   retain class resources until their owning scope closes, and roll back partial acquisitions.
   Make close lazy and idempotent, wait for active child scopes, and retain all cleanup causes.
+
 - fcf0f14: Add module.http() to acquire a Fetch application with automatic root ownership and response
   scopes. Simplify the Hono example to reuse one router with request services in typed bindings.
   Move class-shaped Service exports to resultar-di/advanced and separate the advanced reference

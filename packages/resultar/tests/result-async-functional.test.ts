@@ -1,8 +1,8 @@
 import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
 
 import { pipe } from '../src/core/function.js'
-import { ResultAsync, errAsync, okAsync } from '../src/result-async/result-async.js'
-import { err, ok } from '../src/result/result.js'
+import { ResultAsync, asyncAndThen, asyncMap, errAsync, okAsync } from '../src/entries/async.js'
+import { Result, err, ok } from '../src/result/result.js'
 import { createTaggedError } from '../src/tagged/tagged-error.js'
 
 describe.each(['direct', 'curried'] as const)('ResultAsync functional operators: %s', (form) => {
@@ -134,7 +134,7 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
         events.push(`ok:${value}`)
         throw new Error('observer')
       },
-      error: (error: 'source') => {
+      err: (error: 'source') => {
         events.push(`err:${error}`)
         throw new Error('observer')
       },
@@ -149,19 +149,19 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
         : ResultAsync.inspectBoth(handlers)(failure)
     const observedCallbacksOk =
       form === 'direct'
-        ? ResultAsync.inspectBoth(success, handlers.ok, handlers.error)
-        : ResultAsync.inspectBoth(handlers.ok, handlers.error)(success)
+        ? ResultAsync.inspectBoth(success, handlers.ok, handlers.err)
+        : ResultAsync.inspectBoth(handlers.ok, handlers.err)(success)
     const observedCallbacksErr =
       form === 'direct'
-        ? ResultAsync.inspectBoth(failure, handlers.ok, handlers.error)
-        : ResultAsync.inspectBoth(handlers.ok, handlers.error)(failure)
+        ? ResultAsync.inspectBoth(failure, handlers.ok, handlers.err)
+        : ResultAsync.inspectBoth(handlers.ok, handlers.err)(failure)
 
     expect(await observedObjectOk).toEqual(ok(2))
     expect(await observedObjectErr).toEqual(err('source'))
     expect(await observedCallbacksOk).toEqual(ok(2))
     expect(await observedCallbacksErr).toEqual(err('source'))
     expect(await success.inspectBoth(handlers)).toEqual(ok(2))
-    expect(await failure.inspectBoth(handlers.ok, handlers.error)).toEqual(err('source'))
+    expect(await failure.inspectBoth(handlers.ok, handlers.err)).toEqual(err('source'))
     expect(() =>
       (success as unknown as { inspectBoth: (f: () => void) => void }).inspectBoth(() => undefined),
     ).toThrow('ResultTask.inspectBoth requires an error handler')
@@ -170,31 +170,10 @@ describe.each(['direct', 'curried'] as const)('ResultAsync functional operators:
     expectTypeOf(observedCallbacksErr).toEqualTypeOf<ResultAsync<number, 'source'>>()
   })
 
-  it('combines tuples, arrays, and records via ResultAsync.all', async () => {
-    const tupleResult = ResultAsync.all([okAsync<number, 'e1'>(1), okAsync<string, 'e2'>('two')])
-    const arrayInput: readonly ResultAsync<number, 'arr'>[] = [okAsync(1), okAsync(2)]
-    const arrayResult = ResultAsync.all(arrayInput)
-    const recordResult = ResultAsync.all({
-      id: okAsync<number, 'idErr'>(7),
-      name: okAsync<string, 'nameErr'>('Ada'),
-    })
-    const failedAll = ResultAsync.all([okAsync<number, 'e1'>(1), errAsync<string, 'e2'>('e2')])
-
-    expectTypeOf(tupleResult).toEqualTypeOf<ResultAsync<[number, string], 'e1' | 'e2'>>()
-    expectTypeOf(arrayResult).toEqualTypeOf<ResultAsync<readonly number[], 'arr'>>()
-    expectTypeOf(recordResult).toEqualTypeOf<
-      ResultAsync<{ readonly id: number; readonly name: string }, 'idErr' | 'nameErr'>
-    >()
-    expect(await tupleResult).toEqual(ok([1, 'two']))
-    expect(await arrayResult).toEqual(ok([1, 2]))
-    expect(await recordResult).toEqual(ok({ id: 7, name: 'Ada' }))
-    expect(await failedAll).toEqual(err('e2'))
-  })
-
   it('matches both variants with object handlers', async () => {
     const success = okAsync<number, 'source'>(2)
     const failure = errAsync<number, 'source'>('source')
-    const handlers = { ok: String, error: (_error: 'source') => false as const }
+    const handlers = { ok: String, err: (_error: 'source') => false as const }
     const matched =
       form === 'direct'
         ? ResultAsync.match(success, handlers)
@@ -438,7 +417,7 @@ describe('ResultAsync functional inference and lazy composition', () => {
           expectTypeOf(value).toEqualTypeOf<number | boolean>()
           return String(value)
         },
-        error: (error) => {
+        err: (error) => {
           expectTypeOf(error).toEqualTypeOf<'recovery'>()
           return false as const
         },
@@ -514,7 +493,7 @@ describe('ResultAsync functional inference and lazy composition', () => {
       ok: () => {
         throw defect
       },
-      error: () => 'source',
+      err: () => 'source',
     })
 
     await Promise.all(
@@ -526,9 +505,7 @@ describe('ResultAsync functional inference and lazy composition', () => {
     )
   })
 
-  it('supports curried Result.when/unless, ResultAsync.when/unless, and ResultAsync.fromTask', async () => {
-    const { Result, ResultTask } = await import('../src/index.js')
-
+  it('supports curried Result.when/unless and ResultAsync.when/unless', async () => {
     expect(Result.when(true)(() => ok(42))).toEqual(ok(42))
     expect(Result.when(false)(() => ok(42))).toEqual(ok(undefined))
     expect(Result.unless(false)(() => ok(42))).toEqual(ok(42))
@@ -538,8 +515,52 @@ describe('ResultAsync functional inference and lazy composition', () => {
     expect(await ResultAsync.when(false)(() => okAsync(42))).toEqual(ok(undefined))
     expect(await ResultAsync.unless(false)(() => okAsync(42))).toEqual(ok(42))
     expect(await ResultAsync.unless(true)(() => okAsync(42))).toEqual(ok(undefined))
+  })
 
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    expect(await ResultAsync.fromTask(ResultTask.ok(99))).toEqual(ok(99))
+  it('supports ResultAsync.gen, ResultAsync.fn, and standalone asyncMap/asyncAndThen bridges', async () => {
+    const genOk = ResultAsync.gen(async function* () {
+      const a = yield* ok<number, 'sync-err'>(10)
+      const b = yield* okAsync<number, 'async-err'>(32)
+      return a + b
+    })
+    expectTypeOf(genOk).toEqualTypeOf<ResultAsync<number, 'sync-err' | 'async-err'>>()
+    expect(await genOk).toEqual(ok(42))
+
+    const genErr = ResultAsync.gen(async function* () {
+      yield* errAsync<number, 'async-err'>('async-err')
+      return 1
+    })
+    expect(await genErr).toEqual(err('async-err'))
+
+    const addAsync = ResultAsync.fn(async function* (base: number) {
+      const step = yield* okAsync<number, 'fn-err'>(base * 2)
+      return step + 1
+    })
+    expectTypeOf(addAsync).toEqualTypeOf<(base: number) => ResultAsync<number, 'fn-err'>>()
+    expect(await addAsync(10)).toEqual(ok(21))
+
+    const directMap = asyncMap(ok<number, 'e1'>(3), async (n) => n * 4)
+    const pipedMap = pipe(
+      ok<number, 'e1'>(3),
+      asyncMap(async (n) => n * 4),
+    )
+    const skippedMap = asyncMap(err<number, 'e1'>('e1'), async (n) => n * 4)
+    expectTypeOf(directMap).toEqualTypeOf<ResultAsync<number, 'e1'>>()
+    expectTypeOf(pipedMap).toEqualTypeOf<ResultAsync<number, 'e1'>>()
+    expect(await directMap).toEqual(ok(12))
+    expect(await pipedMap).toEqual(ok(12))
+    expect(await skippedMap).toEqual(err('e1'))
+
+    const directAndThen = asyncAndThen(ok<number, 'e1'>(5), (n) => okAsync<string, 'e2'>(`${n}!`))
+    const pipedAndThen = pipe(
+      ok<number, 'e1'>(5),
+      asyncAndThen(() => errAsync<string, 'e2'>('e2')),
+    )
+    const skippedAndThen = asyncAndThen(err<number, 'e1'>('e1'), () => okAsync<string, 'e2'>('no'))
+    expectTypeOf(directAndThen).toEqualTypeOf<ResultAsync<string, 'e1' | 'e2'>>()
+    expectTypeOf(pipedAndThen).toEqualTypeOf<ResultAsync<string, 'e1' | 'e2'>>()
+    expect(await directAndThen).toEqual(ok('5!'))
+    expect(await pipedAndThen).toEqual(err('e2'))
+    expect(await skippedAndThen).toEqual(err('e1'))
   })
 })

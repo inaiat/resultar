@@ -3,6 +3,7 @@
 /editors/vscode/dist
 /editors/vscode/*.vsix
 /website/dist
+/website/node_modules
 /website/src/generated
 /benchmarks/node_modules
 /benchmarks/.tmp

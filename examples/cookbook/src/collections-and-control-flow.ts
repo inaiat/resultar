@@ -135,11 +135,11 @@ export const zipBuyerAndCart = () =>
   Result.zip(ok("buyer_1"), ok(["sku_book", "sku_pen"] as const));
 
 /**
- * `Result.combine(recordOrIterable)` and `Result.all(recordOrIterable)` short-circuit
- * on the first `Err` and preserve named record keys or array elements on `Ok`.
+ * `Result.all(recordOrIterable)` short-circuits on the first `Err`
+ * and preserves named record keys or array elements on `Ok`.
  */
 export const combineOrderContext = (coupon: string | undefined) =>
-  Result.combine({
+  Result.all({
     buyerId: ok("buyer_1"),
     coupon: validateCoupon(coupon),
   });
@@ -158,11 +158,11 @@ export const validateOrderLines = (lines: readonly OrderLineInput[]) =>
   Result.validateAll(lines, validateLine);
 
 /**
- * `Result.combineWithAllErrors(recordOrIterable)` combines multiple `Result` values
+ * `Result.validateAll(recordOrIterable)` combines multiple `Result` values
  * and accumulates all errors across fields when more than one fails.
  */
 export const validateCheckout = (lines: readonly OrderLineInput[], coupon: string | undefined) =>
-  Result.combineWithAllErrors({
+  Result.validateAll({
     coupon: validateCoupon(coupon),
     lines: validateOrderLines(lines),
   });
@@ -317,7 +317,7 @@ export const validateTaskCheckout = (
       }),
     },
     { concurrency: "unbounded" },
-  ).andThen((checks) => ResultTask.fromResult(Result.combineWithAllErrors(checks)));
+  ).andThen((checks) => ResultTask.fromResult(Result.validateAll(checks)));
 
 export const firstAvailableWarehouse = (sku: string) =>
   ResultTask.firstSuccessOf([
@@ -386,15 +386,19 @@ export const inspectCheckoutEvents = async () => {
 };
 
 /**
- * Legacy `tap` / `tapError` alongside `log` and explicit resource management
+ * Best-effort `inspect` / `inspectError` alongside `log` and explicit resource management
  * (`toDisposable`).
  */
 export const observeCheckout = () => {
   const events: string[] = [];
 
   ok<string, AuditWriteError>("order_1")
-    .tap((value) => events.push(`tap:${value}`))
-    .tapError((error) => events.push(`tapError:${error._tag}`))
+    .inspect((value) => {
+      events.push(`inspect:${value}`);
+    })
+    .inspectError((error) => {
+      events.push(`inspectError:${error._tag}`);
+    })
     .log((value, error) => events.push(`log:${value ?? error?._tag}`))
     .toDisposable((value, error) => {
       events.push(`dispose:${value ?? error?._tag}`);
@@ -402,8 +406,12 @@ export const observeCheckout = () => {
     [Symbol.dispose]();
 
   err<string, AuditWriteError>(new AuditWriteError({ entry: "receipt" }))
-    .tap((value) => events.push(`tap:${value}`))
-    .tapError((error) => events.push(`tapError:${error._tag}`))
+    .inspect((value) => {
+      events.push(`inspect:${value}`);
+    })
+    .inspectError((error) => {
+      events.push(`inspectError:${error._tag}`);
+    })
     .log((value, error) => events.push(`log:${value ?? error?._tag}`))
     .toDisposable((value, error) => {
       events.push(`dispose:${value ?? error?._tag}`);

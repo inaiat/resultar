@@ -2,9 +2,10 @@ import { deepEqual, equal, ok as isTrue } from 'node:assert'
 
 import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
 
-import type { ResultAsyncRaceTask } from '../src/index.js'
+import type { ResultAsyncRaceTask } from '../src/entries/async.js'
 
-import { Result, ResultAsync, createTaggedError } from '../src/index.js'
+import { Result, createTaggedError } from '../src/index.js'
+import { ResultAsync } from '../src/entries/async.js'
 
 class TimeoutError extends createTaggedError({
   message: '$operation timed out after $timeoutMs milliseconds',

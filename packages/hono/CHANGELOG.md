@@ -29,16 +29,16 @@
   Add best-effort task observation with inspect/inspectError. Retain unrelated
   deprecated synchronous method names with equivalent replacements. Result/ResultAsync tap remains
   best-effort observation; inspect provides the same behavior under the new name.
-  
+
   Add scope-owned child fibers, structured races and timeouts, bounded task
   collections, per-attempt scoped retries, live/virtual clocks, and parallel causes.
   Preserve eager ResultAsync and lazy, repeatable ResultTask execution.
-  
+
   Keep new static asynchronous matching compositional while preserving legacy instance terminals,
   retain errors for optional tagged recovery handlers and preserve union-table outputs,
   add typed Match contexts, and improve finite object-pattern exhaustiveness.
   Preserve native Hono response unions and Fastify response contracts.
-  
+
   Recognize yielded Results and task collection/fiber consumers in the checker,
   and expose Match coverage in hover. Update companion cause inspection for
   parallel failures. Preserve existing `resultar` exports and Async-producing methods; exhaustive Cause consumers
@@ -49,15 +49,16 @@
 
 - 557eb58: Accept and forward native server/router options in `createFastifyApp` (`FastifyAppOptions`, such as `logger`, `loggerInstance`, and `requestIdHeader`) and `createHonoApp` (`HonoOptions`, such as `strict`, `router`, and `getPath`) while stripping Resultar service options before underlying framework initialization.
 - f8458ae: Make `ResultTask` the preferred asynchronous workflow API and unify `ResultAsync` as the in-flight `Result` returned by `task.runResult()` in `resultar`.
-  
+
   - Keep tasks lazy and repeatable, with explicit `runResult`, `runExit`, `runPromise`, and `runFork` boundaries. Tasks are not thenable; `map` remains synchronous.
   - Export `ResultAsync`, `StrictResultAsync`, and eager helpers from `resultar`. Preserve shared single execution, awaited callbacks, native Promise terminals and best-effort observation.
   - Preserve Async-producing compatibility methods on Result and tagged errors, plus explicit Task bridges.
   - `Result.gen` and `Result.fn` support synchronous and eager asynchronous generators with plain returns. The retained legacy `safeTry` preserves final-Result returns in both execution modes.
   - Keep `ResultTask.fromResultAsync` as a structural bridge accepting a Result-producing thenable or signal-aware factory.
   - HTTP request and lifecycle adapters preserve their eager public behavior using `resultar`.
+
 - c6aed8b: Return `ResultAsync<A, E | ScopeError<R>>` from `ResultTask.runResult` and `task.runResult` as the official in-flight `Result` representation (`PromiseLike<Result<T, E>>`).
-  
+
   - Un-deprecate `ResultAsync` and `StrictResultAsync` for consuming and transforming in-flight `Result` values before `await`, as well as in-flight value/Promise constructors (`ResultAsync.ok`, `ResultAsync.err`, `ResultAsync.unit`, `ResultAsync.fromPromise`, `ResultAsync.fromSafePromise`, `ResultAsync.try`, `okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, and `tryResultAsync`).
   - Unify `.try` across namespaces (`Result.try`, `ResultAsync.try`, `ResultTask.try`, `ResultTask.tryPromise`) supporting both positional `(fn, catchFn)` and object `{ try, catch }` signatures, while marking `*tryCatch*` (`Result.tryCatch`, `ResultAsync.tryCatch`, `tryCatch`, `tryCatchAsync`, `tryAsync`) as `@deprecated`.
   - Make `task.toResultAsync()`, `ResultTask.toResultAsync(task)`, and `ResultAsync.fromTask(task)` deprecated aliases of `runResult()`.
@@ -66,6 +67,7 @@
   - Transfer `resultar-check` `no-discard` tracking when awaiting a `ResultAsync` variable into a `Result` binding (`const res = await pending`) or passing it through `Promise.resolve(pending)` / `Promise.all([pending])`, flag bare `await pending;` statements, prevent recursion cycles on self-referential variables, and tighten `.then` / tuple index / destructuring handling.
   - Fix `ResultAsync.then` single-callback return type inference, allow `.bind(task)` on `ResultTask` instance runners (`runResult`, `runPromise`, `runExit`, `runFork`, `toResultAsync`), and make `Redacted<T>` an opaque object type instead of intersecting with `string`.
   - Return `ResultAsync<void, CloseError>` from `HonoApplication.close()` and `HonoServices.close()` in `resultar-hono`.
+
 - Updated dependencies [37e8a0f]
 - Updated dependencies [b15966d]
 - Updated dependencies [37e8a0f]
@@ -107,7 +109,7 @@
 
 - 9f5fa1f: Allow class services with `requires` to return synchronous service values directly from `make`,
   without wrapping ordinary object construction in `ResultTask.sync`.
-  
+
   Keep task-returning factories and generator-based definitions compatible. Normalize construction
   to a lazy `ResultTask`, preserving dependency inference, explicit contracts, lifetimes and cleanup.
   Reject Promise and callable-then factory returns, including unions with synchronous values.
@@ -119,7 +121,7 @@
   initialization and cleanup failures. Hono close cancels pending startup and blocks waiting requests.
   Expose `startServiceTask`, `ServiceTaskSession` and `ServiceTaskRequirements` from DI for adapters
   that need the same task lifecycle and dependency validation.
-  
+
   Consolidate the DI documentation into its README, removing the separate advanced guide and updating
   package contents and agent documentation links.
 
@@ -138,10 +140,11 @@
   files can derive their Hono environment from `typeof createApplication` without repeating
   service tokens. The existing `HonoApplication<CloseError>` contract remains supported;
   inference adds no runtime metadata or lifecycle changes.
-  
+
   Align the guides with the runnable examples: `main.ts` exports `AppHono`, route files
   import that type, and the factory's bindings define the exposed services. Document the
   matching Fastify declaration and self-contained services/routes/main layout.
+
 - 2fc19dd: Allow omitting `bindings` in `createFastifyApp`, `createFastifyPlugin` and `createHonoApp`.
   Omission selects all registered services, validates their requirements and infers their
   readonly request view. Explicit selections and `bindings: []` retain their existing behavior;
@@ -149,14 +152,15 @@
   but are not automatically exposed as registered services.
   Explicit selections must be literal tuples; ambiguous tuple unions and widened arrays are
   rejected so request types cannot promise services absent from the runtime selection.
-  
+
   Selected services are resolved before the handler, preserving lazy application construction,
   scope lifetimes, failure propagation and cleanup. This is not property-based lazy resolution:
   a failure acquiring any default-selected service prevents the handler from executing.
-  
+
   Use the Fastify and Hono example applications as integration cases in each package's test suite,
   covering their real service graph, native routes, overrides and application isolation without
   starting a listener. Both examples demonstrate omitted bindings and inferred application types.
+
 - 2fc19dd: Reexport the Resultar DI application helpers from both framework integrations: `createModule`, `Service`, `service`, `resource`, and their public types. Applications can declare and register services without importing or directly installing `resultar-di`. Framework-independent shared code can continue using `resultar-di` directly.
 
 ### Patch Changes
@@ -164,16 +168,17 @@
 - 2fc19dd: BREAKING: remove the `resultar-di/advanced` entry point. Replace all imports from
   `resultar-di/advanced` with `resultar-di` before upgrading. The pre-1.0 DI package
   ships this breaking change in its next minor release.
-  
+
   Expose one `createModule` and `ServiceModule` supporting token/class registration,
   named factories, task/resource registration, and fluent composition. Export
   `inspectModule`, `withProvider`, `useServiceAccess`, `ServiceAccessError` and their
   public types from the same entry point. Resolution, lazy initialization, lifetimes
   and resource ownership remain unchanged. No compatibility alias is retained.
-  
+
   Update Fastify and Hono to use the unified entry point while preserving their
   explicit application-facing DI reexports. External framework facades that
   imported the removed subpath must migrate their imports when adopting this release.
+
 - Updated dependencies [2fc19dd]
 - Updated dependencies [2fc19dd]
 - Updated dependencies [2fc19dd]

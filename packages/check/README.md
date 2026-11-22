@@ -8,11 +8,11 @@ a small Node launcher and selects the matching Go binary for the current platfor
 
 ## Highlights
 
-- Type-aware rules for `Result`, `ResultAsync`, `ResultTask`, tagged errors, and safe generators;
+- Type-aware rules for `Result`, `ResultTask`, opt-in `ResultAsync` (`resultar/async`), tagged errors, and safe generators;
 - TypeScript compiler and Resultar diagnostics from one `tsconfig.json` project pass;
 - human, JSON Lines, SARIF 2.1.0, and JUnit output for local development and CI;
 - per-rule severities, file overrides, line suppressions, and configurable failure policy;
-- stdio LSP diagnostics, safe composition quick fixes, and `--fix` / `--fix-dry-run` auto-repair;
+- stdio LSP diagnostics, safe composition quick fixes, `--fix` / `--fix-dry-run` auto-repair, and `migrate-v5` codemod;
 - `init` and `doctor` commands for portable Zed, VS Code, and Cursor setup (`--editor zed|vscode|cursor|all`);
 - native packages for macOS, Linux, and Windows on ARM64 and x64.
 
@@ -134,17 +134,19 @@ Flags:
 
 Additional commands:
 
-| Command                                                                    | Purpose                                                                     |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `resultar-check --fix --project tsconfig.json`                             | Apply safe `kind: "correction"` fixes in place and re-verify diagnostics    |
-| `resultar-check --fix-dry-run --project tsconfig.json`                     | Preview how many safe correction fixes would be applied without writing     |
-| `resultar-check overview --project tsconfig.json --json`                   | Inventory exported Resultar functions/values, tagged errors, and services   |
-| `resultar-check quickfixes --project tsconfig.json --file src/workflow.ts` | Preview diagnostics with proposed edits without writing files               |
-| `resultar-check lsp --project tsconfig.json`                               | Run the stdio language server                                               |
-| `resultar-check init --editor zed\|vscode\|cursor\|all`                    | Create portable Zed LSP, VS Code/Cursor tasks, and Cursor rule setup        |
-| `resultar-check init --force`                                              | Refresh generated Resultar entries while preserving other editor settings   |
-| `resultar-check doctor --editor zed\|vscode\|cursor\|all`                  | Check the project, launcher, pnpm, and configured editor setup              |
-| `resultar-check --version`                                                 | Print the launcher package version                                          |
+| Command                                                                    | Purpose                                                                   |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `resultar-check --fix --project tsconfig.json`                             | Apply safe `kind: "correction"` fixes in place and re-verify diagnostics  |
+| `resultar-check --fix-dry-run --project tsconfig.json`                     | Preview how many safe correction fixes would be applied without writing   |
+| `resultar-check migrate-v5 --project tsconfig.json`                        | Preview v4 -> v5 mechanical edits and manual review items without writing |
+| `resultar-check migrate-v5 --fix --project tsconfig.json`                  | Apply safe v4 -> v5 mechanical migration edits in place                   |
+| `resultar-check overview --project tsconfig.json --json`                   | Inventory exported Resultar functions/values, tagged errors, and services |
+| `resultar-check quickfixes --project tsconfig.json --file src/workflow.ts` | Preview diagnostics with proposed edits without writing files             |
+| `resultar-check lsp --project tsconfig.json`                               | Run the stdio language server                                             |
+| `resultar-check init --editor zed\|vscode\|cursor\|all`                    | Create portable Zed LSP, VS Code/Cursor tasks, and Cursor rule setup      |
+| `resultar-check init --force`                                              | Refresh generated Resultar entries while preserving other editor settings |
+| `resultar-check doctor --editor zed\|vscode\|cursor\|all`                  | Check the project, launcher, pnpm, and configured editor setup            |
+| `resultar-check --version`                                                 | Print the launcher package version                                        |
 
 Compiler diagnostics are always included. Resultar diagnostics use their configured severity, and
 the process exits with status `1` when a compiler error or a diagnostic at or above `failOn` exists.
@@ -222,7 +224,8 @@ unless `--force` is passed; forced updates merge the Resultar entries with unrel
 The LSP offers quick fixes for:
 
 - explicitly discarding a directly ignored Resultar value with `void`;
-- replacing `yield` or `await` with `yield*` for Resultar values inside `safeTry` / `Result.gen` / `Result.fn`;
+- replacing `await task` with `await task.runResult()` when a narrowed, requirement-free `ResultTask` is awaited where a `Result` is expected;
+- replacing `yield` or `await` with `yield*` for Resultar values inside `Result.gen` / `Result.fn` / `ResultAsync.gen` / `ResultAsync.fn` / legacy `safeTry`;
 - replacing plain `yield` with `yield*` inside `ResultTask.gen` or `ResultTask.fn`;
 - replacing `return` / plain `yield*` on an always-failing error inside a generator with `return yield*`;
 - unwrapping single-argument `pipe(x)`.
@@ -281,7 +284,7 @@ A complete configuration can combine global policy, individual rule options, and
 
 Rule severities are `error`, `warning`, `suggestion`, `message`, or `off`.
 `diagnosticSeverity` accepts either a single severity string (e.g. `"diagnosticSeverity": "error"`) to
-set the baseline severity for all 42 rules at once, or a rule map accepting `"*"` as a wildcard plus
+set the baseline severity for all 43 rules at once, or a rule map accepting `"*"` as a wildcard plus
 camelCase, kebab-case, or the full `resultar/<rule>` ID. Explicit rule properties (either inside
 `diagnosticSeverity` alongside `"*"` or at the plugin root) override the wildcard baseline. Overrides are
 applied in declaration order, so later matching entries take precedence.
@@ -323,50 +326,51 @@ The new requirements and suppression rules default to `suggestion`; the default
 
 ## Diagnostics
 
-| Rule                                   | Option                             | Default      | What it checks                                                                                                                                                             |
-| -------------------------------------- | ---------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `no-await-in-result-task-gen`          | `noAwaitInResultTaskGen`           | `warning`    | Prevents `await` from breaking laziness and typing inside `ResultTask.gen` / `ResultTask.fn`                                                                               |
-| `no-await-in-safe-try`                 | `noAwaitInSafeTry`                 | `error`      | Prevents `await` from unwrapping Resultar control flow inside `safeTry` / `Result.gen` / `Result.fn`                                                                       |
-| `no-discard`                           | `noDiscard`                        | `error`      | Requires `Result`, `ResultAsync`, `ResultTask`, and `MatchMatcher` values to be handled, returned, or explicitly discarded                                                 |
-| `no-fn-iife`                           | `noFnIife`                         | `warning`    | Replaces immediately invoked `ResultTask.fn(...)()` / `Result.fn(...)()` with `ResultTask.gen(...)` / `Result.gen(...)`                                                    |
-| `no-invalid-lifetime`                  | `noInvalidLifetime`                | `warning`    | Rejects dependencies a longer-lived service cannot capture, such as a singleton on a scoped service                                                                        |
-| `no-promise-in-result-success`         | `noPromiseInResultSuccess`         | `warning`    | Prevents Promises inside synchronous `Result` or lazy `ResultTask` success channels                                                                                        |
-| `no-promise-resultar`                  | `noPromiseResultar`                | `error`      | Rejects native `Promise<Result>`, `Promise<StrictResult>`, and `Promise<ResultTask>` contracts and inferred async wrappers, recommending direct `ResultAsync`, `StrictResultAsync`, or `ResultTask` returns |
-| `no-result-in-task-gen`                | `noResultInTaskGen`                | `warning`    | Requires `ResultTask.gen` / `ResultTask.fn` and `Result.gen` / `Result.fn` bodies to return plain success values instead of nested `ok`/`err` results                      |
-| `no-run-inside-gen`                    | `noRunInsideGen`                   | `warning`    | Prevents executing task runners (`runPromise`, `runResult`, `runExit`, `runFork`, `ResultAsync.fromTask`) or `_unsafeUnwrap` / `unwrapOrThrow` inside a Resultar generator |
-| `no-tagged-error-constructor-override` | `noTaggedErrorConstructorOverride` | `warning`    | Protects the constructor generated by `createTaggedError`                                                                                                                  |
-| `no-throw`                             | `noThrow`                          | `off`        | Reports throw-based expected-failure control flow                                                                                                                          |
-| `no-throw-in-task-sync`                | `noThrowInTaskSync`                | `warning`    | Reports `throw` inside `ResultTask.sync`, where failures become defects instead of typed errors                                                                            |
-| `no-try-catch`                         | `noTryCatch`                       | `off`        | Reports broad `try`/`catch` where a typed Resultar boundary is preferred                                                                                                   |
-| `no-try-catch-in-safe-try`             | `noTryCatchInSafeTry`              | `warning`    | Keeps throwing APIs outside `safeTry` / `Result.gen` / `Result.fn` generators                                                                                              |
-| `no-unnecessary-err-wrap-in-gen`       | `noUnnecessaryErrWrapInGen`        | `suggestion` | Prefers `TaggedError.err(...)` / `TaggedError.taskErr(...)` over wrapping `new TaggedError(...)` in `err(...)` / `ResultTask.err(...)` inside a generator                  |
-| `no-unsafe-await`                      | `noUnsafeAwait`                    | `off`        | Reports Promise awaits that can reject outside a typed Resultar boundary                                                                                                   |
-| `no-unknown-result-error`              | `noUnknownResultError`             | `suggestion` | Rejects `unknown` or `any` Resultar error channels                                                                                                                         |
-| `no-unknown-task-requirements`         | `noUnknownTaskRequirements`        | `suggestion` | Rejects `unknown` or `any` task requirements, including type aliases                                                                                                       |
-| `unused-suppression`                   | `unusedSuppression`                | `suggestion` | Reports unknown suppression IDs and unused entries for enabled rules                                                                                                       |
-| `no-unscoped-acquire-release`          | `noUnscopedAcquireRelease`         | `warning`    | Checks ownership of `acquireRelease` / `acquireDisposable`; accepts factories propagating `ResultTaskScope` to callers                                           |
-| `no-useless-recovery`                  | `noUselessRecovery`                | `warning`    | Removes recovery operators from infallible error channels                                                                                                                  |
-| `prefer-acquire-disposable`            | `preferAcquireDisposable`          | `suggestion` | Prefers `ResultTask.acquireDisposable` when `acquireRelease` only calls `[Symbol.dispose]` / `[Symbol.asyncDispose]`                                                       |
-| `prefer-and-then`                      | `preferAndThen`                    | `warning`    | Replaces `map` callbacks that return Resultar values with fallible chaining                                                                                                |
-| `prefer-as-void`                       | `preferAsVoid`                     | `suggestion` | Replaces `.map(() => undefined)` with `.asVoid()` on `ResultTask`                                                                                                          |
-| `prefer-catch-reason`                  | `preferCatchReason`                | `warning`    | Uses reason-aware recovery instead of manually checking nested reason tags                                                                                                 |
-| `prefer-filter-or-else`                | `preferFilterOrElse`               | `suggestion` | Replaces `andThen` callbacks that only branch on a predicate to return the input or an error with `filterOrElse`                                                           |
-| `prefer-first-success-of`              | `preferFirstSuccessOf`             | `warning`    | Replaces long independent fallback chains with ordered candidates (`firstSuccessOf` / `ResultTask.firstSuccessOf`)                                                         |
-| `prefer-map`                           | `preferMap`                        | `warning`    | Replaces fallible chaining that only wraps a plain success value                                                                                                           |
-| `prefer-map-err`                       | `preferMapErr`                     | `warning`    | Replaces recovery that only transforms an error into another error                                                                                                         |
-| `prefer-or-else-succeed`               | `preferOrElseSucceed`              | `suggestion` | Replaces `orElse` callbacks that unconditionally wrap a fallback in `ok` / `ResultTask.ok` with `orElseSucceed`                                                            |
-| `prefer-result-async`                  | `preferResultAsync`                | `warning`    | Legacy eager-contract policy: reports `Promise<Result>` and `Promise<StrictResult>` contracts and inferred function returns; mode `all` also reports raw Promise contracts |
-| `prefer-result-for-each`               | `preferResultForEach`              | `warning`    | Replaces map-then-combine allocation with Resultar collection helpers (`Result.forEach`, `ResultAsync.forEach`, `ResultTask.forEach`)                                        |
-| `prefer-tagged-error`                  | `preferTaggedError`                | `warning`    | Encourages stable tagged domain errors over plain `Error` values                                                                                                           |
-| `prefer-tap`                           | `preferTap`                        | `suggestion` | Replaces `map` / `andThen` callbacks that perform a side effect and return their input unchanged with `tap`                                                                |
-| `prefer-tap-error`                     | `preferTapError`                   | `suggestion` | Replaces `orElse` callbacks that perform a side effect and re-wrap the same error with `tapError`                                                                          |
-| `require-return-yield-star`            | `requireReturnYieldStar`           | `warning`    | Requires `return yield*` when yielding an always-failing error (`Err<never, E>` / `ResultTask<never, E, R>`) so TypeScript narrows control flow                            |
-| `tagged-error-name-match`              | `taggedErrorNameMatch`             | `warning`    | Keeps the generated runtime tag equal to the TypeScript class name                                                                                                         |
-| `typed-catch-mapper`                   | `typedCatchMapper`                 | `warning`    | Requires throwing and rejecting boundaries to map causes into concrete errors                                                                                              |
-| `unnecessary-pipe`                     | `unnecessaryPipe`                  | `suggestion` | Reports single-argument `pipe(x)` and zero-argument `.pipe()` calls                                                                                                        |
-| `unsafe-result-type-assertion`         | `unsafeResultTypeAssertion`        | `warning`    | Prevents assertions that remove Resultar failures, task services, or deferred scope errors (including unknown bridges)                                                     |
-| `yield-star-in-result-task-gen`        | `yieldStarInResultTaskGen`         | `warning`    | Requires `yield*` for tasks and services inside `ResultTask.gen` / `ResultTask.fn`                                                                                         |
-| `yield-star-in-safe-try`               | `yieldStarInSafeTry`               | `warning`    | Requires `yield*` to compose Resultar values inside `safeTry` / `Result.gen` / `Result.fn`                                                                                 |
+| Rule                                   | Option                             | Default      | What it checks                                                                                                                                                                                     |
+| -------------------------------------- | ---------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `no-await-in-result-task-gen`          | `noAwaitInResultTaskGen`           | `warning`    | Prevents `await` from breaking laziness and typing inside `ResultTask.gen` / `ResultTask.fn`                                                                                                       |
+| `no-await-in-safe-try`                 | `noAwaitInSafeTry`                 | `error`      | Prevents `await` from unwrapping Resultar control flow inside `Result.gen` / `Result.fn` / `ResultAsync.gen` / `ResultAsync.fn` / legacy `safeTry`                                                 |
+| `no-await-result-task`                 | `noAwaitResultTask`                | `error`      | Prevents awaiting a lazy `ResultTask` / `StrictResultTask` directly without calling `.runResult()`, `.runPromise()`, `.runExit()`, or using `yield*` inside a task generator                       |
+| `no-discard`                           | `noDiscard`                        | `error`      | Requires `Result`, `ResultAsync`, `ResultTask`, and `MatchMatcher` values to be handled, returned, or explicitly discarded                                                                         |
+| `no-fn-iife`                           | `noFnIife`                         | `warning`    | Replaces immediately invoked `ResultTask.fn(...)()` / `Result.fn(...)()` with `ResultTask.gen(...)` / `Result.gen(...)`                                                                            |
+| `no-invalid-lifetime`                  | `noInvalidLifetime`                | `warning`    | Rejects dependencies a longer-lived service cannot capture, such as a singleton on a scoped service                                                                                                |
+| `no-promise-in-result-success`         | `noPromiseInResultSuccess`         | `warning`    | Prevents Promises inside synchronous `Result` or lazy `ResultTask` success channels                                                                                                                |
+| `no-promise-resultar`                  | `noPromiseResultar`                | `error`      | Rejects native `Promise<ResultTask>` / `Promise<StrictResultTask>` contracts and inferred async wrappers, recommending direct `ResultTask` returns (allows `Promise<Result>` execution boundaries) |
+| `no-result-in-task-gen`                | `noResultInTaskGen`                | `warning`    | Requires `ResultTask.gen` / `ResultTask.fn` and `Result.gen` / `Result.fn` bodies to return plain success values instead of nested `ok`/`err` results                                              |
+| `no-run-inside-gen`                    | `noRunInsideGen`                   | `warning`    | Prevents executing task runners (`runPromise`, `runResult`, `runExit`, `runFork`) or `_unsafeUnwrap` / `unwrapOrThrow` inside a Resultar generator                                                 |
+| `no-tagged-error-constructor-override` | `noTaggedErrorConstructorOverride` | `warning`    | Protects the constructor generated by `createTaggedError`                                                                                                                                          |
+| `no-throw`                             | `noThrow`                          | `off`        | Reports throw-based expected-failure control flow                                                                                                                                                  |
+| `no-throw-in-task-sync`                | `noThrowInTaskSync`                | `warning`    | Reports `throw` inside `ResultTask.sync`, where failures become defects instead of typed errors                                                                                                    |
+| `no-try-catch`                         | `noTryCatch`                       | `off`        | Reports broad `try`/`catch` where a typed Resultar boundary is preferred                                                                                                                           |
+| `no-try-catch-in-safe-try`             | `noTryCatchInSafeTry`              | `warning`    | Keeps throwing APIs outside `Result.gen` / `Result.fn` / `ResultAsync.gen` / `ResultAsync.fn` / legacy `safeTry` generators                                                                        |
+| `no-unnecessary-err-wrap-in-gen`       | `noUnnecessaryErrWrapInGen`        | `suggestion` | Prefers `TaggedError.err(...)` / `TaggedError.taskErr(...)` over wrapping `new TaggedError(...)` in `err(...)` / `ResultTask.err(...)` inside a generator                                          |
+| `no-unsafe-await`                      | `noUnsafeAwait`                    | `off`        | Reports Promise awaits that can reject outside a typed Resultar boundary                                                                                                                           |
+| `no-unknown-result-error`              | `noUnknownResultError`             | `suggestion` | Rejects `unknown` or `any` Resultar error channels                                                                                                                                                 |
+| `no-unknown-task-requirements`         | `noUnknownTaskRequirements`        | `suggestion` | Rejects `unknown` or `any` task requirements, including type aliases                                                                                                                               |
+| `unused-suppression`                   | `unusedSuppression`                | `suggestion` | Reports unknown suppression IDs and unused entries for enabled rules                                                                                                                               |
+| `no-unscoped-acquire-release`          | `noUnscopedAcquireRelease`         | `warning`    | Checks ownership of `acquireRelease` / `acquireDisposable`; accepts factories propagating `ResultTaskScope` to callers                                                                             |
+| `no-useless-recovery`                  | `noUselessRecovery`                | `warning`    | Removes recovery operators from infallible error channels                                                                                                                                          |
+| `prefer-acquire-disposable`            | `preferAcquireDisposable`          | `suggestion` | Prefers `ResultTask.acquireDisposable` when `acquireRelease` only calls `[Symbol.dispose]` / `[Symbol.asyncDispose]`                                                                               |
+| `prefer-and-then`                      | `preferAndThen`                    | `warning`    | Replaces `map` callbacks that return Resultar values with fallible chaining                                                                                                                        |
+| `prefer-as-void`                       | `preferAsVoid`                     | `suggestion` | Replaces `.map(() => undefined)` with `.asVoid()` on `ResultTask`                                                                                                                                  |
+| `prefer-catch-reason`                  | `preferCatchReason`                | `warning`    | Uses reason-aware recovery instead of manually checking nested reason tags                                                                                                                         |
+| `prefer-filter-or-else`                | `preferFilterOrElse`               | `suggestion` | Replaces `andThen` callbacks that only branch on a predicate to return the input or an error with `filterOrElse`                                                                                   |
+| `prefer-first-success-of`              | `preferFirstSuccessOf`             | `warning`    | Replaces long independent fallback chains with ordered candidates (`ResultTask.firstSuccessOf` / `firstSuccessOf`)                                                                                 |
+| `prefer-map`                           | `preferMap`                        | `warning`    | Replaces fallible chaining that only wraps a plain success value                                                                                                                                   |
+| `prefer-map-err`                       | `preferMapErr`                     | `warning`    | Replaces recovery that only transforms an error into another error                                                                                                                                 |
+| `prefer-or-else-succeed`               | `preferOrElseSucceed`              | `suggestion` | Replaces `orElse` callbacks that unconditionally wrap a fallback in `ok` / `ResultTask.ok` with `orElseSucceed`                                                                                    |
+| `prefer-result-async`                  | `preferResultAsync`                | `off`        | Opt-in eager-contract policy (`resultar/async`): reports `Promise<Result>` and `Promise<StrictResult>` contracts and inferred function returns; mode `all` also reports raw Promise contracts      |
+| `prefer-result-for-each`               | `preferResultForEach`              | `warning`    | Replaces map-then-combine allocation with Resultar collection helpers (`Result.forEach`, `ResultTask.forEach`)                                                                                     |
+| `prefer-tagged-error`                  | `preferTaggedError`                | `warning`    | Encourages stable tagged domain errors over plain `Error` values                                                                                                                                   |
+| `prefer-tap`                           | `preferTap`                        | `suggestion` | Replaces `map` / `andThen` side-effect callbacks that return their input unchanged with `tap` (`ResultTask`) or `inspect` (`Result` / `ResultAsync`)                                               |
+| `prefer-tap-error`                     | `preferTapError`                   | `suggestion` | Replaces `orElse` side-effect callbacks that re-wrap the same error with `tapError` (`ResultTask`) or `inspectError` (`Result` / `ResultAsync`)                                                    |
+| `require-return-yield-star`            | `requireReturnYieldStar`           | `warning`    | Requires `return yield*` when yielding an always-failing error (`Err<never, E>` / `ResultTask<never, E, R>`) so TypeScript narrows control flow                                                    |
+| `tagged-error-name-match`              | `taggedErrorNameMatch`             | `warning`    | Keeps the generated runtime tag equal to the TypeScript class name                                                                                                                                 |
+| `typed-catch-mapper`                   | `typedCatchMapper`                 | `warning`    | Requires throwing and rejecting boundaries to map causes into concrete errors                                                                                                                      |
+| `unnecessary-pipe`                     | `unnecessaryPipe`                  | `suggestion` | Reports single-argument `pipe(x)` and zero-argument `.pipe()` calls                                                                                                                                |
+| `unsafe-result-type-assertion`         | `unsafeResultTypeAssertion`        | `warning`    | Prevents assertions that remove Resultar failures, task services, or deferred scope errors (including unknown bridges)                                                                             |
+| `yield-star-in-result-task-gen`        | `yieldStarInResultTaskGen`         | `warning`    | Requires `yield*` for tasks and services inside `ResultTask.gen` / `ResultTask.fn`                                                                                                                 |
+| `yield-star-in-safe-try`               | `yieldStarInSafeTry`               | `warning`    | Requires `yield*` to compose Resultar values inside `Result.gen` / `Result.fn` / `ResultAsync.gen` / `ResultAsync.fn` / legacy `safeTry`                                                           |
 
 Rules understand both method, static data-first, and curried `pipe` composition forms where applicable (including `Semaphore.withPermit` / `withPermits`, `Fiber` operations, `Match` finalizers, and static `Result` / `ResultAsync` / `ResultTask` helpers). In `no-discard`, `Promise<Result>` / `Promise.all(...).then(...)` and array `.map` / `.forEach` / `.flatMap` chains are tracked through callback targets—including curried/static Resultar consumers, transformers, and tuple combiners (`Result.all`, `Result.combine`, `Result.validateAll`), `.bind(...)`, conditional callbacks, object-literal property callbacks, and higher-order callback factories—when the outer Promise or mapped collection is consumed or returned. ResultTask-aware checks
 cover ignored tasks, unknown or narrowed error and requirements channels, nested tasks returned from `map`, Promises
@@ -376,26 +380,25 @@ deprecated Task aliases `succeed` / `fail`, `mapError`, `flatMap`, and `catchAll
 `RetryPolicy` for retry configuration and `{ ok, err }` for object-form matching; existing forms
 remain supported during migration.
 
-Generator rules also cover `Result.gen`, `Result.fn`, and `ResultTask.fn`. Static ResultTask and Result namespace recognition and
+Generator rules also cover `Result.gen`, `Result.fn`, `ResultAsync.gen`, `ResultAsync.fn`, and `ResultTask.fn`. Static ResultTask, Result, and ResultAsync namespace recognition and
 generator recognition resolve imported symbols, including renamed imports, namespace imports,
-and barrel reexports. Rule IDs retain the `safe-try` spelling for `safeTry`, `Result.gen`, and `Result.fn`.
+and barrel reexports. Rule IDs retain the `safe-try` spelling for `Result.gen`, `Result.fn`, `ResultAsync.gen`, `ResultAsync.fn`, and legacy `safeTry`.
 
-For v4 application code, prefer lazy `ResultTask` workflows and explicit runners (`task.runResult()` returns an in-flight `ResultAsync`). `ResultAsync`
-and `StrictResultAsync` are exported from `resultar` and preserve eager, single-execution contracts.
+For v5 application code, prefer lazy `ResultTask` workflows and explicit runners (`task.runResult()` returns a native `Promise<Result<T, E>>`). Opt-in `ResultAsync`
+and `StrictResultAsync` live in `"resultar/async"` for legacy eager, single-execution contracts.
+
+`noAwaitResultTask` defaults to `"error"`: awaiting a `ResultTask` or `StrictResultTask` directly does not execute it because tasks are lazy and have no `.then`. Call `.runResult()`, `.runPromise()`, or `.runExit()` at an imperative boundary, or use `yield*` inside `ResultTask.gen` / `ResultTask.fn`. When the operand is narrowed to a requirement-free `ResultTask` and the surrounding context expects a `Result`, `resultar-check` offers a safe `.runResult()` autofix.
 
 `noPromiseResultar` defaults to `"error"`, including when `"preferResultAsync": "off"`.
 These contracts fail validation even with `"failOn": "error"`:
 
-- `Promise<Result<T, E>>` -> return `ResultAsync<T, E>` directly without an `async` wrapper;
-- `Promise<StrictResult<T, E>>` -> return `StrictResultAsync<T, E>` directly without an `async` wrapper;
-- `Promise<ResultTask<T, E, R>>` -> return `ResultTask<T, E, R>` directly without an `async` wrapper (or compose external Promise work inside `ResultTask.tryPromise`).
+- `Promise<ResultTask<T, E, R>>` -> return `ResultTask<T, E, R>` directly without an `async` wrapper (or compose external Promise work inside `ResultTask.tryPromise`);
+- `Promise<StrictResultTask<T, E, R>>` -> return `StrictResultTask<T, E, R>` directly without an `async` wrapper;
+- Promise unions containing `ResultTask` / `StrictResultTask` -> keep the workflow lazy and return `ResultTask` directly.
 
-An `async` function returning a `ResultAsync` still unwraps the thenable into `Promise<Result>`, and an `async` function returning a `ResultTask` resolves only the lazy Task description without executing it. `no-promise-resultar` inspects both explicit contract annotations (including aliases, methods, and Promise payload unions) and unannotated `async` factories using Resultar symbol identity, while allowing raw `Promise<T>` SDK inputs and `Promise<Exit<T, E>>` runner boundaries. When both `no-promise-resultar` and `prefer-result-async` are enabled, overlapping `Promise<Result>` contracts emit a single diagnostic without duplicates.
+An `async` function returning a `ResultTask` resolves only the lazy Task description without executing it. `no-promise-resultar` inspects both explicit contract annotations (including aliases, methods, and Promise payload unions) and unannotated `async` factories using Resultar symbol identity, while **allowing** `Promise<Result<T, E>>`, `Promise<StrictResult<T, E>>`, `Promise<Exit<T, E>>` runner boundaries, and raw `Promise<T>` SDK inputs.
 
-The legacy rule name `prefer-result-async` is retained for teams enforcing an existing eager
-boundary policy; it is not a general recommendation to introduce Async into new Task workflows.
-Set `"preferResultAsync": "off"` if that policy does not apply to your project.
-The `resultar` entry point exports `Result`, `ResultTask`, and `ResultAsync` together with its eager helpers.
+The opt-in rule `prefer-result-async` defaults to `"off"` in v5 and is retained for teams enforcing an existing `"resultar/async"` eager boundary policy. Set `"preferResultAsync": "warning"` or `"error"` only if your project enforces eager `ResultAsync` contracts.
 
 The rule checks type references (including aliases, interface properties and methods) and
 inferred function returns. `preferResultAsyncMode` controls its scope:
@@ -426,11 +429,11 @@ const result = await load().runResult();
 ```
 
 Task has no `.then`; `map` is synchronous, and `match` produces another Task to run. Match the
-`Result` above for an immediate boundary response. To preserve an existing eager Async contract,
+`Result` above for an immediate boundary response. To preserve an existing eager `"resultar/async"` contract,
 return the composed operation directly instead of declaring the wrapper `async`:
 
 ```ts
-import { tryResultAsync, type StrictResultAsync } from "resultar";
+import { tryResultAsync, type StrictResultAsync } from "resultar/async";
 
 const load = (): StrictResultAsync<User, LoadError> =>
   tryResultAsync(fetchUser, (cause) => new LoadError({ cause }));
@@ -516,7 +519,7 @@ TypeScript-Go analyzer and avoids rule drift between hosts.
 
 The npm package exposes:
 
-- the `resultar-check` executable, including `lsp`, `init`, and `doctor`;
+- the `resultar-check` executable, including `migrate-v5`, `overview`, `quickfixes`, `lsp`, `init`, and `doctor`;
 - `resultar-check/schema.json` for editor completion and configuration validation;
 - one optional native package for the current operating system and architecture.
 

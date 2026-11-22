@@ -3,20 +3,16 @@
 import {
   createTaggedError,
   Fiber,
-  fromPromise,
   Match,
   ok,
   pipe,
+  Result,
   ResultTask,
-  runPromise,
-  safeTry,
   tryResult,
-  tryResultAsync,
-  type Result,
   type ResultTaskScope,
   type StrictResult,
-  type StrictResultAsync,
 } from "resultar";
+import { fromPromise, ResultAsync, tryResultAsync, type StrictResultAsync } from "resultar/async";
 import { createModule } from "resultar-di";
 
 interface User {
@@ -94,15 +90,15 @@ export const createUserResponse = (email: string) =>
     }),
   });
 
-// prefer-and-then: use andThen when the callback returns another Result.
-export const createUserWithSafeTry = (
+// prefer-and-then: use Result.gen when composing dependent Result steps linearly.
+export const createUserWithGen = (
   email: string,
 ): StrictResult<User, InvalidEmailError | UserAlreadyExistsError> =>
-  safeTry(function* () {
+  Result.gen(function* () {
     const validEmail = yield* validateEmail(email);
     const availableEmail = yield* ensureUserDoesNotExist(validEmail);
 
-    return insertUser(availableEmail);
+    return yield* insertUser(availableEmail);
   });
 
 // typed-catch-mapper: map thrown values to a typed Resultar error.
@@ -131,10 +127,10 @@ export const loadUser = (id: string): StrictResultAsync<User, FetchUserError> =>
 export const loadUserWithFromPromise = (id: string): StrictResultAsync<User, FetchUserError> =>
   fromPromise(fetchUserRecord(id), (cause) => new FetchUserError({ cause, id }));
 
-// Legacy native execution boundary: runPromise unwraps success and rejects on failure.
+// Native execution boundary: runPromise unwraps success and rejects on failure.
 // The host handles the rejection; reusable application methods retain the typed Task.
-export const loadUserAtPromiseBoundary = async (id: string): Promise<User> =>
-  await runPromise(loadUser(id));
+export const loadUserAtPromiseBoundary = (id: string): Promise<User> =>
+  loadUserTask(id).runPromise();
 
 const loadUserTask = (id: string): ResultTask<User, FetchUserError> =>
   ResultTask.tryPromise({
@@ -148,8 +144,9 @@ export const loadUserWithResultTask = (id: string): ResultTask<User, FetchUserEr
     return yield* loadUserTask(id);
   });
 
-// prefer-result-async: execute once and keep the returned operation composable.
-export const runUserTaskAtResultBoundary = (id: string): StrictResultAsync<User, FetchUserError> =>
+// Execution boundary: runResult() returns a native Promise<Result<...>>.
+// resultar-check-disable-next-line prefer-result-async
+export const runUserTaskAtResultBoundary = (id: string): Promise<Result<User, FetchUserError>> =>
   loadUserTask(id).runResult();
 
 // noUnsafeAwaitIgnoreCalls: project-level escape hatches are exact. The full
@@ -185,24 +182,22 @@ export const infallibleUserId = (): Result<string, never> =>
   ok<User, never>({ email: "ok@example.com", id: "ok" }).map((user) => user.id);
 
 // no-try-catch-in-safe-try and yield-star-in-safe-try: compose Resultar values
-// directly inside safeTry; use yield* for every Result/ResultAsync value.
+// directly inside Result.gen; use yield* for every Result value.
 export const createUserWithGenerator = (
   email: string,
 ): StrictResult<User, InvalidEmailError | UserAlreadyExistsError> =>
-  safeTry(function* () {
+  Result.gen(function* () {
     const validEmail = yield* validateEmail(email);
     const availableEmail = yield* ensureUserDoesNotExist(validEmail);
 
-    return insertUser(availableEmail);
+    return yield* insertUser(availableEmail);
   });
 
-// no-await-in-safe-try: async safeTry generators use yield* for ResultAsync
+// no-await-in-safe-try: async ResultAsync.gen generators use yield* for ResultAsync
 // values instead of await.
-export const loadUserWithSafeTry = (id: string): StrictResultAsync<User, FetchUserError> =>
-  safeTry(async function* () {
-    const user = yield* loadUser(id);
-
-    return ok(user);
+export const loadUserWithAsyncGen = (id: string): StrictResultAsync<User, FetchUserError> =>
+  ResultAsync.gen(async function* () {
+    return yield* loadUser(id);
   });
 
 // Existing eager startup adapter; the supplied callback is a native SDK Promise API.

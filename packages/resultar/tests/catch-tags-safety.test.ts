@@ -1,15 +1,8 @@
 import { equal, strictEqual } from 'node:assert'
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import {
-  type Result,
-  type ResultAsync,
-  ResultTask,
-  err,
-  errAsync,
-  ok,
-  okAsync,
-} from '../src/index.js'
+import { type ResultAsync, errAsync, okAsync } from '../src/entries/async.js'
+import { type Result, ResultTask, err, ok } from '../src/index.js'
 import type { ExcludeReasonTag } from '../src/tagged/tagged-types.js'
 
 type Missing = { readonly _tag: 'Missing' }

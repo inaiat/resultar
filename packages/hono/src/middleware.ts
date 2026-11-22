@@ -1,5 +1,5 @@
 import type { Context, Env, MiddlewareHandler } from "hono";
-import { ResultTask, type ResultAsync } from "resultar";
+import { ResultTask, type Result } from "resultar";
 import type {
   ServiceModule,
   HttpServiceSelection,
@@ -24,7 +24,7 @@ export interface HonoServices<S extends object, R, G extends ServiceGraph> {
   ) => MiddlewareHandler<
     Environment & { Variables: { services: Readonly<Pick<S, Keys[number]>> } }
   >;
-  readonly close: () => ResultAsync<void, ServiceScopeError<R>>;
+  readonly close: () => Promise<Result<void, ServiceScopeError<R>>>;
 }
 
 /** Adds DI to a native Hono router without replacing its bindings or response types. */
@@ -33,7 +33,7 @@ export function createHonoServices<S extends object, E, R, G extends ServiceGrap
 ): HonoServices<S, R, G> {
   const root = services.scope();
   const active = new WeakSet<object>();
-  let closing: ResultAsync<void, ServiceScopeError<R>> | undefined = undefined;
+  let closing: Promise<Result<void, ServiceScopeError<R>>> | undefined = undefined;
   return {
     middleware: (keys, options) => {
       const selectedKeys = Object.freeze([...keys]);

@@ -480,7 +480,7 @@ func (a *Analyzer) noPromiseInResultSuccess(file *ast.SourceFile) []Finding {
 				hasPromise = callbackReturnsPromiseLike(a.checker, argument)
 			}
 			if hasPromise {
-				message := "This synchronous Result maps or stores a Promise in its success channel. Use asyncMap or ResultAsync for asynchronous work."
+				message := "This synchronous Result maps or stores a Promise in its success channel. Lift into ResultTask (for example with ResultTask.fromResult(...).andThen(() => ResultTask.tryPromise(...))) for asynchronous work."
 				if isResultTaskLikeType(receiverType) {
 					message = "This ResultTask maps or stores a Promise in its success channel. Use andThen with ResultTask.tryPromise for asynchronous work."
 				}
@@ -498,7 +498,7 @@ func (a *Analyzer) noPromiseInResultSuccess(file *ast.SourceFile) []Finding {
 		}
 		value := call.Arguments.Nodes[0]
 		if isPromiseLikeType(a.checker, a.checker.GetTypeAtLocation(value)) {
-			message := "Do not put a Promise in a synchronous Result success channel. Use ResultAsync or a Resultar Promise boundary."
+			message := "Do not put a Promise in a synchronous Result success channel. Use ResultTask.tryPromise (or ResultTask.fromPromise) for asynchronous work."
 			if isResultTaskLikeType(resultType) {
 				message = "Do not put a Promise in a ResultTask success channel. Use andThen with ResultTask.tryPromise for asynchronous work."
 			}
@@ -782,7 +782,7 @@ func (a *Analyzer) noTryCatch(file *ast.SourceFile) []Finding {
 			return
 		}
 		findings = append(findings, newFinding(file, node, "no-try-catch", a.options.NoTryCatch,
-			"Avoid raw try/catch for expected failures. Use tryResult or tryResultAsync to preserve the typed error channel.", ""))
+			"Avoid raw try/catch for expected failures. Use tryResult or ResultTask.tryPromise to preserve the typed error channel.", ""))
 	})
 	return findings
 }
@@ -803,7 +803,7 @@ func (a *Analyzer) yieldStarInSafeTry(file *ast.SourceFile) []Finding {
 				return
 			}
 			finding := newFinding(file, bodyNode, "yield-star-in-safe-try", a.options.YieldStarInSafeTry,
-				"Use `yield*` when unwrapping Resultar values inside `safeTry`.", "")
+				"Use `yield*` when unwrapping Resultar values inside `Result.gen` / `Result.fn`.", "")
 			finding.Fixes = []Fix{replaceTokenFix(file, bodyNode, "Use yield* for this Resultar value", "yield*")}
 			findings = append(findings, finding)
 		})
@@ -841,7 +841,7 @@ func (a *Analyzer) noAwaitInSafeTry(file *ast.SourceFile) []Finding {
 		visitFunctionBody(body, func(bodyNode *ast.Node) {
 			if bodyNode.Kind == ast.KindAwaitExpression {
 				finding := newFinding(file, bodyNode, "no-await-in-safe-try", a.options.NoAwaitInSafeTry,
-					"Do not use `await` inside `safeTry`. Use `yield*` for Resultar values and wrap raw Promises before yielding them.", "")
+					"Do not use `await` inside `Result.gen` / `Result.fn`. Use `ResultTask.gen` with `yield*` for asynchronous workflows and wrap raw Promises with `ResultTask.tryPromise`.", "")
 				if isResultLikeType(a.checker.GetTypeAtLocation(bodyNode.Expression())) {
 					finding.Fixes = []Fix{replaceTokenFix(file, bodyNode, "Use yield* for this Resultar value", "yield*")}
 				}
@@ -862,7 +862,7 @@ func (a *Analyzer) noTryCatchInSafeTry(file *ast.SourceFile) []Finding {
 		visitFunctionBody(body, func(bodyNode *ast.Node) {
 			if bodyNode.Kind == ast.KindTryStatement {
 				findings = append(findings, newFinding(file, bodyNode, "no-try-catch-in-safe-try", a.options.NoTryCatchInSafeTry,
-					"Avoid raw try/catch inside `safeTry`. Use `safeTry({ try, catch })`, `tryResult`, or `tryResultAsync` to keep failures typed.", ""))
+					"Avoid raw try/catch inside `Result.gen` / `Result.fn`. Use `tryResult` or `ResultTask.tryPromise` to keep failures typed.", ""))
 			}
 		})
 	})
@@ -1128,7 +1128,7 @@ func inspectableCallbackOrObjectTry(expression *ast.Node) *ast.Node {
 		return nil
 	}
 	for _, property := range expression.AsObjectLiteralExpression().Properties.Nodes {
-		if property.Name() == nil || property.Name().Text() != "try" {
+		if key, ok := staticPropertyNameText(property.Name()); !ok || key != "try" {
 			continue
 		}
 		if property.Kind == ast.KindMethodDeclaration {
@@ -1368,7 +1368,7 @@ func hasObjectCatchProperty(expression *ast.Node) bool {
 		if property.Kind != ast.KindPropertyAssignment && property.Kind != ast.KindMethodDeclaration {
 			continue
 		}
-		if name := property.Name(); name != nil && name.Text() == "catch" {
+		if key, ok := staticPropertyNameText(property.Name()); ok && key == "catch" {
 			return true
 		}
 	}
@@ -1473,7 +1473,9 @@ func (a *Analyzer) safeTryBody(node *ast.Node) *ast.Node {
 		return nil
 	}
 	call := node.AsCallExpression()
-	if (a.canonicalExpressionName(call.Expression) != "safeTry" && a.staticNamespace(call.Expression, "gen") != "Result" && a.staticNamespace(call.Expression, "fn") != "Result") || len(call.Arguments.Nodes) == 0 {
+	genNS := a.staticNamespace(call.Expression, "gen")
+	fnNS := a.staticNamespace(call.Expression, "fn")
+	if (a.canonicalExpressionName(call.Expression) != "safeTry" && genNS != "Result" && fnNS != "Result" && genNS != "ResultAsync" && fnNS != "ResultAsync") || len(call.Arguments.Nodes) == 0 {
 		return nil
 	}
 	first := unwrapExpression(call.Arguments.Nodes[0])
@@ -1487,8 +1489,7 @@ func (a *Analyzer) safeTryBody(node *ast.Node) *ast.Node {
 		return nil
 	}
 	for _, property := range first.AsObjectLiteralExpression().Properties.Nodes {
-		name := property.Name()
-		if name == nil || name.Text() != "try" {
+		if key, ok := staticPropertyNameText(property.Name()); !ok || key != "try" {
 			continue
 		}
 		if property.Kind == ast.KindMethodDeclaration {
@@ -1523,8 +1524,7 @@ func (a *Analyzer) resultGenOrFnBody(node *ast.Node) *ast.Node {
 		return nil
 	}
 	for _, property := range first.AsObjectLiteralExpression().Properties.Nodes {
-		name := property.Name()
-		if name == nil || name.Text() != "try" {
+		if key, ok := staticPropertyNameText(property.Name()); !ok || key != "try" {
 			continue
 		}
 		if property.Kind == ast.KindMethodDeclaration {
@@ -1621,7 +1621,7 @@ func taggedErrorName(options *ast.Node) *ast.Node {
 		return nil
 	}
 	for _, property := range options.AsObjectLiteralExpression().Properties.Nodes {
-		if property.Kind != ast.KindPropertyAssignment || property.Name() == nil || property.Name().Text() != "name" {
+		if key, ok := staticPropertyNameText(property.Name()); property.Kind != ast.KindPropertyAssignment || !ok || key != "name" {
 			continue
 		}
 		initializer := property.AsPropertyAssignment().Initializer
@@ -6181,7 +6181,7 @@ func diLifetimeOption(args []*ast.Node, index int) string {
 		if property.Kind == ast.KindSpreadAssignment {
 			return ""
 		}
-		if property.Kind != ast.KindPropertyAssignment || property.Name() == nil || property.Name().Text() != "lifetime" {
+		if key, ok := staticPropertyNameText(property.Name()); property.Kind != ast.KindPropertyAssignment || !ok || key != "lifetime" {
 			continue
 		}
 		if value, ok := diStringArgument([]*ast.Node{property.AsPropertyAssignment().Initializer}, 0); ok {
@@ -6539,9 +6539,13 @@ func (a *Analyzer) noAwaitInResultTaskGen(file *ast.SourceFile) []Finding {
 		}
 		visitFunctionBody(body, func(bodyNode *ast.Node) {
 			if bodyNode.Kind == ast.KindAwaitExpression {
+				operandType := a.checker.GetTypeAtLocation(bodyNode.Expression())
+				if a.options.NoAwaitResultTask != "off" && isResultTaskLikeType(operandType) {
+					return
+				}
 				finding := newFinding(file, bodyNode, "no-await-in-result-task-gen", a.options.NoAwaitInResultTaskGen,
 					"Do not use `await` inside `ResultTask.gen`. Use `yield*` for tasks and services so composition stays lazy and typed.", "")
-				if isResultLikeType(a.checker.GetTypeAtLocation(bodyNode.Expression())) {
+				if isResultLikeType(operandType) {
 					finding.Fixes = []Fix{replaceTokenFix(file, bodyNode, "Use yield* for this ResultTask value", "yield*")}
 				}
 				findings = append(findings, finding)
@@ -6670,10 +6674,13 @@ func (a *Analyzer) preferTap(file *ast.SourceFile) []Finding {
 		if !isResultLikeType(receiverType) {
 			return
 		}
-		replacement := "tap"
-		if a.isResultarSyncType(receiverType) && (!isStatic && a.checker.GetPropertyOfType(receiverType, "inspect") != nil || isStatic && a.hasOperatorReplacement(node, nil, "inspect")) {
-			replacement = "inspect"
-		} else if !a.hasOperatorReplacement(node, receiverType, "tap") {
+		replacement := "inspect"
+		if isResultTaskLikeType(receiverType) {
+			if !a.hasOperatorReplacement(node, receiverType, "tap") {
+				return
+			}
+			replacement = "tap"
+		} else if !(!isStatic && a.checker.GetPropertyOfType(receiverType, "inspect") != nil || isStatic && a.hasOperatorReplacement(node, nil, "inspect")) {
 			return
 		}
 		if len(arguments) == 0 {
@@ -6705,8 +6712,10 @@ func (a *Analyzer) preferTap(file *ast.SourceFile) []Finding {
 		}
 		finding := newFinding(file, nameNode, "prefer-tap", a.options.PreferTap,
 			fmt.Sprintf("`%s` performs side effects and returns the original input unchanged. Use `%s` to express side-effect-only observation.", method, replacement), "")
-		if method == "map" {
-			finding.Fixes = []Fix{renameFix(file, nameNode, fmt.Sprintf("Replace %s with %s", method, replacement), replacement)}
+		if method == "map" && (replacement == "tap" || (!isResultAsyncLikeType(receiverType) && !callbackMayThrowOrReject(a.checker, callback))) {
+			if fix, ok := preferTapVoidCallbackFix(file, nameNode, callback, returned, method, replacement); ok {
+				finding.Fixes = []Fix{fix}
+			}
 		}
 		findings = append(findings, finding)
 	})
@@ -6723,10 +6732,13 @@ func (a *Analyzer) preferTapError(file *ast.SourceFile) []Finding {
 		if !isResultLikeType(receiverType) || hasOnlyNeverErrors(a.checker, receiverType) {
 			return
 		}
-		replacement := "tapError"
-		if a.isResultarSyncType(receiverType) && (!isStatic && a.checker.GetPropertyOfType(receiverType, "inspectError") != nil || isStatic && a.hasOperatorReplacement(node, nil, "inspectError")) {
-			replacement = "inspectError"
-		} else if !a.hasOperatorReplacement(node, receiverType, "tapError") {
+		replacement := "inspectError"
+		if isResultTaskLikeType(receiverType) {
+			if !a.hasOperatorReplacement(node, receiverType, "tapError") {
+				return
+			}
+			replacement = "tapError"
+		} else if !(!isStatic && a.checker.GetPropertyOfType(receiverType, "inspectError") != nil || isStatic && a.hasOperatorReplacement(node, nil, "inspectError")) {
 			return
 		}
 		if len(arguments) == 0 {
@@ -6758,8 +6770,10 @@ func (a *Analyzer) preferTapError(file *ast.SourceFile) []Finding {
 		}
 		finding := newFinding(file, nameNode, "prefer-tap-error", a.options.PreferTapError,
 			fmt.Sprintf("`%s` performs side effects and forwards the original error unchanged. Use `%s` to express error observation.", method, replacement), "")
-		if method == "mapErr" || method == "mapError" {
-			finding.Fixes = []Fix{renameFix(file, nameNode, fmt.Sprintf("Replace %s with %s", method, replacement), replacement)}
+		if (method == "mapErr" || method == "mapError") && (replacement == "tapError" || (!isResultAsyncLikeType(receiverType) && !callbackMayThrowOrReject(a.checker, callback))) {
+			if fix, ok := preferTapVoidCallbackFix(file, nameNode, callback, returned, method, replacement); ok {
+				finding.Fixes = []Fix{fix}
+			}
 		}
 		findings = append(findings, finding)
 	})
@@ -6924,7 +6938,7 @@ func extractAcquireReleaseCallback(args []*ast.Node) *ast.Node {
 		first := unwrapExpression(args[0])
 		if first != nil && first.Kind == ast.KindObjectLiteralExpression {
 			for _, prop := range first.AsObjectLiteralExpression().Properties.Nodes {
-				if prop.Name() == nil || prop.Name().Text() != "release" {
+				if key, ok := staticPropertyNameText(prop.Name()); !ok || key != "release" {
 					continue
 				}
 				if prop.Kind == ast.KindPropertyAssignment {

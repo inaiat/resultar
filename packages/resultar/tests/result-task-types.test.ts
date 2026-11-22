@@ -3,7 +3,6 @@ import { describe, expectTypeOf, it } from 'vite-plus/test'
 import type {
   Exit,
   Result,
-  ResultAsync,
   ResultTaskGenerator,
   ResultTaskRunOptions,
   ResultTaskServices,
@@ -24,8 +23,8 @@ import {
 
 describe('ResultTask public types', () => {
   it('infers constructor and execution boundary types', async () => {
-    const successful = ResultTask.succeed(1)
-    const failed = ResultTask.fail<'not-found'>('not-found')
+    const successful = ResultTask.ok(1)
+    const failed = ResultTask.err<'not-found'>('not-found')
     const synchronous = ResultTask.sync(() => 'value')
     const caught = ResultTask.try({ try: () => 1, catch: () => 'invalid' as const })
     const promised = ResultTask.tryPromise({
@@ -90,10 +89,10 @@ describe('ResultTask public types', () => {
       return value
     })
     const mapped = workflow.map((value) => value + 1)
-    const chained = workflow.flatMap((value) =>
+    const chained = workflow.andThen((value) =>
       ResultTask.try({ try: () => String(value), catch: () => 'format-failed' as const }),
     )
-    const recovered = workflow.catchAll(() => ResultTask.succeed(0))
+    const recovered = workflow.orElse(() => ResultTask.ok(0))
 
     expectTypeOf(workflow).toEqualTypeOf<
       ResultTask<number, 'clock-failed', typeof Logger | typeof Clock>
@@ -140,7 +139,7 @@ describe('ResultTask public types', () => {
     expectTypeOf(oneProvided).toEqualTypeOf<ResultTask<number, never, never>>()
     expectTypeOf(allProvided).toEqualTypeOf<ResultTask<number, never, never>>()
     expectTypeOf(ResultTask.runExit(oneProvided)).toEqualTypeOf<Promise<Exit<number, never>>>()
-    expectTypeOf(ResultTask.runResult(allProvided)).toEqualTypeOf<ResultAsync<number, never>>()
+    expectTypeOf(ResultTask.runResult(allProvided)).toEqualTypeOf<Promise<Result<number, never>>>()
 
     if (false) {
       const Other = ResultTask.service<{ readonly value: string }, 'Other'>('Other')
@@ -197,7 +196,7 @@ describe('ResultTask public types', () => {
     type BaseUser = { readonly id: string }
     type AdminUser = BaseUser & { readonly role: 'admin' }
 
-    const adminTask = ResultTask.succeed<AdminUser>({ id: 'u1', role: 'admin' })
+    const adminTask = ResultTask.ok<AdminUser>({ id: 'u1', role: 'admin' })
 
     expectTypeOf(adminTask[ResultTaskTypeId]).toEqualTypeOf<{
       readonly success: (_: never) => AdminUser
@@ -209,7 +208,7 @@ describe('ResultTask public types', () => {
     expectTypeOf(adminTask).toExtend<ResultTask<BaseUser>>()
 
     // Covariance in error type E: 'narrow' -> string
-    const narrowErrorTask = ResultTask.fail<'narrow'>('narrow')
+    const narrowErrorTask = ResultTask.err<'narrow'>('narrow')
     expectTypeOf(narrowErrorTask).toExtend<ResultTask<never, string>>()
   })
 
@@ -371,7 +370,7 @@ describe('ResultTask public types', () => {
       ok: (value) => {
         expectTypeOf(value).toEqualTypeOf<string>()
       },
-      error: (error) => {
+      err: (error) => {
         expectTypeOf(error).toEqualTypeOf<MissingError | InvalidError | TimeoutError>()
       },
     })

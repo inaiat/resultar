@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
 
-import { okAsync, pipe, type Result, ResultAsync, ResultTask } from '../src/index.js'
+import { ResultAsync, okAsync } from '../src/entries/async.js'
+import { pipe, type Result, ResultTask } from '../src/index.js'
 
 describe('ResultAsync.map compatibility', () => {
   it('resolves an async mapper before wrapping the success value', async () => {

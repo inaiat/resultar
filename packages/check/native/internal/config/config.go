@@ -28,6 +28,7 @@ type Options struct {
 	NoDiscard                        Severity
 	NoDiscardMode                    string
 	NoAwaitInSafeTry                 Severity
+	NoAwaitResultTask                Severity
 	NoPromiseInResultSuccess         Severity
 	NoPromiseResultar                Severity
 	NoTaggedErrorConstructorOverride Severity
@@ -92,6 +93,7 @@ func Defaults() Options {
 		NoUnknownTaskRequirements:        SeveritySuggestion,
 		UnusedSuppression:                SeveritySuggestion,
 		NoAwaitInSafeTry:                 SeverityError,
+		NoAwaitResultTask:                SeverityError,
 		NoDiscard:                        SeverityError,
 		NoDiscardMode:                    "must-use",
 		NoPromiseInResultSuccess:         SeverityWarning,
@@ -109,7 +111,7 @@ func Defaults() Options {
 		PreferFirstSuccessOf:             SeverityWarning,
 		PreferMap:                        SeverityWarning,
 		PreferMapErr:                     SeverityWarning,
-		PreferResultAsync:                SeverityWarning,
+		PreferResultAsync:                SeverityOff,
 		PreferResultAsyncMode:            "result",
 		PreferResultForEach:              SeverityWarning,
 		PreferTaggedError:                SeverityWarning,
@@ -287,6 +289,9 @@ func applyPlugin(options *Options, plugin map[string]any) error {
 		return err
 	}
 	if err := setSeverity(plugin, "noAwaitInSafeTry", &options.NoAwaitInSafeTry); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "noAwaitResultTask", &options.NoAwaitResultTask); err != nil {
 		return err
 	}
 	if err := setSeverity(plugin, "noDiscard", &options.NoDiscard); err != nil {
@@ -572,7 +577,7 @@ func canonicalRule(name string) string {
 
 var ruleNames = map[string]struct{}{
 	"nounknowntaskrequirements": {}, "unusedsuppression": {},
-	"noawaitinsafetry": {}, "nodiscard": {}, "nopromiseinresultsuccess": {}, "nopromiseresultar": {},
+	"noawaitinsafetry": {}, "noawaitresulttask": {}, "nodiscard": {}, "nopromiseinresultsuccess": {}, "nopromiseresultar": {},
 	"notaggederrorconstructoroverride": {}, "nothrow": {}, "notrycatch": {},
 	"notrycatchinsafetry": {}, "nounknownresulterror": {}, "nouselessrecovery": {},
 	"nounsafeawait": {}, "noinvalidlifetime": {}, "nounscopedacquirerelease": {},
@@ -596,6 +601,8 @@ func setRuleSeverity(options *Options, name string, value Severity) error {
 		options.UnusedSuppression = value
 	case "noawaitinsafetry":
 		options.NoAwaitInSafeTry = value
+	case "noawaitresulttask":
+		options.NoAwaitResultTask = value
 	case "nodiscard":
 		options.NoDiscard = value
 	case "nopromiseinresultsuccess":
@@ -914,6 +921,8 @@ func RuleSeverity(options Options, name string) (Severity, bool) {
 		return options.UnusedSuppression, true
 	case "noawaitinsafetry":
 		return options.NoAwaitInSafeTry, true
+	case "noawaitresulttask":
+		return options.NoAwaitResultTask, true
 	case "nodiscard":
 		return options.NoDiscard, true
 	case "nopromiseinresultsuccess":

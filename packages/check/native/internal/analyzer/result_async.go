@@ -222,11 +222,9 @@ func (a *Analyzer) classifyPromiseResultar(type_ *checker.Type, location *ast.No
 		collector.nonResultar = appendUniqueTypeText(collector.nonResultar, a.formatTypeNode(nonPromisePart, location))
 	}
 
-	if !collector.hasTask && !collector.hasResult {
+	if !collector.hasTask {
 		return promiseResultarClassification{}
 	}
-
-	pureSyncResult := isNativePromiseType(type_) && !collector.hasTask && len(collector.nonResultar) == 0 && a.isResultarSyncType(a.checker.GetPromisedTypeOfPromise(type_))
 
 	if collector.hasTask && collector.hasResult {
 		allSuccess := mergeChannelTypes(collector.resSuccess, collector.taskSuccess, collector.nonResultar)
@@ -236,66 +234,27 @@ func (a *Analyzer) classifyPromiseResultar(type_ *checker.Type, location *ast.No
 			unifiedErrorParts = []string{"never"}
 		}
 		unifiedTask := formatResultTaskType(allSuccess, unifiedErrorParts, collector.taskReq)
-		if len(collector.taskReq) > 0 {
-			return promiseResultarClassification{
-				matched: true,
-				hasTask: true,
-				message: fmt.Sprintf("Do not wrap heterogeneous Result and ResultTask unions in a native Promise; review this contract and unify all branches into %s directly without an async wrapper (lifting synchronous Result branches with ResultTask.fromResult) so every success, error, and requirement channel is preserved.", unifiedTask),
-			}
-		}
-		unifiedAsync := fmt.Sprintf("ResultAsync<%s, %s>", joinChannelTypes(allSuccess, "never"), joinChannelTypes(unifiedErrorParts, "never"))
 		return promiseResultarClassification{
 			matched: true,
 			hasTask: true,
-			message: fmt.Sprintf("Do not wrap heterogeneous Result and ResultTask unions in a native Promise; review this contract and unify all branches into %s (or %s for eager boundaries) directly without an async wrapper so every success and error channel is preserved.", unifiedTask, unifiedAsync),
+			message: fmt.Sprintf("Do not wrap heterogeneous Result and ResultTask unions in a native Promise; review this contract and unify all branches into %s directly without an async wrapper (lifting synchronous Result branches with ResultTask.fromResult) so every success, error, and requirement channel is preserved.", unifiedTask),
 		}
-	}
-
-	if collector.hasTask {
-		if len(collector.nonResultar) > 0 {
-			allSuccess := mergeChannelTypes(collector.taskSuccess, collector.nonResultar)
-			replacement := formatResultTaskType(allSuccess, collector.taskError, collector.taskReq)
-			return promiseResultarClassification{
-				matched: true,
-				hasTask: true,
-				message: fmt.Sprintf("Do not wrap ResultTask union contracts in a native Promise; review the non-Resultar union branch (%s) and return %s directly without an async wrapper, lifting plain values with ResultTask.ok.", joinChannelTypes(collector.nonResultar, "unknown"), replacement),
-			}
-		}
-		replacement := formatResultTaskType(collector.taskSuccess, collector.taskError, collector.taskReq)
-		return promiseResultarClassification{
-			matched: true,
-			hasTask: true,
-			message: fmt.Sprintf("Do not wrap ResultTask in a native Promise; return %s directly without an async wrapper, or compose external Promise work inside ResultTask.tryPromise.", replacement),
-		}
-	}
-
-	wrapperName := "Result"
-	replacementCtor := "ResultAsync"
-	if collector.disposable && !collector.plainResult && !collector.strictResult {
-		wrapperName = "DisposableResult"
-		replacementCtor = "DisposableResultAsync"
-	} else if collector.strictResult && !collector.plainResult && !collector.disposable {
-		wrapperName = "StrictResult"
-		replacementCtor = "StrictResultAsync"
 	}
 
 	if len(collector.nonResultar) > 0 {
-		allSuccess := mergeChannelTypes(collector.resSuccess, collector.nonResultar)
-		errorText := joinChannelTypes(collector.resError, "never")
-		replacement := fmt.Sprintf("%s<%s, %s>", replacementCtor, joinChannelTypes(allSuccess, "never"), errorText)
+		allSuccess := mergeChannelTypes(collector.taskSuccess, collector.nonResultar)
+		replacement := formatResultTaskType(allSuccess, collector.taskError, collector.taskReq)
 		return promiseResultarClassification{
 			matched: true,
-			message: fmt.Sprintf("Do not wrap %s union contracts in a native Promise; review the non-Resultar union branch (%s) and return %s directly without an async wrapper, lifting plain values into the success channel.", wrapperName, joinChannelTypes(collector.nonResultar, "unknown"), replacement),
+			hasTask: true,
+			message: fmt.Sprintf("Do not wrap ResultTask union contracts in a native Promise; review the non-Resultar union branch (%s) and return %s directly without an async wrapper, lifting plain values with ResultTask.ok.", joinChannelTypes(collector.nonResultar, "unknown"), replacement),
 		}
 	}
-
-	successText := joinChannelTypes(collector.resSuccess, "never")
-	errorText := joinChannelTypes(collector.resError, "never")
-	replacement := fmt.Sprintf("%s<%s, %s>", replacementCtor, successText, errorText)
+	replacement := formatResultTaskType(collector.taskSuccess, collector.taskError, collector.taskReq)
 	return promiseResultarClassification{
-		matched:        true,
-		pureSyncResult: pureSyncResult,
-		message:        fmt.Sprintf("Do not wrap %s in a native Promise; return %s directly without an async wrapper, mapping external rejections into the typed error channel.", wrapperName, replacement),
+		matched: true,
+		hasTask: true,
+		message: fmt.Sprintf("Do not wrap ResultTask in a native Promise; return %s directly without an async wrapper, or compose external Promise work inside ResultTask.tryPromise.", replacement),
 	}
 }
 
@@ -321,7 +280,7 @@ func (a *Analyzer) collectPromisedResultar(type_ *checker.Type, location *ast.No
 			aliasLibName = libName
 			aliasArgs = alias.TypeArguments()
 			switch libName {
-			case "ResultTask":
+			case "ResultTask", "StrictResultTask":
 				collector.hasTask = true
 			case "StrictResult", "StrictResultAsync":
 				collector.hasResult = true
@@ -368,7 +327,7 @@ func (a *Analyzer) collectPromisedResultar(type_ *checker.Type, location *ast.No
 		matched = true
 		args := typeArguments(a.checker, type_)
 		switch libName {
-		case "ResultTask":
+		case "ResultTask", "StrictResultTask":
 			collector.hasTask = true
 			a.recordTaskArgs(args, location, collector)
 		case "StrictResult", "StrictResultAsync":
@@ -599,7 +558,7 @@ func (a *Analyzer) isResultarSyncTypeVisited(type_ *checker.Type, visited map[*c
 		symbols = append(symbols, type_.Target().Symbol())
 	}
 	for _, symbol := range symbols {
-		if symbol == nil || (symbol.Name() != "Result" && symbol.Name() != "StrictResult" && symbol.Name() != "OkResult" && symbol.Name() != "ErrResult" && symbol.Name() != "DisposableResult") {
+		if symbol == nil || (symbol.Name() != "Result" && symbol.Name() != "StrictResult" && symbol.Name() != "OkResult" && symbol.Name() != "ErrResult" && symbol.Name() != "Ok" && symbol.Name() != "Err" && symbol.Name() != "DisposableResult") {
 			continue
 		}
 		for _, declaration := range symbol.Declarations() {

@@ -29,7 +29,7 @@ test("resolves explicit dependencies lazily in order and includes yielded requir
     },
   }) {}
   const module = createModule().singleton(First).scoped(Second).scoped(Total).value("extra", 3);
-  const task = module.use(["total"], ({ total }) => ResultTask.succeed(total));
+  const task = module.use(["total"], ({ total }) => ResultTask.ok(total));
   expect(events).toEqual([]);
   expect(await ResultTask.runPromise(task)).toBe(6);
   expect(events).toEqual(["first", "second", "factory", "task"]);
@@ -91,7 +91,7 @@ test("requires does not register providers and stops before the factory on a mis
   });
   const task = createModule()
     .scoped(Dependent)
-    .use(["dependent"], ({ dependent }) => ResultTask.succeed(dependent));
+    .use(["dependent"], ({ dependent }) => ResultTask.ok(dependent));
   const exit = await ResultTask.runExit(task, { services: {} as never });
   expect(exit).toMatchObject({
     _tag: "Failure",
@@ -103,7 +103,7 @@ test("requires does not register providers and stops before the factory on a mis
 test("accepts empty requires and prototype-like aliases", async () => {
   const Independent = Service<{ value: number }>()("independent", {
     requires: {},
-    make: () => ResultTask.succeed({ value: 42 }),
+    make: () => ResultTask.ok({ value: 42 }),
   });
   const Alias = Service()("alias", {
     requires: { ["__proto__"]: Independent },
@@ -117,7 +117,7 @@ test("accepts empty requires and prototype-like aliases", async () => {
   const task = createModule()
     .singleton(Independent)
     .scoped(Alias)
-    .use(["alias"], ({ alias }) => ResultTask.succeed(alias));
+    .use(["alias"], ({ alias }) => ResultTask.ok(alias));
   expect(await ResultTask.runPromise(task)).toBe(42);
 });
 
@@ -140,7 +140,7 @@ test.each(["failure", "defect", "interrupt"] as const)(
       requires: { connection: Connection },
       make: () => {
         if (mode === "defect") throw new Error("broken factory");
-        if (mode === "failure") return ResultTask.fail("broken task" as const);
+        if (mode === "failure") return ResultTask.err("broken task" as const);
         return ResultTask.sync(() => {
           controller.abort("stop");
           return 1;
@@ -150,7 +150,7 @@ test.each(["failure", "defect", "interrupt"] as const)(
     const task = createModule()
       .scoped(Connection)
       .scoped(Broken)
-      .use(["broken"], ({ broken }) => ResultTask.succeed(broken));
+      .use(["broken"], ({ broken }) => ResultTask.ok(broken));
     const exit = await ResultTask.runExit(task, { signal: controller.signal });
     const causes = {
       failure: { _tag: "Fail", error: "broken task" },
@@ -168,13 +168,13 @@ test("preserves finalizer failures from the returned construction task", async (
     requires: {},
     make: () =>
       ResultTask.acquireRelease({
-        acquire: ResultTask.succeed(42),
-        release: () => ResultTask.fail("release" as const),
+        acquire: ResultTask.ok(42),
+        release: () => ResultTask.err("release" as const),
       }),
   });
   const task = createModule()
     .scoped(Owned)
-    .use(["owned"], ({ owned }) => ResultTask.succeed(owned));
+    .use(["owned"], ({ owned }) => ResultTask.ok(owned));
   expect(await ResultTask.runExit(task)).toEqual({
     _tag: "Failure",
     cause: { _tag: "Fail", error: "release" },
@@ -183,7 +183,7 @@ test("preserves finalizer failures from the returned construction task", async (
 
 test("rejects invalid factory shapes and returns as programmer defects", async () => {
   // @ts-expect-error With requires, make must be a factory.
-  expect(() => Service("invalid", { requires: {}, make: ResultTask.succeed(1) })).toThrow(
+  expect(() => Service("invalid", { requires: {}, make: ResultTask.ok(1) })).toThrow(
     "Service make must be a factory",
   );
 });
@@ -199,7 +199,7 @@ test.each([
   const Invalid = Service("invalid", { requires: {}, make: invalid });
   const task = createModule()
     .scoped(Invalid)
-    .use(["invalid"], ({ invalid: value }) => ResultTask.succeed(value));
+    .use(["invalid"], ({ invalid: value }) => ResultTask.ok(value));
   expect(await ResultTask.runExit(task)).toMatchObject({
     _tag: "Failure",
     cause: {
@@ -229,7 +229,7 @@ test("accepts lazy factories without requires with explicit and inferred contrac
   });
   const module = createModule().singleton(Repository).scoped(Inferred).scoped(Task);
   expect(calls).toBe(0);
-  const task = module.use(["task", "inferred"], (values) => ResultTask.succeed(values));
+  const task = module.use(["task", "inferred"], (values) => ResultTask.ok(values));
   expect(await ResultTask.runPromise(task)).toEqual({ task: 42, inferred: { value: 1 } });
   expect(calls).toBe(1);
 });
@@ -247,7 +247,7 @@ test("infers independent factory task requirements and errors", () => {
   const Config = Service.require<number>()("config");
   const task = ResultTask.gen(function* construct() {
     yield* Config;
-    return yield* ResultTask.fail("unavailable" as const);
+    return yield* ResultTask.err("unavailable" as const);
   });
   const Inferred = Service("inferred", { make: () => task });
   const Explicit = Service<number>()("explicit", { make: () => task });

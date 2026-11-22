@@ -9,10 +9,7 @@
 - Coding-agent guide: `skills/resultar/SKILL.md`. Remaining work: `docs/rfcs/rfc-0003-*.md`.
 - Every behavior change ships with a changeset (`pnpm changeset`) and targeted tests.
 - Never change eager-to-lazy semantics within the current major.
-- The deprecated APIs documented in `docs/migrations/v4.md` are intentional:
-  preserve their original signatures and behavior for gradual consumer migration.
-  Prefer the replacement names in new workspace code; do not remove the old paths
-  or change generator/tap behavior as part of this release. Do not add other shims.
+- In v5 (`docs/migrations/v5.md`), root `"resultar"` exports only `Result` (sync) + `ResultTask` (lazy async) with zero transitive imports into `result-async/`, and `task.runResult()` returns native `Promise<Result<...>>`. Opt-in eager `ResultAsync` compatibility lives exclusively in `"resultar/async"`. Do not re-add removed v4 deprecated shims to root `"resultar"`.
 
 <!--VITE PLUS START-->
 

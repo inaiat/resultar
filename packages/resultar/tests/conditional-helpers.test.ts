@@ -2,7 +2,8 @@ import { equal } from 'node:assert'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import { Result, ResultAsync, err, errAsync, ok, okAsync, pipe } from '../src/index.js'
+import { ResultAsync, errAsync, okAsync } from '../src/entries/async.js'
+import { Result, err, ok, pipe } from '../src/index.js'
 
 describe('Result conditional helpers', () => {
   it('runs the true branch for Result.if', () => {

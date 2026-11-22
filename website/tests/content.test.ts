@@ -11,8 +11,8 @@ import {
 import { searchDocs } from "../src/search.js";
 
 void test("generated docs cover every nav item and all internal docs links resolve", async () => {
-  assert.ok(SITE_META.pageCount >= 25);
-  assert.equal(SITE_META.ruleCount, 42);
+  assert.ok(SITE_META.pageCount >= 26);
+  assert.equal(SITE_META.ruleCount, 43);
 
   const slugSet = new Set(DOC_SLUGS);
 
@@ -34,9 +34,9 @@ void test("generated docs cover every nav item and all internal docs links resol
   }
 });
 
-void test("search index finds guides, public API symbols, and all 42 resultar-check rules", () => {
+void test("search index finds guides, public API symbols, and all 43 resultar-check rules", () => {
   const ruleEntries = SEARCH_INDEX.filter((entry) => entry.kind === "rule");
-  assert.equal(ruleEntries.length, 42);
+  assert.equal(ruleEntries.length, 43);
 
   const deferredHits = searchDocs(SEARCH_INDEX, "Deferred");
   assert.ok(deferredHits.length > 0);
@@ -50,4 +50,16 @@ void test("search index finds guides, public API symbols, and all 42 resultar-ch
   const effectHits = searchDocs(SEARCH_INDEX, "Coming from Effect");
   assert.ok(effectHits.length > 0);
   assert.equal(effectHits[0]?.entry.route, "#/docs/coming-from-effect");
+});
+
+void test("benchmarks expose the full report in docs and search", async () => {
+  const loader = DOC_LOADERS.benchmarks;
+  assert.ok(loader);
+  const page = await loader();
+  assert.equal(page.toc.filter((item) => item.level === 2).length, 12);
+  assert.match(page.html, /<th>v5 on<\/th>/u);
+  assert.match(page.html, /<th>4\.1\.1 off<\/th>/u);
+  assert.ok(
+    searchDocs(SEARCH_INDEX, "benchmarks").some(({ entry }) => entry.route === "#/docs/benchmarks"),
+  );
 });

@@ -3,9 +3,10 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import type { ResultAsyncConcurrency } from '../src/index.js'
+import type { ResultAsyncConcurrency } from '../src/entries/async.js'
 
-import { Result, ResultAsync, errAsync, okAsync } from '../src/index.js'
+import { Result } from '../src/index.js'
+import { ResultAsync, errAsync, okAsync } from '../src/entries/async.js'
 
 const resultAsyncForEach: typeof ResultAsync.forEach = ResultAsync.forEach
 

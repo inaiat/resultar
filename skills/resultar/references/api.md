@@ -6,34 +6,32 @@ for overloads and inference. The [full guide](../../../DOCUMENTATION.md#api-map)
 is the maintained usage reference; this file highlights decisions that commonly
 cause incorrect generated code.
 
-## Result and ResultAsync
+## Result and opt-in `resultar/async`
 
-| Need | APIs / contract |
-| --- | --- |
-| Constructors | `ok`, `err`, `unit`, `Result.try`, `Result.fromThrowable`, `Result.fromNullishOr`, `Result.liftPredicate` |
-| Compose | `map`, `mapErr`, `andThen`, `andThrough`, `as`, `asVoid`, `filterOrElse`, `pipe` |
-| Recover | `orElse`, `orElseSucceed`, `catchTag`, `catchTags`, `catchReason`, `catchReasons`, `unwrapReason` |
-| Observe | `inspect`, `inspectError`, `inspectBoth`; eager `tap` / `tapError` retain best-effort compatibility |
-| Handle | `match`, `matchTags`, `matchTagsPartial`, `unwrapOr`, `unwrapOrThrow`, `isOk`, `isErr` |
-| Collections | `Result.all` / `combine`, `combineWithAllErrors`, `validateAll`, `forEach`, `zip` |
-| Control flow | `Result.if`, `when`, `unless`, `whenResult`, `unlessResult`, `loop`, `iterate`, `firstSuccessOf` |
-| Eager bridges | `asyncMap`, `asyncAndThen`; `ResultAsync.try`, `fromPromise`, `fromSafePromise`, `okAsync`, `errAsync` |
+| Need                            | APIs / contract                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Constructors                    | `ok`, `err`, `unit`, `Result.try`, `Result.fromThrowable`, `Result.fromNullishOr`, `Result.liftPredicate`                                                                                                                                                                                                                                   |
+| Compose                         | `map`, `mapErr`, `andThen`, `andThrough`, `as`, `asVoid`, `filterOrElse`, `pipe`                                                                                                                                                                                                                                                            |
+| Recover                         | `orElse`, `orElseSucceed`, `catchTag`, `catchTags`, `catchReason`, `catchReasons`, `unwrapReason`                                                                                                                                                                                                                                           |
+| Observe                         | `inspect`, `inspectError`, `inspectBoth` (`tap` / `tapError` exist only on `ResultTask`)                                                                                                                                                                                                                                                    |
+| Handle                          | `match`, `matchTags`, `matchTagsPartial`, `unwrapOr`, `unwrapOrThrow`, `isOk`, `isErr`                                                                                                                                                                                                                                                      |
+| Collections                     | `Result.all`, `Result.validateAll`, `Result.forEach`                                                                                                                                                                                                                                                                                        |
+| Control flow                    | `Result.if`, `when`, `unless`, `whenResult`, `unlessResult`, `loop`, `iterate`, `firstSuccessOf`                                                                                                                                                                                                                                            |
+| Opt-in eager (`resultar/async`) | `@deprecated` compatibility subpath: `ResultAsync`, `StrictResultAsync`, `DisposableResultAsync`, `ResultAsync.gen` / `fn`, `okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`, `safeTry`, `asyncMap`, `asyncAndThen`, and v4 eager helpers (`fromTask`, `retry`, `withResource`, `fromCallback`, etc.) |
 
 See [Result](../../../DOCUMENTATION.md#result), [collections](../../../DOCUMENTATION.md#combining-and-iterating),
 [conditionals](../../../DOCUMENTATION.md#conditional-helpers), and
-[eager compatibility](../../../DOCUMENTATION.md#in-flight-resultasync--deprecated-eager-compatibility).
+[opt-in eager compatibility](../../../DOCUMENTATION.md#opt-in-eager-compatibility-resultarasync).
 Static data-first and curried forms are available for many operators; use the
 declared overload for the specific primitive, not a similarly named library.
-`Result.firstSuccessOf` and `ResultAsync.firstSuccessOf` receive candidate **factories**,
-evaluated as needed. `ResultTask.firstSuccessOf` also accepts Tasks and sync Results;
-factories defer candidate construction when needed.
+`Result.firstSuccessOf` receives candidate **factories**, evaluated as needed.
+`ResultTask.firstSuccessOf` also accepts Tasks and sync Results; factories defer candidate construction when needed.
 
-Modern generators return plain values; `safeTry` keeps its final-Result return.
+`Result.gen` / `Result.fn` are purely synchronous with plain return values. For legacy eager async
+generators, use `ResultAsync.gen` / `ResultAsync.fn` from `"resultar/async"`.
 `ResultAsync` can reject if unsafe promises/callbacks throw; `fromSafePromise`
 requires a promise known not to reject. It does not make arbitrary I/O safe.
-The [migration table](../../../docs/migrations/v4.md#supported-apis-and-preferred-new-code)
-distinguishes active constructors from deprecated eager orchestration.
-`tryResult`, `tryResultAsync`, `fromPromise`, and `fromSafePromise` remain active.
+See the [v5 migration guide](../../../docs/migrations/v5.md) for removed core v4 aliases and `@deprecated` `resultar/async` compatibility helpers.
 
 ## Task constructors, services, and runners
 
@@ -53,14 +51,14 @@ may return native Promises.
 runner `services` options are another valid boundary. Do not widen `R` to `unknown`
 or assert it away. `makeScope` creates a manually owned root; close it explicitly.
 
-| Runner | Outcome |
-| --- | --- |
-| `task.runResult(options)` | Starts execution; returns `ResultAsync<T, E>` (including deferred scope errors). A simple `Fail` becomes `Err`; other causes reject. |
-| `task.runPromise(options)` | Resolves success; rejects typed failures and unhandled causes. |
-| `task.runExit(options)` | Resolves `Exit<T, E>` for success or any failure cause. |
-| `task.runSync(options)` | Runs synchronous tasks and returns `Result<T, E | ScopeError<R>>` (throws if async/defect/interrupt/composite). |
-| `task.runSyncExit(options)` | Runs synchronous tasks and returns `Exit<T, E | ScopeError<R>>` (throws if async). |
-| `task.runFork(options)` | Starts a root fiber immediately and returns its handle. |
+| Runner                      | Outcome                                                        |
+| --------------------------- | -------------------------------------------------------------- |
+| `task.runResult(options)`   | Starts execution; returns native `Promise<Result<T, E          | ScopeError<R>>>`. A simple `Fail`becomes`Err`; other causes reject. |
+| `task.runPromise(options)`  | Resolves success; rejects typed failures and unhandled causes. |
+| `task.runExit(options)`     | Resolves `Exit<T, E>` for success or any failure cause.        |
+| `task.runSync(options)`     | Runs synchronous tasks and returns `Result<T, E                | ScopeError<R>>` (throws if async/defect/interrupt/composite).       |
+| `task.runSyncExit(options)` | Runs synchronous tasks and returns `Exit<T, E                  | ScopeError<R>>` (throws if async).                                  |
+| `task.runFork(options)`     | Starts a root fiber immediately and returns its handle.        |
 
 Static forms accept the Task first. Both static and instance forms exist for
 `scoped()` (`task.scoped()` / `ResultTask.scoped(task)`), `forkChild()`
@@ -129,18 +127,18 @@ Inspectors: `isCause`, `hasFails`, `hasDies`, `hasInterrupts`, `isInterruptedOnl
 failures. Preserve cleanup failures instead of discarding them as successful shutdown.
 
 `inspect` / `inspectError` / `inspectCause` swallow synchronous observer throws.
-Task `tap` / `tapError` / `tapCause` / `tapBoth` can run Tasks and preserve their
-failure semantics. Legacy Result/Async `tap` is best-effort, not a strict variant.
+Task `tap` / `tapError` / `tapCause` / `tapBoth` run Tasks and preserve their
+failure semantics (`tap` / `tapError` exist only on `ResultTask`).
 
 ## Subpath exports
 
 All library packages set `"sideEffects": false`. Focused subpaths are exported from `resultar`:
-`resultar/result`, `resultar/task`, `resultar/match`, `resultar/tagged`, `resultar/retry`, and `resultar/function`.
+`resultar/result`, `resultar/task`, `resultar/async` (opt-in eager compat), `resultar/match`, `resultar/tagged`, `resultar/retry`, and `resultar/function`.
 
 ## Tagged errors, enums, matching, and functions
 
 `createTaggedError(...).withProps<Props>()` generates construction, guards, and
-Result/Async/Task helpers; see [tagged errors](../../../DOCUMENTATION.md#tagged-errors).
+Result/Task helpers (`.err`, `.taskErr`); see [tagged errors](../../../DOCUMENTATION.md#tagged-errors).
 `taggedEnum<Members>()` takes a **member map**, while `TaggedEnum<Members>` is the
 union type. Use `$is(tag, value)` and `$match(value, handlers)`.
 `redact(value, label)` renders `<redacted:label>`; `isRedacted` and `revealRedacted`

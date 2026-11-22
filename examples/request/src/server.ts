@@ -1,4 +1,4 @@
-import { ResultAsync, runPromise, type ResultAsyncAbortSignal } from "resultar";
+import { ResultTask } from "resultar";
 
 import {
   AccountExampleServerError,
@@ -12,10 +12,8 @@ const printEndpoints = (baseUrl: string) => {
   process.stdout.write("Press Ctrl+C to stop.\n");
 };
 
-const waitForShutdownSignal = (signal: ResultAsyncAbortSignal) =>
-  ResultAsync.fromCallback<NodeJS.Signals, AccountExampleServerError>({
-    catch: (cause) => new AccountExampleServerError({ cause, operation: "wait" }),
-    signal,
+const waitForShutdownSignal = () =>
+  ResultTask.fromCallback<NodeJS.Signals, AccountExampleServerError>({
     subscribe: ({ resolve }) => {
       const stop = (shutdownSignal: NodeJS.Signals) => resolve(shutdownSignal);
       process.once("SIGINT", stop);
@@ -29,17 +27,19 @@ const waitForShutdownSignal = (signal: ResultAsyncAbortSignal) =>
   });
 
 const runServer = () =>
-  ResultAsync.withResource({
-    acquire: () => startAccountExampleServer(),
-    release: ({ server }) =>
-      closeServer(server).map(() => {
-        process.stdout.write("Request example server stopped.\n");
-      }),
-    use: ({ baseUrl }, signal) => {
+  ResultTask.scoped(
+    ResultTask.gen(function* () {
+      const { baseUrl } = yield* ResultTask.acquireRelease({
+        acquire: startAccountExampleServer(),
+        release: ({ server }) =>
+          closeServer(server).map(() => {
+            process.stdout.write("Request example server stopped.\n");
+          }),
+      });
       process.stdout.write(`Request example server listening on ${baseUrl}\n`);
       printEndpoints(baseUrl);
-      return waitForShutdownSignal(signal);
-    },
-  });
+      return yield* waitForShutdownSignal();
+    }),
+  );
 
-await runPromise(runServer());
+await runServer().runPromise();

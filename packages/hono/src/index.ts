@@ -1,21 +1,14 @@
-// Lifecycle sessions retain their eager ResultAsync compatibility boundary.
-/* eslint-disable typescript/no-deprecated */
 import { Hono, type TypedResponse } from "hono";
 import type { StatusCode } from "hono/utils/http-status";
 import type { HonoOptions } from "hono/hono-base";
 import {
   AbortError,
   err,
-  errAsync,
-  fromSafePromise,
   ResultTask,
   ResultTaskCauseError,
   unit,
-  unitAsync,
-  ok,
   type Exit,
   type Result,
-  type ResultAsync,
   type ResultTaskScope,
 } from "resultar";
 import {
@@ -74,7 +67,7 @@ export interface HonoApplication<CloseError = never, RequestServices extends obj
   readonly serviceTypes?: { readonly request: RequestServices };
   readonly fetch: (request: Request) => Promise<Response>;
   readonly request: (input: string | Request, init?: RequestInit) => Promise<Response>;
-  readonly close: () => ResultAsync<void, CloseError>;
+  readonly close: () => Promise<Result<void, CloseError>>;
 }
 
 /** Infers selected bindings from an application or its factory. */
@@ -118,7 +111,7 @@ export function createHonoApp<
   configure: (app: Hono<{ Bindings: SelectedServices<S, Keys> }>) => void,
 ): HonoApplication<ServiceScopeError<R>, SelectedServices<S, Keys>> & {
   /** Runs the optional one-time application task and shares its result across requests. */
-  readonly ready: () => ResultAsync<void, ResultTaskCauseError>;
+  readonly ready: () => Promise<Result<void, ResultTaskCauseError>>;
 } {
   const { services, startup, bindings, ...honoOptions } = options;
   const router = new Hono<{ Bindings: SelectedServices<S, Keys> }>(honoOptions);
@@ -136,41 +129,37 @@ export function createHonoApp<
   const dispatch = bind(keys, (resolvedBindings, request) =>
     router.fetch(request, resolvedBindings),
   );
-  let closing: ResultAsync<void, ServiceScopeError<R>> | undefined = undefined;
-  let resourcesClosing: ResultAsync<Exit<void, ServiceScopeError<R>>, never> | undefined =
-    undefined;
+  let closing: Promise<Result<void, ServiceScopeError<R>>> | undefined = undefined;
+  let resourcesClosing: Promise<Exit<void, ServiceScopeError<R>>> | undefined = undefined;
   let session: ServiceTaskSession | undefined = undefined;
-  let startupResult: ResultAsync<void, ResultTaskCauseError> | undefined = undefined;
+  let startupResult: Promise<Result<void, ResultTaskCauseError>> | undefined = undefined;
   let startupFailed = false;
-  const closeResources = () => {
-    resourcesClosing ??= (session?.close() ?? unitAsync())
-      .map((): ResultTaskCauseError | undefined => undefined)
-      .orElse((error) => ok(error))
-      .andThen((error) =>
-        fromSafePromise(ResultTask.runExit(root.close())).map(
-          (exit): Exit<void, ServiceScopeError<R>> => {
-            if (error === undefined) return exit;
-            const cause = { _tag: "Die", defect: error } as const;
-            return {
-              _tag: "Failure",
-              cause:
-                exit._tag === "Failure"
-                  ? { _tag: "Sequential", left: cause, right: exit.cause }
-                  : cause,
-            };
-          },
-        ),
-      );
+  const closeResources = (): Promise<Exit<void, ServiceScopeError<R>>> => {
+    resourcesClosing ??= (async (): Promise<Exit<void, ServiceScopeError<R>>> => {
+      const sessionClose = session === undefined ? unit() : await session.close();
+      const sessionError = sessionClose.isErr() ? sessionClose.error : undefined;
+      const exit = await ResultTask.runExit(root.close());
+      if (sessionError === undefined) return exit;
+      const cause = { _tag: "Die", defect: sessionError } as const;
+      return {
+        _tag: "Failure",
+        cause:
+          exit._tag === "Failure" ? { _tag: "Sequential", left: cause, right: exit.cause } : cause,
+      };
+    })();
     return resourcesClosing;
   };
-  const ready = (): ResultAsync<void, ResultTaskCauseError> => {
-    if (closing !== undefined && !startupFailed)
-      return errAsync(
-        new ResultTaskCauseError({ _tag: "Die", defect: new Error("Hono application is closed") }),
-      );
+  const ready = (): Promise<Result<void, ResultTaskCauseError>> => {
+    if (closing !== undefined && !startupFailed) {
+      const closedError = new ResultTaskCauseError({
+        _tag: "Die",
+        defect: new Error("Hono application is closed"),
+      });
+      return Promise.resolve(err(closedError));
+    }
     if (startupResult !== undefined) return startupResult;
     if (startup === undefined) {
-      startupResult = unitAsync();
+      startupResult = Promise.resolve(unit());
       return startupResult;
     }
     const useSingletons = root.useSingletons as unknown as (
@@ -182,23 +171,29 @@ export function createHonoApp<
         useSingletons([], () => task as ResultTask<void, unknown>) as ResultTask<void, unknown>,
       startup,
     );
-    startupResult = session.ready.orElse((error) => {
+    const activeSession = session;
+    startupResult = (async (): Promise<Result<void, ResultTaskCauseError>> => {
+      const outcome = await activeSession.ready;
+      if (outcome.isOk()) return outcome;
       startupFailed = true;
-      return closeResources().andThen((exit) =>
-        errAsync(
-          exit._tag === "Failure"
-            ? new ResultTaskCauseError({ _tag: "Sequential", left: error.cause, right: exit.cause })
-            : error,
-        ),
+      const exit = await closeResources();
+      return err(
+        exit._tag === "Failure"
+          ? new ResultTaskCauseError({
+              _tag: "Sequential",
+              left: outcome.error.cause,
+              right: exit.cause,
+            })
+          : outcome.error,
       );
-    });
+    })();
     return startupResult;
   };
   const fetch = (request: Request): Promise<Response> => {
     if (closing !== undefined && !startupFailed)
       return Promise.reject(new Error("Hono application is closed"));
     if (startup === undefined) return dispatch(request);
-    return Promise.resolve(ready()).then((result) =>
+    return ready().then((result) =>
       result.match(
         () =>
           closing === undefined
@@ -220,7 +215,7 @@ export function createHonoApp<
         closing ??= ResultTask.runResult(root.close());
         return closing;
       }
-      closing ??= closeResources().andThen((exit): Result<void, ServiceScopeError<R>> => {
+      closing ??= closeResources().then((exit): Result<void, ServiceScopeError<R>> => {
         if (exit._tag === "Success") return unit();
         if (exit.cause._tag === "Fail") return err(exit.cause.error);
         if (exit.cause._tag === "Die") throw exit.cause.defect;

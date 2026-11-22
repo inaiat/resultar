@@ -97,6 +97,7 @@ void test("completes Resultar options alongside standard plugin properties", asy
     '{ "compilerOptions": { "plugins": [{ "name": "resultar-check", | }] } }',
   );
   for (const option of [
+    "noAwaitResultTask",
     "noDiscard",
     "noPromiseResultar",
     "noUnknownTaskRequirements",

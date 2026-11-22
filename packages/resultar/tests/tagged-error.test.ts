@@ -1,7 +1,7 @@
 import { deepEqual, equal, ok as isTrue, throws } from 'node:assert'
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import type { ErrResult, Redacted, ResultAsync, ResultTask, TaggedEnum } from '../src/index.js'
+import type { ErrResult, Redacted, ResultTask, TaggedEnum } from '../src/index.js'
 
 import {
   Result,
@@ -129,19 +129,7 @@ describe('tagged errors', async () => {
     equal(result.error.message, 'Static failure')
   })
 
-  it('creates ResultAsync and ResultTask failures from static errAsync and taskErr helpers', async () => {
-    const asyncResult = UserNotFoundError.errAsync({ id: '123', source: 'users' })
-    const resolvedAsync = await asyncResult
-
-    isTrue(resolvedAsync.isErr())
-    isTrue(resolvedAsync.error instanceof UserNotFoundError)
-    equal(resolvedAsync.error.message, 'User 123 not found in users')
-    equal(resolvedAsync.error.id, '123')
-
-    const staticAsyncResult = await StaticMessageError.errAsync()
-    isTrue(staticAsyncResult.isErr())
-    equal(staticAsyncResult.error.message, 'Static failure')
-
+  it('creates ResultTask failures from static taskErr helpers', async () => {
     const task = UserNotFoundError.taskErr({ id: '456', source: 'accounts' })
     const resolvedTask = await ResultTaskValue.runResult(task)
 
@@ -468,7 +456,6 @@ describe('tagged error types', async () => {
   it('infers template props and narrows handlers', () => {
     const error = new UserNotFoundError({ id: '123', source: 'users' })
     const defaultResult = UserNotFoundError.err({ id: '123', source: 'users' })
-    const defaultAsyncResult = UserNotFoundError.errAsync({ id: '123', source: 'users' })
     const defaultTaskResult = UserNotFoundError.taskErr({ id: '123', source: 'users' })
     const assignableResult: Result<string, UserNotFoundError> = UserNotFoundError.err({
       id: '123',
@@ -479,7 +466,6 @@ describe('tagged error types', async () => {
     expectTypeOf(error.source).toEqualTypeOf<string | number | Redacted<unknown>>()
     expectTypeOf(defaultResult).toEqualTypeOf<ErrResult<never, UserNotFoundError>>()
     expectTypeOf(defaultResult.error).toEqualTypeOf<UserNotFoundError>()
-    expectTypeOf(defaultAsyncResult).toEqualTypeOf<ResultAsync<never, UserNotFoundError>>()
     expectTypeOf(defaultTaskResult).toEqualTypeOf<ResultTask<never, UserNotFoundError, never>>()
     if (assignableResult.isErr()) {
       expectTypeOf(assignableResult.error).toEqualTypeOf<UserNotFoundError>()
@@ -511,9 +497,6 @@ describe('tagged error types', async () => {
 
       // @ts-expect-error source is required by the message template.
       void UserNotFoundError.err({ id: '123' })
-
-      // @ts-expect-error id and source are required by the message template.
-      void UserNotFoundError.errAsync()
 
       // @ts-expect-error id and source are required by the message template.
       void UserNotFoundError.taskErr()

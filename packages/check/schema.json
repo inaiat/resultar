@@ -68,7 +68,12 @@
         "noAwaitInSafeTry": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "error",
-          "description": "Disallow await expressions inside safeTry bodies; use yield* for Resultar values."
+          "description": "Disallow await expressions inside Result.gen / Result.fn (or safeTry) bodies; use ResultTask.gen with yield* for async workflows."
+        },
+        "noAwaitResultTask": {
+          "$ref": "#/definitions/ruleSeverity",
+          "default": "error",
+          "description": "Disallow awaiting a ResultTask directly; execute it with .runResult() or .runPromise() at an async boundary, or compose with yield* inside ResultTask.gen / ResultTask.fn."
         },
         "noAwaitInResultTaskGen": {
           "$ref": "#/definitions/ruleSeverity",
@@ -83,12 +88,12 @@
         "noPromiseInResultSuccess": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",
-          "description": "Disallow Promise values in synchronous Result success channels; use asyncMap or ResultAsync."
+          "description": "Disallow Promise values in Result or ResultTask success channels; use ResultTask / ResultTask.tryPromise for asynchronous work."
         },
         "noPromiseResultar": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "error",
-          "description": "Disallow native Promise contracts wrapping Result, StrictResult, or ResultTask; return ResultAsync, StrictResultAsync, or ResultTask directly without an async wrapper."
+          "description": "Disallow native Promise contracts wrapping ResultTask (for example async functions returning a ResultTask); return ResultTask directly without an async wrapper. Promise<Result<...>> is accepted as an execution boundary."
         },
         "noDiscardMode": {
           "type": "string",
@@ -129,7 +134,7 @@
         "noTryCatchInSafeTry": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",
-          "description": "Avoid raw try/catch inside safeTry generators."
+          "description": "Avoid raw try/catch inside Result.gen / Result.fn (or safeTry) generators."
         },
         "noUnsafeAwait": {
           "$ref": "#/definitions/ruleSeverity",
@@ -190,8 +195,8 @@
         },
         "preferResultAsync": {
           "$ref": "#/definitions/ruleSeverity",
-          "default": "warning",
-          "description": "Prefer ResultAsync or StrictResultAsync over native Promise contracts and inferred function returns. Scope is controlled by preferResultAsyncMode. Review async implementations and external rejection mapping together."
+          "default": "off",
+          "description": "Optional eager-compatibility policy: prefer ResultAsync or StrictResultAsync (from resultar/async) over native Promise contracts. Disabled by default in v5."
         },
         "preferResultAsyncMode": {
           "type": "string",
@@ -227,7 +232,7 @@
         "yieldStarInSafeTry": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "warning",
-          "description": "Require yield* for Resultar values inside safeTry."
+          "description": "Require yield* for Resultar values inside Result.gen / Result.fn (or safeTry)."
         },
         "yieldStarInResultTaskGen": {
           "$ref": "#/definitions/ruleSeverity",
@@ -252,12 +257,12 @@
         "preferTap": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "suggestion",
-          "description": "Prefer tap when map, andThen, or flatMap performs side effects and returns the original input value unchanged."
+          "description": "Prefer tap (on ResultTask) or inspect (on Result / ResultAsync) when map or andThen performs side effects and returns the original input value unchanged."
         },
         "preferTapError": {
           "$ref": "#/definitions/ruleSeverity",
           "default": "suggestion",
-          "description": "Prefer tapError when orElse, catchAll, mapErr, or mapError performs side effects and forwards the original error unchanged."
+          "description": "Prefer tapError (on ResultTask) or inspectError (on Result / ResultAsync) when orElse or mapErr performs side effects and forwards the original error unchanged."
         },
         "preferAsVoid": {
           "$ref": "#/definitions/ruleSeverity",

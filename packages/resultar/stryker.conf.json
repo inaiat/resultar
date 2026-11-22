@@ -18,7 +18,6 @@
     "src/core/pipe.ts",
     "src/core/redacted.ts",
     "src/result-async/disposable-result-async.ts",
-    "src/result-async/result-async-adapter.ts",
     "src/result-async/result-async.ts",
     "src/result/result-helpers.ts",
     "src/result/result.ts",

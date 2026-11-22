@@ -26,7 +26,6 @@ import {
   createPaidAccount,
   createPaidAccountTaskWithGen,
   createPaidAccountWithGen,
-  createPaidAccountWithSafeTry,
   decidePaymentState,
   decodeSignupPayload,
   describeProviderReason,
@@ -196,7 +195,7 @@ if (failedTaskAccount.isErr()) {
   assert.equal(findStorageCause(failedTaskAccount.error) instanceof StorageWriteError, true);
 }
 
-const declined = createPaidAccountWithSafeTry({
+const declined = createPaidAccountWithGen({
   cardToken: "card_declined",
   email: "ada@example.com",
   planCode: "team",
@@ -640,10 +639,10 @@ assert.deepEqual(await inspectCheckoutEvents(), [
 ]);
 
 assert.deepEqual(observeCheckout(), [
-  "tap:order_1",
+  "inspect:order_1",
   "log:order_1",
   "dispose:order_1",
-  "tapError:AuditWriteError",
+  "inspectError:AuditWriteError",
   "log:AuditWriteError",
   "dispose:AuditWriteError",
 ]);

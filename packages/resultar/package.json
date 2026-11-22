@@ -64,6 +64,10 @@
     "./function": {
       "types": "./dist/function.d.ts",
       "import": "./dist/function.js"
+    },
+    "./async": {
+      "types": "./dist/async.d.ts",
+      "import": "./dist/async.js"
     }
   },
   "scripts": {

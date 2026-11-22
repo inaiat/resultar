@@ -1,4 +1,4 @@
-import { createTaggedError, okAsync, Result, ResultTask, type StrictResultAsync } from "resultar";
+import { createTaggedError, ResultTask, type StrictResultTask } from "resultar";
 import { createModule, Service, service, type NestRequestLogger } from "resultar-nestjs";
 
 export type User = { readonly id: string; readonly name: string };
@@ -22,11 +22,11 @@ export class Cache extends Service("cache", {
 export class UsersRepository extends Service("repository", {
   requires: { cache: Cache },
   make: ({ cache }) => ({
-    findById(id: string): StrictResultAsync<User | undefined, UserReadError> {
-      return okAsync(cache.get(id));
+    findById(id: string): StrictResultTask<User | undefined, UserReadError> {
+      return ResultTask.sync(() => cache.get(id));
     },
-    remove(id: string): StrictResultAsync<boolean, never> {
-      return okAsync(cache.delete(id));
+    remove(id: string): StrictResultTask<boolean, never> {
+      return ResultTask.sync(() => cache.delete(id));
     },
   }),
 }) {}
@@ -34,8 +34,8 @@ export class UsersRepository extends Service("repository", {
 export class Users extends Service("users", {
   requires: { repository: UsersRepository, log: Log },
   make: ({ repository, log }) => ({
-    findById(id: string): StrictResultAsync<User, UserNotFoundError | UserReadError> {
-      return Result.gen(async function* () {
+    findById(id: string): StrictResultTask<User, UserNotFoundError | UserReadError> {
+      return ResultTask.gen(function* () {
         log.info({ id }, "Looking up user");
         const user = yield* repository.findById(id);
         if (user === undefined) {
@@ -45,8 +45,8 @@ export class Users extends Service("users", {
         return user;
       });
     },
-    remove(id: string): StrictResultAsync<void, UserNotFoundError> {
-      return Result.gen(async function* () {
+    remove(id: string): StrictResultTask<void, UserNotFoundError> {
+      return ResultTask.gen(function* () {
         const removed = yield* repository.remove(id);
         if (!removed) return yield* UserNotFoundError.err({ id });
       });
@@ -56,7 +56,7 @@ export class Users extends Service("users", {
 
 export const Health = service("health", { cache: Cache }, ({ cache }) => ({
   check() {
-    return okAsync({ status: "ok", users: cache.size });
+    return ResultTask.sync(() => ({ status: "ok", users: cache.size }));
   },
 }));
 

@@ -61,7 +61,7 @@ describe('Ref, Deferred, and Queue concurrency primitives', () => {
     deepEqual(gate.await().runSync(), ok('opened'))
 
     const failedGate = Deferred.make<number, 'Bad'>()
-    deepEqual(await failedGate.complete(ResultTask.fail('Bad' as const)).runResult(), ok(true))
+    deepEqual(await failedGate.complete(ResultTask.err('Bad' as const)).runResult(), ok(true))
     deepEqual(failedGate.await().runSync(), err('Bad'))
   })
 
@@ -429,7 +429,7 @@ describe('Ref, Deferred, and Queue concurrency primitives', () => {
     // 3. Failure that already carries an origin span trace preserves that origin trace
     const tracedGate = Deferred.make<number, 'origin-fail'>()
     await tracedGate
-      .complete(ResultTask.fail('origin-fail' as const).withSpan('origin'))
+      .complete(ResultTask.err('origin-fail' as const).withSpan('origin'))
       .runPromise()
     const obs1 = await tracedGate.await().withSpan('A').runExit()
     const obs2 = await tracedGate.await().withSpan('B').runExit()

@@ -2,7 +2,7 @@
 import { Hono, type Context } from "hono";
 import { hc, type InferResponseType } from "hono/client";
 import { expect, expectTypeOf, test } from "vite-plus/test";
-import { ResultTask, type ResultAsync } from "resultar";
+import { ResultTask, type Result } from "resultar";
 import { createModule, resource, service } from "resultar-di";
 import { createHonoServices } from "../src/index.js";
 
@@ -173,14 +173,14 @@ test("abort and native error responses release the selected graph", async () => 
 
 test("cleanup failures remain typed and repeated middleware is rejected", async () => {
   const Bad = resource("bad", {
-    acquire: ResultTask.succeed(42),
-    release: () => ResultTask.fail("cleanup" as const),
+    acquire: ResultTask.ok(42),
+    release: () => ResultTask.err("cleanup" as const),
   });
   const di = createHonoServices(createModule().singleton(Bad));
   const app = new Hono().get("/", di.middleware(["bad"]), (c) => c.body(null, 204));
   await app.request("/");
   const closing = di.close();
-  expectTypeOf(closing).toEqualTypeOf<ResultAsync<void, "cleanup">>();
+  expectTypeOf(closing).toEqualTypeOf<Promise<Result<void, "cleanup">>>();
   expect((await closing).isErr()).toBe(true);
   const other = createHonoServices(createModule().value("answer", 42));
   const duplicate = new Hono();

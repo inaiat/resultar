@@ -53,6 +53,7 @@ export type {
   ResultTaskYieldOf,
   ResultTaskZipOptions,
   ServiceTag,
+  StrictResultTask,
 } from '../task/result-task.js'
 export { Clock, VirtualClock } from '../task/task-clock.js'
 export type { TaskClock } from '../task/task-clock.js'

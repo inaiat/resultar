@@ -30,11 +30,11 @@ through creation of the Response.
 
 ## Frameworks
 
-| Package | Features and boundary |
-| --- | --- |
-| [Hono](../../../packages/hono/README.md) | `createHonoApp`, `createHonoServices`, inferred request services, optional bindings, locals, startup and response-body lifetime; Deno/server limitations |
-| [Fastify](../../../packages/fastify/README.md) | `createFastifyApp`, `createFastifyPlugin`, `request.services`, `app.services`, request/app bindings, locals, startup, cancellation, close and exposure policy |
-| [NestJS](../../../packages/nestjs/README.md) | `createNestApp`, `createNestModule`, `Services`, `APP_SERVICES`, `getRequestServices`, `getAppServices`, inferred request/app services, bindings, locals and native lifecycle |
+| Package                                        | Features and boundary                                                                                                                                                         |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Hono](../../../packages/hono/README.md)       | `createHonoApp`, `createHonoServices`, inferred request services, optional bindings, locals, startup and response-body lifetime; Deno/server limitations                      |
+| [Fastify](../../../packages/fastify/README.md) | `createFastifyApp`, `createFastifyPlugin`, `request.services`, `app.services`, request/app bindings, locals, startup, cancellation, close and exposure policy                 |
+| [NestJS](../../../packages/nestjs/README.md)   | `createNestApp`, `createNestModule`, `Services`, `APP_SERVICES`, `getRequestServices`, `getAppServices`, inferred request/app services, bindings, locals and native lifecycle |
 
 Select the adapter for the existing framework. Keep framework-native request,
 reply, decorators, and bootstrap contracts at the boundary. App bindings must
@@ -45,36 +45,35 @@ integration projects, including external route/controller files.
 
 ## Outbound HTTP
 
-[`resultar-request`](../../../packages/request/README.md) supplies lazy `requestJsonTask`
-(returning `ResultTask<T, E>`) and eager `requestJson` (returning `ResultAsync<T, E>`),
+[`resultar-request`](../../../packages/request/README.md) supplies lazy `requestJson`
+(returning `ResultTask<T, E>` directly),
 Fetch/Undici response support, validators/decoders, status and body checks, cancellation-aware retry,
 and stage-preserving domain `mapError`. Its public error helpers are `RequestError`,
 `HttpResponseErrorCauseError` (also `HttpClientRequestErrorCause`),
 `baseRequestErrorHandler`, `integrationErrorHandler`, and `isHttpResponseError`.
 The README describes structured error contexts and exported transport/validation types.
 
-[`resultar-request-zod`](../../../packages/request-zod/README.md) adds `requestJsonZodTask` /
-`requestJsonZod` and derives transformed success from `z.output<Schema>`.
+[`resultar-request-zod`](../../../packages/request-zod/README.md) adds `requestJsonZod` (returning `ResultTask`)
+and derives transformed success from `z.output<Schema>`.
 [`resultar-request-typebox`](../../../packages/request-typebox/README.md) adds
-`requestJsonTypeBoxTask` / `requestJsonTypeBox` and infers `Static<Schema>`. Both offer
-package-local `requestJsonTask` and `requestJson` aliases and re-export the base public API.
+`requestJsonTypeBox` (returning `ResultTask`) and infers `Static<Schema>`. Both offer
+package-local `requestJson` aliases and re-export the base public API.
 
 Raw Promise-returning SDK/database drivers use `ResultTask.tryPromise` directly
-inside repository adapters; new repository/service methods expose Tasks, not Promises.
+inside repository adapters; repository/service methods expose Tasks, not Promises.
 
-For new lazy HTTP orchestration, return `requestJsonTask` / `requestJsonZodTask` /
-`requestJsonTypeBoxTask` directly without `async` or `ResultTask.fromResultAsync`:
+For HTTP orchestration, return `requestJson` / `requestJsonZod` / `requestJsonTypeBox`
+directly without `async` or `ResultTask.fromResultAsync`:
 
 ```ts
-const load = requestJsonTask({
-  request: signal => fetch(url, { signal }),
+const load = requestJson({
+  request: (signal) => fetch(url, { signal }),
   validator: isPayload,
-})
+});
 ```
 
-Preserve `requestJson` in existing eager `ResultAsync` callers (passing `signal` to cancel
-attempts and retry delays), and use `ResultTask.fromResultAsync(signal => existingAsyncHelper(signal))`
-when bridging an existing `ResultAsync` helper into a Task. `url` and `isPayload` above are
+Use `ResultTask.fromResultAsync(signal => existingAsyncHelper(signal))` only
+when bridging a legacy eager `"resultar/async"` helper into a Task. `url` and `isPayload` above are
 application-specific. The complete [request example](../../../examples/request/README.md) and
 [agent evaluation cases](../evals/cases.mjs) demonstrate plain, Zod, and TypeBox validation,
 cancellation, and lazy execution. Keep retry ownership explicit; do not retry invalid payloads merely

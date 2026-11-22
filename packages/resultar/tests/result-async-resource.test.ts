@@ -2,15 +2,16 @@ import { deepEqual, equal, ok as isTrue, rejects } from 'node:assert'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
+import type { AbortError } from '../src/index.js'
 import type {
-  AbortError,
   ResultAsync as ResultAsyncType,
   ResultAsyncResourceAcquire,
   ResultAsyncResourceReleaseContext,
   ResultAsyncWithResourceOptions,
-} from '../src/index.js'
+} from '../src/entries/async.js'
 
-import { ResultAsync, isAbortError } from '../src/index.js'
+import { isAbortError } from '../src/index.js'
+import { ResultAsync } from '../src/entries/async.js'
 
 describe('ResultAsync resource helpers', () => {
   it('acquires, uses, and releases a resource after success', async () => {

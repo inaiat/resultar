@@ -9,8 +9,8 @@ when importing framework adapter helpers such as `withProvider` and `useServiceA
 Core helpers such as `ResultTask` continue to come from `resultar`.
 The DI package has one entry point; migrate old `resultar-di/advanced` imports to `resultar-di`.
 
-Prefer lazy `ResultTask` values for new async service methods and run them explicitly in routes.
-`task.runResult()` (or `ResultTask.runResult(task)`) returns `ResultAsync<T, E>` (an in-flight `PromiseLike<Result<T, E>>`); existing eager `ResultAsync` service contracts can also be adapted back into lazy workflows with `ResultTask.fromResultAsync(() => legacyMethod())`.
+Use lazy `ResultTask` values for async service methods and run them explicitly in routes.
+`task.runResult()` (or `ResultTask.runResult(task)`) returns a native `Promise<Result<T, E>>`; legacy eager `ResultAsync` service contracts from `resultar/async` can be adapted into lazy workflows with `ResultTask.fromResultAsync(() => legacyMethod())`.
 
 ## Add services to an existing Hono router
 
@@ -18,17 +18,17 @@ Prefer lazy `ResultTask` values for new async service methods and run them expli
 It preserves `c.env`, execution context and native route/RPC response inference:
 
 ```ts
-import { Hono } from 'hono'
-import { createModule, createHonoServices } from 'resultar-hono'
+import { Hono } from "hono";
+import { createModule, createHonoServices } from "resultar-hono";
 
-const di = createHonoServices(createModule().value('answer', 42))
+const di = createHonoServices(createModule().value("answer", 42));
 const app = new Hono<{ Bindings: { suffix: string } }>()
-  .get('/public', c => c.text('public'))
-  .get('/answer', di.middleware(['answer']), c =>
+  .get("/public", (c) => c.text("public"))
+  .get("/answer", di.middleware(["answer"]), (c) =>
     c.json({ answer: c.var.services.answer, suffix: c.env.suffix }),
-  )
+  );
 
-export default app
+export default app;
 // On shutdown, after consuming/canceling active responses:
 // const closed = await di.close()
 ```
@@ -55,22 +55,19 @@ pnpm add resultar-hono resultar hono
 ```
 
 ```ts
-import { createModule, service, createHonoApp } from 'resultar-hono';
+import { createModule, service, createHonoApp } from "resultar-hono";
 
-const Greeting = service('greeting', {}, () => ({ text: 'Hello' }));
-const app = createHonoApp(
-  { services: createModule().scoped(Greeting) },
-  (hono) => {
-    hono.get('/', (c) => c.text(c.env.greeting.text));
-  },
-);
+const Greeting = service("greeting", {}, () => ({ text: "Hello" }));
+const app = createHonoApp({ services: createModule().scoped(Greeting) }, (hono) => {
+  hono.get("/", (c) => c.text(c.env.greeting.text));
+});
 
-const response = await app.request('/');
+const response = await app.request("/");
 console.log(await response.text());
 
 const closed = await app.close();
 closed.match(
-  () => console.log('closed'),
+  () => console.log("closed"),
   (error) => console.error(error),
 );
 ```
@@ -85,11 +82,11 @@ and lifecycle Promise boundaries retain ordinary `await`. Configure middleware (
 
 ## Optional request bindings
 
-| Configuration | Services resolved and exposed before the handler |
-| --- | --- |
-| `bindings` omitted | All services registered in the module |
+| Configuration                   | Services resolved and exposed before the handler                     |
+| ------------------------------- | -------------------------------------------------------------------- |
+| `bindings` omitted              | All services registered in the module                                |
 | `bindings: ["users", "health"]` | Only the listed services; their dependencies are resolved internally |
-| `bindings: []` | None |
+| `bindings: []`                  | None                                                                 |
 
 Creating the application still initializes no providers. On a request, the effective selection
 is resolved in registration order for the default view, following dependency resolution and
@@ -105,21 +102,21 @@ selection. No route-body analysis or automatic property-based resolution is perf
 `ready()` or before the first request, using the same root as the request services:
 
 ```ts
-import { ResultTask } from 'resultar'
+import { ResultTask } from "resultar";
 
 const app = createHonoApp(
   {
     services,
     startup: ResultTask.gen(function* () {
-      const database = yield* Database
-      yield* database.ensureSchema()
+      const database = yield* Database;
+      yield* database.ensureSchema();
     }),
   },
   configureRoutes,
-)
-
-// At the server boundary, stop startup if initialization fails.
-await app.ready().unwrapOrThrow()
+)(
+  // At the server boundary, stop startup if initialization fails.
+  await app.ready(),
+).unwrapOrThrow();
 ```
 
 The task's requirements are checked against the module. A failed task closes the root and prevents
@@ -174,13 +171,12 @@ if (import.meta.main) {
 Route files import only the application type:
 
 ```ts
-// routes.ts — adapting the fixture's existing eager health method
-import { ResultTask } from "resultar";
+// routes.ts
 import type { AppHono } from "./main.ts";
 
 export const healthRoutes = (app: AppHono) => {
   app.get("/health", async (c) => {
-    const result = await ResultTask.fromResultAsync(() => c.env.health.check()).runResult();
+    const result = await c.env.health.check().runResult();
     return result.match(
       (health) => c.json(health),
       () => c.json({ error: "Health unavailable" }, 503),
@@ -195,10 +191,8 @@ services by default, or only the explicit `bindings` selection. Routes do not re
 This helper describes `createHonoApp` bindings in `c.env`; `createHonoServices` middleware
 continues to infer its per-route selection in `c.var.services`.
 
-The runnable fixture retains eager Async service methods for compatibility coverage. The bridge
-calls the method on each Task run; passing an already-created Async value would reuse its execution.
-For a new Task-returning method, pass it directly to `runResult`. Task has no `.then`, `map` is
-synchronous, and `match` returns a Task to execute with a runner.
+Service methods return lazy `ResultTask` values executed explicitly with `.runResult()`. Task has no `.then`, `map` is
+synchronous, and `match` returns a Task to execute with a runner. Legacy eager `resultar/async` methods can be bridged with `ResultTask.fromResultAsync(() => legacyMethod())`.
 
 Start the example with `pnpm dev` from `examples/hono`. Tests import `createApplication`
 without starting the Node server because startup is guarded by `import.meta.main`.
@@ -207,10 +201,10 @@ without starting the Node server because startup is guarded by `import.meta.main
 
 - `fetch(request)` serves requests using one shared root and a fresh child scope per response.
 - `request(input, init?)` uses the same path for tests. Relative paths resolve against localhost.
-- `ready()` runs the optional startup task once and returns an in-flight `ResultAsync`. Call it before opening a
+- `ready()` runs the optional startup task once and returns a native `Promise<Result<void, StartupError>>`. Call it before opening a
   server listener when startup errors should be handled explicitly.
-- `close()` returns an in-flight `ResultAsync`, retaining the module's typed release failures. Concurrent
-  and repeated calls return the same `ResultAsync`; requests after close are rejected. Defects or
+- `close()` returns a native `Promise<Result<void, CloseError>>`, retaining the module's typed release failures. Concurrent
+  and repeated calls share the same `Promise`; requests after close are rejected. Defects or
   composite causes that cannot be represented by Result may reject with ResultTaskCauseError,
   following `task.runResult()` / `ResultTask.runResult` semantics.
 
@@ -240,11 +234,11 @@ then await `app.close()`. No `/node`, `/deno` or `/bun` adapters are provided.
 See the [complete example](../../examples/hono/README.md) with workspace dependencies and
 no experimental module-resolution flags.
 
-| Runtime | Status |
-| --- | --- |
+| Runtime    | Status                                      |
+| ---------- | ------------------------------------------- |
 | Node.js 24 | Exercised (example via `@hono/node-server`) |
-| Deno | Exercised (`Deno.serve` with `app.fetch`) |
-| Bun | Not validated |
+| Deno       | Exercised (`Deno.serve` with `app.fetch`)   |
+| Bun        | Not validated                               |
 
 The runtime uses web APIs and does not import Node APIs.
 
@@ -270,16 +264,16 @@ and OpenAPI route contracts. An exhaustive `Match.context(...).tagsExhaustive(..
 be used for `error` without introducing another error-dispatch abstraction.
 
 ```ts
-import { Hono } from 'hono'
-import { ResultTask } from 'resultar'
-import { runTaskJson } from 'resultar-hono'
+import { Hono } from "hono";
+import { ResultTask } from "resultar";
+import { runTaskJson } from "resultar-hono";
 
-const app = new Hono().get('/answer', c =>
+const app = new Hono().get("/answer", (c) =>
   runTaskJson(c, ResultTask.ok({ answer: 42 }), {
-    ok: value => c.json(value, 200),
-    error: () => c.json({ error: 'unavailable' }, 503),
+    ok: (value) => c.json(value, 200),
+    error: () => c.json({ error: "unavailable" }, 503),
   }),
-)
+);
 ```
 
 Provide required Task services before calling the helper. Simple typed failures, including typed

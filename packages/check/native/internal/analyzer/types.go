@@ -13,7 +13,8 @@ var resultTypeNames = map[string]struct{}{
 }
 
 var resultTaskTypeNames = map[string]struct{}{
-	"ResultTask": {},
+	"ResultTask":       {},
+	"StrictResultTask": {},
 }
 
 var resultAsyncTypeNames = map[string]struct{}{
@@ -103,11 +104,85 @@ func isResultTaskLikeType(type_ *checker.Type) bool {
 			return false
 		}
 	}
-	if symbol := type_.Symbol(); symbol != nil && symbol.Name() == "ResultTask" {
+	if symbol := type_.Symbol(); symbol != nil && (symbol.Name() == "ResultTask" || symbol.Name() == "StrictResultTask") {
 		return true
 	}
 	_, ok := resultTaskTypeNames[typeSymbolName(type_)]
 	return ok
+}
+
+func isSingleResultTaskType(type_ *checker.Type) bool {
+	if type_ == nil {
+		return false
+	}
+	if alias := type_.Alias(); alias != nil && alias.Symbol() != nil {
+		if _, ok := resultAsyncTypeNames[alias.Symbol().Name()]; ok {
+			return false
+		}
+		if _, ok := resultTaskTypeNames[alias.Symbol().Name()]; ok {
+			return true
+		}
+	}
+	if symbol := type_.Symbol(); symbol != nil && (symbol.Name() == "ResultTask" || symbol.Name() == "StrictResultTask") {
+		return true
+	}
+	_, ok := resultTaskTypeNames[typeSymbolName(type_)]
+	return ok
+}
+
+func isNarrowedResultTaskType(c *checker.Checker, type_ *checker.Type) bool {
+	if type_ == nil {
+		return false
+	}
+	if type_.Flags()&checker.TypeFlagsTypeParameter != 0 {
+		constraint := c.GetBaseConstraintOfType(type_)
+		return constraint != nil && isNarrowedResultTaskType(c, constraint)
+	}
+	if type_.Flags()&checker.TypeFlagsUnion != 0 {
+		foundTask := false
+		for _, part := range type_.Types() {
+			if part == nil || part.Flags()&checker.TypeFlagsNever != 0 {
+				continue
+			}
+			if !isNarrowedResultTaskType(c, part) {
+				return false
+			}
+			foundTask = true
+		}
+		return foundTask
+	}
+	return isSingleResultTaskType(type_)
+}
+
+func isScopeOnlyOrNeverRequirement(t *checker.Type) bool {
+	if t == nil || t.Flags()&checker.TypeFlagsNever != 0 {
+		return true
+	}
+	if t.Flags()&checker.TypeFlagsAnyOrUnknown != 0 {
+		return false
+	}
+	if t.Flags()&checker.TypeFlagsUnion != 0 {
+		for _, part := range t.Types() {
+			if !isScopeOnlyOrNeverRequirement(part) {
+				return false
+			}
+		}
+		return true
+	}
+	return typeSymbolName(t) == "ResultTaskScope"
+}
+
+func taskHasNoServiceRequirements(c *checker.Checker, type_ *checker.Type) bool {
+	if !isNarrowedResultTaskType(c, type_) {
+		return false
+	}
+	reqs := taskRequirementTypes(c, type_)
+	for _, req := range reqs {
+		if !isScopeOnlyOrNeverRequirement(req) {
+			return false
+		}
+	}
+	return true
 }
 
 func isAwaitableResultTaskType(c *checker.Checker, type_ *checker.Type) bool {
