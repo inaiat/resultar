@@ -103,15 +103,13 @@ jobs:
           node -e 'if (require("./.changeset/pre.json").mode !== "pre") throw new Error("Enter Changesets prerelease mode on next before releasing.")'
 
       - name: Version packages or publish
-        uses: changesets/action@v1
+        uses: changesets/action@v2.1.2
         with:
-          version: vp run version:packages
-          publish: ${{ github.ref == 'refs/heads/next' && 'vp run release:next' || 'vp run release:publish' }}
-          commit: "Version packages"
-          title: "Version packages"
-          createGithubReleases: false
-          commitMode: github-api
+          version-script: vp run version:packages
+          publish-script: ${{ github.ref == 'refs/heads/next' && 'vp run release:next' || 'vp run release:publish' }}
+          commit-message: "Version packages"
+          pr-title: "Version packages"
+          create-github-releases: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
