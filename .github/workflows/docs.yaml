@@ -36,6 +36,7 @@ jobs:
         run: vp run build
 
       - name: Build and verify docs website & playground
+        timeout-minutes: 5
         run: vp run test:website
 
       - name: Upload Pages artifact

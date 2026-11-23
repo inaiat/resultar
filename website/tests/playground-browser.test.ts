@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 
 import { PLAYGROUND_PRESETS } from "../src/presets.js";
 
@@ -92,9 +92,10 @@ interface StaticServerHooks {
 }
 
 const startStaticServer = async (
+  context: TestContext,
   rootDir: string,
   hooks?: StaticServerHooks,
-): Promise<{ readonly server: Server; readonly url: string }> => {
+): Promise<string> => {
   if (!existsSync(join(rootDir, "index.html"))) {
     throw new Error(
       `Missing production build at ${rootDir}. Run "pnpm --dir website run build" first.`,
@@ -121,6 +122,14 @@ const startStaticServer = async (
     };
     void sendResponse();
   });
+  context.after(async () => {
+    await new Promise<void>((resolveClose) => {
+      server.close(() => {
+        resolveClose();
+      });
+      server.closeAllConnections();
+    });
+  });
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once("error", rejectListen);
     server.listen(0, "127.0.0.1", () => {
@@ -131,7 +140,7 @@ const startStaticServer = async (
   if (address === null || typeof address === "string") {
     throw new Error("Failed to bind static test server");
   }
-  return { server, url: `http://127.0.0.1:${String(address.port)}` };
+  return `http://127.0.0.1:${String(address.port)}`;
 };
 
 interface CdpMessage {
@@ -141,6 +150,30 @@ interface CdpMessage {
   readonly result?: Record<string, unknown>;
   readonly error?: { readonly message?: string };
 }
+
+const stopChrome = async (
+  proc: ChildProcess,
+  userDataDir: string,
+  ws?: WebSocket,
+): Promise<void> => {
+  try {
+    ws?.close();
+  } catch {
+    // The process and profile still need cleanup if the connection cannot be closed.
+  }
+  if (proc.pid !== undefined && proc.exitCode === null && proc.signalCode === null) {
+    const exited = new Promise<void>((resolveExit) => {
+      proc.once("exit", () => {
+        resolveExit();
+      });
+    });
+    proc.kill("SIGKILL");
+    await exited;
+  }
+  // A Chrome subprocess can still hold the inherited pipe after the browser exits.
+  proc.stderr?.destroy();
+  rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5 });
+};
 
 class HeadlessBrowser {
   private readonly proc: ChildProcess;
@@ -164,8 +197,10 @@ class HeadlessBrowser {
     this.sessionId = sessionId;
   }
 
-  public static async launch(): Promise<HeadlessBrowser> {
-    const executable = findBrowserExecutable();
+  public static async launch(
+    executable = findBrowserExecutable(),
+    startupTimeoutMs = 15_000,
+  ): Promise<HeadlessBrowser> {
     const userDataDir = mkdtempSync(join(tmpdir(), "resultar-pg-chrome-"));
     const proc = spawn(
       executable,
@@ -180,75 +215,99 @@ class HeadlessBrowser {
         `--user-data-dir=${userDataDir}`,
         "about:blank",
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      { stdio: ["ignore", "ignore", "pipe"] },
     );
 
-    const wsUrl = await new Promise<string>((resolveUrl, rejectUrl) => {
-      let stderrBuf = "";
-      const timer = setTimeout(() => {
-        rejectUrl(new Error(`Timed out waiting for Chrome DevTools URL. Stderr:\n${stderrBuf}`));
-      }, 15_000);
+    let ws: WebSocket | undefined = undefined;
+    try {
+      const wsUrl = await new Promise<string>((resolveUrl, rejectUrl) => {
+        let stderrBuf = "";
+        const timer = setTimeout(() => {
+          rejectUrl(new Error(`Timed out waiting for Chrome DevTools URL. Stderr:\n${stderrBuf}`));
+        }, startupTimeoutMs);
 
-      proc.once("exit", (code) => {
-        clearTimeout(timer);
-        rejectUrl(new Error(`Chrome exited early (${String(code)}). Stderr:\n${stderrBuf}`));
-      });
-
-      proc.stderr?.on("data", (chunk: Buffer) => {
-        stderrBuf += chunk.toString("utf8");
-        const match = /DevTools listening on (ws:\/\/[^\s]+)/u.exec(stderrBuf);
-        if (match?.[1] !== undefined) {
+        proc.once("error", (error) => {
           clearTimeout(timer);
-          resolveUrl(match[1]);
-        }
-      });
-    });
+          rejectUrl(error);
+        });
 
-    const ws = new WebSocket(wsUrl);
-    await new Promise<void>((resolveOpen, rejectOpen) => {
-      ws.addEventListener("open", () => {
-        resolveOpen();
-      });
-      ws.addEventListener("error", () => {
-        rejectOpen(new Error(`Failed to open CDP WebSocket at ${wsUrl}`));
-      });
-    });
+        proc.once("exit", (code) => {
+          clearTimeout(timer);
+          rejectUrl(new Error(`Chrome exited early (${String(code)}). Stderr:\n${stderrBuf}`));
+        });
 
-    const browser = new HeadlessBrowser(proc, userDataDir, ws, "");
-    ws.addEventListener("message", (event) => {
-      const text = typeof event.data === "string" ? event.data : "";
-      const msg = JSON.parse(text) as CdpMessage;
-      if (msg.id !== undefined) {
-        const entry = browser.pending.get(msg.id);
-        if (entry !== undefined) {
-          browser.pending.delete(msg.id);
-          if (msg.error === undefined) {
-            entry.resolve(msg.result ?? {});
-          } else {
-            entry.reject(new Error(msg.error.message ?? "CDP command failed"));
+        proc.stderr?.on("data", (chunk: Buffer) => {
+          stderrBuf += chunk.toString("utf8");
+          const match = /DevTools listening on (ws:\/\/[^\s]+)/u.exec(stderrBuf);
+          if (match?.[1] !== undefined) {
+            clearTimeout(timer);
+            resolveUrl(match[1]);
           }
+        });
+      });
+
+      const socket = new WebSocket(wsUrl);
+      ws = socket;
+      await withDeadline(
+        new Promise<void>((resolveOpen, rejectOpen) => {
+          socket.addEventListener(
+            "open",
+            () => {
+              resolveOpen();
+            },
+            { once: true },
+          );
+          socket.addEventListener(
+            "error",
+            () => {
+              rejectOpen(new Error(`Failed to open CDP WebSocket at ${wsUrl}`));
+            },
+            { once: true },
+          );
+        }),
+        startupTimeoutMs,
+        "Chrome DevTools WebSocket",
+      );
+
+      const browser = new HeadlessBrowser(proc, userDataDir, socket, "");
+      socket.addEventListener("message", (event) => {
+        const text = typeof event.data === "string" ? event.data : "";
+        const msg = JSON.parse(text) as CdpMessage;
+        if (msg.id !== undefined) {
+          const entry = browser.pending.get(msg.id);
+          if (entry !== undefined) {
+            browser.pending.delete(msg.id);
+            if (msg.error === undefined) {
+              entry.resolve(msg.result ?? {});
+            } else {
+              entry.reject(new Error(msg.error.message ?? "CDP command failed"));
+            }
+          }
+          return;
         }
-        return;
-      }
-      if (msg.method === "Runtime.exceptionThrown") {
-        const details = msg.params?.exceptionDetails as
-          | { readonly text?: string; readonly exception?: { readonly description?: string } }
-          | undefined;
-        browser.uncaughtExceptions.push(
-          details?.exception?.description ?? details?.text ?? "Unknown page exception",
-        );
-      }
-    });
+        if (msg.method === "Runtime.exceptionThrown") {
+          const details = msg.params?.exceptionDetails as
+            | { readonly text?: string; readonly exception?: { readonly description?: string } }
+            | undefined;
+          browser.uncaughtExceptions.push(
+            details?.exception?.description ?? details?.text ?? "Unknown page exception",
+          );
+        }
+      });
 
-    const target = await browser.sendRaw("Target.createTarget", { url: "about:blank" });
-    const targetId = String(target.targetId);
-    const attached = await browser.sendRaw("Target.attachToTarget", { targetId, flatten: true });
-    const sessionId = String(attached.sessionId);
+      const target = await browser.sendRaw("Target.createTarget", { url: "about:blank" });
+      const targetId = String(target.targetId);
+      const attached = await browser.sendRaw("Target.attachToTarget", { targetId, flatten: true });
+      const sessionId = String(attached.sessionId);
 
-    const attachedBrowser = Object.assign(browser, { sessionId }) as HeadlessBrowser;
-    await attachedBrowser.send("Page.enable");
-    await attachedBrowser.send("Runtime.enable");
-    return attachedBrowser;
+      const attachedBrowser = Object.assign(browser, { sessionId }) as HeadlessBrowser;
+      await attachedBrowser.send("Page.enable");
+      await attachedBrowser.send("Runtime.enable");
+      return attachedBrowser;
+    } catch (error) {
+      await stopChrome(proc, userDataDir, ws);
+      throw error;
+    }
   }
 
   private async sendRaw(
@@ -258,12 +317,17 @@ class HeadlessBrowser {
   ): Promise<Record<string, unknown>> {
     this.nextId += 1;
     const id = this.nextId;
-    return new Promise((resolveCmd, rejectCmd) => {
+    const response = new Promise<Record<string, unknown>>((resolveCmd, rejectCmd) => {
       this.pending.set(id, { resolve: resolveCmd, reject: rejectCmd });
       const payload =
         sessionId === undefined ? { id, method, params } : { id, method, params, sessionId };
       this.ws.send(JSON.stringify(payload));
     });
+    try {
+      return await withDeadline(response, 10_000, `Chrome DevTools command ${method}`);
+    } finally {
+      this.pending.delete(id);
+    }
   }
 
   public async send(
@@ -314,37 +378,54 @@ class HeadlessBrowser {
   }
 
   public async close(): Promise<void> {
-    try {
-      this.ws.close();
-    } catch {
-      /* ignore close errors */
-    }
-    this.proc.kill("SIGKILL");
-    await new Promise<void>((resolveExit) => {
-      if (this.proc.exitCode !== null || this.proc.killed) {
-        resolveExit();
-        return;
-      }
-      this.proc.once("exit", () => {
-        resolveExit();
-      });
-    });
-    rmSync(this.userDataDir, { recursive: true, force: true, maxRetries: 5 });
+    await stopChrome(this.proc, this.userDataDir, this.ws);
   }
 }
 
 const encodeShareCode = (code: string): string =>
   encodeURIComponent(Buffer.from(code, "utf8").toString("base64"));
 
-void test("the home page links to the full benchmark report", async (context) => {
-  const { server, url } = await startStaticServer(distDir);
-  context.after(async () => {
-    await new Promise<void>((resolveClose) => {
-      server.close(() => {
-        resolveClose();
-      });
+void test(
+  "a Chrome startup timeout kills the process and removes its profile",
+  { skip: process.platform === "win32" },
+  async (context) => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), "resultar-fake-chrome-"));
+    const executable = join(fixtureDir, "chrome.mjs");
+    const startupInfo = `${executable}.startup`;
+    context.after(() => {
+      if (existsSync(startupInfo)) {
+        const { profile } = JSON.parse(readFileSync(startupInfo, "utf8")) as { profile: string };
+        rmSync(profile, { recursive: true, force: true });
+      }
+      rmSync(fixtureDir, { recursive: true, force: true });
     });
-  });
+    writeFileSync(
+      executable,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+const prefix = "--user-data-dir=";
+const profile = process.argv.find((arg) => arg.startsWith(prefix)).slice(prefix.length);
+writeFileSync(process.argv[1] + ".startup", JSON.stringify({ pid: process.pid, profile }));
+setTimeout(() => {}, 10_000);
+`,
+      { mode: 0o755 },
+    );
+
+    await assert.rejects(
+      HeadlessBrowser.launch(executable, 2000),
+      /Timed out waiting for Chrome DevTools URL/u,
+    );
+    const { pid, profile } = JSON.parse(readFileSync(startupInfo, "utf8")) as {
+      pid: number;
+      profile: string;
+    };
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+    assert.equal(existsSync(profile), false);
+  },
+);
+
+void test("the home page links to the full benchmark report", async (context) => {
+  const url = await startStaticServer(context, distDir);
   const browser = await HeadlessBrowser.launch();
   context.after(async () => {
     await browser.close();
@@ -377,8 +458,8 @@ void test("the home page links to the full benchmark report", async (context) =>
 void test(
   "real browser verifies shared-link manual run, opaque iframe sandbox isolation, and all production presets",
   { timeout: 60_000 },
-  async () => {
-    const { server, url } = await startStaticServer(distDir);
+  async (context) => {
+    const url = await startStaticServer(context, distDir);
     const browser = await HeadlessBrowser.launch();
 
     try {
@@ -616,11 +697,6 @@ console.log("ISOLATION_REPORT=" + JSON.stringify(report));
       );
     } finally {
       await browser.close();
-      await new Promise<void>((resolveClose) => {
-        server.close(() => {
-          resolveClose();
-        });
-      });
     }
   },
 );
@@ -672,12 +748,12 @@ const withDeadline = async <T>(promise: Promise<T>, ms: number, label: string): 
 void test(
   "real browser cancels stale initial playground run when hash switches before runner module resolves",
   { timeout: 60_000 },
-  async () => {
+  async (context) => {
     const runnerRequested = createDeferred();
     const releaseRunner = createDeferred();
     const runnerServed = createDeferred();
 
-    const { server, url } = await startStaticServer(distDir, {
+    const url = await startStaticServer(context, distDir, {
       beforeServe: async (relPath) => {
         if (isRunnerChunk(relPath)) {
           runnerRequested.resolve();
@@ -815,12 +891,8 @@ void test(
         `Uncaught browser exceptions: ${browser.uncaughtExceptions.join("; ")}`,
       );
     } finally {
+      releaseRunner.resolve();
       await browser.close();
-      await new Promise<void>((resolveClose) => {
-        server.close(() => {
-          resolveClose();
-        });
-      });
     }
   },
 );
