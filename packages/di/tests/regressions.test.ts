@@ -279,6 +279,55 @@ describe("DI guarantees", () => {
     });
   });
 
+  test("detects direct and mutual cycles involving transient services without stack overflow", async () => {
+    const Self = ResultTask.service<string, "self">("self");
+    const selfModule = createModule().task(
+      "self",
+      [],
+      () =>
+        ResultTask.gen(function* buildSelf() {
+          return yield* Self;
+        }),
+      { lifetime: "transient" },
+    );
+    const selfExit = await ResultTask.runExit(
+      selfModule.use(["self"], ({ self }) => ResultTask.ok(self)),
+    );
+    expect(selfExit).toMatchObject({
+      _tag: "Failure",
+      cause: { _tag: "Die", defect: { message: "Cyclic dependencies detected: self -> self" } },
+    });
+
+    const A = ResultTask.service<string, "a">("a");
+    const B = ResultTask.service<string, "b">("b");
+    const mutualModule = createModule()
+      .task(
+        "a",
+        [],
+        () =>
+          ResultTask.gen(function* buildA() {
+            return yield* B;
+          }),
+        { lifetime: "transient" },
+      )
+      .task(
+        "b",
+        [],
+        () =>
+          ResultTask.gen(function* buildB() {
+            return yield* A;
+          }),
+        { lifetime: "transient" },
+      );
+    const mutualExit = await ResultTask.runExit(
+      mutualModule.use(["a"], ({ a }) => ResultTask.ok(a)),
+    );
+    expect(mutualExit).toMatchObject({
+      _tag: "Failure",
+      cause: { _tag: "Die", defect: { message: "Cyclic dependencies detected: a -> b -> a" } },
+    });
+  });
+
   test("class tokens cannot pretend to construct the service contract", () => {
     expect(() => new Cache()).toThrow("Service classes are tokens");
     // eslint-disable-next-line no-constant-condition

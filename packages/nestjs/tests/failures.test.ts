@@ -7,15 +7,20 @@ import {
   Catch,
   Controller,
   Get,
+  Inject,
+  Injectable,
+  Post,
+  Req,
   Res,
   type ArgumentsHost,
   type ExceptionFilter,
   type LoggerService,
+  type OnModuleDestroy,
 } from "@nestjs/common";
 import { expect, test, vi } from "vite-plus/test";
 import { ResultTask } from "resultar";
 import { createModule, resource, service } from "resultar-di";
-import { createNestApp, Services, type NestRequest } from "../src/index.js";
+import { APP_SERVICES, createNestApp, Services, type NestRequest } from "../src/index.js";
 
 function serverUrl(server: { address: () => string | AddressInfo | null }): string {
   const address = server.address();
@@ -374,4 +379,355 @@ test("transients are materialized per binding and values are not automatically o
   expect((await app.inject("/")).json()).toEqual({ id: 2 });
   await app.close();
   expect(disposed).toBe(0);
+});
+
+test("Tier 2 cleans up and does not hang close() when client disconnects or ends response before interceptor", async () => {
+  let acquired = 0;
+  let released = 0;
+  const locals = vi.fn(() => ({ tenant: "acme" }));
+  const Local = resource("local", {
+    acquire: ResultTask.sync(() => {
+      acquired += 1;
+      return { id: acquired };
+    }),
+    release: () =>
+      ResultTask.sync(() => {
+        released += 1;
+      }),
+  });
+
+  @Controller()
+  class DisconnectBeforeInterceptorController {
+    @Get("/destroyed")
+    destroyed() {
+      return "unreachable";
+    }
+
+    @Get("/finished")
+    finished() {
+      return "done";
+    }
+  }
+
+  const app = createNestApp(
+    {
+      services: createModule().scoped(Local),
+      bindings: ["local"],
+      locals: () => locals(),
+      controllers: [DisconnectBeforeInterceptorController],
+    },
+    (instance) => {
+      instance.useGlobalGuards({
+        canActivate(context) {
+          const http = context.switchToHttp();
+          const req = http.getRequest<NestRequest>();
+          const res = http.getResponse<{
+            raw?: { destroy: () => void; end: (body?: string) => void };
+            destroy?: () => void;
+            end?: (body?: string) => void;
+          }>();
+          const rawRes = res.raw ?? res;
+          if (req.url === "/destroyed") {
+            rawRes.destroy?.();
+          } else if (req.url === "/finished") {
+            rawRes.end?.("early");
+          }
+          return true;
+        },
+      });
+    },
+  );
+
+  await app.inject("/destroyed");
+  expect(locals).not.toHaveBeenCalled();
+  expect(acquired).toBe(0);
+  expect(released).toBe(0);
+
+  const finishedRes = await app.inject("/finished");
+  expect(finishedRes.body).toBe("early");
+  expect(acquired).toBe(1);
+  await expect.poll(() => released).toBe(1);
+  await app.close();
+});
+
+test("handlerTimeout aborts request.signal inside handlers on FastifyAdapter even after POST body completes", async () => {
+  let initiallyAborted: boolean | undefined = undefined;
+  let abortReason: unknown = undefined;
+  const aborted = Promise.withResolvers<void>();
+  let released = 0;
+
+  const Local = resource("local", {
+    acquire: ResultTask.ok(1),
+    release: () =>
+      ResultTask.sync(() => {
+        released += 1;
+      }),
+  });
+
+  @Controller()
+  class PostTimeoutController {
+    @Post("/slow")
+    async slow(@Req() request: NestRequest) {
+      initiallyAborted = request.signal.aborted;
+      await new Promise<void>((resolve) => {
+        request.signal.addEventListener(
+          "abort",
+          () => {
+            abortReason = request.signal.reason;
+            aborted.resolve();
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      return "interrupted";
+    }
+  }
+
+  const app = createNestApp({
+    services: createModule().scoped(Local),
+    bindings: ["local"],
+    handlerTimeout: 40,
+    controllers: [PostTimeoutController],
+  });
+
+  const response = await app.inject({ method: "POST", url: "/slow", payload: { hello: "world" } });
+  expect(response.statusCode).toBe(503);
+  await aborted.promise;
+  expect(initiallyAborted).toBe(false);
+  expect(abortReason).toBeInstanceOf(Error);
+  expect((abortReason as Error).message).toContain("timed out");
+  await expect.poll(() => released).toBe(1);
+
+  // Also verify over a real HTTP POST on FastifyAdapter
+  initiallyAborted = undefined;
+  abortReason = undefined;
+  await app.listen({ port: 0, host: "127.0.0.1" });
+  const httpRes = await fetch(`${serverUrl(app.server)}/slow`, {
+    method: "POST",
+    headers: { "content-type": "application/json", connection: "close" },
+    body: JSON.stringify({ hello: "http" }),
+  });
+  expect(httpRes.status).toBe(503);
+  await httpRes.text();
+  expect(initiallyAborted).toBe(false);
+  expect(abortReason).toBeInstanceOf(Error);
+  expect((abortReason as Error).message).toContain("timed out");
+  await expect.poll(() => released).toBe(2);
+  await app.close();
+});
+
+test("initTimeout cancels and rolls back signal-aware singletons and startup without post-timeout decoration", async () => {
+  let sharedReleased = 0;
+  let slowSignalAborted = false;
+  const slowStarted = Promise.withResolvers<void>();
+
+  const Shared = resource("shared", {
+    acquire: ResultTask.ok(1),
+    release: () =>
+      ResultTask.sync(() => {
+        sharedReleased += 1;
+      }),
+  });
+  const Slow = service(
+    "slow",
+    ResultTask.tryPromise({
+      try: (signal) =>
+        new Promise<number>((resolve) => {
+          slowStarted.resolve();
+          signal.addEventListener(
+            "abort",
+            () => {
+              slowSignalAborted = true;
+              resolve(0);
+            },
+            { once: true },
+          );
+        }),
+      catch: (error) => error,
+    }),
+  );
+
+  const initApp = createNestApp({
+    services: createModule().singleton(Shared).singleton(Slow),
+    appBindings: ["shared", "slow"],
+    bindings: [],
+    initTimeout: 35,
+  });
+
+  const initReady = initApp.ready();
+  await slowStarted.promise;
+  await expect(initReady).rejects.toThrow("timed out");
+  await expect.poll(() => slowSignalAborted).toBe(true);
+  await expect.poll(() => sharedReleased).toBe(1);
+  expect(initApp.hasDecorator("services")).toBe(false);
+  await initApp.close();
+
+  // Startup timeout cancels and rolls back without requiring app.close()
+  let startupReleased = 0;
+  let startupAborted = false;
+  const startupEntered = Promise.withResolvers<void>();
+  const StartupShared = resource("shared", {
+    acquire: ResultTask.ok(1),
+    release: () =>
+      ResultTask.sync(() => {
+        startupReleased += 1;
+      }),
+  });
+  const startupApp = createNestApp({
+    services: createModule().singleton(StartupShared),
+    appBindings: ["shared"],
+    bindings: [],
+    initTimeout: 35,
+    startup: ResultTask.tryPromise({
+      try: (signal) =>
+        new Promise<void>((resolve) => {
+          startupEntered.resolve();
+          signal.addEventListener(
+            "abort",
+            () => {
+              startupAborted = true;
+              resolve();
+            },
+            { once: true },
+          );
+        }),
+      catch: (error) => error,
+    }),
+  });
+
+  const startupReady = startupApp.ready();
+  await startupEntered.promise;
+  await expect(startupReady).rejects.toThrow("timed out");
+  await expect.poll(() => startupAborted).toBe(true);
+  await expect.poll(() => startupReleased).toBe(1);
+  await startupApp.close();
+});
+
+test("createNestApp().close() runs NestJS onModuleDestroy before disposing DI singletons and aggregates dual failures", async () => {
+  const events: string[] = [];
+  const Shared = resource("shared", {
+    acquire: ResultTask.sync(() => ({ closed: false })),
+    release: (value) =>
+      ResultTask.sync(() => {
+        value.closed = true;
+        events.push("di-release");
+      }),
+  });
+
+  @Injectable()
+  class LifecycleProvider implements OnModuleDestroy {
+    readonly #appServices: { readonly shared: { readonly closed: boolean } };
+    constructor(
+      @Inject(APP_SERVICES) appServices: { readonly shared: { readonly closed: boolean } },
+    ) {
+      this.#appServices = appServices;
+    }
+
+    onModuleDestroy() {
+      expect(this.#appServices.shared.closed).toBe(false);
+      events.push("nest-onModuleDestroy");
+    }
+  }
+
+  const app = createNestApp({
+    services: createModule().singleton(Shared),
+    appBindings: ["shared"],
+    bindings: [],
+    providers: [LifecycleProvider],
+  });
+  await app.ready();
+  await app.close();
+  expect(events).toEqual(["nest-onModuleDestroy", "di-release"]);
+
+  // Both adapter.close() and DI singleton release fail -> DI singleton still runs and errors are aggregated
+  let failingReleased = 0;
+  const FailingShared = resource("shared", {
+    acquire: ResultTask.ok(1),
+    release: () =>
+      ResultTask.sync(() => {
+        failingReleased += 1;
+      }).andThen(() => ResultTask.err("di-cleanup-err")),
+  });
+
+  const failingApp = createNestApp({
+    services: createModule().singleton(FailingShared),
+    appBindings: ["shared"],
+    bindings: [],
+  });
+  await failingApp.ready();
+  const closeSpy = vi
+    .spyOn(failingApp.getHttpAdapter(), "close")
+    .mockRejectedValueOnce(new Error("adapter-close-err"));
+  await expect(failingApp.close()).rejects.toMatchObject({
+    name: "AggregateError",
+    errors: [
+      expect.objectContaining({ message: "adapter-close-err" }),
+      expect.objectContaining({ message: "Application service cleanup failed" }),
+    ],
+  });
+  closeSpy.mockRestore();
+  expect(failingReleased).toBe(1);
+});
+
+test("does not invoke locals on already-aborted requests in NestJS Tier 1 and Tier 2", async () => {
+  const tier1Locals = vi.fn(() => ({ tenant: "acme" }));
+  const tier2Locals = vi.fn(() => ({ tenant: "acme" }));
+  const route = vi.fn(() => "unexpected");
+  let tier2Acquired = 0;
+
+  @Controller()
+  class AbortedController {
+    @Get()
+    get() {
+      return route();
+    }
+  }
+
+  const Tenant = ResultTask.service<string, "tenant">("tenant");
+  const Greeting = service("greeting", { tenant: Tenant }, ({ tenant }) => tenant);
+  const tier1App = createNestApp({
+    services: createModule().scoped(Greeting),
+    bindings: ["greeting"],
+    locals: () => tier1Locals(),
+    controllers: [AbortedController],
+  });
+
+  const LocalRes = resource("local", {
+    acquire: ResultTask.sync(() => {
+      tier2Acquired += 1;
+      return tier2Acquired;
+    }),
+    release: () =>
+      ResultTask.sync(() => {
+        /* Released. */
+      }),
+  });
+  const tier2App = createNestApp({
+    services: createModule().scoped(LocalRes),
+    bindings: ["local"],
+    locals: () => tier2Locals(),
+    controllers: [AbortedController],
+  });
+
+  try {
+    const res1 = await tier1App.inject({
+      url: "/",
+      signal: AbortSignal.abort(new Error("aborted-t1")),
+    });
+    expect(res1.statusCode).toBe(500);
+    expect(tier1Locals).not.toHaveBeenCalled();
+
+    const res2 = await tier2App.inject({
+      url: "/",
+      signal: AbortSignal.abort(new Error("aborted-t2")),
+    });
+    expect(res2.statusCode).toBe(500);
+    expect(tier2Locals).not.toHaveBeenCalled();
+    expect(tier2Acquired).toBe(0);
+    expect(route).not.toHaveBeenCalled();
+  } finally {
+    await tier1App.close();
+    await tier2App.close();
+  }
 });

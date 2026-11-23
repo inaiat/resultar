@@ -1287,6 +1287,7 @@ interface RaceFirstObserverContext<Tasks extends readonly ResultAsyncRaceTask<un
   readonly resolve: (
     result: Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>,
   ) => void
+  readonly reject: (error: unknown) => void
   readonly startedTasks: readonly StartedRaceTask<unknown, unknown>[]
   readonly state: RaceSettlementState
 }
@@ -1297,6 +1298,7 @@ interface RaceSuccessObserverContext<
   readonly resolve: (
     result: Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>,
   ) => void
+  readonly reject: (error: unknown) => void
   readonly startedTasks: readonly StartedRaceTask<unknown, unknown>[]
   readonly state: RaceSuccessState
 }
@@ -1305,71 +1307,99 @@ type RaceTaskResolve<Tasks extends readonly ResultAsyncRaceTask<unknown, unknown
   result: Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>,
 ) => void
 
+const abortPendingRaceTasks = (
+  startedTasks: readonly StartedRaceTask<unknown, unknown>[],
+  skipIndex?: number,
+  completedIndexes?: ReadonlySet<number>,
+): void => {
+  for (const [loserIndex, loser] of startedTasks.entries()) {
+    if (loserIndex !== skipIndex && completedIndexes?.has(loserIndex) !== true) {
+      loser.controller.abort(createRaceAbortReason())
+    }
+  }
+}
+
+const rejectWith = (reject: (reason?: unknown) => void, error: unknown): void => {
+  // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Preserve original rejection payloads.
+  reject(error)
+}
+
 const observeRaceFirstTask = <Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[]>(
   task: StartedRaceTask<unknown, unknown>,
   context: RaceFirstObserverContext<Tasks>,
 ): void => {
-  void task.settled.then(({ index, result }) => {
-    if (context.state.settled) {
-      return
-    }
-
-    context.state.settled = true
-    const startedTasks = context.startedTasks
-
-    for (const [loserIndex, loser] of startedTasks.entries()) {
-      if (loserIndex !== index) {
-        loser.controller.abort(createRaceAbortReason())
+  void task.settled.then(
+    ({ index, result }) => {
+      if (context.state.settled) {
+        return
       }
-    }
 
-    context.resolve(result as Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>)
-  })
+      context.state.settled = true
+      abortPendingRaceTasks(context.startedTasks, index)
+      context.resolve(
+        result as Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>,
+      )
+    },
+    (error: unknown) => {
+      if (context.state.settled) {
+        return
+      }
+
+      context.state.settled = true
+      abortPendingRaceTasks(context.startedTasks)
+      context.reject(error)
+    },
+  )
 }
 
 const observeRaceSuccessTask = <Tasks extends readonly ResultAsyncRaceTask<unknown, unknown>[]>(
   task: StartedRaceTask<unknown, unknown>,
   context: RaceSuccessObserverContext<Tasks>,
 ): void => {
-  void task.settled.then(({ index, result }) => {
-    // Stryker disable next-line all: ignore late settlements after the race already resolved.
-    if (context.state.settled) {
-      return
-    }
-
-    context.state.completedIndexes.add(index)
-
-    if (result.isOk()) {
-      // Stryker disable next-line all: marks the race as resolved before aborting pending losers.
-      context.state.settled = true
-      const startedTasks = context.startedTasks
-
-      for (const [loserIndex, loser] of startedTasks.entries()) {
-        if (!context.state.completedIndexes.has(loserIndex)) {
-          loser.controller.abort(createRaceAbortReason())
-        }
+  void task.settled.then(
+    ({ index, result }) => {
+      // Stryker disable next-line all: ignore late settlements after the race already resolved.
+      if (context.state.settled) {
+        return
       }
 
-      context.resolve(
-        result as Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>,
-      )
-      return
-    }
+      context.state.completedIndexes.add(index)
 
-    context.state.completedCount += 1
-    context.state.latestError = result
+      if (result.isOk()) {
+        // Stryker disable next-line all: marks the race as resolved before aborting pending losers.
+        context.state.settled = true
+        abortPendingRaceTasks(context.startedTasks, undefined, context.state.completedIndexes)
 
-    if (context.state.completedCount === context.startedTasks.length) {
-      // Stryker disable next-line all: all tasks failed, so future late settlements must be ignored.
+        context.resolve(
+          result as Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>,
+        )
+        return
+      }
+
+      context.state.completedCount += 1
+      context.state.latestError = result
+
+      if (context.state.completedCount === context.startedTasks.length) {
+        // Stryker disable next-line all: all tasks failed, so future late settlements must be ignored.
+        context.state.settled = true
+        context.resolve(
+          context.state.latestError as Result<
+            ResultAsyncRaceTasksOk<Tasks>,
+            ResultAsyncRaceTasksErr<Tasks>
+          >,
+        )
+      }
+    },
+    (error: unknown) => {
+      if (context.state.settled) {
+        return
+      }
+
       context.state.settled = true
-      context.resolve(
-        context.state.latestError as Result<
-          ResultAsyncRaceTasksOk<Tasks>,
-          ResultAsyncRaceTasksErr<Tasks>
-        >,
-      )
-    }
-  })
+      abortPendingRaceTasks(context.startedTasks, undefined, context.state.completedIndexes)
+      context.reject(error)
+    },
+  )
 }
 
 const observeRaceResultAsyncTasks = <
@@ -1379,6 +1409,7 @@ const observeRaceResultAsyncTasks = <
   tasks: Tasks,
   createContext: (
     resolve: RaceTaskResolve<Tasks>,
+    reject: (error: unknown) => void,
     startedTasks: readonly StartedRaceTask<unknown, unknown>[],
   ) => Context,
   observeTask: (task: StartedRaceTask<unknown, unknown>, context: Context) => void,
@@ -1393,9 +1424,21 @@ const observeRaceResultAsyncTasks = <
 
   const promise = new Promise<
     Result<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>>
-  >((resolve) => {
-    const startedTasks = taskList.map((task, index) => startRaceTask(task, index))
-    const context = createContext(resolve, startedTasks)
+  >((resolve, reject) => {
+    const startedTasks: StartedRaceTask<unknown, unknown>[] = []
+    try {
+      for (const [index, task] of taskList.entries()) {
+        startedTasks.push(startRaceTask(task, index))
+      }
+    } catch (error) {
+      abortPendingRaceTasks(startedTasks)
+      for (const started of startedTasks) {
+        void started.settled.catch(() => undefined)
+      }
+      rejectWith(reject, error)
+      return
+    }
+    const context = createContext(resolve, reject, startedTasks)
 
     for (const task of startedTasks) {
       observeTask(task, context)
@@ -1410,8 +1453,9 @@ const raceResultAsyncTasks = <Tasks extends readonly ResultAsyncRaceTask<unknown
 ): ResultAsync<ResultAsyncRaceTasksOk<Tasks>, ResultAsyncRaceTasksErr<Tasks>> =>
   observeRaceResultAsyncTasks<Tasks, RaceSuccessObserverContext<Tasks>>(
     tasks,
-    (resolve, startedTasks) => ({
+    (resolve, reject, startedTasks) => ({
       resolve,
+      reject,
       startedTasks,
       state: {
         completedCount: 0,
@@ -3117,7 +3161,12 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
     >(
       [left, right] as const,
       // Stryker disable next-line all: explicit false and missing value are equivalent before first settlement.
-      (resolve, startedTasks) => ({ resolve, startedTasks, state: { settled: false } }),
+      (resolve, reject, startedTasks) => ({
+        resolve,
+        reject,
+        startedTasks,
+        state: { settled: false },
+      }),
       observeRaceFirstTask,
     )
   }
@@ -3157,9 +3206,17 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
         HandlerOk<OnLeftDone> | HandlerOk<OnRightDone>,
         HandlerErr<OnLeftDone> | HandlerErr<OnRightDone>
       >
-    >((resolve) => {
+    >((resolve, reject) => {
       const leftTask = startRaceTask(left, 0)
-      const rightTask = startRaceTask(right, 1)
+      let rightTask: StartedRaceTask<unknown, unknown> | undefined = undefined
+      try {
+        rightTask = startRaceTask(right, 1)
+      } catch (error) {
+        leftTask.controller.abort(createRaceAbortReason())
+        void leftTask.settled.catch(() => undefined)
+        rejectWith(reject, error)
+        return
+      }
       const leftHandle = createRaceHandle(leftTask) as ResultAsyncRaceHandle<
         ResultAsyncRaceTaskOk<Left>,
         ResultAsyncRaceTaskErr<Left>
@@ -3170,47 +3227,71 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
       >
       let settled = false
 
-      void leftTask.settled.then(({ result }) => {
-        if (settled) {
-          return
+      const settleWithHandler = (runHandler: () => OnLeftDone | OnRightDone): void => {
+        try {
+          const handled = runHandler()
+          void Promise.resolve(toResultAsync(handled)).then((handledResult) => {
+            resolve(
+              handledResult as Result<
+                HandlerOk<OnLeftDone> | HandlerOk<OnRightDone>,
+                HandlerErr<OnLeftDone> | HandlerErr<OnRightDone>
+              >,
+            )
+          }, reject)
+        } catch (error) {
+          rejectWith(reject, error)
         }
+      }
 
-        settled = true
-        const handled = handlers.onLeftDone(
-          result as Result<ResultAsyncRaceTaskOk<Left>, ResultAsyncRaceTaskErr<Left>>,
-          rightHandle,
-        )
+      void leftTask.settled.then(
+        ({ result }) => {
+          if (settled) {
+            return
+          }
 
-        void Promise.resolve(toResultAsync(handled)).then((handledResult) => {
-          resolve(
-            handledResult as Result<
-              HandlerOk<OnLeftDone> | HandlerOk<OnRightDone>,
-              HandlerErr<OnLeftDone> | HandlerErr<OnRightDone>
-            >,
+          settled = true
+          settleWithHandler(() =>
+            handlers.onLeftDone(
+              result as Result<ResultAsyncRaceTaskOk<Left>, ResultAsyncRaceTaskErr<Left>>,
+              rightHandle,
+            ),
           )
-        })
-      })
+        },
+        (error: unknown) => {
+          if (settled) {
+            return
+          }
 
-      void rightTask.settled.then(({ result }) => {
-        if (settled) {
-          return
-        }
+          settled = true
+          rightTask.controller.abort(createRaceAbortReason())
+          rejectWith(reject, error)
+        },
+      )
 
-        settled = true
-        const handled = handlers.onRightDone(
-          result as Result<ResultAsyncRaceTaskOk<Right>, ResultAsyncRaceTaskErr<Right>>,
-          leftHandle,
-        )
+      void rightTask.settled.then(
+        ({ result }) => {
+          if (settled) {
+            return
+          }
 
-        void Promise.resolve(toResultAsync(handled)).then((handledResult) => {
-          resolve(
-            handledResult as Result<
-              HandlerOk<OnLeftDone> | HandlerOk<OnRightDone>,
-              HandlerErr<OnLeftDone> | HandlerErr<OnRightDone>
-            >,
+          settled = true
+          settleWithHandler(() =>
+            handlers.onRightDone(
+              result as Result<ResultAsyncRaceTaskOk<Right>, ResultAsyncRaceTaskErr<Right>>,
+              leftHandle,
+            ),
           )
-        })
-      })
+        },
+        (error: unknown) => {
+          if (settled) {
+            return
+          }
+
+          settled = true
+          leftTask.controller.abort(createRaceAbortReason())
+          rejectWith(reject, error)
+        },
+      )
     })
 
     return new ResultAsync(promise)
@@ -3518,11 +3599,11 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
     fn: (...args: A) => Promise<T>,
     errorFn?: (err: unknown) => E,
   ): (...args: A) => ResultAsync<T, E> {
-    return (...args) =>
-      new ResultAsync<T, E>(
+    return function (this: unknown, ...args: A): ResultAsync<T, E> {
+      return new ResultAsync<T, E>(
         (async () => {
           try {
-            const v = await fn(...args)
+            const v = await Reflect.apply(fn, this, args)
             return resultOk<T, E>(v)
           } catch (error) {
             const e = errorFn ? errorFn(error) : error
@@ -3530,6 +3611,7 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
           }
         })(),
       )
+    }
   }
 
   private readonly innerPromise: Promise<Result<T, E>>

@@ -190,7 +190,7 @@ const getRequestAbortReason = (
   rawRequest: IncomingMessage,
   rawResponse: ServerResponse,
 ): unknown => {
-  if (rawResponse.destroyed && !rawResponse.writableFinished) {
+  if ((rawResponse.destroyed || rawResponse.closed) && !rawResponse.writableFinished) {
     return new Error("Response connection closed");
   }
   if (rawRequest.destroyed && !rawRequest.complete) {
@@ -403,6 +403,10 @@ const createDynamicDispatcher = (
       const rawResponse = getRawResponse(response);
       const externalSignal = ensureRequestSignal(request, rawRequest, rawResponse);
       const ctx: ResolvedPlanContext = { request, rawRequest, rawResponse, externalSignal };
+      const abortReason = getRequestAbortReason(externalSignal, rawRequest, rawResponse);
+      if (abortReason !== undefined) {
+        return rejectMapped(config.mapError(abortReason));
+      }
 
       externalSignal?.addEventListener("abort", noopAbortListener, { once: true });
 

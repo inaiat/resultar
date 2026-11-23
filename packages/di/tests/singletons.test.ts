@@ -60,6 +60,45 @@ test("rejects shorter-lived selections, callback tokens and request locals", asy
   await ResultTask.runPromise(scope.close());
 });
 
+test("useSingletons still rejects overridden scoped and transient services", async () => {
+  const Scoped = service("scoped", {}, () => 1);
+  const Transient = service("transient", {}, () => 2);
+  const overridden = createModule()
+    .scoped(Scoped)
+    .transient(Transient)
+    .singleton("badSingleton", ["scoped"], ({ scoped }) => scoped + 1)
+    .override("scoped", 10)
+    .override("transient", 20);
+  const previousJit = process.env.RESULTAR_JIT;
+  try {
+    for (const jit of ["1", "0"]) {
+      process.env.RESULTAR_JIT = jit;
+      const scope = overridden.scope();
+      // eslint-disable-next-line no-await-in-loop
+      await expect(
+        ResultTask.runPromise(scope.useSingletons(["scoped"], (values) => ResultTask.ok(values))),
+      ).rejects.toThrow("Lifetime violation");
+      // eslint-disable-next-line no-await-in-loop
+      await expect(
+        ResultTask.runPromise(
+          scope.useSingletons(["transient"], (values) => ResultTask.ok(values)),
+        ),
+      ).rejects.toThrow("Lifetime violation");
+      // eslint-disable-next-line no-await-in-loop
+      await expect(
+        ResultTask.runPromise(
+          scope.useSingletons(["badSingleton"], (values) => ResultTask.ok(values)),
+        ),
+      ).rejects.toThrow("Lifetime violation");
+      // eslint-disable-next-line no-await-in-loop
+      await ResultTask.runPromise(scope.close());
+    }
+  } finally {
+    if (previousJit === undefined) delete process.env.RESULTAR_JIT;
+    else process.env.RESULTAR_JIT = previousJit;
+  }
+});
+
 test("root close waits for the application callback and retains selected error types", async () => {
   const finished = Promise.withResolvers<void>();
   const ready = Promise.withResolvers<void>();

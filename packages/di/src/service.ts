@@ -213,7 +213,10 @@ export function service(
         const value = create(values);
         if (
           value instanceof ResultTask ||
-          (value !== null && typeof value === "object" && "then" in value)
+          (value !== null &&
+            (typeof value === "object" || typeof value === "function") &&
+            "then" in value &&
+            typeof value.then === "function")
         )
           throw new TypeError("Use service(name, task) for asynchronous initialization");
         return value;

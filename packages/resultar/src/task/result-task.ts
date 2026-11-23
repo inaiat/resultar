@@ -51,7 +51,7 @@ import {
   success,
   toNativeAbortSignal,
 } from './exit.js'
-import { transformCause } from './cause-transform.js'
+import { isolateExitForObserver, transformCause } from './cause-transform.js'
 import { detachedPromise, NEVER_ABORTED_SIGNAL } from './promise-interruption.js'
 import {
   checkedConcurrency,
@@ -92,6 +92,7 @@ import {
   resolveService,
   ResultTaskYieldTypeId,
   serviceTag,
+  withAcquiring,
   withChildScope,
   withCleanupScope,
   withNamedServices,
@@ -472,56 +473,100 @@ const isErrResult = (
 const isSyncResult = (value: unknown): value is Result<unknown, unknown> =>
   isObjectLike(value) && typeof (value as { readonly isOk?: unknown }).isOk === 'function'
 
-// fallow-ignore-next-line complexity
+const applyFinallyFailure = <Return, E>(
+  currentExit: Exit<Return, E>,
+  cleanupExit: Exit<Return, E>,
+): Exit<Return, E> => {
+  if (cleanupExit._tag === 'Failure') {
+    markCleanupCause(cleanupExit.cause)
+  }
+  if (currentExit._tag === 'Failure' && Cause.hasInterrupts(currentExit.cause)) {
+    return combineExits(currentExit, cleanupExit, 'Sequential') as Exit<Return, E>
+  }
+  return cleanupExit
+}
+
+const advanceFinallyOutcome = <Yield, Return, Next, E>(
+  iterator: Generator<Yield, Return, Next>,
+  state: { readonly exit: Exit<Return, E>; readonly unwrapService: boolean },
+  outcome: Exit<unknown, unknown>,
+): { readonly step: IteratorResult<Yield, Return>; readonly exit: Exit<Return, E> } => {
+  if (outcome._tag === 'Failure') {
+    return {
+      step: iterator.return(undefined as Return),
+      exit: applyFinallyFailure(state.exit, outcome as Exit<Return, E>),
+    }
+  }
+  return {
+    step: iterator.next((state.unwrapService ? outcome.value : outcome) as Next),
+    exit: state.exit,
+  }
+}
+
+const runFinallyYieldAsync = async <Yield, Return, Next, E>(
+  iterator: Generator<Yield, Return, Next>,
+  state: { readonly yielded: Yield; readonly exit: Exit<Return, E> },
+  runtime: ResultTaskCloseRuntime,
+): Promise<{ readonly step: IteratorResult<Yield, Return>; readonly exit: Exit<Return, E> }> => {
+  if (isResultTaskYield(state.yielded)) {
+    const outcome = await executeTaskSafely(state.yielded.task, runtime.executeTask)
+    const exit = 'error' in outcome ? died<unknown, unknown>(outcome.error) : outcome
+    return advanceFinallyOutcome(iterator, { exit: state.exit, unwrapService: false }, exit)
+  }
+  if (isServiceYield(state.yielded)) {
+    const resolution = await resolveService(state.yielded.tag, runtime.context, runtime.executeTask)
+    return advanceFinallyOutcome(iterator, { exit: state.exit, unwrapService: true }, resolution)
+  }
+  const failureExit = isErrResult(state.yielded)
+    ? failed<Return, E>(state.yielded.error as E)
+    : died<Return, E>(new TypeError('ResultTask.gen yielded an unsupported value'))
+  return {
+    step: iterator.return(undefined as Return),
+    exit: applyFinallyFailure(state.exit, failureExit),
+  }
+}
+
 const closeGeneratorAsync = async <Yield, Return, Next, E>(
   iterator: Generator<Yield, Return, Next>,
-  state: { readonly initialStep: IteratorResult<Yield, Return>; readonly exit: Exit<Return, E> },
+  state: {
+    readonly pending: Promise<Exit<unknown, unknown>>
+    readonly kind: 'task' | 'service'
+    readonly exit: Exit<Return, E>
+  },
   runtime: ResultTaskCloseRuntime,
 ): Promise<Exit<Return, E>> => {
+  let finalExit = state.exit
   try {
-    let step = state.initialStep
-    let finalExit = state.exit
+    // eslint-disable-next-line init-declarations
+    let step: IteratorResult<Yield, Return>
+    try {
+      const firstOutcome = await state.pending
+      const advanced = advanceFinallyOutcome(
+        iterator,
+        { exit: finalExit, unwrapService: state.kind === 'service' },
+        firstOutcome,
+      )
+      step = advanced.step
+      finalExit = advanced.exit
+    } catch (error) {
+      finalExit = applyFinallyFailure(finalExit, died<Return, E>(error))
+      step = iterator.return(undefined as Return)
+    }
 
     while (step.done === false) {
-      if (isResultTaskYield(step.value)) {
-        // eslint-disable-next-line no-await-in-loop
-        const outcome = await executeTaskSafely(step.value.task, runtime.executeTask)
-
-        if ('error' in outcome) {
-          finalExit = died<Return, E>(outcome.error)
-          step = iterator.return(undefined as Return)
-        } else if (outcome._tag === 'Failure') {
-          finalExit = outcome as Exit<Return, E>
-          step = iterator.return(undefined as Return)
-        } else {
-          step = iterator.next(outcome as Next)
-        }
-      } else if (isServiceYield(step.value)) {
-        // eslint-disable-next-line no-await-in-loop
-        const resolution = await resolveService(
-          step.value.tag,
-          runtime.context,
-          runtime.executeTask,
-        )
-
-        if (resolution._tag === 'Success') {
-          step = iterator.next(resolution.value as Next)
-        } else {
-          finalExit = resolution as Exit<Return, E>
-          step = iterator.return(undefined as Return)
-        }
-      } else if (isErrResult(step.value)) {
-        finalExit = failed<Return, E>(step.value.error as E)
-        step = iterator.return(undefined as Return)
-      } else {
-        finalExit = died<Return, E>(new TypeError('ResultTask.gen yielded an unsupported value'))
-        step = iterator.return(undefined as Return)
-      }
+      // eslint-disable-next-line no-await-in-loop
+      const advanced = await runFinallyYieldAsync(
+        iterator,
+        { yielded: step.value, exit: finalExit },
+        runtime,
+      )
+      step = advanced.step
+      finalExit = advanced.exit
     }
 
     return completeCleanup(finalExit, runtime.context)
   } catch (error) {
-    return completeCleanup(died<Return, E>(error), runtime.context)
+    return completeCleanup(applyFinallyFailure(finalExit, died<Return, E>(error)), runtime.context)
   }
 }
 
@@ -806,6 +851,22 @@ export class ResultTask<out A, out E = never, out R = never> {
     }
   }
 
+  static #runFastCatchTagMatch(
+    task: ResultTask<unknown, unknown, unknown>,
+    errorValue: unknown,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
+    const desc = task.continuation as CatchTagContinuation
+    try {
+      if (hasTag(errorValue, desc.tag)) {
+        return ResultTask.#runFastLeafStep(task, errorValue, context)
+      }
+    } catch (error) {
+      return died(error)
+    }
+    return failed(errorValue)
+  }
+
   static #tryFastCatchTag(
     task: ResultTask<unknown, unknown, unknown>,
     context: ResultTaskRuntimeContext,
@@ -826,11 +887,7 @@ export class ResultTask<out A, out E = never, out R = never> {
       return undefined
     }
     context.scheduling.remaining -= steps
-    const desc = task.continuation as CatchTagContinuation
-    if (hasTag(cursor.value, desc.tag)) {
-      return ResultTask.#runFastLeafStep(task, cursor.value, context)
-    }
-    return failed(cursor.value)
+    return ResultTask.#runFastCatchTagMatch(task, cursor.value, context)
   }
 
   static #tryFastLeafCombinator(
@@ -868,6 +925,18 @@ export class ResultTask<out A, out E = never, out R = never> {
     return leafOp === OP_SUCCESS ? success(inner.value) : failed(inner.value)
   }
 
+  static #finishFastCombinator(
+    fast: Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
+    if (isPromiseExit(fast)) {
+      return context.signal !== NEVER_ABORTED_SIGNAL && context.acquiring !== true
+        ? fast.then((exit) => interruptSuccess(exit, context.signal), died)
+        : fast.catch(died)
+    }
+    return context.acquiring === true ? fast : interruptSuccess(fast, context.signal)
+  }
+
   static #runCombinator(
     task: ResultTask<unknown, unknown, unknown>,
     rootOp: number,
@@ -878,7 +947,7 @@ export class ResultTask<out A, out E = never, out R = never> {
         ? ResultTask.#tryFastCatchTag(task, context)
         : ResultTask.#tryFastLeafCombinator(task, rootOp, context)
     if (fast !== undefined) {
-      return isPromiseExit(fast) ? fast : interruptSuccess(fast, context.signal)
+      return ResultTask.#finishFastCombinator(fast, context)
     }
     if (rootOp >= OP_FLAT_MAP && task.jitHits < 2) {
       task.jitHits += 1
@@ -923,7 +992,12 @@ export class ResultTask<out A, out E = never, out R = never> {
       runSlow: (task, context) =>
         ResultTask.runTaskLoop(task as unknown as ResultTask<unknown, unknown, unknown>, context),
       createAsyncResumer: (steps) => (pending, fromIndex, context) => {
-        if (fromIndex >= steps.length) return pending.catch(died)
+        if (fromIndex >= steps.length) {
+          return pending.then(
+            (exit) => (context.acquiring === true ? exit : interruptSuccess(exit, context.signal)),
+            died,
+          )
+        }
         return ResultTask.#runTaskLoopFromAsync(
           pending,
           buildSuffixContinuations(steps, fromIndex),
@@ -931,7 +1005,9 @@ export class ResultTask<out A, out E = never, out R = never> {
         )
       },
       createSyncResumer: (steps) => (exit, fromIndex, context) => {
-        if (fromIndex >= steps.length) return exit
+        if (fromIndex >= steps.length) {
+          return context.acquiring === true ? exit : interruptSuccess(exit, context.signal)
+        }
         return ResultTask.runTaskLoop(
           undefined,
           context,
@@ -1004,29 +1080,29 @@ export class ResultTask<out A, out E = never, out R = never> {
     exit: Exit<unknown, unknown> & { readonly _tag: 'Failure' },
     failureValue: unknown,
   ): ContinuationStep {
-    let tagged: CatchTagContinuation | undefined = undefined
-    // eslint-disable-next-line init-declarations -- Each switch branch selects a handler or returns.
-    let handler: (error: unknown) => unknown
-    switch (continuation.op) {
-      case OP_CATCH_ALL:
-      case OP_CATCH_REASON: {
-        handler = continuation.continuation as (error: unknown) => unknown
-        break
-      }
-      case OP_CATCH_TAG: {
-        tagged = continuation.continuation as CatchTagContinuation
-        if (!hasTag(failureValue, tagged.tag)) return { current: undefined, currentExit: exit }
-        handler = tagged.handler
-        break
-      }
-      default: {
-        const selected = getTaggedHandler(failureValue, continuation.continuation as object)
-        if (selected === undefined) return { current: undefined, currentExit: exit }
-        handler = selected
-      }
-    }
-
     try {
+      let tagged: CatchTagContinuation | undefined = undefined
+      // eslint-disable-next-line init-declarations -- Each switch branch selects a handler or returns.
+      let handler: (error: unknown) => unknown
+      switch (continuation.op) {
+        case OP_CATCH_ALL:
+        case OP_CATCH_REASON: {
+          handler = continuation.continuation as (error: unknown) => unknown
+          break
+        }
+        case OP_CATCH_TAG: {
+          tagged = continuation.continuation as CatchTagContinuation
+          if (!hasTag(failureValue, tagged.tag)) return { current: undefined, currentExit: exit }
+          handler = tagged.handler
+          break
+        }
+        default: {
+          const selected = getTaggedHandler(failureValue, continuation.continuation as object)
+          if (selected === undefined) return { current: undefined, currentExit: exit }
+          handler = selected
+        }
+      }
+
       const matched = (
         tagged === undefined ? handler(failureValue) : tagged.handler(failureValue)
       ) as
@@ -1351,7 +1427,9 @@ export class ResultTask<out A, out E = never, out R = never> {
               /* Stryker disable all: zero-continuation fast-path is equivalent to #runTaskLoopFromAsync. */
               if (continuations.length === 0) {
                 releaseContinuationStack(continuations)
-                return executed.catch(died)
+                return trackSignal && context.acquiring !== true
+                  ? executed.then((exit) => interruptSuccess(exit, context.signal), died)
+                  : executed.catch(died)
               }
               /* Stryker restore all */
               return ResultTask.#runTaskLoopFromAsync(executed, continuations, context)
@@ -1612,7 +1690,7 @@ export class ResultTask<out A, out E = never, out R = never> {
         return finishRelease(died(error))
       }
     })
-    return acquired
+    return context.acquiring === true ? acquired : interruptSuccess(acquired, context.signal)
   }
 
   /**
@@ -1700,7 +1778,10 @@ export class ResultTask<out A, out E = never, out R = never> {
     R | WithoutScope<ReleaseR> | ResultTaskScope<ReleaseError | ScopeError<ReleaseR>>
   > {
     return new ResultTask((context) => {
-      const acquired = options.acquire.run(context)
+      if (context.signal.aborted) return interrupted(context.signal)
+      const acquireContext =
+        context.signal === NEVER_ABORTED_SIGNAL ? context : withAcquiring(context)
+      const acquired = options.acquire.run(acquireContext)
       return isPromiseExit(acquired)
         ? acquired.then((resolved) =>
             ResultTask.#registerAcquireReleaseFinalizer(resolved, options, context),
@@ -1729,12 +1810,19 @@ export class ResultTask<out A, out E = never, out R = never> {
   ): ResultTask<A, E, R | ResultTaskScope<never>> {
     return ResultTask.acquireRelease({
       acquire,
-      release: (resource) =>
-        Symbol.asyncDispose in resource
-          ? ResultTask.fromPromise(() => resource[Symbol.asyncDispose]())
-          : ResultTask.sync(() => {
-              resource[Symbol.dispose]()
-            }),
+      release: (resource) => {
+        const asyncDispose = (resource as { readonly [Symbol.asyncDispose]?: unknown })[
+          Symbol.asyncDispose
+        ]
+        if (typeof asyncDispose === 'function') {
+          return ResultTask.fromPromise(() =>
+            (asyncDispose as () => PromiseLike<void>).call(resource),
+          )
+        }
+        return ResultTask.sync(() => {
+          ;(resource as Disposable)[Symbol.dispose]()
+        })
+      },
     })
   }
 
@@ -2051,23 +2139,87 @@ export class ResultTask<out A, out E = never, out R = never> {
    * ```
    */
   /* eslint-disable max-statements, max-depth, init-declarations */
+  static #stepFinallySync<Yield, Return, Next, E>(
+    iterator: Generator<Yield, Return, Next>,
+    state: { readonly yielded: Yield; readonly exit: Exit<Return, E> },
+    runtime: ResultTaskCloseRuntime,
+  ):
+    | { readonly step: IteratorResult<Yield, Return>; readonly exit: Exit<Return, E> }
+    | Promise<Exit<Return, E>> {
+    if (isResultTaskYield(state.yielded)) {
+      let outcome: Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>
+      try {
+        outcome = runtime.executeTask(state.yielded.task)
+      } catch (error) {
+        return {
+          step: iterator.return(undefined as Return),
+          exit: applyFinallyFailure(state.exit, died<Return, E>(error)),
+        }
+      }
+      if (isPromiseExit(outcome)) {
+        return closeGeneratorAsync(
+          iterator,
+          { pending: outcome, kind: 'task', exit: state.exit },
+          runtime,
+        )
+      }
+      return advanceFinallyOutcome(iterator, { exit: state.exit, unwrapService: false }, outcome)
+    }
+    if (isServiceYield(state.yielded)) {
+      const resolution = resolveService(state.yielded.tag, runtime.context, runtime.executeTask)
+      if (isPromiseExit(resolution)) {
+        return closeGeneratorAsync(
+          iterator,
+          { pending: resolution, kind: 'service', exit: state.exit },
+          runtime,
+        )
+      }
+      return advanceFinallyOutcome(iterator, { exit: state.exit, unwrapService: true }, resolution)
+    }
+    const failureExit = isErrResult(state.yielded)
+      ? failed<Return, E>(state.yielded.error as E)
+      : died<Return, E>(new TypeError('ResultTask.gen yielded an unsupported value'))
+    return {
+      step: iterator.return(undefined as Return),
+      exit: applyFinallyFailure(state.exit, failureExit),
+    }
+  }
+
   static #closeGenerator<Yield, Return, Next, E>(
     iterator: Generator<Yield, Return, Next>,
     exit: Exit<Return, E>,
     context: ResultTaskRuntimeContext,
   ): Exit<Return, E> | Promise<Exit<Return, E>> {
+    let step: IteratorResult<Yield, Return>
     try {
-      const step = iterator.return(undefined as Return)
-      // Stryker disable next-line ConditionalExpression: closeGeneratorAsync immediately exits its loop when step.done is true.
-      if (step.done === true) return exit
-      const cleanupContext = withCleanupScope(context, context.scope)
-      return closeGeneratorAsync(
-        iterator,
-        { initialStep: step, exit },
-        { context: cleanupContext, executeTask: (task) => task.execute(cleanupContext) },
-      )
+      step = iterator.return(undefined as Return)
     } catch (error) {
-      return died<Return, E>(error)
+      return applyFinallyFailure(exit, died<Return, E>(error))
+    }
+    // Stryker disable next-line ConditionalExpression: closeGenerator loop immediately exits when step.done is true.
+    if (step.done === true) return exit
+    const cleanupContext = withCleanupScope(context, context.scope)
+    const runtime: ResultTaskCloseRuntime = {
+      context: cleanupContext,
+      executeTask: (task) => task.execute(cleanupContext),
+    }
+    let finalExit: Exit<Return, E> = exit
+    try {
+      while (step.done === false) {
+        const next:
+          | { readonly step: IteratorResult<Yield, Return>; readonly exit: Exit<Return, E> }
+          | Promise<Exit<Return, E>> = ResultTask.#stepFinallySync(
+          iterator,
+          { yielded: step.value, exit: finalExit },
+          runtime,
+        )
+        if (next instanceof Promise) return next
+        step = next.step
+        finalExit = next.exit
+      }
+      return completeCleanup(finalExit, cleanupContext)
+    } catch (error) {
+      return completeCleanup(applyFinallyFailure(finalExit, died<Return, E>(error)), cleanupContext)
     }
   }
 
@@ -2523,12 +2675,12 @@ export class ResultTask<out A, out E = never, out R = never> {
               combineExits(exit, interruptSuccess(observed, context.signal), 'Sequential'),
             )
           }
-          return res === undefined
-            ? exit
-            : Promise.resolve(res).then(
+          return isPromiseLike(res)
+            ? Promise.resolve(res).then(
                 () => exit,
                 (error: unknown) => combineExits(exit, died(error), 'Sequential'),
               )
+            : exit
         } catch (error) {
           return combineExits(exit, died(error), 'Sequential')
         }
@@ -3351,7 +3503,12 @@ export class ResultTask<out A, out E = never, out R = never> {
       }
       failures = combineExits(failures, settled.exit, 'Parallel')
     }
-    if (winnerIndex === -1) return failures
+    if (winnerIndex === -1) {
+      if (failures._tag === 'Failure' && isExternalInterruptOnly(failures.cause, context.signal)) {
+        return interrupted(context.signal)
+      }
+      return failures
+    }
     return finishRace(winner, winnerIndex, children)
   }
 
@@ -3485,11 +3642,20 @@ export class ResultTask<out A, out E = never, out R = never> {
   public static raceAll(
     tasks: Iterable<ResultTask<unknown, unknown, unknown>>,
   ): ResultTask<unknown, unknown, unknown> {
-    const list = [...tasks]
-    if (list.length === 0) {
-      throw new RangeError('ResultTask.raceAll requires at least one task')
+    if (Array.isArray(tasks)) {
+      const list = [...(tasks as readonly ResultTask<unknown, unknown, unknown>[])]
+      if (list.length === 0) {
+        throw new RangeError('ResultTask.raceAll requires at least one task')
+      }
+      return new ResultTask((context) => ResultTask.#race(list, context, true))
     }
-    return new ResultTask((context) => ResultTask.#race(list, context, true))
+    return new ResultTask((context) => {
+      const list = [...tasks]
+      if (list.length === 0) {
+        return died(new RangeError('ResultTask.raceAll requires at least one task'))
+      }
+      return ResultTask.#race(list, context, true)
+    })
   }
 
   /**
@@ -3524,11 +3690,20 @@ export class ResultTask<out A, out E = never, out R = never> {
   public static raceFirstAll(
     tasks: Iterable<ResultTask<unknown, unknown, unknown>>,
   ): ResultTask<unknown, unknown, unknown> {
-    const list = [...tasks]
-    if (list.length === 0) {
-      throw new RangeError('ResultTask.raceFirstAll requires at least one task')
+    if (Array.isArray(tasks)) {
+      const list = [...(tasks as readonly ResultTask<unknown, unknown, unknown>[])]
+      if (list.length === 0) {
+        throw new RangeError('ResultTask.raceFirstAll requires at least one task')
+      }
+      return new ResultTask((context) => ResultTask.#race(list, context, false))
     }
-    return new ResultTask((context) => ResultTask.#race(list, context, false))
+    return new ResultTask((context) => {
+      const list = [...tasks]
+      if (list.length === 0) {
+        return died(new RangeError('ResultTask.raceFirstAll requires at least one task'))
+      }
+      return ResultTask.#race(list, context, false)
+    })
   }
 
   /**
@@ -4187,7 +4362,7 @@ export class ResultTask<out A, out E = never, out R = never> {
       | Readonly<Record<string, ResultTask<unknown, unknown, unknown>>>,
     options?: ResultTaskConcurrencyOptions,
   ): ResultTask<unknown, unknown, unknown> {
-    if (Symbol.iterator in tasks)
+    if (typeof (tasks as { readonly [Symbol.iterator]?: unknown })[Symbol.iterator] === 'function')
       // eslint-disable-next-line unicorn/no-array-for-each -- This is the ResultTask policy, not Array.forEach.
       return ResultTask.forEach(
         tasks as Iterable<ResultTask<unknown, unknown, unknown>>,
@@ -4197,7 +4372,7 @@ export class ResultTask<out A, out E = never, out R = never> {
     return ResultTask.suspend(() =>
       // eslint-disable-next-line unicorn/no-array-for-each -- Task traversal preserves scope semantics.
       ResultTask.forEach(
-        Object.entries(tasks),
+        Object.entries(tasks as Readonly<Record<string, ResultTask<unknown, unknown, unknown>>>),
         ([key, task]) => task.map((value) => [key, value] as const),
         options,
       ).map((entries) => Object.fromEntries(entries)),
@@ -4206,15 +4381,8 @@ export class ResultTask<out A, out E = never, out R = never> {
 
   /** Shares one in-flight execution and successful value. Failed executions can be retried. */
   public static memoize<A, E, R>(task: ResultTask<A, E, R>): ResultTask<A, E, R> {
-    let pending: Promise<Exit<unknown, unknown>> | undefined = undefined
-    return new ResultTask(async (context) => {
-      pending ??= Promise.resolve(task.execute(context))
-      const current = pending
-      const exit = await current
-      // Stryker disable next-line ConditionalExpression: only a newer execution starting between capture and reset could distinguish the guard; microtask ordering makes the first failing attacher always observe its own pending, so the mutant is equivalent.
-      if (exit._tag === 'Failure' && pending === current) pending = undefined
-      return exit
-    })
+    const state: MemoizeState = { cached: undefined, inFlight: undefined }
+    return new ResultTask((context) => runMemoized(task, state, context))
   }
 
   /** Creates an explicit resource owner for adapters that manage long-lived scopes. */
@@ -4223,16 +4391,32 @@ export class ResultTask<out A, out E = never, out R = never> {
     const controller = new AbortController()
     const pending = new Set<Promise<Exit<unknown, unknown>>>()
     let closing: Promise<Exit<unknown, unknown>> | undefined = undefined
+    let closeContext: ResultTaskRuntimeContext | undefined = undefined
     const owner: ResultTaskScopeOwner<CloseError> = {
       addFinalizer: (release) => {
         if (closing !== undefined) throw new Error('Cannot acquire into a closing ResultTask scope')
-        scope.add((exit) =>
-          ResultTask.runExit(
-            ResultTask.gen(function* () {
-              yield* release(exit)
-            }),
-          ),
-        )
+        scope.add((exit) => {
+          const finalizerTask = ResultTask.gen(function* () {
+            yield* release(exit)
+          })
+          if (closeContext === undefined) {
+            return ResultTask.runExit(finalizerTask)
+          }
+          const finalizerScope = new TaskScope()
+          const cleanupContext = withCleanupScope(closeContext, finalizerScope)
+          const finish = (
+            released: Exit<unknown, unknown>,
+          ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+            const closed = finalizerScope.closeSyncOrAsync(released)
+            return isPromiseExit(closed)
+              ? closed.then((closedExit) => completeCleanup(closedExit, cleanupContext))
+              : completeCleanup(closed, cleanupContext)
+          }
+          const released = finalizerTask.execute(cleanupContext)
+          return isPromiseExit(released)
+            ? released.then(finish, (error: unknown) => finish(died(error)))
+            : finish(released)
+        })
       },
       use: (task) =>
         new ResultTask(async (context) => {
@@ -4250,6 +4434,7 @@ export class ResultTask<out A, out E = never, out R = never> {
           // Stryker disable next-line all: pending-set cleanup is memory hygiene; settled promises keep close() resolving identically.
           void execution.then(() => pending.delete(execution))
           if (context.signal === NEVER_ABORTED_SIGNAL) return execution
+          if (context.signal.aborted) return interrupted(context.signal)
           return new Promise<Exit<unknown, unknown>>((resolve) => {
             const onAbort = (): void => {
               resolve(interrupted(context.signal))
@@ -4264,8 +4449,9 @@ export class ResultTask<out A, out E = never, out R = never> {
           })
         }),
       close: (exit = success(undefined)) =>
-        new ResultTask(async () => {
+        new ResultTask(async (context) => {
           closing ??= (async () => {
+            closeContext = context
             controller.abort('ResultTask scope closed')
             await Promise.all(pending)
             return scope.close(exit, true)
@@ -5296,13 +5482,20 @@ export class ResultTask<out A, out E = never, out R = never> {
   > {
     return new ResultTask((context) => {
       const iterator = candidates[Symbol.iterator]()
+      const closeIterator = (): void => {
+        try {
+          iterator.return?.()
+        } catch {
+          // Best-effort iterator cleanup must not clobber a resolved outcome or interrupt.
+        }
+      }
       const advance = (
         previous: Exit<unknown, unknown> | undefined,
       ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
         let last = previous
         for (;;) {
           if (context.signal.aborted) {
-            iterator.return?.()
+            closeIterator()
             return interrupted(context.signal)
           }
           const step = iterator.next()
@@ -5313,7 +5506,7 @@ export class ResultTask<out A, out E = never, out R = never> {
           if (isPromiseExit(outcome)) return outcome.then(resume)
           last = interruptSuccess(outcome, context.signal)
           if (last._tag === 'Success' || last.cause._tag !== 'Fail') {
-            iterator.return?.()
+            closeIterator()
             return last
           }
         }
@@ -5323,7 +5516,7 @@ export class ResultTask<out A, out E = never, out R = never> {
       ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
         const exit = interruptSuccess(outcome, context.signal)
         if (exit._tag === 'Success' || exit.cause._tag !== 'Fail') {
-          iterator.return?.()
+          closeIterator()
           return exit
         }
         return advance(exit)
@@ -6484,6 +6677,206 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
 }
 
+interface MemoizeWaiter {
+  readonly signal: AbortSignal
+  readonly scope: TaskScope
+  readonly resolve: (exit: Exit<unknown, unknown>) => void
+  readonly onAbort: () => void
+}
+
+interface MemoizeRun {
+  readonly signal: FiberSignal
+  readonly scope: TaskScope
+  readonly waiters: Set<MemoizeWaiter>
+  readonly done: Promise<Exit<unknown, unknown>>
+  readonly resolveDone: (exit: Exit<unknown, unknown>) => void
+  settled: boolean
+}
+
+interface MemoizeState {
+  cached: Exit<unknown, unknown> | undefined
+  inFlight: MemoizeRun | undefined
+}
+
+const finishMemoizeRun = (
+  state: MemoizeState,
+  run: MemoizeRun,
+  resolved: Exit<unknown, unknown>,
+): void => {
+  run.settled = true
+  run.signal.dispose()
+  if (state.inFlight === run) {
+    state.inFlight = undefined
+  }
+  if (resolved._tag === 'Success') {
+    if (!run.scope.isClean()) {
+      const firstWaiter = run.waiters.values().next().value
+      if (firstWaiter === undefined) void run.scope.close(resolved)
+      else firstWaiter.scope.adopt(run.scope)
+    }
+    state.cached = resolved
+  }
+  for (const waiter of run.waiters) {
+    if (waiter.signal !== NEVER_ABORTED_SIGNAL) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort)
+    }
+    waiter.resolve(
+      resolved._tag === 'Success'
+        ? interruptSuccess(resolved, waiter.signal)
+        : isolateExitForObserver(resolved),
+    )
+  }
+  run.waiters.clear()
+  run.resolveDone(resolved)
+}
+
+const settleMemoizeOutcome = (
+  state: MemoizeState,
+  run: MemoizeRun,
+  exit: Exit<unknown, unknown>,
+): void => {
+  const resolved = interruptSuccess(exit, run.signal.asAbortSignal())
+  if (resolved._tag === 'Failure' && !run.scope.isClean()) {
+    const closed = run.scope.closeSyncOrAsync(resolved)
+    if (isPromiseExit(closed)) {
+      void closed.then((closedExit) => {
+        finishMemoizeRun(state, run, closedExit)
+      })
+      return
+    }
+    finishMemoizeRun(state, run, closed)
+    return
+  }
+  finishMemoizeRun(state, run, resolved)
+}
+
+const abortLastMemoizeWaiter = (
+  state: MemoizeState,
+  active: MemoizeRun,
+  signal: AbortSignal,
+): Promise<Exit<unknown, unknown>> => {
+  if (state.inFlight === active) state.inFlight = undefined
+  active.signal.abort(signal.reason)
+  return active.done.then((finalExit) =>
+    finalExit._tag === 'Failure' ? isolateExitForObserver(finalExit) : interrupted(signal),
+  )
+}
+
+const attachMemoizeWaiter = (
+  state: MemoizeState,
+  active: MemoizeRun,
+  context: ResultTaskRuntimeContext,
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+  if (context.signal.aborted) {
+    if (active.waiters.size === 0 && !active.settled) {
+      return abortLastMemoizeWaiter(state, active, context.signal)
+    }
+    return interrupted(context.signal)
+  }
+  return new Promise<Exit<unknown, unknown>>((resolve) => {
+    const waiter: MemoizeWaiter = {
+      signal: context.signal,
+      scope: context.scope,
+      resolve,
+      onAbort: () => {
+        active.waiters.delete(waiter)
+        if (active.waiters.size === 0 && !active.settled) {
+          void abortLastMemoizeWaiter(state, active, context.signal).then(resolve)
+          return
+        }
+        resolve(interrupted(context.signal))
+      },
+    }
+    if (context.signal !== NEVER_ABORTED_SIGNAL) {
+      context.signal.addEventListener('abort', waiter.onAbort, { once: true })
+    }
+    active.waiters.add(waiter)
+  })
+}
+
+const finishSyncMemoized = (
+  state: MemoizeState,
+  shared: {
+    readonly scope: TaskScope
+    readonly signal: FiberSignal
+    readonly context: ResultTaskRuntimeContext
+  },
+  outcome: Exit<unknown, unknown>,
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+  shared.signal.dispose()
+  if (outcome._tag === 'Success') {
+    if (!shared.scope.isClean()) shared.context.scope.adopt(shared.scope)
+    state.cached = outcome
+    return interruptSuccess(outcome, shared.context.signal)
+  }
+  if (!shared.scope.isClean()) {
+    const closed = shared.scope.closeSyncOrAsync(outcome)
+    return isPromiseExit(closed)
+      ? closed.then(isolateExitForObserver)
+      : isolateExitForObserver(closed)
+  }
+  return isolateExitForObserver(outcome)
+}
+
+const executeMemoizeTask = <A, E, R>(
+  task: ResultTask<A, E, R>,
+  sharedContext: ResultTaskRuntimeContext,
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+  try {
+    return (task as unknown as { execute: ResultTaskExecutor }).execute(sharedContext)
+  } catch (error) {
+    return died(error)
+  }
+}
+
+const runMemoized = <A, E, R>(
+  task: ResultTask<A, E, R>,
+  state: MemoizeState,
+  context: ResultTaskRuntimeContext,
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+  if (state.cached !== undefined) {
+    return context.signal.aborted ? interrupted(context.signal) : state.cached
+  }
+  if (context.signal.aborted) {
+    return interrupted(context.signal)
+  }
+  if (state.inFlight === undefined) {
+    const sharedSignal = new FiberSignal()
+    const sharedScope = new TaskScope()
+    const doneResolvers = Promise.withResolvers<Exit<unknown, unknown>>()
+    const run: MemoizeRun = {
+      signal: sharedSignal,
+      scope: sharedScope,
+      waiters: new Set(),
+      done: doneResolvers.promise,
+      resolveDone: doneResolvers.resolve,
+      settled: false,
+    }
+    const sharedContext = withSpanStack(
+      withScope(context, sharedScope, sharedSignal.asAbortSignal()),
+      undefined,
+    )
+    const outcome = executeMemoizeTask(task, sharedContext)
+    if (!isPromiseExit(outcome)) {
+      return finishSyncMemoized(
+        state,
+        { scope: sharedScope, signal: sharedSignal, context },
+        outcome,
+      )
+    }
+    state.inFlight = run
+    void outcome.then(
+      (exit) => {
+        settleMemoizeOutcome(state, run, exit)
+      },
+      (error: unknown) => {
+        settleMemoizeOutcome(state, run, died(error))
+      },
+    )
+  }
+  return attachMemoizeWaiter(state, state.inFlight, context)
+}
+
 const executeTryPromise = (
   tryFn: (signal: AbortSignal) => PromiseLike<unknown>,
   catchFn: ((error: unknown) => unknown) | undefined,
@@ -6493,7 +6886,8 @@ const executeTryPromise = (
   const nativeSignal = toNativeAbortSignal(signal)
   try {
     return Promise.resolve(tryFn(nativeSignal)).then(
-      success,
+      (value) =>
+        signal.aborted && context.acquiring !== true ? interrupted(signal) : success(value),
       (error: unknown): Exit<unknown, unknown> => {
         if (signal.aborted) {
           return interrupted(signal)

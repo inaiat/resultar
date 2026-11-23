@@ -62,6 +62,9 @@ const safeSerialize = (value: unknown): string => {
     .unwrapOr("Unknown error");
 };
 
+const serializeHeadersForMessage = (headers: RequestHeaders): unknown =>
+  headers instanceof Headers ? Object.fromEntries(headers.entries()) : headers;
+
 /** Error cause containing the body, headers, and status of an unsuccessful HTTP response. */
 export class HttpResponseErrorCauseError extends Error {
   readonly body: string;
@@ -77,7 +80,7 @@ export class HttpResponseErrorCauseError extends Error {
     readonly headers: RequestHeaders;
     readonly statusCode: number;
   }) {
-    super(safeSerialize({ body, headers, statusCode }));
+    super(safeSerialize({ body, headers: serializeHeadersForMessage(headers), statusCode }));
     this.name = "HttpResponseErrorCauseError";
     this.body = body;
     this.headers = headers;
@@ -231,6 +234,84 @@ const createHttpResponseRequestError = (
     }),
   );
 
+const getAbortReason = (signal: AbortSignal): unknown =>
+  signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+
+const cancelResponseBody = (response: unknown, reason: unknown): void => {
+  if (!isRecord(response)) {
+    return;
+  }
+
+  const body = response.body;
+  if (!isRecord(body)) {
+    return;
+  }
+
+  if (typeof body.cancel === "function" && body.locked !== true) {
+    const cancelFn = body.cancel;
+    const cancelResult = fromThrowable((): unknown => Reflect.apply(cancelFn, body, [reason]))();
+    if (cancelResult.isOk()) {
+      disarmPromiseLike(cancelResult.value).unwrapOr(false);
+    }
+    return;
+  }
+
+  if (typeof body.destroy === "function") {
+    const destroyFn = body.destroy;
+    fromThrowable((): unknown =>
+      Reflect.apply(destroyFn, body, [reason instanceof Error ? reason : undefined]),
+    )();
+  }
+};
+
+const readResponseWithSignal = <T>(
+  response: RequestJsonResponseData,
+  read: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> => {
+  if (signal.aborted) {
+    const reason = getAbortReason(signal);
+    cancelResponseBody(response, reason);
+    const deferred = Promise.withResolvers<T>();
+    deferred.reject(reason);
+    return deferred.promise;
+  }
+
+  const readPromise = read();
+  // Disarm late rejections when abort wins the race after body cancellation.
+  disarmPromiseLike(readPromise).unwrapOr(false);
+
+  const deferred = Promise.withResolvers<T>();
+  let settled = false;
+
+  const onAbort = () => {
+    if (settled) return;
+    settled = true;
+    const reason = getAbortReason(signal);
+    cancelResponseBody(response, reason);
+    deferred.reject(reason);
+  };
+
+  signal.addEventListener("abort", onAbort, { once: true });
+
+  readPromise.then(
+    (value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      deferred.resolve(value);
+    },
+    (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      deferred.reject(error);
+    },
+  );
+
+  return deferred.promise;
+};
+
 const handleHttpErrors = <T extends RequestJsonResponseData>(
   response: T,
 ): ResultTask<T, RequestError> => {
@@ -239,7 +320,7 @@ const handleHttpErrors = <T extends RequestJsonResponseData>(
   if (normalized.statusCode >= 400 && normalized.statusCode < 600) {
     return ResultTask.tryPromise({
       catch: baseRequestErrorHandler,
-      try: () => normalized.text(),
+      try: (signal) => readResponseWithSignal(response, normalized.text, signal),
     }).andThen((body) => err(createHttpResponseRequestError(body, normalized)));
   }
 
@@ -377,15 +458,13 @@ const executeRequestJson = <T, R extends RequestJsonResponseData = RequestJsonRe
   retry: RequestJsonRetry | undefined,
 ): ResultTask<T, Error> => {
   if (typeof request !== "function") {
-    const invalidSourceError = RequestError.integrationError(
-      "JSON request requires a request factory",
+    const invalidSourceTask = ResultTask.err(
+      RequestError.integrationError("JSON request requires a request factory"),
     );
 
-    return ResultTask.err(
-      mapError === undefined
-        ? invalidSourceError
-        : mapRequestJsonError(mapError)(invalidSourceError),
-    );
+    return mapError === undefined
+      ? invalidSourceTask
+      : invalidSourceTask.mapErr(mapRequestJsonError(mapError));
   }
 
   const attemptTask = ResultTask.tryPromise({
@@ -396,7 +475,7 @@ const executeRequestJson = <T, R extends RequestJsonResponseData = RequestJsonRe
     .andThen((response) =>
       ResultTask.tryPromise({
         catch: jsonParseErrorHandler,
-        try: () => normalizeResponse(response).json(),
+        try: (signal) => readResponseWithSignal(response, normalizeResponse(response).json, signal),
       }),
     )
     .andThen((value) => decodeJsonResponseValue(decode, value, validationError));

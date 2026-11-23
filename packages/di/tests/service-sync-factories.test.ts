@@ -1,6 +1,6 @@
 import { ResultTask } from "resultar";
 import { expect, test } from "vite-plus/test";
-import { Service, createModule, resource } from "../src/index.js";
+import { Service, createModule, resource, service } from "../src/index.js";
 
 test("constructs synchronous services lazily after ordered dependency resolution", async () => {
   const events: string[] = [];
@@ -151,4 +151,48 @@ test("accepts synchronous null, undefined, functions and non-callable then prope
   expect(values.empty).toBeUndefined();
   expect(values.callable()).toBe(42);
   expect(values.data.then).toBe("later");
+});
+
+test("service() accepts non-callable then properties and rejects function thenables in JIT and Tier 2", async () => {
+  // eslint-disable-next-line unicorn/no-thenable -- Non-callable then property is plain data.
+  const Data = service("data", {}, () => ({ then: "later" }));
+  const CallableThenable = service(
+    "callableThenable",
+    {},
+    () =>
+      // eslint-disable-next-line unicorn/no-thenable -- Testing runtime rejection of callable thenables.
+      Object.assign(() => 1, { then: () => undefined }) as unknown as () => number,
+  );
+
+  // Tier 2 (module.use via service.make)
+  const mod = createModule().scoped(Data).scoped(CallableThenable);
+  const okValues = await ResultTask.runPromise(
+    mod.use(["data"], ({ data }) => ResultTask.ok(data)),
+  );
+  expect(okValues.then).toBe("later");
+  await expect(
+    ResultTask.runPromise(
+      mod.use(["callableThenable"], ({ callableThenable }) => ResultTask.ok(callableThenable)),
+    ),
+  ).rejects.toThrow("Use service(name, task) for asynchronous initialization");
+
+  // JIT fast path (scope.fetch via assertTokenSync)
+  const scope = mod.scope();
+  const dataRes = await scope.fetch(
+    ["data"],
+    ({ data }) => new Response(data.then),
+  )(new Request("https://example.test/data"));
+  expect(await dataRes.text()).toBe("later");
+  await expect(
+    scope.fetch(
+      ["callableThenable"],
+      () => new Response("ok"),
+    )(new Request("https://example.test/thenable")),
+  ).rejects.toMatchObject({
+    cause: {
+      _tag: "Die",
+      defect: { message: "Use service(name, task) for asynchronous initialization" },
+    },
+  });
+  await ResultTask.runPromise(scope.close());
 });

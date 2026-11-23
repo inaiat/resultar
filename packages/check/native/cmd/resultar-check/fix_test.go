@@ -254,3 +254,63 @@ func TestFileFilterPrefersProjectFileOnCollision(t *testing.T) {
 		t.Fatal("a project-relative filter must select only the project file")
 	}
 }
+
+func TestFixPreferMapAndPreferMapErrConvergeWithoutOscillation(t *testing.T) {
+	dir := t.TempDir()
+	resultarTypes := `export interface Result<T, E = never> {
+  readonly value: T
+  readonly error: E
+  map<U>(fn: (value: T) => U): Result<U, E>
+  mapErr<F>(fn: (error: E) => F): Result<T, F>
+  andThen<U, F>(fn: (value: T) => Result<U, F>): Result<U, E | F>
+  orElse<U, F>(fn: (error: E) => Result<U, F>): Result<T | U, F>
+}
+export declare function ok<T>(value: T): Result<T, never>
+export declare function err<E>(error: E): Result<never, E>
+`
+	files := map[string]string{
+		"package.json":                       `{"type":"module"}`,
+		"node_modules/resultar/package.json": `{"name":"resultar","type":"module","types":"index.d.ts"}`,
+		"node_modules/resultar/index.d.ts":   resultarTypes,
+		"tsconfig.json": `{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "skipLibCheck": true,
+    "plugins": [{ "name": "resultar-check", "failOn": "suggestion" }]
+  },
+  "include": ["src/**/*.ts"]
+}`,
+		"src/app.ts": `import { ok, err, type Result } from "resultar"
+declare const res: Result<number, string>
+export const mapped = () => res.andThen((x) => ok({ doubled: x * 2 }))
+export const mappedErr = () => res.orElse((e) => err("err:" + e))
+`,
+	}
+	for rel, content := range files {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configPath := filepath.Join(dir, "tsconfig.json")
+	appPath := filepath.Join(dir, "src", "app.ts")
+
+	code, stdout, stderr := runCapturing(t, []string{"--project", configPath, "--fix"})
+	if code != 0 {
+		t.Fatalf("expected clean exit 0 after prefer-map/prefer-map-err --fix, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	fixed, err := os.ReadFile(appPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(fixed)
+	if !strings.Contains(text, `res.map((x) => ({ doubled: x * 2 }))`) || !strings.Contains(text, `res.mapErr((e) => "err:" + e)`) {
+		t.Fatalf("expected unwrapped map and mapErr:\n%s", text)
+	}
+}

@@ -94,13 +94,26 @@ export const copyCauseSpans = (source: object, target: object): void => {
 export const getCauseSpans = (cause: object): readonly SpanTraceFrame[] =>
   causeSpanTraces.get(cause) ?? EMPTY_SPAN_TRACE
 
+const defineAttribute = (
+  target: Record<string, SpanAttributeValue>,
+  key: string,
+  value: SpanAttributeValue,
+): void => {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
+}
+
 const sanitizeAttributes = (
   attributes: SpanAttributes | undefined,
 ): Record<string, SpanAttributeValue> => {
   const clean: Record<string, SpanAttributeValue> = {}
   if (attributes === undefined) return clean
   for (const [key, value] of Object.entries(attributes)) {
-    if (value !== undefined) clean[key] = value
+    if (value !== undefined) defineAttribute(clean, key, value)
   }
   return clean
 }
@@ -136,7 +149,7 @@ const createMemoryTracer = (): MemoryTracer => {
       return {
         name,
         setAttribute: (key, value) => {
-          entry.attributes[key] = value
+          defineAttribute(entry.attributes, key, value)
         },
         end: (exit, endTime) => {
           entry.exit = exit

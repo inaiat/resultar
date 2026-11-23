@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -13,6 +14,38 @@ import (
 	"github.com/microsoft/TypeScript/tsc/internal/scanner"
 	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/config"
 )
+
+func sameFilePathForOS(left, right, goos string) bool {
+	a, b := filepath.Clean(left), filepath.Clean(right)
+	if goos == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func sameFilePath(left, right string) bool {
+	return sameFilePathForOS(left, right, runtime.GOOS)
+}
+
+func functionExpressionSelfReferences(c *checker.Checker, fn *ast.Node) bool {
+	if fn == nil || fn.Kind != ast.KindFunctionExpression || fn.Name() == nil || fn.Body() == nil {
+		return false
+	}
+	fnSym := c.GetSymbolAtLocation(fn.Name())
+	if fnSym == nil {
+		return false
+	}
+	referenced := false
+	visit(fn.Body(), func(child *ast.Node) {
+		if referenced || child == nil || child.Kind != ast.KindIdentifier || isDeclarationIdentifier(child) {
+			return
+		}
+		if c.GetSymbolAtLocation(child) == fnSym {
+			referenced = true
+		}
+	})
+	return referenced
+}
 
 type Channels struct {
 	Success      string `json:"success,omitempty"`
@@ -194,7 +227,7 @@ func HoverAt(ctx context.Context, program *compiler.Program, path string, offset
 		return "", fmt.Errorf("unable to acquire TypeScript checker")
 	}
 	for _, file := range program.SourceFiles() {
-		if filepath.Clean(string(file.FileName())) != filepath.Clean(path) {
+		if !sameFilePath(string(file.FileName()), path) {
 			continue
 		}
 		var selected *ast.Node
@@ -259,7 +292,7 @@ func Refactors(ctx context.Context, program *compiler.Program, path string) ([]F
 	a := Analyzer{checker: c}
 	result := []Fix{}
 	for _, file := range program.SourceFiles() {
-		if filepath.Clean(string(file.FileName())) != filepath.Clean(path) {
+		if !sameFilePath(string(file.FileName()), path) {
 			continue
 		}
 		source := func(node *ast.Node) string {
@@ -309,10 +342,13 @@ func Refactors(ctx context.Context, program *compiler.Program, path string) ([]F
 		visit(file.AsNode(), func(node *ast.Node) {
 			if (node.Kind == ast.KindArrowFunction || node.Kind == ast.KindFunctionExpression) && node.Body() != nil {
 				outerText := strings.TrimSpace(source(node))
-				if strings.HasPrefix(outerText, "async ") || strings.HasPrefix(outerText, "async(") {
+				if ast.HasSyntacticModifier(node, ast.ModifierFlagsAsync) || strings.HasPrefix(outerText, "async ") || strings.HasPrefix(outerText, "async(") {
 					return
 				}
 				if node.Kind == ast.KindFunctionExpression && node.AsFunctionExpression().AsteriskToken != nil {
+					return
+				}
+				if node.Type() != nil || functionExpressionSelfReferences(c, node) {
 					return
 				}
 				var genCall *ast.Node
@@ -334,10 +370,13 @@ func Refactors(ctx context.Context, program *compiler.Program, path string) ([]F
 						nsReceiver := call.Expression.AsPropertyAccessExpression().Expression
 						if c.GetPropertyOfType(c.GetTypeAtLocation(nsReceiver), "fn") != nil {
 							innerGen := unwrapExpression(call.Arguments.Nodes[0])
-							if innerGen != nil && innerGen.Kind == ast.KindFunctionExpression && innerGen.AsFunctionExpression().AsteriskToken != nil && len(innerGen.Parameters()) == 0 && innerGen.Body() != nil && innerGen.Body().Kind == ast.KindBlock {
+							if innerGen != nil && innerGen.Kind == ast.KindFunctionExpression && innerGen.AsFunctionExpression().AsteriskToken != nil && len(innerGen.Parameters()) == 0 && innerGen.Body() != nil && innerGen.Body().Kind == ast.KindBlock && innerGen.Type() == nil && !functionExpressionSelfReferences(c, innerGen) {
 								innerText := strings.TrimSpace(source(innerGen))
 								prefix := "function*"
-								if strings.HasPrefix(innerText, "async") {
+								if ast.HasSyntacticModifier(innerGen, ast.ModifierFlagsAsync) || strings.HasPrefix(innerText, "async") {
+									if namespace == "ResultTask" {
+										return
+									}
 									prefix = "async function*"
 								}
 								typeParamsText := ""

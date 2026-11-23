@@ -373,10 +373,14 @@ class ManagedFiber implements RuntimeFiber, ScopeChild {
   private finalize(exit: Exit<unknown, unknown>): Exit<unknown, unknown> {
     this.fiberSignal.dispose()
     this.settled = true
-    if (this.observed) {
+    const completed = this.completeFn === undefined ? exit : this.completeFn(exit)
+    if (
+      this.observed ||
+      completed._tag === 'Success' ||
+      withoutInterruptions(completed.cause) === undefined
+    ) {
       this.owner?.unregisterChild(this)
     }
-    const completed = this.completeFn === undefined ? exit : this.completeFn(exit)
     this.nativeHandle?.complete(completed)
     this.onSettled?.(completed)
     return completed

@@ -747,25 +747,24 @@ function valueTags(inputOrHandlers: object, handlers?: object): unknown {
   if (handlers === undefined) {
     return new Matcher('type', undefined, identity).tagsExhaustive(inputOrHandlers)
   }
+  const hasInputObject =
+    inputOrHandlers !== null &&
+    (typeof inputOrHandlers === 'object' || typeof inputOrHandlers === 'function')
+  const rawTag = hasInputObject ? (inputOrHandlers as { readonly _tag?: unknown })._tag : undefined
+  const lookupKey = typeof rawTag === 'number' ? String(rawTag) : rawTag
+  const validLookupKey = typeof lookupKey === 'string' || typeof lookupKey === 'symbol'
+  let matchedHandler: Handler | undefined = undefined
   for (const key of Reflect.ownKeys(handlers)) {
     const entry = (handlers as Record<PropertyKey, unknown>)[key]
     if (entry !== undefined && typeof entry !== 'function') {
       throw new TypeError('Match handlers must be functions')
     }
+    if (validLookupKey && key === lookupKey && entry !== undefined) {
+      matchedHandler = entry as Handler
+    }
   }
-  if (
-    inputOrHandlers === null ||
-    (typeof inputOrHandlers !== 'object' && typeof inputOrHandlers !== 'function')
-  )
-    return unmatched()
-
-  const rawTag = (inputOrHandlers as { readonly _tag?: unknown })._tag
-  const lookupKey = typeof rawTag === 'number' ? String(rawTag) : rawTag
-  if (typeof lookupKey !== 'string' && typeof lookupKey !== 'symbol') return unmatched()
-  if (!Object.hasOwn(handlers, lookupKey)) return unmatched()
-
-  const handler = (handlers as Record<PropertyKey, unknown>)[lookupKey]
-  return handler === undefined ? unmatched() : (handler as Handler)(inputOrHandlers as never)
+  if (!hasInputObject || !validLookupKey || matchedHandler === undefined) return unmatched()
+  return matchedHandler(inputOrHandlers as never)
 }
 const withReturnType =
   <Target>() =>

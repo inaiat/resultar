@@ -808,13 +808,13 @@ describe("requestJson", () => {
     assert.ok(ordinary.isErr());
     const ordinaryError = expectRequestError(ordinary.error);
     assert.ok(isHttpResponseError(ordinaryError));
+    assert.ok(ordinaryError.cause.headers instanceof Headers);
+    assert.equal(ordinaryError.cause.headers.get("x-request-id"), "req-1");
+    const expectedResponse = new Response("Bad Gateway", { headers: serializableHeaders });
+    const expectedHeaders = Object.fromEntries(expectedResponse.headers.entries());
     assert.equal(
       ordinaryError.cause.message,
-      JSON.stringify({
-        body: "Bad Gateway",
-        headers: new Response("", { headers: serializableHeaders }).headers,
-        statusCode: 502,
-      }),
+      JSON.stringify({ body: "Bad Gateway", headers: expectedHeaders, statusCode: 502 }),
     );
   });
 
@@ -1053,5 +1053,125 @@ describe("requestJson", () => {
       Success: () => false,
     });
     assert.equal(wasInterrupted, true);
+  });
+
+  it("defers mapError.request lazily when request is not a function", async () => {
+    let mapCalls = 0;
+    const task = requestJsonUnsafe({
+      mapError: createMapError({
+        request: ({ cause }) => {
+          mapCalls += 1;
+          return new MappedRequestJsonError("request", cause.message);
+        },
+      }),
+      request: Promise.resolve(createFetchResponse(userSample)),
+      validator: isUserSample,
+    });
+
+    assert.equal(mapCalls, 0);
+
+    const outcome = await task.runResult();
+    assert.equal(mapCalls, 1);
+    assert.ok(outcome.isErr());
+    assert.equal(
+      expectMappedError(outcome.error).message,
+      "JSON request requires a request factory",
+    );
+  });
+
+  it("aborts and cancels stalled response bodies during json() and text() without hanging or unhandled rejections", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      // 1. Stalled Fetch 200 json() with cancelable body and timeout
+      let jsonCanceled = false;
+      const jsonDeferred = Promise.withResolvers<unknown>();
+      const stalledJsonTask = ResultTask.timeout(
+        requestJson({
+          request: async () => ({
+            body: {
+              cancel: () => {
+                jsonCanceled = true;
+                jsonDeferred.reject(new Error("late body cancel rejection"));
+                return Promise.reject(new Error("cancel promise rejection"));
+              },
+            },
+            headers: {},
+            json: () => jsonDeferred.promise,
+            status: 200,
+            text: async () => "",
+          }),
+          validator: isUserSample,
+        }),
+        25,
+        () => new MappedRequestJsonError("timeout", "JSON body timed out"),
+      );
+      const jsonOutcome = await stalledJsonTask.runResult();
+      assert.ok(jsonOutcome.isErr());
+      assert.equal(jsonOutcome.error.message, "JSON body timed out");
+      assert.equal(jsonCanceled, true);
+
+      // 2. Stalled Undici 500 text() with destroyable body and explicit AbortController
+      let textDestroyed = false;
+      const textDeferred = Promise.withResolvers<string>();
+      const textController = new AbortController();
+      const stalledTextTask = requestJson({
+        request: async () => ({
+          body: {
+            destroy: () => {
+              textDestroyed = true;
+              textDeferred.reject(new Error("late text destroy rejection"));
+            },
+            json: async () => ({}),
+            text: () => {
+              queueMicrotask(() => {
+                textController.abort(new Error("aborted while reading error text"));
+              });
+              return textDeferred.promise;
+            },
+          },
+          headers: {},
+          statusCode: 500,
+        }),
+        validator: isUserSample,
+      });
+      const textExit = await stalledTextTask.runExit({ signal: textController.signal });
+      assert.equal(textDestroyed, true);
+      assert.equal(
+        Match.valueTags(textExit, {
+          Failure: ({ cause }) => Cause.hasInterrupts(cause),
+          Success: () => false,
+        }),
+        true,
+      );
+
+      // 3. Real Fetch Response with locked stalled ReadableStream never hangs on timeout
+      const lockedStreamResponse = new Response(
+        new ReadableStream<Uint8Array>({
+          start() {
+            /* Intentionally never enqueues or closes. */
+          },
+        }),
+        { status: 200 },
+      );
+      const lockedTimeout = await ResultTask.timeout(
+        requestJson({ request: async () => lockedStreamResponse, validator: isUserSample }),
+        25,
+        () => new MappedRequestJsonError("timeout", "Locked stream timed out"),
+      ).runResult();
+      assert.ok(lockedTimeout.isErr());
+      assert.equal(lockedTimeout.error.message, "Locked stream timed out");
+
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 25);
+      });
+      assert.deepEqual(unhandled, []);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });

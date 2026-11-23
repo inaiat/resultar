@@ -26,7 +26,9 @@ import type {
   VscodeRange,
   VscodeStatusBarItem,
   VscodeTextDocument,
+  VscodeUri,
   VscodeWorkspaceEdit,
+  VscodeWorkspaceFolder,
 } from "./vscode-types.js";
 
 const SUPPORTED_LANGUAGES = new Set(["typescript", "typescriptreact"]);
@@ -182,8 +184,24 @@ export interface ActivateOptions {
     trace: boolean,
     onDiagnostics: (uri: string, items: readonly LspDiagnostic[]) => void,
     onLog: (line: string) => void,
+    onExit?: (code: number | null, signal: NodeJS.Signals | null) => void,
   ) => ResultarLspClient;
 }
+
+interface FolderSession {
+  readonly root: string;
+  folder: VscodeWorkspaceFolder;
+  client: ResultarLspClient | undefined;
+  readonly publishedUris: Set<string>;
+  starting: boolean;
+  restartPending: boolean;
+  crashed: boolean;
+}
+
+const isPathInsideRoot = (root: string, filePath: string): boolean => {
+  const rel = relative(root, filePath);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+};
 
 let activeController: ExtensionController | undefined = undefined;
 
@@ -203,16 +221,46 @@ export const activateWithApi = (
   statusBar.text = "$(sync~spin) Resultar";
   statusBar.show();
 
-  let client: ResultarLspClient | undefined = undefined;
-  let starting = false;
-  let restartPending = false;
+  const sessions = new Map<string, FolderSession>();
   let disposed = false;
 
-  const getWorkspaceRoot = (): string | undefined =>
-    api.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const resolveWorkspaceFolder = (uri?: VscodeUri): VscodeWorkspaceFolder | undefined => {
+    if (uri !== undefined) {
+      const fromHost = api.workspace.getWorkspaceFolder?.(uri);
+      if (fromHost !== undefined) {
+        return fromHost;
+      }
+      let bestMatch: VscodeWorkspaceFolder | undefined = undefined;
+      for (const folder of api.workspace.workspaceFolders ?? []) {
+        if (
+          isPathInsideRoot(folder.uri.fsPath, uri.fsPath) &&
+          (bestMatch === undefined || folder.uri.fsPath.length > bestMatch.uri.fsPath.length)
+        ) {
+          bestMatch = folder;
+        }
+      }
+      return bestMatch;
+    }
+    const activeUri = api.window.activeTextEditor?.document.uri;
+    if (activeUri !== undefined) {
+      const activeFolder = resolveWorkspaceFolder(activeUri);
+      if (activeFolder !== undefined) {
+        return activeFolder;
+      }
+    }
+    return api.workspace.workspaceFolders?.[0];
+  };
 
-  const getSettings = () => {
-    const cfg = api.workspace.getConfiguration("resultarCheck");
+  const getClientForUri = (uri: VscodeUri): ResultarLspClient | undefined => {
+    const folder = resolveWorkspaceFolder(uri);
+    if (folder === undefined) {
+      return undefined;
+    }
+    return sessions.get(folder.uri.fsPath)?.client;
+  };
+
+  const getSettings = (folder?: VscodeWorkspaceFolder) => {
+    const cfg = api.workspace.getConfiguration("resultarCheck", folder?.uri);
     return {
       enable: cfg.get<boolean>("enable", true),
       project: cfg.get<string>("project", "tsconfig.json"),
@@ -221,16 +269,57 @@ export const activateWithApi = (
     };
   };
 
-  const resolveCommand = (workspaceRoot: string): ResolvedCommand => {
-    const settings = getSettings();
+  const resolveCommand = (
+    workspaceRoot: string,
+    folder?: VscodeWorkspaceFolder,
+  ): ResolvedCommand => {
+    const settings = getSettings(folder);
     return resolveResultarCheckCommand({ workspaceRoot, executablePath: settings.executablePath });
   };
 
-  const handlePublishedDiagnostics = (uri: string, items: readonly LspDiagnostic[]): void => {
-    const targetUri = api.Uri.file(uriToFilePath(uri));
+  const clearSessionDiagnostics = (session: FolderSession): void => {
+    for (const fsPath of session.publishedUris) {
+      diagnostics.delete(api.Uri.file(fsPath));
+    }
+    session.publishedUris.clear();
+    if (sessions.size === 0) {
+      diagnostics.clear();
+    }
+  };
+
+  const refreshStatusBar = (): void => {
+    const folders = api.workspace.workspaceFolders ?? [];
+    if (folders.length === 0) {
+      statusBar.text = "$(circle-slash) Resultar";
+      statusBar.tooltip = "Resultar Check: open a workspace folder";
+      return;
+    }
+    for (const session of sessions.values()) {
+      if (session.crashed) {
+        return;
+      }
+    }
+    const anyEnabled = folders.some((folder) => getSettings(folder).enable);
+    if (!anyEnabled) {
+      statusBar.text = "$(circle-slash) Resultar";
+      statusBar.tooltip = "Resultar Check: disabled";
+      return;
+    }
+    updateStatusBar(statusBar, diagnostics);
+  };
+
+  const handlePublishedDiagnostics = (
+    session: FolderSession,
+    uri: string,
+    items: readonly LspDiagnostic[],
+  ): void => {
+    const fsPath = uriToFilePath(uri);
+    const targetUri = api.Uri.file(fsPath);
     if (items.length === 0) {
+      session.publishedUris.delete(fsPath);
       diagnostics.delete(targetUri);
     } else {
+      session.publishedUris.add(fsPath);
       diagnostics.set(
         targetUri,
         items.map((item) => mapLspDiagnostic(api, item)),
@@ -239,44 +328,85 @@ export const activateWithApi = (
     updateStatusBar(statusBar, diagnostics);
   };
 
-  const stopClient = async (): Promise<void> => {
-    const current = client;
-    client = undefined;
+  const stopSessionClient = async (session: FolderSession): Promise<void> => {
+    const current = session.client;
+    session.client = undefined;
     if (current !== undefined) {
       await current.stop();
     }
   };
 
-  const startClient = async (): Promise<void> => {
+  const stopAllClients = async (): Promise<void> => {
+    const active = [...sessions.values()];
+    sessions.clear();
+    await Promise.all(
+      active.map(async (session) => {
+        clearSessionDiagnostics(session);
+        await stopSessionClient(session);
+      }),
+    );
+  };
+
+  const startFolderClient = async (folder: VscodeWorkspaceFolder): Promise<void> => {
     if (disposed) return;
-    if (starting) {
-      restartPending = true;
+    const workspaceRoot = folder.uri.fsPath;
+    let session = sessions.get(workspaceRoot);
+    if (session === undefined) {
+      session = {
+        root: workspaceRoot,
+        folder,
+        client: undefined,
+        publishedUris: new Set<string>(),
+        starting: false,
+        restartPending: false,
+        crashed: false,
+      };
+      sessions.set(workspaceRoot, session);
+    } else {
+      session.folder = folder;
+    }
+
+    if (session.starting) {
+      session.restartPending = true;
       return;
     }
-    const workspaceRoot = getWorkspaceRoot();
-    const settings = getSettings();
 
-    if (!settings.enable || workspaceRoot === undefined) {
-      await stopClient();
-      diagnostics.clear();
-      statusBar.text = "$(circle-slash) Resultar";
-      statusBar.tooltip = settings.enable
-        ? "Resultar Check: open a workspace folder"
-        : "Resultar Check: disabled";
+    const settings = getSettings(folder);
+    if (!settings.enable) {
+      await stopSessionClient(session);
+      session.crashed = false;
+      clearSessionDiagnostics(session);
+      refreshStatusBar();
       return;
     }
 
-    starting = true;
+    session.starting = true;
+    session.crashed = false;
     try {
-      await stopClient();
-      if (disposed) return;
-      diagnostics.clear();
+      await stopSessionClient(session);
+      if (disposed || sessions.get(workspaceRoot) !== session) return;
+      clearSessionDiagnostics(session);
       statusBar.text = "$(sync~spin) Resultar";
 
-      const resolved = resolveCommand(workspaceRoot);
+      const resolved = resolveCommand(workspaceRoot, folder);
       output.appendLine(
         `Starting resultar-check lsp (${resolved.source}): ${resolved.command} ${[...resolved.baseArgs, "lsp", "--project", settings.project].join(" ")}`,
       );
+
+      const activeSession = session;
+      const onDiag = (uri: string, items: readonly LspDiagnostic[]): void => {
+        if (disposed || sessions.get(workspaceRoot) !== activeSession) return;
+        handlePublishedDiagnostics(activeSession, uri, items);
+      };
+      const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+        if (disposed || sessions.get(workspaceRoot) !== activeSession) return;
+        if (code !== 0 || signal !== null) {
+          activeSession.crashed = true;
+          clearSessionDiagnostics(activeSession);
+          statusBar.text = "$(error) Resultar";
+          statusBar.tooltip = `Resultar Check exited with ${signal ?? code} — run Restart Language Server`;
+        }
+      };
 
       const nextClient =
         options?.clientFactory?.(
@@ -284,10 +414,11 @@ export const activateWithApi = (
           settings.project,
           workspaceRoot,
           settings.trace,
-          handlePublishedDiagnostics,
+          onDiag,
           (line) => {
             output.appendLine(line);
           },
+          onExit,
         ) ??
         new ResultarLspClient({
           command: resolved.command,
@@ -295,26 +426,26 @@ export const activateWithApi = (
           cwd: workspaceRoot,
           trace: settings.trace,
           onDiagnostics: (params) => {
-            handlePublishedDiagnostics(params.uri, params.diagnostics);
+            onDiag(params.uri, params.diagnostics);
           },
           onLog: (line) => {
             output.appendLine(line);
           },
-          onExit: (code, signal) => {
-            if (code !== 0 || signal !== null) {
-              statusBar.text = "$(error) Resultar";
-              statusBar.tooltip = `Resultar Check exited with ${signal ?? code} — run Restart Language Server`;
-            }
-          },
+          onExit,
         });
 
-      client = nextClient;
+      session.client = nextClient;
       await nextClient.start(workspaceRoot);
-      if (disposed || client !== nextClient) return;
-      updateStatusBar(statusBar, diagnostics);
+      if (disposed || sessions.get(workspaceRoot) !== session || session.client !== nextClient) {
+        return;
+      }
+      refreshStatusBar();
 
       for (const doc of api.workspace.textDocuments) {
-        if (isSupportedDocument(doc)) {
+        if (
+          isSupportedDocument(doc) &&
+          resolveWorkspaceFolder(doc.uri)?.uri.fsPath === workspaceRoot
+        ) {
           nextClient.didOpen(
             filePathToUri(doc.fileName),
             doc.languageId,
@@ -333,42 +464,68 @@ export const activateWithApi = (
         `Resultar Check could not start: ${message}. Install resultar-check or configure resultarCheck.executablePath.`,
       );
     } finally {
-      starting = false;
-      if (restartPending && !disposed) {
-        restartPending = false;
-        await startClient();
+      session.starting = false;
+      if (session.restartPending && !disposed && sessions.get(workspaceRoot) === session) {
+        session.restartPending = false;
+        await startFolderClient(session.folder);
       }
     }
   };
 
+  const startAllClients = async (): Promise<void> => {
+    if (disposed) return;
+    const folders = api.workspace.workspaceFolders ?? [];
+    const currentRoots = new Set(folders.map((folder) => folder.uri.fsPath));
+
+    const removedSessions: FolderSession[] = [];
+    for (const [root, session] of sessions) {
+      if (!currentRoots.has(root)) {
+        sessions.delete(root);
+        clearSessionDiagnostics(session);
+        removedSessions.push(session);
+      }
+    }
+    await Promise.all(removedSessions.map(async (session) => stopSessionClient(session)));
+
+    if (folders.length === 0) {
+      diagnostics.clear();
+      refreshStatusBar();
+      return;
+    }
+
+    await Promise.all(folders.map(async (folder) => startFolderClient(folder)));
+    if (!disposed) {
+      refreshStatusBar();
+    }
+  };
+
   const runFix = async (singleFile: boolean): Promise<void> => {
-    const workspaceRoot = getWorkspaceRoot();
+    const activeDoc = api.window.activeTextEditor?.document;
+    if (singleFile && (activeDoc === undefined || !isSupportedDocument(activeDoc))) {
+      void api.window.showWarningMessage("Resultar Check: active editor is not a TypeScript file.");
+      return;
+    }
+
+    const folder = singleFile
+      ? (resolveWorkspaceFolder(activeDoc?.uri) ?? resolveWorkspaceFolder())
+      : resolveWorkspaceFolder();
+    const workspaceRoot = folder?.uri.fsPath;
     if (workspaceRoot === undefined) {
       void api.window.showWarningMessage("Resultar Check: open a workspace folder first.");
       return;
     }
-    const settings = getSettings();
-    const resolved = resolveCommand(workspaceRoot);
+    const settings = getSettings(folder);
+    const resolved = resolveCommand(workspaceRoot, folder);
     const args: string[] = ["--fix", "--project", settings.project];
 
-    if (singleFile) {
-      const activeDoc = api.window.activeTextEditor?.document;
-      if (activeDoc === undefined || !isSupportedDocument(activeDoc)) {
-        void api.window.showWarningMessage(
-          "Resultar Check: active editor is not a TypeScript file.",
-        );
-        return;
-      }
+    if (singleFile && activeDoc !== undefined) {
       args.push("--file", activeDoc.fileName);
     }
 
-    const documents = singleFile
-      ? [api.window.activeTextEditor?.document]
-      : api.workspace.textDocuments;
+    const documents = singleFile ? [activeDoc] : api.workspace.textDocuments;
     const dirty = documents.filter((doc): doc is VscodeTextDocument => {
       if (doc?.isDirty !== true || !isSupportedDocument(doc)) return false;
-      const path = relative(workspaceRoot, doc.fileName);
-      return singleFile || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+      return singleFile || isPathInsideRoot(workspaceRoot, doc.fileName);
     });
     const saved = await Promise.all(dirty.map(async (doc) => doc.save?.()));
     if (saved.some((ok) => ok !== true)) {
@@ -388,16 +545,17 @@ export const activateWithApi = (
         ? "Resultar Check: no issues found."
         : "Resultar Check: fixes applied; remaining issues logged.");
     void api.window.showInformationMessage(summaryLine);
-    client?.didChangeWatchedFiles(filePathToUri(workspaceRoot), 2);
+    sessions.get(workspaceRoot)?.client?.didChangeWatchedFiles(filePathToUri(workspaceRoot), 2);
   };
 
   const showOverview = async (): Promise<void> => {
-    const workspaceRoot = getWorkspaceRoot();
+    const folder = resolveWorkspaceFolder();
+    const workspaceRoot = folder?.uri.fsPath;
     if (workspaceRoot === undefined) {
       return;
     }
-    const settings = getSettings();
-    const resolved = resolveCommand(workspaceRoot);
+    const settings = getSettings(folder);
+    const resolved = resolveCommand(workspaceRoot, folder);
     const result = await runCliCommand(
       resolved,
       ["overview", "--project", settings.project],
@@ -416,11 +574,12 @@ export const activateWithApi = (
       document: VscodeTextDocument,
       position: VscodePosition,
     ): Promise<VscodeHover | undefined> {
-      if (client === undefined || !client.isRunning || !isSupportedDocument(document)) {
+      const targetClient = getClientForUri(document.uri);
+      if (targetClient === undefined || !targetClient.isRunning || !isSupportedDocument(document)) {
         return undefined;
       }
       try {
-        const result = await client.hover(filePathToUri(document.fileName), {
+        const result = await targetClient.hover(filePathToUri(document.fileName), {
           line: position.line,
           character: position.character,
         });
@@ -447,12 +606,17 @@ export const activateWithApi = (
         range: VscodeRange,
         actionContext: VscodeCodeActionContext,
       ): Promise<readonly VscodeCodeAction[]> {
-        if (client === undefined || !client.isRunning || !isSupportedDocument(document)) {
+        const targetClient = getClientForUri(document.uri);
+        if (
+          targetClient === undefined ||
+          !targetClient.isRunning ||
+          !isSupportedDocument(document)
+        ) {
           return [];
         }
         try {
           const only = actionContext.only === undefined ? undefined : [actionContext.only.value];
-          const actions = await client.codeAction(
+          const actions = await targetClient.codeAction(
             filePathToUri(document.fileName),
             toLspRange(range),
             only,
@@ -467,15 +631,23 @@ export const activateWithApi = (
   );
 
   const watcher = api.workspace.createFileSystemWatcher("**/*.{ts,tsx,mts,cts,json}");
-  const notifyWatched = (uri: { readonly fsPath: string }, kind: 1 | 2 | 3) => {
-    client?.didChangeWatchedFiles(filePathToUri(uri.fsPath), kind);
+  const notifyWatched = (uri: VscodeUri, kind: 1 | 2 | 3) => {
+    const fileUri = filePathToUri(uri.fsPath);
+    const targetClient = getClientForUri(uri);
+    if (targetClient !== undefined) {
+      targetClient.didChangeWatchedFiles(fileUri, kind);
+      return;
+    }
+    for (const session of sessions.values()) {
+      session.client?.didChangeWatchedFiles(fileUri, kind);
+    }
   };
 
   const controller: ExtensionController = {
-    restart: startClient,
+    restart: startAllClients,
     dispose: async () => {
       disposed = true;
-      await stopClient();
+      await stopAllClients();
       diagnostics.dispose();
       statusBar.dispose();
       output.dispose();
@@ -500,12 +672,17 @@ export const activateWithApi = (
     }),
     api.workspace.onDidOpenTextDocument((doc) => {
       if (isSupportedDocument(doc)) {
-        client?.didOpen(filePathToUri(doc.fileName), doc.languageId, doc.version, doc.getText());
+        getClientForUri(doc.uri)?.didOpen(
+          filePathToUri(doc.fileName),
+          doc.languageId,
+          doc.version,
+          doc.getText(),
+        );
       }
     }),
     api.workspace.onDidChangeTextDocument((event) => {
       if (isSupportedDocument(event.document)) {
-        client?.didChange(
+        getClientForUri(event.document.uri)?.didChange(
           filePathToUri(event.document.fileName),
           event.document.version,
           event.document.getText(),
@@ -514,20 +691,20 @@ export const activateWithApi = (
     }),
     api.workspace.onDidSaveTextDocument((doc) => {
       if (isSupportedDocument(doc)) {
-        client?.didSave(filePathToUri(doc.fileName));
+        getClientForUri(doc.uri)?.didSave(filePathToUri(doc.fileName));
       }
     }),
     api.workspace.onDidCloseTextDocument((doc) => {
       if (isSupportedDocument(doc)) {
-        client?.didClose(filePathToUri(doc.fileName));
+        getClientForUri(doc.uri)?.didClose(filePathToUri(doc.fileName));
       }
     }),
     api.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("resultarCheck")) {
-        void startClient();
+        void startAllClients();
       }
     }),
-    api.commands.registerCommand("resultarCheck.restart", () => void startClient()),
+    api.commands.registerCommand("resultarCheck.restart", () => void startAllClients()),
     api.commands.registerCommand("resultarCheck.fixWorkspace", async () => runFix(false)),
     api.commands.registerCommand("resultarCheck.fixFile", async () => runFix(true)),
     api.commands.registerCommand("resultarCheck.showOverview", () => void showOverview()),
@@ -536,12 +713,31 @@ export const activateWithApi = (
     }),
     {
       dispose: () => {
-        void stopClient();
+        void stopAllClients();
       },
     },
   );
 
-  void startClient();
+  if (api.workspace.onDidChangeWorkspaceFolders !== undefined) {
+    context.subscriptions.push(
+      api.workspace.onDidChangeWorkspaceFolders((event) => {
+        for (const removed of event.removed) {
+          const session = sessions.get(removed.uri.fsPath);
+          if (session !== undefined) {
+            sessions.delete(removed.uri.fsPath);
+            clearSessionDiagnostics(session);
+            void stopSessionClient(session);
+          }
+        }
+        for (const added of event.added) {
+          void startFolderClient(added);
+        }
+        refreshStatusBar();
+      }),
+    );
+  }
+
+  void startAllClients();
   return controller;
 };
 

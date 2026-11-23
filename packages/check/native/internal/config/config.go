@@ -237,7 +237,9 @@ func resolveExtendsPath(configPath, extension string) (string, error) {
 		candidates = append(candidates, filepath.Join(base, "tsconfig.json"))
 	}
 
-	if filepath.IsAbs(extension) || strings.HasPrefix(extension, ".") {
+	if filepath.IsAbs(extension) {
+		appendCandidates(extension)
+	} else if strings.HasPrefix(extension, ".") {
 		appendCandidates(filepath.Join(filepath.Dir(configPath), extension))
 	} else {
 		for directory := filepath.Dir(configPath); ; directory = filepath.Dir(directory) {
@@ -908,8 +910,44 @@ func normalizeJSONC(contents []byte) []byte {
 		result.WriteByte(char)
 	}
 
-	withoutTrailingCommas := regexp.MustCompile(`,\s*([}\]])`).ReplaceAllString(result.String(), "$1")
-	return []byte(withoutTrailingCommas)
+	return []byte(stripTrailingCommas(result.String()))
+}
+
+func stripTrailingCommas(input string) string {
+	var out strings.Builder
+	out.Grow(len(input))
+	inString := false
+	escaped := false
+	for i := 0; i < len(input); i++ {
+		ch := input[i]
+		if inString {
+			out.WriteByte(ch)
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		if ch == '"' {
+			inString = true
+			out.WriteByte(ch)
+			continue
+		}
+		if ch == ',' {
+			j := i + 1
+			for j < len(input) && (input[j] == ' ' || input[j] == '\t' || input[j] == '\r' || input[j] == '\n') {
+				j++
+			}
+			if j < len(input) && (input[j] == '}' || input[j] == ']') {
+				continue
+			}
+		}
+		out.WriteByte(ch)
+	}
+	return out.String()
 }
 
 // RuleSeverity resolves canonical, kebab-case, and fully qualified rule IDs.

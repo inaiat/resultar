@@ -245,6 +245,7 @@ export const compileSyncSubgraph = (
   keys: readonly string[],
   localKeys: readonly string[],
   defaultAssertSync: (value: unknown) => void,
+  requestedBy?: ServiceLifetime,
 ): CompiledSyncPlan | undefined => {
   if (keys.length === 0) {
     return { tier: 0, resolve: () => EMPTY_FROZEN };
@@ -297,11 +298,11 @@ export const compileSyncSubgraph = (
       const existing = stepIndexByName.get(name);
       if (existing !== undefined) return existing;
     }
+    if (def.lifetime !== "singleton") hasNonSingleton = true;
     if (def.kind === "value") {
       return recordStep(name, { kind: "constant", name, value: def.constantValue }, true);
     }
 
-    if (def.lifetime !== "singleton") hasNonSingleton = true;
     visiting.add(name);
     const resolvedDeps = visitDependencies(def, visit);
     visiting.delete(name);
@@ -322,7 +323,7 @@ export const compileSyncSubgraph = (
 
   const outputRefs: (readonly [string, number])[] = [];
   for (const key of keys) {
-    const idx = visit(key);
+    const idx = visit(key, requestedBy);
     if (idx === undefined) return undefined;
     outputRefs.push([key, idx]);
   }

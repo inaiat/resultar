@@ -210,3 +210,24 @@ export function runWorkflow() {
     rmSync(fixture.dir, { force: true, recursive: true });
   }
 });
+
+void test("ResultarLspClient handles stdin EPIPE errors without crashing when process exits immediately", async () => {
+  const logs: string[] = [];
+  const client = new ResultarLspClient({
+    command: process.execPath,
+    args: ["-e", "process.exit(0)"],
+    cwd: process.cwd(),
+    requestTimeoutMs: 2000,
+    onLog: (line) => {
+      logs.push(line);
+    },
+  });
+
+  await assert.rejects(async () => client.start(process.cwd()));
+  // Sending a notification after exit must be a safe no-op, never an unhandled EPIPE.
+  assert.doesNotThrow(() => {
+    client.sendNotification("textDocument/didSave", { textDocument: { uri: "file:///tmp/x.ts" } });
+  });
+  await client.stop();
+  assert.ok(Array.isArray(logs));
+});

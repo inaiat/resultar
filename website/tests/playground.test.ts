@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import * as resultar from "../../packages/resultar/dist/index.js";
-import { executePlaygroundInContext } from "../src/playground-core.js";
+import { executePlaygroundInContext, sanitizeSpan } from "../src/playground-core.js";
+import { parseSpans } from "../src/playground-runner.js";
 import { PLAYGROUND_PRESETS } from "../src/presets.js";
 import { transpilePlaygroundTs } from "../src/ts-strip.js";
 
@@ -59,6 +60,163 @@ void test("rejects unknown subpaths and unavailable bindings before running the 
   const wrongDefault = await runPlaygroundCode('import retry from "resultar/retry";');
   assert.equal(wrongDefault.ok, false);
   assert.match(wrongDefault.error ?? "", /export named "default"/u);
+
+  const missingRuntime = await runPlaygroundCode(
+    'import { NonExistent } from "resultar"; console.log(NonExistent);',
+  );
+  assert.equal(missingRuntime.ok, false);
+  assert.match(missingRuntime.error ?? "", /export named "NonExistent"/u);
+  assert.deepEqual(missingRuntime.logs, []);
+
+  const typeUsedAsRuntime = await runPlaygroundCode(
+    'import { ResultTaskScope } from "resultar"; console.log(ResultTaskScope);',
+  );
+  assert.equal(typeUsedAsRuntime.ok, false);
+  assert.match(typeUsedAsRuntime.error ?? "", /export named "ResultTaskScope"/u);
+
+  const wrongReExport = await runPlaygroundCode('export { DoesNotExist } from "resultar";');
+  assert.equal(wrongReExport.ok, false);
+  assert.match(wrongReExport.error ?? "", /export named "DoesNotExist"/u);
+
+  const wrongAliasedReExport = await runPlaygroundCode(
+    'export { DoesNotExist as alias } from "resultar";',
+  );
+  assert.equal(wrongAliasedReExport.ok, false);
+  assert.match(wrongAliasedReExport.error ?? "", /export named "DoesNotExist"/u);
+
+  const wrongExportAll = await runPlaygroundCode('export * from "resultar/typo";');
+  assert.equal(wrongExportAll.ok, false);
+  assert.match(wrongExportAll.error ?? "", /resultar\/typo/u);
+});
+
+void test("allows type-only imports without the type keyword, valid re-exports, and decorator syntax parsing", async () => {
+  const typeImports = await runPlaygroundCode(`
+    import {
+      ResultTask,
+      ResultTaskScope,
+      ResultTaskScope as ScopeAlias,
+      Exit,
+      StrictResult,
+      RetryPolicy,
+      ServiceTag,
+      ok,
+    } from "resultar";
+
+    type Bundle = {
+      readonly exit: Exit<number, Error>;
+      readonly result: StrictResult<number, Error>;
+      readonly policy: RetryPolicy;
+      readonly tag: ServiceTag<"Db", { readonly ping: () => string }>;
+      readonly scope: ScopeAlias;
+    };
+
+    const describeScope = (scope: ResultTaskScope): ResultTask<string> =>
+      ResultTask.ok(typeof scope);
+
+    const sample: StrictResult<number, never> = ok(42);
+    const marker: Bundle | null = null;
+    console.log(sample.unwrapOr(0), typeof describeScope, marker);
+  `);
+  assert.ok(
+    typeImports.ok,
+    typeImports.error ?? "Expected type-only imports without `type` to run",
+  );
+  assert.deepEqual(typeImports.logs, [{ level: "log", text: "42 function null" }]);
+
+  const validReExports = await runPlaygroundCode(`
+    export { ok } from "resultar";
+    export type { Exit, ResultTaskScope } from "resultar";
+    export { type RetryPolicy } from "resultar/retry";
+    console.log("re-exports ok");
+  `);
+  assert.ok(validReExports.ok, validReExports.error ?? "Expected valid re-exports to run");
+  assert.deepEqual(validReExports.logs, [{ level: "log", text: "re-exports ok" }]);
+
+  // Decorator syntax parses with Babel's "decorators" plugin so module import errors surface cleanly.
+  const decoratedExternal = await runPlaygroundCode(`
+    import { Injectable } from "@nestjs/common";
+    @Injectable()
+    export class UsersService {}
+  `);
+  assert.equal(decoratedExternal.ok, false);
+  assert.match(decoratedExternal.error ?? "", /Playground only supports imports from "resultar"/u);
+  assert.doesNotMatch(decoratedExternal.error ?? "", /experimental syntax/u);
+});
+
+void test("filters and sanitizes non-finite span timestamps in core and runner", async () => {
+  const result = await runPlaygroundCode(`
+    console.log([
+      {
+        name: "bad.nanStart",
+        attributes: {},
+        startTime: Number.NaN,
+        endTime: 10,
+        durationMs: 5,
+      },
+      {
+        name: "bad.infStart",
+        attributes: {},
+        startTime: Number.POSITIVE_INFINITY,
+        endTime: 10,
+        durationMs: 5,
+      },
+    ]);
+    console.log([
+      {
+        name: "ok.partial",
+        attributes: { ok: true },
+        startTime: 100,
+        endTime: Number.NaN,
+        durationMs: Number.POSITIVE_INFINITY,
+      },
+    ]);
+  `);
+  assert.ok(result.ok, result.error ?? "Expected snippet logging malformed spans to execute");
+  assert.equal(result.spans.length, 1);
+  assert.equal(result.spans[0]?.name, "ok.partial");
+  assert.equal(result.spans[0]?.startTime, 100);
+  assert.equal(result.spans[0]?.endTime, undefined);
+  assert.equal(result.spans[0]?.durationMs, undefined);
+
+  const sanitized = sanitizeSpan({
+    name: "direct.bad",
+    parentName: undefined,
+    attributes: {},
+    startTime: Number.NaN,
+    endTime: Number.POSITIVE_INFINITY,
+    durationMs: Number.NaN,
+    exit: undefined,
+  });
+  assert.equal(Number.isFinite(sanitized.startTime), true);
+  assert.equal(sanitized.endTime, undefined);
+  assert.equal(sanitized.durationMs, undefined);
+
+  const parsed = parseSpans([
+    { name: "drop.nan", attributes: {}, startTime: Number.NaN, endTime: 10, durationMs: 5 },
+    {
+      name: "drop.inf",
+      attributes: {},
+      startTime: Number.NEGATIVE_INFINITY,
+      endTime: 10,
+      durationMs: 5,
+    },
+    {
+      name: "keep.clean",
+      attributes: { env: "test" },
+      startTime: 25,
+      endTime: Number.POSITIVE_INFINITY,
+      durationMs: Number.NaN,
+    },
+    { name: "keep.valid", attributes: {}, startTime: 25, endTime: 40, durationMs: 15 },
+  ]);
+  assert.equal(parsed.length, 2);
+  assert.equal(parsed[0]?.name, "keep.clean");
+  assert.equal(parsed[0]?.startTime, 25);
+  assert.equal(parsed[0]?.endTime, undefined);
+  assert.equal(parsed[0]?.durationMs, undefined);
+  assert.equal(parsed[1]?.name, "keep.valid");
+  assert.equal(parsed[1]?.endTime, 40);
+  assert.equal(parsed[1]?.durationMs, 15);
 });
 
 void test("runs compatibility imports and preserves JavaScript expressions inside templates", async () => {

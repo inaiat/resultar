@@ -17,12 +17,12 @@ const config: UserConfig = defineConfig({
   pack: {
     clean: true,
     // Declaration isolation applies to package exports, not the imported example applications.
-    dts: { compilerOptions: { isolatedDeclarations: true } },
+    dts: { compilerOptions: { isolatedDeclarations: true }, sourcemap: false },
     deps: { onlyBundle: false },
     entry: ["src/index.ts"],
     format: ["esm"],
     outExtensions: () => ({ dts: ".d.ts", js: ".js" }),
-    sourcemap: true,
+    sourcemap: false,
   },
   fmt: { ignorePatterns, objectWrap: "collapse" },
   lint: {

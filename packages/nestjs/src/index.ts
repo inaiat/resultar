@@ -317,26 +317,31 @@ function attachRequest(
             rawResponse.statusCode = 503;
             rawResponse.end("Service Unavailable");
           }
-          if (!request.signal.aborted) {
-            rawRequest.emit("close");
-          }
         }, handlerTimeout);
 
-  if (externalSignal === undefined) {
+  if (externalSignal !== undefined) {
+    externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    if (externalSignal.aborted) onExternalAbort();
+  }
+  if (externalSignal === undefined || handlerTimeout !== undefined) {
     Object.defineProperty(request, "signal", {
       value: controller.signal,
       configurable: true,
       enumerable: true,
       writable: true,
     });
-  } else {
-    externalSignal.addEventListener("abort", onExternalAbort, { once: true });
-    if (externalSignal.aborted) onExternalAbort();
   }
   rawRequest.once("aborted", onAborted);
   rawRequest.once("error", onTransportError);
   rawResponse.once("close", onDisconnect);
   rawResponse.once("error", onTransportError);
+  if (!controller.signal.aborted) {
+    if ((rawResponse.destroyed || rawResponse.closed) && !rawResponse.writableFinished) {
+      controller.abort(new Error("Response connection closed"));
+    } else if (rawRequest.destroyed && !rawRequest.complete) {
+      controller.abort(new Error("Request aborted"));
+    }
+  }
 
   return {
     controller,
@@ -355,6 +360,7 @@ function attachRequest(
 function withInitTimeout<T, E>(
   operation: Promise<Result<T, E>>,
   timeoutMs: number | undefined,
+  onTimeout?: (timeoutError: Error) => void,
 ): Promise<Result<T, E | Error>> {
   if (timeoutMs === undefined) return operation;
   return new Promise<Result<T, E | Error>>((resolve) => {
@@ -362,6 +368,7 @@ function withInitTimeout<T, E>(
       const timeoutError = new Error(
         `NestJS initialization timed out after ${String(timeoutMs)}ms`,
       );
+      onTimeout?.(timeoutError);
       resolve(err(timeoutError));
     }, timeoutMs);
     operation.then(
@@ -518,6 +525,19 @@ function logCleanupFailure(
   Logger.error("Request service cleanup failed", failure, "ResultarServices");
 }
 
+const copyApplicationServices = (target: object, source: object): void => {
+  const prototype = Object.getPrototypeOf(source) as object | null;
+  if (prototype !== Object.prototype) {
+    Object.setPrototypeOf(target, prototype);
+  }
+  Object.defineProperties(target, Object.getOwnPropertyDescriptors(source));
+};
+
+const extractFastifyInstance = (adapter: unknown): unknown =>
+  typeof adapter === "object" && adapter !== null && "getInstance" in adapter
+    ? (adapter as { readonly getInstance: () => unknown }).getInstance()
+    : undefined;
+
 function createModuleState(
   options: NestServicesOptions,
   httpAdapterHost: HttpAdapterHost,
@@ -574,14 +594,18 @@ function createModuleState(
     return application.closing;
   };
 
-  const closeAndUnwrap = async (): Promise<void> => {
-    const adapter: unknown = httpAdapterHost.httpAdapter;
-    if (typeof adapter === "object" && adapter !== null) {
-      registeredAdapters.delete(adapter);
-    }
-    if (application.rolledBack === true && options.rethrowRollbackOnClose === false) return;
-    const closed = await close();
-    closed.mapErr(mapError).unwrapOrThrow();
+  let closePromise: Promise<void> | undefined = undefined;
+  const closeAndUnwrap = (): Promise<void> => {
+    closePromise ??= (async (): Promise<void> => {
+      const adapter: unknown = httpAdapterHost.httpAdapter;
+      if (typeof adapter === "object" && adapter !== null) {
+        registeredAdapters.delete(adapter);
+      }
+      if (application.rolledBack === true && options.rethrowRollbackOnClose === false) return;
+      const closed = await close();
+      closed.mapErr(mapError).unwrapOrThrow();
+    })();
+    return closePromise;
   };
 
   const waitForActiveRequests = async (): Promise<void> => {
@@ -609,22 +633,34 @@ function createModuleState(
   };
 
   const onModuleInit = async (): Promise<void> => {
+    let timedOut = false;
+    const initController = new AbortController();
     const init = async (): Promise<Result<void, unknown>> => {
       let session: ServiceSession | undefined = undefined;
       try {
         const source: ModuleSource = options.services;
         const serviceModule = typeof source === "function" ? await source(appFacade) : source;
+        if (timedOut || application.closing !== undefined) {
+          return err(
+            initController.signal.reason ??
+              // Native module initialization failure, not a domain Result error.
+              // resultar-check-disable-next-line prefer-tagged-error
+              new Error("NestJS services closed during initialization"),
+          );
+        }
         resolvedBindings = options.bindings ?? inspectModule(serviceModule).map(({ name }) => name);
         const createdRoot = serviceModule.scope() as RuntimeScope;
         root = createdRoot;
-        session = startSession((hold) =>
-          exposeApplication === undefined
-            ? createdRoot.useSingletons(options.appBindings ?? [], hold)
-            : useServiceAccess(
-                createdRoot,
-                (access) => hold(exposeApplication(access, appFacade) as RuntimeServices),
-                { application: true, initialize: options.appBindings },
-              ),
+        session = startSession(
+          (hold) =>
+            exposeApplication === undefined
+              ? createdRoot.useSingletons(options.appBindings ?? [], hold)
+              : useServiceAccess(
+                  createdRoot,
+                  (access) => hold(exposeApplication(access, appFacade) as RuntimeServices),
+                  { application: true, initialize: options.appBindings },
+                ),
+          initController.signal,
         );
         application.session = session;
       } catch (error) {
@@ -635,7 +671,7 @@ function createModuleState(
       if (ready.isErr()) return err(ready.error);
 
       return tryResult(() => {
-        if (application.closing !== undefined)
+        if (timedOut || application.closing !== undefined)
           // Native module initialization failure, not a domain Result error.
           // resultar-check-disable-next-line prefer-tagged-error
           throw new Error("NestJS services closed during initialization");
@@ -654,16 +690,12 @@ function createModuleState(
             );
           host.appContext.decorate("services", ready.value);
         }
-        Object.defineProperties(appServicesTarget, Object.getOwnPropertyDescriptors(ready.value));
+        copyApplicationServices(appServicesTarget, ready.value);
         const bridge =
           exposeRequest === undefined && options.handlerTimeout === undefined && root !== undefined
             ? getSyncPlanBridge(root)
             : undefined;
         if (bridge !== undefined) {
-          const fastifyInstance =
-            typeof adapter === "object" && adapter !== null && "getInstance" in adapter
-              ? (adapter as { readonly getInstance: () => unknown }).getInstance()
-              : undefined;
           fastDispatcher = createFastRequestDispatcher({
             bridge,
             bindings: resolvedBindings,
@@ -671,7 +703,7 @@ function createModuleState(
             mapError,
             nextRequestId,
             requestIdHeader: host?.requestIdHeader,
-            fastifyInstance,
+            fastifyInstance: extractFastifyInstance(adapter),
           });
         }
       }, preserveNativeError);
@@ -680,12 +712,28 @@ function createModuleState(
     const initWithRollback = init().then<Result<void, unknown>>((result) =>
       result.isErr() ? rollback(result.error) : result,
     );
-    const settled = await withInitTimeout(initWithRollback, options.initTimeout);
+    const settled = await withInitTimeout(initWithRollback, options.initTimeout, (timeoutError) => {
+      timedOut = true;
+      initController.abort(timeoutError);
+      const adapter: unknown = httpAdapterHost.httpAdapter;
+      if (typeof adapter === "object" && adapter !== null) {
+        registeredAdapters.delete(adapter);
+      }
+      close().then(
+        () => {
+          application.rolledBack = true;
+        },
+        () => {
+          /* close() resolves with Result; guard defensively. */
+        },
+      );
+    });
     settled.mapErr(mapError).unwrapOrThrow();
   };
 
   const onApplicationBootstrap = async (): Promise<void> => {
-    if (options.startup === undefined || root === undefined) return;
+    if (options.startup === undefined || root === undefined || application.closing !== undefined)
+      return;
     const currentRoot = root;
     const startup = ResultTask.gen(function* initializeApplication() {
       const task =
@@ -699,7 +747,20 @@ function createModuleState(
     const startupWithRollback = application.startup.ready.then<Result<void, unknown>>((result) =>
       result.isErr() ? rollback(result.error) : result,
     );
-    const settled = await withInitTimeout(startupWithRollback, options.initTimeout);
+    const settled = await withInitTimeout(startupWithRollback, options.initTimeout, () => {
+      const adapter: unknown = httpAdapterHost.httpAdapter;
+      if (typeof adapter === "object" && adapter !== null) {
+        registeredAdapters.delete(adapter);
+      }
+      close().then(
+        () => {
+          application.rolledBack = true;
+        },
+        () => {
+          /* close() resolves with Result; guard defensively. */
+        },
+      );
+    });
     settled.mapErr(mapError).unwrapOrThrow();
   };
 
@@ -719,10 +780,11 @@ function createModuleState(
     if (request.services !== undefined) return;
 
     const state = attachRequest(request, rawRequest, response, rawResponse, options.handlerTimeout);
-    let completed = false;
-    const onComplete = (): void => {
-      if (completed) return;
-      completed = true;
+    let responseEnded = false;
+    let cleanupStarted = false;
+    const scheduleCleanup = (): void => {
+      if (cleanupStarted) return;
+      cleanupStarted = true;
       rawResponse.removeListener("finish", onComplete);
       rawResponse.removeListener("close", onComplete);
       const cleanupPromise = finishRequest(state).finally(() => {
@@ -731,12 +793,22 @@ function createModuleState(
       requestCleanups.set(rawRequest, cleanupPromise);
       activeRequests.add(cleanupPromise);
     };
+    const onComplete = (): void => {
+      responseEnded = true;
+      if (state.exposed) {
+        scheduleCleanup();
+      }
+    };
     rawResponse.once("finish", onComplete);
     rawResponse.once("close", onComplete);
+    if (rawResponse.closed || rawResponse.destroyed || rawResponse.writableFinished) {
+      responseEnded = true;
+    }
 
     const resolveAndExpose = async (): Promise<Result<void, unknown>> => {
       let locals: object = {};
       try {
+        state.controller.signal.throwIfAborted();
         locals = precomputedLocals ?? (await options.locals?.(request)) ?? {};
       } catch (error) {
         return err(error);
@@ -779,12 +851,19 @@ function createModuleState(
 
     const outcome = await resolveAndExpose();
     if (outcome.isErr()) {
-      completed = true;
+      cleanupStarted = true;
       rawResponse.removeListener("finish", onComplete);
       rawResponse.removeListener("close", onComplete);
       await finishRequest(state);
       // NestJS's exception filter layer receives the original failure after cleanup.
       err(mapError(outcome.error)).unwrapOrThrow();
+    } else if (
+      responseEnded ||
+      rawResponse.closed ||
+      rawResponse.destroyed ||
+      rawResponse.writableFinished
+    ) {
+      scheduleCleanup();
     }
   };
 
@@ -974,6 +1053,9 @@ async function dispatchInject(
   req.method = (options.method ?? "GET").toUpperCase();
   req.url = options.url;
   req.headers = headers;
+  req.prependOnceListener("end", () => {
+    req.complete = true;
+  });
   if (options.signal !== undefined) {
     Object.defineProperty(req, "signal", {
       value: options.signal,
@@ -1326,19 +1408,29 @@ export function createNestApp<const Options extends NestAppOptions>(
         }
         await hookChain;
         await host.waitForActiveRequests?.();
-        let cleanupError: unknown = undefined;
-        try {
-          await host.close?.();
-        } catch (error) {
-          cleanupError = error;
-        }
+        let nestError: unknown = undefined;
+        let hostError: unknown = undefined;
         try {
           await (nestApp === undefined ? adapter.close() : nestApp.close());
-        } catch {
-          /* Preserve cleanupError priority when closing adapter after service cleanup. */
+        } catch (error) {
+          nestError = error;
+        } finally {
+          try {
+            await host.close?.();
+          } catch (error) {
+            hostError = error;
+          }
         }
-        if (cleanupError !== undefined) {
-          err(cleanupError).unwrapOrThrow();
+        if (nestError !== undefined && hostError !== undefined && nestError !== hostError) {
+          err(
+            new AggregateError([nestError, hostError], "Application close failed"),
+          ).unwrapOrThrow();
+        }
+        if (hostError !== undefined) {
+          err(hostError).unwrapOrThrow();
+        }
+        if (nestError !== undefined) {
+          err(nestError).unwrapOrThrow();
         }
       })();
       return closingPromise;

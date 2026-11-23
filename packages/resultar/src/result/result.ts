@@ -134,6 +134,15 @@ const combineResultList = <T, E>(resultList: readonly Result<T, E>[]): Result<re
   return ok(values)
 }
 
+const defineDataProperty = (target: Record<string, unknown>, key: string, value: unknown): void => {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
+}
+
 const combineResultRecord = <T extends ResultRecord>(resultRecord: T): CombineResultsRecord<T> => {
   const values: Record<string, unknown> = {}
 
@@ -142,7 +151,7 @@ const combineResultRecord = <T extends ResultRecord>(resultRecord: T): CombineRe
       return err(result.error) as CombineResultsRecord<T>
     }
 
-    values[key] = result.value
+    defineDataProperty(values, key, result.value)
   }
 
   return ok(values) as CombineResultsRecord<T>
@@ -178,7 +187,7 @@ const combineResultRecordWithAllErrors = <T extends ResultRecord>(
     if (result.isErr()) {
       errors.push(result.error)
     } else {
-      values[key] = result.value
+      defineDataProperty(values, key, result.value)
     }
   }
 
@@ -1025,7 +1034,9 @@ class ResultNamespace {
     left: Left,
     right: Right,
   ): ResultZipped<Left, Right> {
-    return combineResultList([left, right]) as ResultZipped<Left, Right>
+    if (left.isErr()) return err(left.error) as ResultZipped<Left, Right>
+    if (right.isErr()) return err(right.error) as ResultZipped<Left, Right>
+    return ok([left.value, right.value]) as ResultZipped<Left, Right>
   }
 
   public static firstSuccessOf<Candidates extends Iterable<ResultCandidate>>(
@@ -1767,7 +1778,12 @@ class Err<T, E> {
 const copyPrototypeMethods = (target: object, source: object): void => {
   for (const name of Object.getOwnPropertyNames(source)) {
     if (name !== 'constructor') {
-      ;(target as Record<string, unknown>)[name] = (source as Record<string, unknown>)[name]
+      Object.defineProperty(target, name, {
+        configurable: true,
+        enumerable: false,
+        value: (source as Record<string, unknown>)[name],
+        writable: true,
+      })
     }
   }
 }

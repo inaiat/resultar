@@ -27,6 +27,82 @@ export interface HonoServices<S extends object, R, G extends ServiceGraph> {
   readonly close: () => Promise<Result<void, ServiceScopeError<R>>>;
 }
 
+const findPropertyDescriptor = (
+  target: object,
+  key: PropertyKey,
+): PropertyDescriptor | undefined => {
+  let current: unknown = target;
+  // eslint-disable-next-line unicorn/no-null -- Prototype chains terminate at null.
+  while (typeof current === "object" && current !== null) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, key);
+    if (descriptor !== undefined) return descriptor;
+    current = Object.getPrototypeOf(current);
+  }
+  return undefined;
+};
+
+const watchReplacedResponse = (context: Context, wrapped: Response): void => {
+  const initialBody = wrapped.body;
+  // eslint-disable-next-line unicorn/no-null -- Fetch Response.body is null when there is no body stream.
+  if (initialBody === null) return;
+
+  let trackedBody: ReadableStream<Uint8Array> | undefined = initialBody;
+  const cancelTrackedBody = (reason: unknown): void => {
+    const body = trackedBody;
+    if (body === undefined) return;
+    trackedBody = undefined;
+    if (!body.locked) {
+      body.cancel(reason).catch(() => {
+        /* Replacement or outer error cleanup must not surface an unhandled rejection. */
+      });
+    }
+  };
+
+  const resDescriptor = findPropertyDescriptor(context, "res");
+  if (
+    resDescriptor !== undefined &&
+    resDescriptor.get !== undefined &&
+    resDescriptor.set !== undefined
+  ) {
+    Object.defineProperty(context, "res", {
+      configurable: true,
+      enumerable: resDescriptor.enumerable ?? false,
+      get(this: Context): Response {
+        return resDescriptor.get?.call(this) as Response;
+      },
+      set(this: Context, nextResponse: Response | undefined) {
+        resDescriptor.set?.call(this, nextResponse);
+        if (nextResponse?.body !== trackedBody) {
+          // resultar-check-disable-next-line prefer-tagged-error
+          cancelTrackedBody(new Error("Hono response replaced"));
+        }
+      },
+    });
+  }
+
+  const errorDescriptor = findPropertyDescriptor(context, "error");
+  if (errorDescriptor === undefined || errorDescriptor.configurable !== false) {
+    let currentError: unknown = context.error;
+    Object.defineProperty(context, "error", {
+      configurable: true,
+      enumerable: errorDescriptor?.enumerable ?? true,
+      get(this: Context): unknown {
+        return errorDescriptor?.get === undefined ? currentError : errorDescriptor.get.call(this);
+      },
+      set(this: Context, nextError: unknown) {
+        if (errorDescriptor?.set === undefined) {
+          currentError = nextError;
+        } else {
+          errorDescriptor.set.call(this, nextError);
+        }
+        if (nextError !== undefined) {
+          cancelTrackedBody(nextError);
+        }
+      },
+    });
+  }
+};
+
 /** Adds DI to a native Hono router without replacing its bindings or response types. */
 export function createHonoServices<S extends object, E, R, G extends ServiceGraph>(
   services: ServiceModule<S, E, R, G>,
@@ -82,16 +158,19 @@ export function createHonoServices<S extends object, E, R, G extends ServiceGrap
           return context.res;
         };
         const request = context.req.raw;
+        let wrapped: Response | undefined = undefined;
         if (sharedDispatch === undefined || handlers.has(request)) {
-          context.res = await bind(scope, handle)(request);
-          return;
+          wrapped = await bind(scope, handle)(request);
+        } else {
+          handlers.set(request, handle);
+          try {
+            wrapped = await sharedDispatch(request);
+          } finally {
+            handlers.delete(request);
+          }
         }
-        handlers.set(request, handle);
-        try {
-          context.res = await sharedDispatch(request);
-        } finally {
-          handlers.delete(request);
-        }
+        context.res = wrapped;
+        watchReplacedResponse(context, wrapped);
       };
     },
     close: () => {

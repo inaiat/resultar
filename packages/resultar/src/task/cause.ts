@@ -180,22 +180,38 @@ const findError = <E>(cause: Cause<E>): Result<E, Cause<never>> => {
   return err(cause as Cause<never>)
 }
 
+const safeJsonStringify = (value: unknown): string | undefined => {
+  const ancestors: object[] = []
+  const active = new Set<object>()
+  return JSON.stringify(value, function (this: unknown, _key: string, entry: unknown): unknown {
+    while (ancestors.length > 0 && ancestors.at(-1) !== this) {
+      const popped = ancestors.pop()
+      if (popped !== undefined) active.delete(popped)
+    }
+    if (typeof entry === 'bigint') return `${entry}n`
+    if (typeof entry === 'symbol' || typeof entry === 'function') return String(entry)
+    if (typeof entry === 'object' && entry !== null) {
+      if (active.has(entry)) return '[Circular]'
+      ancestors.push(entry)
+      active.add(entry)
+    }
+    return entry
+  })
+}
+
 const formatValue = (value: unknown): string => {
-  if (value instanceof Error) return value.stack ?? `${value.name}: ${value.message}`
   if (typeof value === 'string') return value
   try {
-    const seen = new WeakSet<object>()
-    return (
-      JSON.stringify(value, (_key, entry: unknown): unknown => {
-        if (typeof entry === 'bigint') return `${entry}n`
-        if (typeof entry === 'symbol' || typeof entry === 'function') return String(entry)
-        if (typeof entry === 'object' && entry !== null) {
-          if (seen.has(entry)) return '[Circular]'
-          seen.add(entry)
-        }
-        return entry
-      }) ?? String(value)
-    )
+    if (value instanceof Error) return value.stack ?? `${value.name}: ${value.message}`
+    return safeJsonStringify(value) ?? String(value)
+  } catch {
+    return '[Unserializable value]'
+  }
+}
+
+const formatSpanAttribute = (value: unknown): string => {
+  try {
+    return safeJsonStringify(value) ?? String(value)
   } catch {
     return '[Unserializable value]'
   }
@@ -203,10 +219,16 @@ const formatValue = (value: unknown): string => {
 
 const formatSpanFrame = (frame: SpanTraceFrame): string => {
   if (frame.attributes === undefined) return `  at ${frame.name}`
-  const entries = Object.entries(frame.attributes).filter(([, value]) => value !== undefined)
-  if (entries.length === 0) return `  at ${frame.name}`
-  const formatted = entries.map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ')
-  return `  at ${frame.name} (${formatted})`
+  try {
+    const entries = Object.entries(frame.attributes).filter(([, value]) => value !== undefined)
+    if (entries.length === 0) return `  at ${frame.name}`
+    const formatted = entries
+      .map(([key, value]) => `${key}=${formatSpanAttribute(value)}`)
+      .join(', ')
+    return `  at ${frame.name} (${formatted})`
+  } catch {
+    return `  at ${frame.name} ([Unserializable attributes])`
+  }
 }
 
 const pretty = <E>(cause: Cause<E>): string => {

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { applyEdits, modify, parse, type JSONPath, type ParseError } from "jsonc-parser";
 
@@ -114,20 +114,36 @@ const generatedZedSettings = (project: string): JsonRecord => ({
   },
 });
 
-const RESULTAR_PROBLEM_MATCHER: JsonRecord = {
-  owner: "resultar-check",
-  // eslint-disable-next-line no-template-curly-in-string
-  fileLocation: ["relative", "${workspaceFolder}"],
-  pattern: {
-    regexp: String.raw`^(.+):(\d+):(\d+) resultar/([a-z0-9-]+) \((error|warning|suggestion|message)\) - (.+)$`,
-    file: 1,
-    line: 2,
-    column: 3,
-    code: 4,
-    severity: 5,
-    message: 6,
+const RESULTAR_PROBLEM_MATCHER: readonly JsonRecord[] = [
+  {
+    owner: "resultar-check",
+    // eslint-disable-next-line no-template-curly-in-string
+    fileLocation: ["relative", "${workspaceFolder}"],
+    pattern: {
+      regexp: String.raw`^(.+):(\d+):(\d+) resultar/([a-z0-9-]+) \((error|warning)\) - (.+)$`,
+      file: 1,
+      line: 2,
+      column: 3,
+      code: 4,
+      severity: 5,
+      message: 6,
+    },
   },
-};
+  {
+    owner: "resultar-check-info",
+    severity: "info",
+    // eslint-disable-next-line no-template-curly-in-string
+    fileLocation: ["relative", "${workspaceFolder}"],
+    pattern: {
+      regexp: String.raw`^(.+):(\d+):(\d+) resultar/([a-z0-9-]+) \((?:suggestion|message)\) - (.+)$`,
+      file: 1,
+      line: 2,
+      column: 3,
+      code: 4,
+      message: 5,
+    },
+  },
+];
 
 const generatedVscodeTasks = (project: string): readonly JsonRecord[] => [
   {
@@ -512,6 +528,22 @@ const checkCursorRule = (root: string): boolean => {
   );
 };
 
+const findLocalBinary = (startDir: string): string | undefined => {
+  const binName = process.platform === "win32" ? "resultar-check.cmd" : "resultar-check";
+  let current = resolve(startDir);
+  for (;;) {
+    const candidate = join(current, "node_modules", ".bin", binName);
+    if (existsSync(candidate) && (process.platform === "win32" || executableAvailable(candidate))) {
+      return candidate;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      return undefined;
+    }
+    current = parent;
+  }
+};
+
 export const runDoctor = (args: readonly string[]): number => {
   try {
     if (args.includes("--help") || args.includes("-h")) {
@@ -524,14 +556,8 @@ export const runDoctor = (args: readonly string[]): number => {
     let healthy = true;
     healthy = check("project", existsSync(projectPath), projectPath) && healthy;
 
-    const localBinary = join(
-      root,
-      "node_modules",
-      ".bin",
-      process.platform === "win32" ? "resultar-check.cmd" : "resultar-check",
-    );
-    const binaryHealthy =
-      existsSync(localBinary) && (process.platform === "win32" || executableAvailable(localBinary));
+    const localBinary = findLocalBinary(root);
+    const binaryHealthy = localBinary !== undefined;
     healthy =
       check(
         "resultar-check binary",

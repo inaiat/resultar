@@ -449,6 +449,7 @@ const registerTier2Hooks = (app: FastifyInstance, config: RequestHookConfig): vo
     const resolveAndExpose = async (): Promise<Result<void, unknown>> => {
       let locals: RuntimeServices = EMPTY_SERVICES;
       try {
+        state.controller.signal.throwIfAborted();
         locals = ((await config.locals?.(request)) ?? EMPTY_SERVICES) as RuntimeServices;
       } catch (error) {
         return err(error);

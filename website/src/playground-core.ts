@@ -10,7 +10,7 @@ import * as resultarTask from "../../packages/resultar/dist/task.js";
 import type * as ResultarModule from "../../packages/resultar/dist/index.js";
 import type { RecordedSpan, SpanAttributeValue } from "../../packages/resultar/dist/index.js";
 
-import { transpilePlaygroundTs } from "./ts-strip.js";
+import { stripPlaygroundTypes, transpilePlaygroundTs } from "./ts-strip.js";
 
 export interface PlaygroundLogEntry {
   readonly level: "log" | "info" | "warn" | "error";
@@ -38,10 +38,13 @@ export interface PlaygroundRunResult {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
 const isRecordedSpan = (value: unknown): value is RecordedSpan =>
   isRecord(value) &&
   typeof value.name === "string" &&
-  typeof value.startTime === "number" &&
+  isFiniteNumber(value.startTime) &&
   "attributes" in value;
 
 const sanitizeAttributeValue = (value: unknown): SpanAttributeValue | undefined => {
@@ -72,11 +75,108 @@ export const sanitizeSpan = (span: RecordedSpan): PlaygroundSpan => {
     name: span.name,
     parentName: typeof span.parentName === "string" ? span.parentName : undefined,
     attributes,
-    startTime: span.startTime,
-    endTime: typeof span.endTime === "number" ? span.endTime : undefined,
-    durationMs: typeof span.durationMs === "number" ? span.durationMs : undefined,
+    startTime: isFiniteNumber(span.startTime) ? span.startTime : 0,
+    endTime: isFiniteNumber(span.endTime) ? span.endTime : undefined,
+    durationMs: isFiniteNumber(span.durationMs) ? Math.max(0, span.durationMs) : undefined,
     exit: exitTag === undefined ? undefined : { _tag: exitTag },
   };
+};
+
+const SKIP_AST_KEYS = new Set(["loc", "start", "end", "extra"]);
+
+const getRootIdentifierName = (node: unknown): string | undefined => {
+  let current = node;
+  while (isRecord(current)) {
+    if (current.type === "Identifier" && typeof current.name === "string") {
+      return current.name;
+    }
+    if (current.type === "TSQualifiedName") {
+      current = current.left;
+    } else if (current.type === "MemberExpression") {
+      current = current.object;
+    } else {
+      return undefined;
+    }
+  }
+  return undefined;
+};
+
+const collectExpressionIdentifierNames = (node: unknown, target: Set<string>): void => {
+  if (Array.isArray(node)) {
+    for (const item of node) collectExpressionIdentifierNames(item, target);
+    return;
+  }
+  if (!isRecord(node)) return;
+  if (node.type === "Identifier" && typeof node.name === "string") {
+    target.add(node.name);
+    return;
+  }
+  if (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") {
+    collectExpressionIdentifierNames(node.object, target);
+    if (node.computed === true) {
+      collectExpressionIdentifierNames(node.property, target);
+    }
+    return;
+  }
+  if (node.type === "ObjectProperty") {
+    if (node.computed === true) {
+      collectExpressionIdentifierNames(node.key, target);
+    }
+    collectExpressionIdentifierNames(node.value, target);
+    return;
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (SKIP_AST_KEYS.has(key)) continue;
+    if (typeof value === "object" && value !== null) {
+      collectExpressionIdentifierNames(value, target);
+    }
+  }
+};
+
+const collectTypeAndDecoratorRefs = (
+  root: unknown,
+): { readonly typeRefs: ReadonlySet<string>; readonly decoratorRefs: ReadonlySet<string> } => {
+  const typeRefs = new Set<string>();
+  const decoratorRefs = new Set<string>();
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (!isRecord(node)) return;
+    if (node.type === "TSTypeReference") {
+      const name = getRootIdentifierName(node.typeName);
+      if (name !== undefined) typeRefs.add(name);
+    } else if (
+      node.type === "TSInterfaceHeritage" ||
+      node.type === "TSClassImplements" ||
+      node.type === "TSExpressionWithTypeArguments"
+    ) {
+      const name = getRootIdentifierName(node.expression);
+      if (name !== undefined) typeRefs.add(name);
+    } else if (node.type === "Decorator") {
+      collectExpressionIdentifierNames(node.expression, decoratorRefs);
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (SKIP_AST_KEYS.has(key)) continue;
+      if (typeof value === "object" && value !== null) walk(value);
+    }
+  };
+  walk(root);
+  return { typeRefs, decoratorRefs };
+};
+
+const collectRuntimeImportedLocals = (source: string): ReadonlySet<string> => {
+  const stripped = stripPlaygroundTypes(source);
+  const { program } = parse(stripped, { sourceType: "module", plugins: ["decorators"] });
+  const locals = new Set<string>();
+  for (const node of program.body) {
+    if (node.type !== "ImportDeclaration") continue;
+    for (const specifier of node.specifiers) {
+      locals.add(specifier.local.name);
+    }
+  }
+  return locals;
 };
 
 interface ResultLike {
@@ -212,28 +312,96 @@ export const executePlaygroundInContext = async (
         `Playground only supports imports from "resultar" and its public subpaths (found "${specifier}").`,
       );
     };
-    // Check bindings before execution, including imports that the snippet never reads.
-    const { program } = parse(source, { sourceType: "module", plugins: ["typescript"] });
-    for (const node of program.body) {
-      if (node.type !== "ImportDeclaration" || node.importKind === "type") continue;
-      const bindings = node.specifiers.filter(
-        (binding) => binding.type !== "ImportSpecifier" || binding.importKind !== "type",
-      );
-      if (bindings.length === 0 && node.specifiers.length > 0) continue;
-
-      const module = loadModule(node.source.value);
-      for (const binding of bindings) {
-        if (binding.type === "ImportNamespaceSpecifier") continue;
-        let name = "default";
-        if (binding.type === "ImportSpecifier") {
-          name =
-            binding.imported.type === "Identifier" ? binding.imported.name : binding.imported.value;
+    // Check bindings before execution, including imports and re-exports.
+    const { program } = parse(source, {
+      sourceType: "module",
+      plugins: ["typescript", "decorators"],
+    });
+    let importAnalysis:
+      | {
+          readonly runtimeLocals: ReadonlySet<string>;
+          readonly typeRefs: ReadonlySet<string>;
+          readonly decoratorRefs: ReadonlySet<string>;
         }
-        if (!Object.hasOwn(module, name)) {
+      | undefined = undefined;
+    const getImportAnalysis = () => {
+      if (importAnalysis === undefined) {
+        const { typeRefs, decoratorRefs } = collectTypeAndDecoratorRefs(program);
+        importAnalysis = {
+          runtimeLocals: collectRuntimeImportedLocals(source),
+          typeRefs,
+          decoratorRefs,
+        };
+      }
+      return importAnalysis;
+    };
+
+    for (const node of program.body) {
+      if (node.type === "ImportDeclaration") {
+        if (node.importKind === "type") continue;
+        const bindings = node.specifiers.filter(
+          (binding) => binding.type !== "ImportSpecifier" || binding.importKind !== "type",
+        );
+        if (bindings.length === 0 && node.specifiers.length > 0) continue;
+
+        const module = loadModule(node.source.value);
+        for (const binding of bindings) {
+          if (binding.type === "ImportNamespaceSpecifier") continue;
+          let name = "default";
+          if (binding.type === "ImportSpecifier") {
+            name =
+              binding.imported.type === "Identifier"
+                ? binding.imported.name
+                : binding.imported.value;
+          }
+          if (Object.hasOwn(module, name)) continue;
+          const localName = binding.local.name;
+          const analysis = getImportAnalysis();
+          if (
+            !analysis.runtimeLocals.has(localName) &&
+            !analysis.decoratorRefs.has(localName) &&
+            analysis.typeRefs.has(localName)
+          ) {
+            continue;
+          }
           throw new SyntaxError(
             `Module "${node.source.value}" does not provide an export named "${name}".`,
           );
         }
+        continue;
+      }
+
+      if (
+        node.type === "ExportNamedDeclaration" &&
+        node.source !== null &&
+        node.source !== undefined
+      ) {
+        if (node.exportKind === "type") continue;
+        const specifiers = node.specifiers.filter(
+          (specifier) => specifier.type !== "ExportSpecifier" || specifier.exportKind !== "type",
+        );
+        if (specifiers.length === 0 && node.specifiers.length > 0) continue;
+
+        const module = loadModule(node.source.value);
+        for (const specifier of specifiers) {
+          if (specifier.type === "ExportNamespaceSpecifier") continue;
+          let name = "default";
+          if (specifier.type === "ExportSpecifier") {
+            name =
+              specifier.local.type === "Identifier" ? specifier.local.name : specifier.local.value;
+          }
+          if (!Object.hasOwn(module, name)) {
+            throw new SyntaxError(
+              `Module "${node.source.value}" does not provide an export named "${name}".`,
+            );
+          }
+        }
+        continue;
+      }
+
+      if (node.type === "ExportAllDeclaration") {
+        if (node.exportKind === "type") continue;
+        loadModule(node.source.value);
       }
     }
     const jsCode = transpilePlaygroundTs(source);

@@ -145,4 +145,47 @@ describe("framework service access", () => {
       ResultTask.runPromise(useServiceAccess({}, (view) => ResultTask.ok(view))),
     ).rejects.toThrow("scope");
   });
+
+  it("allows in-flight ServiceAccess.get() during graceful shutdown drain and rejects after disposal", async () => {
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const base = withProvider(createModule(), "db", {
+      create: () => ({ ok: true }),
+      release: () =>
+        ResultTask.sync(() => {
+          events.push("release-db");
+        }),
+    });
+    const module = withProvider(base, "lazyScoped", {
+      lifetime: "scoped",
+      create: (access) => ({ db: access.get("db").unwrapOrThrow() }),
+    });
+    const root = module.scope();
+
+    const inFlight = ResultTask.runPromise(
+      useServiceAccess(root, (access) =>
+        ResultTask.tryPromise({
+          try: async () => {
+            started.resolve();
+            await gate.promise;
+            return { value: access.get("lazyScoped").unwrapOrThrow(), access };
+          },
+          catch: (error) => error,
+        }),
+      ),
+    );
+
+    await started.promise;
+    const closing = ResultTask.runPromise(root.close());
+    await Promise.resolve();
+    expect(events).toEqual([]);
+
+    gate.resolve();
+    const result = await inFlight;
+    expect(result.value).toEqual({ db: { ok: true } });
+    await closing;
+    expect(events).toEqual(["release-db"]);
+    expect(result.access.get("db").isErr()).toBe(true);
+  });
 });
