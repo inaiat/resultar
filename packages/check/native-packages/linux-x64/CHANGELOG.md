@@ -1,5 +1,9 @@
 # resultar-check-linux-x64
 
+## 6.0.0-beta.1
+
+No changes in this release.
+
 ## 6.0.0-beta.0
 
 No changes in this release.
