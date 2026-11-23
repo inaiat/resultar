@@ -175,6 +175,8 @@ const stopChrome = async (
   rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5 });
 };
 
+const chromeStartupTimeoutCode = "ERR_CHROME_STARTUP_TIMEOUT";
+
 class HeadlessBrowser {
   private readonly proc: ChildProcess;
   private readonly userDataDir: string;
@@ -199,7 +201,22 @@ class HeadlessBrowser {
 
   public static async launch(
     executable = findBrowserExecutable(),
-    startupTimeoutMs = 15_000,
+    startupTimeoutMs = 30_000,
+  ): Promise<HeadlessBrowser> {
+    try {
+      return await HeadlessBrowser.launchOnce(executable, startupTimeoutMs);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === chromeStartupTimeoutCode)) {
+        throw error;
+      }
+      console.warn("Chrome did not announce its DevTools URL in time. Retrying startup once.");
+      return HeadlessBrowser.launchOnce(executable, startupTimeoutMs);
+    }
+  }
+
+  private static async launchOnce(
+    executable: string,
+    startupTimeoutMs: number,
   ): Promise<HeadlessBrowser> {
     const userDataDir = mkdtempSync(join(tmpdir(), "resultar-pg-chrome-"));
     const proc = spawn(
@@ -223,7 +240,12 @@ class HeadlessBrowser {
       const wsUrl = await new Promise<string>((resolveUrl, rejectUrl) => {
         let stderrBuf = "";
         const timer = setTimeout(() => {
-          rejectUrl(new Error(`Timed out waiting for Chrome DevTools URL. Stderr:\n${stderrBuf}`));
+          rejectUrl(
+            Object.assign(
+              new Error(`Timed out waiting for Chrome DevTools URL. Stderr:\n${stderrBuf}`),
+              { code: chromeStartupTimeoutCode },
+            ),
+          );
         }, startupTimeoutMs);
 
         proc.once("error", (error) => {
@@ -386,15 +408,21 @@ const encodeShareCode = (code: string): string =>
   encodeURIComponent(Buffer.from(code, "utf8").toString("base64"));
 
 void test(
-  "a Chrome startup timeout kills the process and removes its profile",
+  "a Chrome startup timeout retries once and cleans up both attempts",
   { skip: process.platform === "win32" },
   async (context) => {
     const fixtureDir = mkdtempSync(join(tmpdir(), "resultar-fake-chrome-"));
     const executable = join(fixtureDir, "chrome.mjs");
     const startupInfo = `${executable}.startup`;
+    const readAttempts = (): { pid: number; profile: string }[] =>
+      existsSync(startupInfo)
+        ? readFileSync(startupInfo, "utf8")
+            .trimEnd()
+            .split("\n")
+            .map((line) => JSON.parse(line) as { pid: number; profile: string })
+        : [];
     context.after(() => {
-      if (existsSync(startupInfo)) {
-        const { profile } = JSON.parse(readFileSync(startupInfo, "utf8")) as { profile: string };
+      for (const { profile } of readAttempts()) {
         rmSync(profile, { recursive: true, force: true });
       }
       rmSync(fixtureDir, { recursive: true, force: true });
@@ -402,10 +430,10 @@ void test(
     writeFileSync(
       executable,
       `#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 const prefix = "--user-data-dir=";
 const profile = process.argv.find((arg) => arg.startsWith(prefix)).slice(prefix.length);
-writeFileSync(process.argv[1] + ".startup", JSON.stringify({ pid: process.pid, profile }));
+appendFileSync(process.argv[1] + ".startup", JSON.stringify({ pid: process.pid, profile }) + "\\n");
 setTimeout(() => {}, 10_000);
 `,
       { mode: 0o755 },
@@ -415,12 +443,13 @@ setTimeout(() => {}, 10_000);
       HeadlessBrowser.launch(executable, 2000),
       /Timed out waiting for Chrome DevTools URL/u,
     );
-    const { pid, profile } = JSON.parse(readFileSync(startupInfo, "utf8")) as {
-      pid: number;
-      profile: string;
-    };
-    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
-    assert.equal(existsSync(profile), false);
+    const attempts = readAttempts();
+    assert.equal(attempts.length, 2);
+    assert.notEqual(attempts[0]?.profile, attempts[1]?.profile);
+    for (const { pid, profile } of attempts) {
+      assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+      assert.equal(existsSync(profile), false);
+    }
   },
 );
 
@@ -457,7 +486,7 @@ void test("the home page links to the full benchmark report", async (context) =>
 
 void test(
   "real browser verifies shared-link manual run, opaque iframe sandbox isolation, and all production presets",
-  { timeout: 60_000 },
+  { timeout: 90_000 },
   async (context) => {
     const url = await startStaticServer(context, distDir);
     const browser = await HeadlessBrowser.launch();
@@ -747,7 +776,7 @@ const withDeadline = async <T>(promise: Promise<T>, ms: number, label: string): 
 
 void test(
   "real browser cancels stale initial playground run when hash switches before runner module resolves",
-  { timeout: 60_000 },
+  { timeout: 90_000 },
   async (context) => {
     const runnerRequested = createDeferred();
     const releaseRunner = createDeferred();
