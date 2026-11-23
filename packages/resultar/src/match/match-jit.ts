@@ -1,4 +1,5 @@
 import {
+  canUseJit,
   compileJitFunction,
   formatPropertyAccess,
   MAX_JIT_CASES,
@@ -499,8 +500,14 @@ export interface CompileMatcherOptions {
 export const compileMatcher = (
   options: CompileMatcherOptions,
 ): ((...args: readonly unknown[]) => unknown) => {
+  if (!canUseJit()) return createFallbackMatcher(options)
   const { kind, select, cases, outcome, fallback, builtins } = options
-  if (cases.length > MAX_JIT_CASES) return createFallbackMatcher(options)
+  if (
+    cases.length > MAX_JIT_CASES ||
+    cases.some((item) => item.kind === 'tagPrefix' && typeof item.prefix !== 'string')
+  ) {
+    return createFallbackMatcher(options)
+  }
 
   const builder = new MatchCodeBuilder(builtins)
   const okParam = outcome === 'result' ? builder.bind(ok) : ''

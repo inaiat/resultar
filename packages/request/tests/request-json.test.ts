@@ -808,13 +808,13 @@ describe("requestJson", () => {
     assert.ok(ordinary.isErr());
     const ordinaryError = expectRequestError(ordinary.error);
     assert.ok(isHttpResponseError(ordinaryError));
+    assert.ok(ordinaryError.cause.headers instanceof Headers);
+    assert.equal(ordinaryError.cause.headers.get("x-request-id"), "req-1");
+    const expectedResponse = new Response("Bad Gateway", { headers: serializableHeaders });
+    const expectedHeaders = Object.fromEntries(expectedResponse.headers.entries());
     assert.equal(
       ordinaryError.cause.message,
-      JSON.stringify({
-        body: "Bad Gateway",
-        headers: new Response("", { headers: serializableHeaders }).headers,
-        statusCode: 502,
-      }),
+      JSON.stringify({ body: "Bad Gateway", headers: expectedHeaders, statusCode: 502 }),
     );
   });
 
@@ -1053,5 +1053,159 @@ describe("requestJson", () => {
       Success: () => false,
     });
     assert.equal(wasInterrupted, true);
+  });
+
+  it("defers mapError.request lazily when request is not a function", async () => {
+    let mapCalls = 0;
+    const task = requestJsonUnsafe({
+      mapError: createMapError({
+        request: ({ cause }) => {
+          mapCalls += 1;
+          return new MappedRequestJsonError("request", cause.message);
+        },
+      }),
+      request: Promise.resolve(createFetchResponse(userSample)),
+      validator: isUserSample,
+    });
+
+    assert.equal(mapCalls, 0);
+
+    const outcome = await task.runResult();
+    assert.equal(mapCalls, 1);
+    assert.ok(outcome.isErr());
+    assert.equal(
+      expectMappedError(outcome.error).message,
+      "JSON request requires a request factory",
+    );
+  });
+
+  it("aborts and cancels stalled response bodies during json() and text() without hanging or unhandled rejections", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      // 1. Stalled Fetch 200 json() with cancelable body and timeout
+      let jsonCanceled = false;
+      const jsonDeferred = Promise.withResolvers<unknown>();
+      const stalledJsonTask = ResultTask.timeout(
+        requestJson({
+          request: async () => ({
+            body: {
+              cancel: () => {
+                jsonCanceled = true;
+                jsonDeferred.reject(new Error("late body cancel rejection"));
+                return Promise.reject(new Error("cancel promise rejection"));
+              },
+            },
+            headers: {},
+            json: () => jsonDeferred.promise,
+            status: 200,
+            text: async () => "",
+          }),
+          validator: isUserSample,
+        }),
+        25,
+        () => new MappedRequestJsonError("timeout", "JSON body timed out"),
+      );
+      const jsonOutcome = await stalledJsonTask.runResult();
+      assert.ok(jsonOutcome.isErr());
+      assert.equal(jsonOutcome.error.message, "JSON body timed out");
+      assert.equal(jsonCanceled, true);
+
+      // 2. Stalled Undici 500 text() with destroyable body and explicit AbortController
+      let textDestroyed = false;
+      const textDeferred = Promise.withResolvers<string>();
+      const textController = new AbortController();
+      const stalledTextTask = requestJson({
+        request: async () => ({
+          body: {
+            destroy: () => {
+              textDestroyed = true;
+              textDeferred.reject(new Error("late text destroy rejection"));
+            },
+            json: async () => ({}),
+            text: () => {
+              textController.abort(new Error("aborted while reading error text"));
+              return textDeferred.promise;
+            },
+          },
+          headers: {},
+          statusCode: 500,
+        }),
+        validator: isUserSample,
+      });
+      const textExit = await stalledTextTask.runExit({ signal: textController.signal });
+      assert.equal(textDestroyed, true);
+      assert.equal(
+        Match.valueTags(textExit, {
+          Failure: ({ cause }) => Cause.hasInterrupts(cause),
+          Success: () => false,
+        }),
+        true,
+      );
+
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 25);
+      });
+      assert.deepEqual(unhandled, []);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it.each([200, 500])(
+    "cancels and unlocks a stalled native Fetch body with status %i",
+    async (status) => {
+      const reading = Promise.withResolvers<void>();
+      const clock = Clock.virtual();
+      let canceled = false;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull() {
+            reading.resolve();
+          },
+          cancel() {
+            canceled = true;
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const response = new Response(body, { status });
+      const timed = ResultTask.timeout(
+        requestJson({ request: async () => response, validator: isUserSample }),
+        25,
+        () => new MappedRequestJsonError("timeout", "Fetch body timed out"),
+      ).runResult({ clock });
+
+      await reading.promise;
+      assert.equal(body.locked, true);
+      await clock.advanceBy(25);
+      const outcome = await timed;
+      assert.ok(outcome.isErr());
+      assert.equal(outcome.error.message, "Fetch body timed out");
+      assert.equal(canceled, true);
+      assert.equal(body.locked, false);
+    },
+  );
+
+  it("decodes split UTF-8 characters and a leading BOM in native Fetch JSON", async () => {
+    const value = { ...userSample, name: "José" };
+    const bytes = new TextEncoder().encode(`\uFEFF${JSON.stringify(value)}`);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+        controller.close();
+      },
+    });
+    const result = await requestJson({
+      request: async () => new Response(body),
+      validator: isUserSample,
+    }).runResult();
+
+    assert.ok(result.isOk());
+    assert.deepEqual(result.value, value);
   });
 });

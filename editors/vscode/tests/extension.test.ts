@@ -369,3 +369,168 @@ void test("activateWithApi wires diagnostics, status bar, hover, code actions, a
 
   await controller.dispose();
 });
+
+void test("activateWithApi clears stale diagnostics when the LSP crashes", async () => {
+  const mock = createMockVscode();
+  const context: VscodeExtensionContext = { subscriptions: [] };
+  const holder: {
+    publish?: (uri: string, items: readonly LspDiagnostic[]) => void;
+    exit?: (code: number | null, signal: NodeJS.Signals | null) => void;
+  } = {};
+
+  const fakeClient = {
+    isRunning: true,
+    start: () => Promise.resolve({ capabilities: {} }),
+    stop: () => Promise.resolve(undefined),
+    didOpen: () => undefined,
+    didChange: () => undefined,
+    didSave: () => undefined,
+    didClose: () => undefined,
+    didChangeWatchedFiles: () => undefined,
+    hover: () => Promise.resolve(null),
+    codeAction: () => Promise.resolve([]),
+  } as unknown as ResultarLspClient;
+
+  const controller = activateWithApi(context, mock.api, {
+    clientFactory: (_cmd, _proj, _root, _trace, onDiag, _onLog, onExit) => {
+      holder.publish = onDiag;
+      if (onExit !== undefined) {
+        holder.exit = onExit;
+      }
+      return fakeClient;
+    },
+  });
+
+  await new Promise<void>((resolveDelay) => {
+    setTimeout(resolveDelay, 10);
+  });
+
+  holder.publish?.("file:///workspace/src/a.ts", [
+    {
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+      severity: 1,
+      code: "no-discard",
+      message: "Unhandled Result",
+    },
+  ]);
+  assert.equal(mock.diagnosticMap.size, 1);
+
+  holder.exit?.(1, null);
+  assert.equal(mock.diagnosticMap.size, 0);
+  assert.equal(mock.statusBar.text, "$(error) Resultar");
+
+  await controller.dispose();
+});
+
+void test("activateWithApi routes multi-root workspaces via getWorkspaceFolder and workspace folder changes", async () => {
+  const mock = createMockVscode();
+  const context: VscodeExtensionContext = { subscriptions: [] };
+  const folderA = { uri: mock.api.Uri.file("/workspace-a"), name: "app-a" };
+  const folderB = { uri: mock.api.Uri.file("/workspace-b"), name: "app-b" };
+  const folderC = { uri: mock.api.Uri.file("/workspace-c"), name: "app-c" };
+
+  let currentFolders = [folderA, folderB];
+  const folderChangeHolder: {
+    listener?: (event: {
+      readonly added: readonly (typeof folderA)[];
+      readonly removed: readonly (typeof folderA)[];
+    }) => unknown;
+  } = {};
+
+  Object.defineProperty(mock.api.workspace, "workspaceFolders", {
+    get: () => currentFolders,
+    configurable: true,
+  });
+  Object.defineProperty(mock.api.workspace, "getWorkspaceFolder", {
+    value: (uri: VscodeUri) =>
+      currentFolders.find((folder) => uri.fsPath.startsWith(`${folder.uri.fsPath}/`)),
+    configurable: true,
+  });
+  Object.defineProperty(mock.api.workspace, "onDidChangeWorkspaceFolders", {
+    value: (listener: NonNullable<typeof folderChangeHolder.listener>) => {
+      folderChangeHolder.listener = listener;
+      return { dispose: () => undefined };
+    },
+    configurable: true,
+  });
+
+  const startedRoots: string[] = [];
+  const stoppedRoots: string[] = [];
+  const hoverCalls: { root: string; uri: string }[] = [];
+  const diagHandlers = new Map<string, (uri: string, items: readonly LspDiagnostic[]) => void>();
+
+  const controller = activateWithApi(context, mock.api, {
+    clientFactory: (_cmd, _proj, root, _trace, onDiag) => {
+      startedRoots.push(root);
+      diagHandlers.set(root, onDiag);
+      return {
+        isRunning: true,
+        start: () => Promise.resolve({ capabilities: { hoverProvider: true } }),
+        stop: () => {
+          stoppedRoots.push(root);
+          return Promise.resolve(undefined);
+        },
+        didOpen: () => undefined,
+        didChange: () => undefined,
+        didSave: () => undefined,
+        didClose: () => undefined,
+        didChangeWatchedFiles: () => undefined,
+        hover: (uri: string) => {
+          hoverCalls.push({ root, uri });
+          return Promise.resolve({ contents: { kind: "markdown", value: `from:${root}` } });
+        },
+        codeAction: () => Promise.resolve([]),
+      } as unknown as ResultarLspClient;
+    },
+  });
+
+  await new Promise<void>((resolveDelay) => {
+    setTimeout(resolveDelay, 15);
+  });
+
+  assert.deepEqual(startedRoots, ["/workspace-a", "/workspace-b"]);
+
+  const docB = {
+    uri: mock.api.Uri.file("/workspace-b/src/index.ts"),
+    languageId: "typescript",
+    version: 1,
+    fileName: "/workspace-b/src/index.ts",
+    getText: () => "ok(1)",
+  };
+  const hover = await mock.getHoverProvider()?.provideHover(docB, new mock.api.Position(0, 0));
+  assert.equal(hover?.contents.value, "from:/workspace-b");
+  assert.equal(hoverCalls.length, 1);
+  assert.equal(hoverCalls[0]?.root, "/workspace-b");
+
+  // Publish diagnostics for both folders, then remove folderB and add folderC.
+  diagHandlers.get("/workspace-a")?.("file:///workspace-a/src/a.ts", [
+    {
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } },
+      severity: 1,
+      code: "no-discard",
+      message: "A",
+    },
+  ]);
+  diagHandlers.get("/workspace-b")?.("file:///workspace-b/src/b.ts", [
+    {
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } },
+      severity: 1,
+      code: "no-discard",
+      message: "B",
+    },
+  ]);
+  assert.equal(mock.diagnosticMap.size, 2);
+
+  currentFolders = [folderA, folderC];
+  folderChangeHolder.listener?.({ added: [folderC], removed: [folderB] });
+  await new Promise<void>((resolveDelay) => {
+    setTimeout(resolveDelay, 15);
+  });
+
+  assert.ok(stoppedRoots.includes("/workspace-b"));
+  assert.ok(startedRoots.includes("/workspace-c"));
+  assert.equal(mock.diagnosticMap.has("/workspace-b/src/b.ts"), false);
+  assert.equal(mock.diagnosticMap.has("/workspace-a/src/a.ts"), true);
+
+  await controller.dispose();
+});

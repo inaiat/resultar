@@ -220,7 +220,7 @@ const collectionFailure = (
   if (validate && exit.cause._tag === 'Fail') return success(undefined)
   const cause = withoutInterruptions(exit.cause)
   if (cause === undefined) return success(undefined)
-  return validate ? died(new ResultTaskCauseError(cause)) : failure(cause)
+  return validate && cause._tag !== 'Die' ? died(new ResultTaskCauseError(cause)) : failure(cause)
 }
 
 export const collectOutcomes = (

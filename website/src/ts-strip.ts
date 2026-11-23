@@ -1,5 +1,12 @@
 import { transform } from "sucrase";
 
+export const stripPlaygroundTypes = (source: string): string =>
+  transform(source, {
+    transforms: ["typescript"],
+    keepUnusedImports: false,
+    disableESTransforms: true,
+  }).code;
+
 export const transpilePlaygroundTs = (source: string): string =>
   transform(source, {
     transforms: ["typescript", "imports"],

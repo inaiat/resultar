@@ -110,7 +110,9 @@ func TestVersionedFixesUseUnsavedUTF16Ranges(t *testing.T) {
 	path := filepath.Join(dir, "fixture.ts")
 	uri := fileURI(path)
 	server := lspServer{project: filepath.Join(dir, "tsconfig.json"), documents: map[string]lspDocument{uri: {Text: text, Version: 3}}}
-	actions, err := server.codeActions(uri, lspRange{})
+	saveOffset := strings.LastIndex(text, "save()")
+	saveStart, saveEnd := positionsForText(text, saveOffset, len("save()"))
+	actions, err := server.codeActions(uri, lspRange{Start: saveStart, End: saveEnd})
 	if err != nil || len(actions) != 1 {
 		t.Fatalf("actions: %#v %v", actions, err)
 	}

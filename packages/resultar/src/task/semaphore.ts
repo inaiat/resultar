@@ -30,9 +30,9 @@ const createSemaphoreTask: SemaphoreTaskFactory = (acquire, task, caller) => {
 
 interface Waiter {
   readonly permits: number
-  readonly signal: AbortSignal
-  readonly resolve: (release: (() => void) | undefined) => void
-  readonly onAbort: () => void
+  signal: AbortSignal | undefined
+  resolve: ((release: (() => void) | undefined) => void) | undefined
+  onAbort: (() => void) | undefined
   aborted: boolean
 }
 
@@ -90,6 +90,40 @@ const make = (permits: number): Semaphore => {
           drainQueue()
         }
 
+  const compactWaiters = (): void => {
+    const remaining = waiters.length - waitersHead
+    if (remaining === 0) {
+      waiters.length = 0
+      waitersHead = 0
+      return
+    }
+    if (waitersHead >= 64 && waitersHead * 2 >= waiters.length) {
+      for (let index = 0; index < remaining; index += 1) {
+        waiters[index] = waiters[waitersHead + index]
+      }
+      waiters.length = remaining
+      waitersHead = 0
+    }
+  }
+
+  const grantWaiter = (next: Waiter): void => {
+    currentPermits -= next.permits
+    const waiterSignal = next.signal
+    const waiterOnAbort = next.onAbort
+    const waiterResolve = next.resolve
+    next.signal = undefined
+    next.onAbort = undefined
+    next.resolve = undefined
+    if (
+      waiterSignal !== undefined &&
+      waiterSignal !== NEVER_ABORTED_SIGNAL &&
+      waiterOnAbort !== undefined
+    ) {
+      waiterSignal.removeEventListener('abort', waiterOnAbort)
+    }
+    waiterResolve?.(makeRelease(next.permits))
+  }
+
   const drainQueue = (): void => {
     while (waitersHead < waiters.length) {
       const next = waiters[waitersHead]
@@ -102,17 +136,10 @@ const make = (permits: number): Semaphore => {
         }
         waiters[waitersHead] = undefined
         waitersHead += 1
-        currentPermits -= next.permits
-        if (next.signal !== NEVER_ABORTED_SIGNAL) {
-          next.signal.removeEventListener('abort', next.onAbort)
-        }
-        next.resolve(makeRelease(next.permits))
+        grantWaiter(next)
       }
     }
-    if (waitersHead > 0 && waitersHead === waiters.length) {
-      waiters.length = 0
-      waitersHead = 0
-    }
+    compactWaiters()
   }
 
   const acquire = (
@@ -134,11 +161,15 @@ const make = (permits: number): Semaphore => {
         aborted: false,
         onAbort: () => {
           waiter.aborted = true
-          resolve(undefined)
+          const finish = waiter.resolve
+          waiter.signal = undefined
+          waiter.resolve = undefined
+          waiter.onAbort = undefined
+          finish?.(undefined)
           drainQueue()
         },
       }
-      if (signal !== NEVER_ABORTED_SIGNAL) {
+      if (signal !== NEVER_ABORTED_SIGNAL && waiter.onAbort !== undefined) {
         signal.addEventListener('abort', waiter.onAbort, { once: true })
       }
       waiters.push(waiter)

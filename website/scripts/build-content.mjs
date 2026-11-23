@@ -1,11 +1,124 @@
+import { parse } from "@babel/parser";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
+import { transform } from "sucrase";
 import { build as viteBuild } from "vite-plus";
 
 const scriptsDir = import.meta.dirname;
 const websiteDir = resolve(scriptsDir, "..");
 const repoRoot = resolve(websiteDir, "..");
+
+const PLAYGROUND_MODULES = new Map([
+  [
+    "resultar",
+    await import(pathToFileURL(join(repoRoot, "packages/resultar/dist/index.js")).href),
+  ],
+  [
+    "resultar/async",
+    await import(pathToFileURL(join(repoRoot, "packages/resultar/dist/async.js")).href),
+  ],
+  [
+    "resultar/function",
+    await import(pathToFileURL(join(repoRoot, "packages/resultar/dist/function.js")).href),
+  ],
+  [
+    "resultar/match",
+    await import(pathToFileURL(join(repoRoot, "packages/resultar/dist/match.js")).href),
+  ],
+  [
+    "resultar/result",
+    await import(pathToFileURL(join(repoRoot, "packages/resultar/dist/result.js")).href),
+  ],
+  [
+    "resultar/retry",
+    await import(pathToFileURL(join(repoRoot, "packages/resultar/dist/retry.js")).href),
+  ],
+  [
+    "resultar/tagged",
+    await import(pathToFileURL(join(repoRoot, "packages/resultar/dist/tagged.js")).href),
+  ],
+  [
+    "resultar/task",
+    await import(pathToFileURL(join(repoRoot, "packages/resultar/dist/task.js")).href),
+  ],
+]);
+
+const PLAYGROUND_SAFE_GLOBALS = new Set([
+  "console",
+  "Promise",
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "URIError",
+  "EvalError",
+  "AggregateError",
+  "SuppressedError",
+  "Object",
+  "Array",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "Number",
+  "String",
+  "Boolean",
+  "Symbol",
+  "BigInt",
+  "Math",
+  "Date",
+  "JSON",
+  "RegExp",
+  "URL",
+  "URLSearchParams",
+  "AbortController",
+  "AbortSignal",
+  "setTimeout",
+  "clearTimeout",
+  "setInterval",
+  "clearInterval",
+  "queueMicrotask",
+  "performance",
+  "structuredClone",
+  "TextEncoder",
+  "TextDecoder",
+  "Uint8Array",
+  "Int32Array",
+  "Float64Array",
+  "ArrayBuffer",
+  "Intl",
+  "Proxy",
+  "Reflect",
+  "undefined",
+  "NaN",
+  "Infinity",
+  "isNaN",
+  "isFinite",
+  "parseInt",
+  "parseFloat",
+  "encodeURI",
+  "decodeURI",
+  "encodeURIComponent",
+  "decodeURIComponent",
+  "globalThis",
+  "atob",
+  "btoa",
+  "crypto",
+  "Response",
+  "Request",
+  "Headers",
+  "EventTarget",
+  "Event",
+  "CustomEvent",
+  "DOMException",
+  "DisposableStack",
+  "AsyncDisposableStack",
+  "Function",
+  "arguments",
+]);
 
 const pkgManifest = JSON.parse(
   readFileSync(join(repoRoot, "packages/resultar/package.json"), "utf8"),
@@ -216,12 +329,419 @@ const highlightCode = (code, lang) => {
   return escapeHtml(code);
 };
 
-const isPlaygroundCandidate = (code, lang) => {
+const SKIP_AST_KEYS = new Set(["loc", "start", "end", "extra"]);
+
+const getRootIdentifierName = (node) => {
+  let current = node;
+  while (current && typeof current === "object") {
+    if (current.type === "Identifier") return current.name;
+    if (current.type === "TSQualifiedName") current = current.left;
+    else if (current.type === "MemberExpression") current = current.object;
+    else return undefined;
+  }
+  return undefined;
+};
+
+const inspectTsAstForPlayground = (program) => {
+  const typeRefs = new Set();
+  let hasUnsupportedSyntax = false;
+
+  const walk = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (
+      node.declare === true ||
+      node.type === "TSDeclareFunction" ||
+      node.type === "ExportDefaultDeclaration" ||
+      node.type === "Decorator"
+    ) {
+      hasUnsupportedSyntax = true;
+      return;
+    }
+    if (node.type === "TSTypeReference") {
+      const name = getRootIdentifierName(node.typeName);
+      if (name !== undefined) typeRefs.add(name);
+    } else if (
+      node.type === "TSInterfaceHeritage" ||
+      node.type === "TSClassImplements" ||
+      node.type === "TSExpressionWithTypeArguments"
+    ) {
+      const name = getRootIdentifierName(node.expression);
+      if (name !== undefined) typeRefs.add(name);
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (SKIP_AST_KEYS.has(key)) continue;
+      if (value && typeof value === "object") walk(value);
+    }
+  };
+  walk(program);
+  return { typeRefs, hasUnsupportedSyntax };
+};
+
+const collectPatternBindings = (pattern, target) => {
+  if (!pattern || typeof pattern !== "object") return;
+  switch (pattern.type) {
+    case "Identifier":
+      target.add(pattern.name);
+      break;
+    case "RestElement":
+      collectPatternBindings(pattern.argument, target);
+      break;
+    case "AssignmentPattern":
+      collectPatternBindings(pattern.left, target);
+      break;
+    case "ArrayPattern":
+      for (const el of pattern.elements) collectPatternBindings(el, target);
+      break;
+    case "ObjectPattern":
+      for (const prop of pattern.properties) {
+        if (prop.type === "RestElement") collectPatternBindings(prop.argument, target);
+        else collectPatternBindings(prop.value, target);
+      }
+      break;
+    default:
+      break;
+  }
+};
+
+const collectBlockDeclarations = (statements, scope, includeVar) => {
+  for (const stmt of statements) {
+    if (!stmt || typeof stmt !== "object") continue;
+    if (stmt.type === "ExportNamedDeclaration" && stmt.declaration) {
+      collectBlockDeclarations([stmt.declaration], scope, includeVar);
+    } else if (stmt.type === "VariableDeclaration") {
+      if (stmt.kind !== "var" || includeVar) {
+        for (const decl of stmt.declarations) collectPatternBindings(decl.id, scope);
+      }
+    } else if (stmt.type === "FunctionDeclaration" && stmt.id) {
+      scope.add(stmt.id.name);
+    } else if (stmt.type === "ClassDeclaration" && stmt.id) {
+      scope.add(stmt.id.name);
+    } else if (stmt.type === "ImportDeclaration") {
+      for (const spec of stmt.specifiers) scope.add(spec.local.name);
+    }
+  }
+};
+
+const collectHoistedVars = (node, scope) => {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) collectHoistedVars(item, scope);
+    return;
+  }
+  if (
+    node.type === "FunctionDeclaration" ||
+    node.type === "FunctionExpression" ||
+    node.type === "ArrowFunctionExpression" ||
+    node.type === "ClassMethod" ||
+    node.type === "ClassPrivateMethod" ||
+    node.type === "ObjectMethod" ||
+    node.type === "StaticBlock"
+  ) {
+    return;
+  }
+  if (node.type === "VariableDeclaration" && node.kind === "var") {
+    for (const decl of node.declarations) collectPatternBindings(decl.id, scope);
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (SKIP_AST_KEYS.has(key)) continue;
+    if (value && typeof value === "object") collectHoistedVars(value, scope);
+  }
+};
+
+const findUnboundIdentifiers = (jsAst) => {
+  const unbound = new Set();
+  const isBound = (name, scopes) => {
+    if (PLAYGROUND_SAFE_GLOBALS.has(name)) return true;
+    for (let idx = scopes.length - 1; idx >= 0; idx--) {
+      if (scopes[idx].has(name)) return true;
+    }
+    return false;
+  };
+
+  const visitPatternDefaults = (pattern, scopes) => {
+    if (!pattern || typeof pattern !== "object") return;
+    if (pattern.type === "AssignmentPattern") {
+      visitPatternDefaults(pattern.left, scopes);
+      visit(pattern.right, scopes);
+    } else if (pattern.type === "RestElement") {
+      visitPatternDefaults(pattern.argument, scopes);
+    } else if (pattern.type === "ArrayPattern") {
+      for (const el of pattern.elements) visitPatternDefaults(el, scopes);
+    } else if (pattern.type === "ObjectPattern") {
+      for (const prop of pattern.properties) {
+        if (prop.type === "RestElement") {
+          visitPatternDefaults(prop.argument, scopes);
+        } else {
+          if (prop.computed) visit(prop.key, scopes);
+          visitPatternDefaults(prop.value, scopes);
+        }
+      }
+    }
+  };
+
+  const visit = (node, scopes) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item, scopes);
+      return;
+    }
+    switch (node.type) {
+      case "Program": {
+        const scope = new Set();
+        collectBlockDeclarations(node.body, scope, true);
+        collectHoistedVars(node.body, scope);
+        scopes.push(scope);
+        for (const stmt of node.body) visit(stmt, scopes);
+        scopes.pop();
+        return;
+      }
+      case "BlockStatement":
+      case "StaticBlock": {
+        const scope = new Set();
+        collectBlockDeclarations(node.body, scope, node.type === "StaticBlock");
+        if (node.type === "StaticBlock") collectHoistedVars(node.body, scope);
+        scopes.push(scope);
+        for (const stmt of node.body) visit(stmt, scopes);
+        scopes.pop();
+        return;
+      }
+      case "SwitchStatement": {
+        visit(node.discriminant, scopes);
+        const scope = new Set();
+        for (const switchCase of node.cases) {
+          collectBlockDeclarations(switchCase.consequent, scope, false);
+        }
+        scopes.push(scope);
+        for (const switchCase of node.cases) {
+          visit(switchCase.test, scopes);
+          for (const stmt of switchCase.consequent) visit(stmt, scopes);
+        }
+        scopes.pop();
+        return;
+      }
+      case "FunctionDeclaration":
+      case "FunctionExpression":
+      case "ArrowFunctionExpression":
+      case "ObjectMethod":
+      case "ClassMethod":
+      case "ClassPrivateMethod": {
+        const scope = new Set();
+        if (node.id && node.type === "FunctionExpression") scope.add(node.id.name);
+        for (const param of node.params) collectPatternBindings(param, scope);
+        if (node.body?.type === "BlockStatement") {
+          collectBlockDeclarations(node.body.body, scope, true);
+          collectHoistedVars(node.body.body, scope);
+        }
+        scopes.push(scope);
+        if (node.computed && node.key) visit(node.key, scopes);
+        for (const param of node.params) visitPatternDefaults(param, scopes);
+        if (node.body?.type === "BlockStatement") {
+          for (const stmt of node.body.body) visit(stmt, scopes);
+        } else {
+          visit(node.body, scopes);
+        }
+        scopes.pop();
+        return;
+      }
+      case "CatchClause": {
+        const scope = new Set();
+        if (node.param) collectPatternBindings(node.param, scope);
+        scopes.push(scope);
+        if (node.param) visitPatternDefaults(node.param, scopes);
+        visit(node.body, scopes);
+        scopes.pop();
+        return;
+      }
+      case "ForStatement": {
+        const scope = new Set();
+        if (node.init?.type === "VariableDeclaration" && node.init.kind !== "var") {
+          for (const decl of node.init.declarations) collectPatternBindings(decl.id, scope);
+        }
+        scopes.push(scope);
+        visit(node.init, scopes);
+        visit(node.test, scopes);
+        visit(node.update, scopes);
+        visit(node.body, scopes);
+        scopes.pop();
+        return;
+      }
+      case "ForInStatement":
+      case "ForOfStatement": {
+        const scope = new Set();
+        if (node.left?.type === "VariableDeclaration" && node.left.kind !== "var") {
+          for (const decl of node.left.declarations) collectPatternBindings(decl.id, scope);
+        }
+        scopes.push(scope);
+        if (node.left?.type === "VariableDeclaration") {
+          for (const decl of node.left.declarations) visitPatternDefaults(decl.id, scopes);
+        } else {
+          visit(node.left, scopes);
+        }
+        visit(node.right, scopes);
+        visit(node.body, scopes);
+        scopes.pop();
+        return;
+      }
+      case "ClassExpression":
+      case "ClassDeclaration": {
+        const scope = new Set();
+        if (node.id && node.type === "ClassExpression") scope.add(node.id.name);
+        scopes.push(scope);
+        visit(node.superClass, scopes);
+        visit(node.body, scopes);
+        scopes.pop();
+        return;
+      }
+      case "ClassProperty":
+      case "ClassPrivateProperty":
+        if (node.computed) visit(node.key, scopes);
+        visit(node.value, scopes);
+        return;
+      case "VariableDeclarator":
+        visitPatternDefaults(node.id, scopes);
+        visit(node.init, scopes);
+        return;
+      case "ImportDeclaration":
+      case "ExportAllDeclaration":
+      case "BreakStatement":
+      case "ContinueStatement":
+      case "MetaProperty":
+        return;
+      case "ExportNamedDeclaration":
+        if (node.source) return;
+        visit(node.declaration, scopes);
+        for (const spec of node.specifiers) {
+          if (spec.local?.type === "Identifier" && !isBound(spec.local.name, scopes)) {
+            unbound.add(spec.local.name);
+          }
+        }
+        return;
+      case "MemberExpression":
+      case "OptionalMemberExpression":
+        visit(node.object, scopes);
+        if (node.computed) visit(node.property, scopes);
+        return;
+      case "ObjectProperty":
+        if (node.computed) visit(node.key, scopes);
+        visit(node.value, scopes);
+        return;
+      case "LabeledStatement":
+        visit(node.body, scopes);
+        return;
+      case "Identifier":
+        if (!isBound(node.name, scopes)) unbound.add(node.name);
+        return;
+      default:
+        for (const [key, value] of Object.entries(node)) {
+          if (SKIP_AST_KEYS.has(key)) continue;
+          if (value && typeof value === "object") visit(value, scopes);
+        }
+    }
+  };
+
+  visit(jsAst.program, []);
+  return [...unbound];
+};
+
+export const isPlaygroundCandidate = (code, lang) => {
   const normalized = (lang || "").toLowerCase();
   if (!["ts", "tsx", "mts", "typescript"].includes(normalized)) return false;
-  if (!/from\s+["']resultar(?:\/[a-z]+)?["']/.test(code)) return false;
-  if (/from\s+["'](?:node:|resultar-|hono|fastify|@nestjs|zod|typebox|\.)/.test(code)) return false;
-  return code.split("\n").length >= 4 && code.split("\n").length <= 90;
+  const lineCount = code.split("\n").length;
+  if (lineCount < 4 || lineCount > 90) return false;
+  if (/^\s*\/\/\s*\.\.\.\s*$/m.test(code)) return false;
+
+  let tsProgram;
+  try {
+    tsProgram = parse(code, { sourceType: "module", plugins: ["typescript", "decorators"] }).program;
+  } catch {
+    return false;
+  }
+
+  const { typeRefs, hasUnsupportedSyntax } = inspectTsAstForPlayground(tsProgram);
+  if (hasUnsupportedSyntax) return false;
+
+  let stripped;
+  let jsAst;
+  try {
+    stripped = transform(code, {
+      transforms: ["typescript"],
+      keepUnusedImports: false,
+      disableESTransforms: true,
+    }).code;
+    jsAst = parse(stripped, { sourceType: "module" });
+  } catch {
+    return false;
+  }
+
+  const runtimeLocals = new Set();
+  for (const node of jsAst.program.body) {
+    if (node.type !== "ImportDeclaration") continue;
+    for (const specifier of node.specifiers) {
+      runtimeLocals.add(specifier.local.name);
+    }
+  }
+
+  let hasResultarImport = false;
+  for (const node of tsProgram.body) {
+    if (node.type === "ImportDeclaration") {
+      if (node.importKind === "type") continue;
+      const bindings = node.specifiers.filter(
+        (binding) => binding.type !== "ImportSpecifier" || binding.importKind !== "type",
+      );
+      if (bindings.length === 0 && node.specifiers.length > 0) continue;
+
+      const module = PLAYGROUND_MODULES.get(node.source.value);
+      if (module === undefined) return false;
+      hasResultarImport = true;
+
+      for (const binding of bindings) {
+        if (binding.type === "ImportNamespaceSpecifier") continue;
+        let name = "default";
+        if (binding.type === "ImportSpecifier") {
+          name =
+            binding.imported.type === "Identifier" ? binding.imported.name : binding.imported.value;
+        }
+        if (Object.hasOwn(module, name)) continue;
+        const localName = binding.local.name;
+        if (!runtimeLocals.has(localName) && typeRefs.has(localName)) continue;
+        return false;
+      }
+      continue;
+    }
+
+    if (node.type === "ExportNamedDeclaration" && node.source != null) {
+      if (node.exportKind === "type") continue;
+      const specifiers = node.specifiers.filter(
+        (specifier) => specifier.type !== "ExportSpecifier" || specifier.exportKind !== "type",
+      );
+      if (specifiers.length === 0 && node.specifiers.length > 0) continue;
+
+      const module = PLAYGROUND_MODULES.get(node.source.value);
+      if (module === undefined) return false;
+      for (const specifier of specifiers) {
+        if (specifier.type === "ExportNamespaceSpecifier") continue;
+        let name = "default";
+        if (specifier.type === "ExportSpecifier") {
+          name =
+            specifier.local.type === "Identifier" ? specifier.local.name : specifier.local.value;
+        }
+        if (!Object.hasOwn(module, name)) return false;
+      }
+      continue;
+    }
+
+    if (node.type === "ExportAllDeclaration") {
+      if (node.exportKind === "type") continue;
+      if (!PLAYGROUND_MODULES.has(node.source.value)) return false;
+    }
+  }
+
+  if (!hasResultarImport) return false;
+  return findUnboundIdentifiers(jsAst).length === 0;
 };
 
 const resolveLink = (href, sourceFileAbs) => {
@@ -258,41 +778,67 @@ const resolveLink = (href, sourceFileAbs) => {
   return `https://github.com/inaiat/resultar/blob/main/${rel}${anchor ? `#${anchor}` : ""}`;
 };
 
-const renderInline = (text, sourceFileAbs) => {
-  const codeSpans = [];
-  let output = text.replaceAll(/`([^`]+)`/g, (_match, inner) => {
-    const id = codeSpans.length;
-    codeSpans.push(`<code>${escapeHtml(inner)}</code>`);
-    return `\u0000CODE${id}\u0000`;
-  });
+const isUnsafeScheme = (rawUrl, allowedSchemes) => {
+  const cleaned = rawUrl.replaceAll(/[\u0000-\u0020]+/g, "");
+  const schemeMatch = /^([a-z][a-z0-9+.-]*):/i.exec(cleaned);
+  if (!schemeMatch) return false;
+  return !allowedSchemes.has(schemeMatch[1].toLowerCase());
+};
 
-  // Escape raw HTML except explicit <br> tags used inside tables.
-  output = output
+const ALLOWED_LINK_SCHEMES = new Set(["http", "https", "mailto"]);
+const ALLOWED_IMAGE_SCHEMES = new Set(["http", "https"]);
+
+const formatEscapedInline = (value) => {
+  let out = value
     .replaceAll("<br>", "\u0000BR\u0000")
     .replaceAll("<br/>", "\u0000BR\u0000")
     .replaceAll("<br />", "\u0000BR\u0000");
-  output = escapeHtml(output).replaceAll("\u0000BR\u0000", "<br>");
+  out = escapeHtml(out).replaceAll("\u0000BR\u0000", "<br>");
+  out = out.replaceAll(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  out = out.replaceAll(/~~([^~]+)~~/g, "<del>$1</del>");
+  out = out.replaceAll(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
+  return out;
+};
 
-  // Images: ![alt](src)
+export const renderInline = (text, sourceFileAbs) => {
+  const tokens = [];
+  const stash = (html) => {
+    const id = tokens.length;
+    tokens.push(html);
+    return `\u0000TOK${id}\u0000`;
+  };
+
+  let output = text.replaceAll("\u0000", "");
+
+  // Inline code spans first so brackets/formatting inside code are preserved verbatim.
+  output = output.replaceAll(/`([^`]+)`/g, (_match, inner) =>
+    stash(`<code>${escapeHtml(inner)}</code>`),
+  );
+
+  // Images: ![alt](src) — tokenize before escaping prose to avoid double-escaping `&` in URLs/alt.
   output = output.replaceAll(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_m, alt, src) => {
-    const safeSrc = escapeHtml(src);
-    return `<img src="${safeSrc}" alt="${escapeHtml(alt)}" loading="lazy" />`;
+    const safeSrc = isUnsafeScheme(src, ALLOWED_IMAGE_SCHEMES) ? "" : src;
+    return stash(`<img src="${escapeHtml(safeSrc)}" alt="${escapeHtml(alt)}" loading="lazy" />`);
   });
 
-  // Links: [label](href)
+  // Links: [label](href) — tokenize before escaping prose; label may contain stashed img/code tokens.
   output = output.replaceAll(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, label, href) => {
-    const resolved = resolveLink(href, sourceFileAbs);
+    const resolved = isUnsafeScheme(href, ALLOWED_LINK_SCHEMES)
+      ? "#"
+      : resolveLink(href, sourceFileAbs);
     const isExternal = /^https?:/i.test(resolved);
     const extra = isExternal ? ' target="_blank" rel="noopener noreferrer"' : "";
-    return `<a href="${escapeHtml(resolved)}"${extra}>${label}</a>`;
+    return stash(`<a href="${escapeHtml(resolved)}"${extra}>${formatEscapedInline(label)}</a>`);
   });
 
-  // Bold, italic, strikethrough
-  output = output.replaceAll(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  output = output.replaceAll(/~~([^~]+)~~/g, "<del>$1</del>");
-  output = output.replaceAll(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
+  output = formatEscapedInline(output);
 
-  output = output.replaceAll(/\u0000CODE(\d+)\u0000/g, (_m, idx) => codeSpans[Number(idx)] ?? "");
+  // Restore stashed tokens (up to 2 passes for nested code/image inside link).
+  while (output.includes("\u0000TOK")) {
+    const next = output.replaceAll(/\u0000TOK(\d+)\u0000/g, (_m, idx) => tokens[Number(idx)] ?? "");
+    if (next === output) break;
+    output = next;
+  }
   return output;
 };
 
@@ -320,7 +866,7 @@ const splitTableRow = (line) => {
   return cells;
 };
 
-const renderMarkdown = (rawMarkdown, sourceFileAbs) => {
+export const renderMarkdown = (rawMarkdown, sourceFileAbs) => {
   const markdown = stripFrontmatter(rawMarkdown).replaceAll("\r\n", "\n");
   const lines = markdown.split("\n");
   const html = [];
@@ -374,7 +920,7 @@ const renderMarkdown = (rawMarkdown, sourceFileAbs) => {
     }
 
     // Headings
-    const headingMatch = /^(#{1,4})\s+(.+)$/.exec(line);
+    const headingMatch = /^(#{1,6})\s+(.+)$/.exec(line);
     if (headingMatch) {
       const level = headingMatch[1].length;
       const rawHeading = headingMatch[2].replace(/\s+#+\s*$/, "").trim();
@@ -454,7 +1000,7 @@ const renderMarkdown = (rawMarkdown, sourceFileAbs) => {
           i < lines.length &&
           lines[i].trim().length > 0 &&
           !/^\s*(?:[-*+]|\d+\.)\s+/.test(lines[i]) &&
-          !/^(?:#{1,4}\s|```|>|---|\*{3})/.test(lines[i].trim())
+          !/^(?:#{1,6}\s|```|>|---|\*{3})/.test(lines[i].trim())
         ) {
           itemText += ` ${lines[i].trim()}`;
           i++;
@@ -471,7 +1017,7 @@ const renderMarkdown = (rawMarkdown, sourceFileAbs) => {
     while (
       i < lines.length &&
       lines[i].trim().length > 0 &&
-      !/^(?:#{1,4}\s|```|>|---|\*{3}|\s*(?:[-*+]|\d+\.)\s+)/.test(lines[i])
+      !/^(?:#{1,6}\s|```|>|---|\*{3}|\s*(?:[-*+]|\d+\.)\s+)/.test(lines[i])
     ) {
       if (
         lines[i].includes("|") &&
@@ -492,6 +1038,7 @@ const renderMarkdown = (rawMarkdown, sourceFileAbs) => {
   return { html: html.join("\n"), toc, sections };
 };
 
+const buildContent = async () => {
 // Build docs pages and unified search index.
 const docsPages = {};
 const searchIndex = [];
@@ -690,3 +1237,8 @@ writeFileSync(
 console.log(
   `Built website docs content: ${ALL_PAGES.length} pages, ${ruleCount} rules, ${searchIndex.length} search entries, sandbox gzip bundle ${(sandboxGzip.length / 1024).toFixed(1)} KiB.`,
 );
+};
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await buildContent();
+}

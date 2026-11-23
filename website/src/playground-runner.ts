@@ -12,6 +12,9 @@ let sandboxSrcdoc: string | undefined = undefined;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
 const isLogLevel = (value: unknown): value is PlaygroundLogEntry["level"] =>
   value === "log" || value === "info" || value === "warn" || value === "error";
 
@@ -26,14 +29,14 @@ const parseLogs = (raw: unknown): readonly PlaygroundLogEntry[] => {
   return entries;
 };
 
-const parseSpans = (raw: unknown): readonly PlaygroundSpan[] => {
+export const parseSpans = (raw: unknown): readonly PlaygroundSpan[] => {
   if (!Array.isArray(raw)) return [];
   const spans: PlaygroundSpan[] = [];
   for (const item of raw) {
     if (
       isRecord(item) &&
       typeof item.name === "string" &&
-      typeof item.startTime === "number" &&
+      isFiniteNumber(item.startTime) &&
       isRecord(item.attributes)
     ) {
       const exitTag =
@@ -46,8 +49,8 @@ const parseSpans = (raw: unknown): readonly PlaygroundSpan[] => {
         // eslint-disable-next-line typescript/no-unsafe-type-assertion -- Attributes were sanitized inside the sandbox before postMessage.
         attributes: item.attributes as PlaygroundSpan["attributes"],
         startTime: item.startTime,
-        endTime: typeof item.endTime === "number" ? item.endTime : undefined,
-        durationMs: typeof item.durationMs === "number" ? item.durationMs : undefined,
+        endTime: isFiniteNumber(item.endTime) ? item.endTime : undefined,
+        durationMs: isFiniteNumber(item.durationMs) ? Math.max(0, item.durationMs) : undefined,
         exit: exitTag === undefined ? undefined : { _tag: exitTag },
       });
     }

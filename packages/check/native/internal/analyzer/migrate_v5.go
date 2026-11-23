@@ -621,9 +621,11 @@ func (a *Analyzer) planFileMigration(file *ast.SourceFile, skipped map[*ast.Node
 		defer func() {
 			for _, candidate := range items[start:] {
 				for _, edit := range candidate.Edits {
-					end := edit.Start + edit.Length
-					index := sort.Search(len(accepted), func(i int) bool { return accepted[i].Start+accepted[i].Length > edit.Start })
-					if index < len(accepted) && accepted[index].Start < end {
+					index := sort.Search(len(accepted), func(i int) bool {
+						return accepted[i].Start > edit.Start || (accepted[i].Start == edit.Start && accepted[i].Length >= edit.Length)
+					})
+					if (index > 0 && textEditsConflict(accepted[index-1], edit)) ||
+						(index < len(accepted) && textEditsConflict(accepted[index], edit)) {
 						skipped[node] = true
 						hadConflict = true
 						return
@@ -2126,13 +2128,13 @@ func (a *Analyzer) migrateCallV5(file *ast.SourceFile, node *ast.Node, state *fi
 	}
 
 	// 4. Instance & class calls resolved via TypeScript type checker (verified to be Resultar types)
-	receiverType := a.checker.GetTypeAtLocation(receiver)
+	receiverType := a.checker.GetTypeAtLocation(propAccess.Expression)
 
 	// 4a. TaggedErrorClass.errAsync(...)
 	if method == "errAsync" && len(a.checker.GetConstructSignatures(receiverType)) > 0 {
 		callType := a.checker.GetTypeAtLocation(node)
 		if isResultAsyncLikeType(callType) && a.isResultarDeclaredType(a.checker.GetTypeAtLocation(methodNode)) {
-			recvText := strings.TrimSpace(nodeSourceText(file, receiver))
+			recvText := strings.TrimSpace(nodeSourceText(file, propAccess.Expression))
 			items = append(items, makeMigrationItem(
 				file, node, MigrationReview, "removed-tagged-err-async",
 				nodeSourceText(file, node), "",
@@ -2169,7 +2171,7 @@ func (a *Analyzer) migrateCallV5(file *ast.SourceFile, node *ast.Node, state *fi
 				return items
 			}
 			asyncName := state.useAsyncValue("ResultAsync")
-			recvText := strings.TrimSpace(nodeSourceText(file, receiver))
+			recvText := strings.TrimSpace(nodeSourceText(file, propAccess.Expression))
 			replacement := fmt.Sprintf("%s.fromTask(%s)", asyncName, recvText)
 			edit := replaceSpanFix(file, node, node, "Replace .toResultAsync() with "+asyncName+".fromTask(...)", replacement).Edits[0]
 			items = append(items, makeMigrationItem(
@@ -2232,7 +2234,7 @@ func (a *Analyzer) migrateCallV5(file *ast.SourceFile, node *ast.Node, state *fi
 			return items
 		}
 		if method == "safeUnwrap" && len(call.Arguments.Nodes) == 0 {
-			recvText := strings.TrimSpace(nodeSourceText(file, receiver))
+			recvText := strings.TrimSpace(nodeSourceText(file, propAccess.Expression))
 			edit := replaceSpanFix(file, node, node, "Remove .safeUnwrap() in favor of direct yield* result", recvText).Edits[0]
 			items = append(items, makeMigrationItem(
 				file, node, MigrationEdit, "removed-safe-unwrap",
@@ -3053,6 +3055,21 @@ func (a *Analyzer) isExportedUnannotatedRunResultReturn(file *ast.SourceFile, ca
 	return isContainerExported(file, fn.Parent)
 }
 
+func textEditsConflict(left, right TextEdit) bool {
+	leftEnd := left.Start + left.Length
+	rightEnd := right.Start + right.Length
+	if left.Length == 0 && right.Length == 0 {
+		return left.Start == right.Start
+	}
+	if left.Length == 0 {
+		return right.Start <= left.Start && left.Start < rightEnd
+	}
+	if right.Length == 0 {
+		return left.Start <= right.Start && right.Start < leftEnd
+	}
+	return left.Start < rightEnd && right.Start < leftEnd
+}
+
 func (a *Analyzer) isRunResultCall(node *ast.Node) bool {
 	if node == nil || node.Kind != ast.KindCallExpression {
 		return false
@@ -3072,7 +3089,7 @@ func (a *Analyzer) isRunResultCall(node *ast.Node) bool {
 	if pkgGroup, exportName, ok := a.resolvePackageExport(recv); ok && (pkgGroup == "core" || pkgGroup == "app") && exportName == "ResultTask" {
 		return true
 	}
-	recvType := a.checker.GetTypeAtLocation(recv)
+	recvType := a.checker.GetTypeAtLocation(prop.Expression)
 	return isResultTaskLikeType(recvType) && a.isResultarDeclaredType(recvType)
 }
 

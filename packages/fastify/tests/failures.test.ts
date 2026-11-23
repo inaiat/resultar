@@ -385,3 +385,36 @@ test.each([false, 0, "", Number.NaN])(
     }
   },
 );
+
+test("does not invoke locals on already-aborted requests in Tier 2 hooks", async () => {
+  const locals = vi.fn(() => ({ tenant: "acme" }));
+  const route = vi.fn(() => "unexpected");
+  const Local = resource("local", {
+    acquire: ResultTask.ok(1),
+    release: () =>
+      ResultTask.sync(() => {
+        /* Released. */
+      }),
+  });
+  const app = Fastify();
+  app.addHook("onRequest", async (request) => {
+    Object.defineProperty(request, "signal", { value: AbortSignal.abort(new Error("gone")) });
+  });
+  await app.register(
+    createFastifyPlugin({
+      services: createModule().scoped(Local),
+      bindings: ["local"],
+      locals: () => locals(),
+      exposeRequest: () => ({ ok: true }),
+    }),
+  );
+  app.get("/", route);
+  try {
+    const reply = await app.inject("/");
+    expect(reply.statusCode).toBe(500);
+    expect(locals).not.toHaveBeenCalled();
+    expect(route).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});

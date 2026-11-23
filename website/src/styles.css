@@ -488,6 +488,17 @@ pre {
   margin: 18px 0 6px;
 }
 
+.doc-prose h5 {
+  font-size: 13.5px;
+  margin: 16px 0 6px;
+}
+
+.doc-prose h6 {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin: 14px 0 6px;
+}
+
 .heading-anchor {
   opacity: 0;
   margin-right: 6px;
@@ -498,7 +509,10 @@ pre {
 
 h1:hover .heading-anchor,
 h2:hover .heading-anchor,
-h3:hover .heading-anchor {
+h3:hover .heading-anchor,
+h4:hover .heading-anchor,
+h5:hover .heading-anchor,
+h6:hover .heading-anchor {
   opacity: 1;
 }
 

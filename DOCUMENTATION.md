@@ -1159,7 +1159,7 @@ error.statusCode;
 Use `cause`, `.findCause`, or the standalone `findCause` helper for nested error lookup:
 
 ```ts
-import { findCause } from "resultar";
+import { createTaggedError, findCause } from "resultar";
 
 class DatabaseError extends createTaggedError({
   name: "DatabaseError",

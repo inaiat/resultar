@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -161,6 +169,75 @@ void test("doctor reports malformed extension recommendations and continues chec
     assert.equal(checked.status, 1);
     assert.match(checked.stdout + checked.stderr, /VS Code extensions/);
     assert.match(checked.stdout + checked.stderr, /Cursor rule/);
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+void test("doctor walks parent directories for hoisted node_modules/.bin/resultar-check", () => {
+  const root = mkdtempSync(join(tmpdir(), "resultar-check-monorepo-"));
+  const subpkg = join(root, "packages", "web");
+  try {
+    mkdirSync(join(root, "node_modules", ".bin"), { recursive: true });
+    mkdirSync(subpkg, { recursive: true });
+    writeFileSync(join(subpkg, "tsconfig.json"), '{"compilerOptions":{"strict":true}}\n', "utf8");
+    const binName = process.platform === "win32" ? "resultar-check.cmd" : "resultar-check";
+    const hoistedBin = join(root, "node_modules", ".bin", binName);
+    writeFileSync(hoistedBin, "#!/bin/sh\nexit 0\n", "utf8");
+    if (process.platform !== "win32") {
+      chmodSync(hoistedBin, 0o755);
+    }
+
+    const doctor = runCli(subpkg, ["doctor", "--editor", "zed"]);
+    assert.match(doctor.stdout, /✓ resultar-check binary:/u);
+    assert.ok(doctor.stdout.includes(hoistedBin), doctor.stdout);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+void test("vscode problemMatcher maps error/warning and suggestion/message severities cleanly", () => {
+  const dir = makeTempProject();
+  try {
+    const init = runCli(dir, ["init", "--editor", "vscode"]);
+    assert.equal(init.status, 0, init.stderr);
+    const tasksFile = JSON.parse(readFileSync(join(dir, ".vscode", "tasks.json"), "utf8")) as {
+      readonly tasks: readonly {
+        readonly label: string;
+        readonly problemMatcher: readonly {
+          readonly owner: string;
+          readonly severity?: string;
+          readonly pattern: {
+            readonly regexp: string;
+            readonly severity?: number;
+            readonly message: number;
+          };
+        }[];
+      }[];
+    };
+    const matchers = tasksFile.tasks[0]?.problemMatcher;
+    assert.ok(matchers !== undefined && matchers.length === 2);
+    const [errWarnMatcher, infoMatcher] = matchers;
+    assert.ok(errWarnMatcher !== undefined && infoMatcher !== undefined);
+    assert.equal(infoMatcher.severity, "info");
+
+    const errWarnRe = new RegExp(errWarnMatcher.pattern.regexp, "u");
+    const infoRe = new RegExp(infoMatcher.pattern.regexp, "u");
+
+    const errMatch = errWarnRe.exec("src/a.ts:1:2 resultar/no-discard (error) - Unhandled");
+    assert.equal(errMatch?.[5], "error");
+    const warnMatch = errWarnRe.exec("src/a.ts:3:4 resultar/prefer-map (warning) - Use map");
+    assert.equal(warnMatch?.[5], "warning");
+    assert.equal(
+      errWarnRe.test("src/a.ts:5:6 resultar/prefer-as-void (suggestion) - Use asVoid"),
+      false,
+    );
+
+    const suggMatch = infoRe.exec("src/a.ts:5:6 resultar/prefer-as-void (suggestion) - Use asVoid");
+    assert.equal(suggMatch?.[5], "Use asVoid");
+    const msgMatch = infoRe.exec("src/a.ts:7:8 resultar/unnecessary-pipe (message) - Unwrap pipe");
+    assert.equal(msgMatch?.[5], "Unwrap pipe");
+    assert.equal(infoRe.test("src/a.ts:1:2 resultar/no-discard (error) - Unhandled"), false);
   } finally {
     rmSync(dir, { force: true, recursive: true });
   }

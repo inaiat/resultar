@@ -91,6 +91,11 @@ export class ResultarLspClient {
         this.#options.onLog?.(`[stderr] ${text}`);
       }
     });
+    child.stdin.on("error", (error: Error) => {
+      if (this.#child !== child) return;
+      this.#options.onLog?.(`[stdin] ${error.message}`);
+      this.#rejectAllPending(error);
+    });
     child.on("error", (error: Error) => {
       this.#options.onLog?.(`[error] ${error.message}`);
       this.#rejectAllPending(error);
@@ -199,19 +204,23 @@ export class ResultarLspClient {
 
   public sendNotification(method: string, params: unknown): void {
     const child = this.#child;
-    if (child === undefined || !child.stdin.writable) {
+    if (child === undefined || child.stdin.destroyed || !child.stdin.writable) {
       return;
     }
     const message = { jsonrpc: "2.0", method, params };
     if (this.#options.trace === true) {
       this.#options.onLog?.(`[->] ${method}`);
     }
-    child.stdin.write(encodeLspMessage(message));
+    try {
+      child.stdin.write(encodeLspMessage(message));
+    } catch (error: unknown) {
+      this.#options.onLog?.(`[stdin] ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   public async sendRequest(method: string, params: unknown, timeoutMs?: number): Promise<unknown> {
     const child = this.#child;
-    if (child === undefined || !child.stdin.writable) {
+    if (child === undefined || child.stdin.destroyed || !child.stdin.writable) {
       throw new Error(`resultar-check lsp is not running (request: ${method})`);
     }
     const id = this.#nextId;
@@ -230,7 +239,13 @@ export class ResultarLspClient {
       if (this.#options.trace === true) {
         this.#options.onLog?.(`[-> #${id}] ${method}`);
       }
-      child.stdin.write(encodeLspMessage(message));
+      try {
+        child.stdin.write(encodeLspMessage(message));
+      } catch (error: unknown) {
+        this.#pending.delete(id);
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 

@@ -479,3 +479,51 @@ func TestDiagnosticSeverityShorthandAndWildcard(t *testing.T) {
 		}
 	}
 }
+
+func TestExtendsAbsolutePathAndStringAwareTrailingCommaStripping(t *testing.T) {
+	baseDir := t.TempDir()
+	basePath := filepath.Join(baseDir, "tsconfig.base.json")
+	baseContents := `{
+  // base comment
+  "compilerOptions": {
+    "plugins": [{
+      "name": "resultar-check",
+      "noThrow": "error",
+      "ignoreFilePatterns": [
+        "src/literal,}.ts",
+        "src/literal, ].ts",
+      ],
+    },],
+  },
+}`
+	if err := os.WriteFile(basePath, []byte(baseContents), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	childDir := t.TempDir()
+	childPath := filepath.Join(childDir, "tsconfig.json")
+	// Use JSON-escaped absolute path (works on POSIX and Windows).
+	escapedBase := strings.ReplaceAll(basePath, `\`, `\\`)
+	childContents := `{
+  "extends": "` + escapedBase + `",
+  "compilerOptions": {
+    "strict": true,
+  },
+}`
+	if err := os.WriteFile(childPath, []byte(childContents), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	options, err := Load(childPath)
+	if err != nil {
+		t.Fatalf("expected absolute extends path to resolve cleanly: %v", err)
+	}
+	if options.NoThrow != SeverityError {
+		t.Fatalf("expected inherited noThrow=error, got %q", options.NoThrow)
+	}
+	if len(options.IgnoreFilePatterns) != 2 ||
+		options.IgnoreFilePatterns[0] != "src/literal,}.ts" ||
+		options.IgnoreFilePatterns[1] != "src/literal, ].ts" {
+		t.Fatalf("string literals containing ,} or ,] were corrupted: %#v", options.IgnoreFilePatterns)
+	}
+}

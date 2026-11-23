@@ -7,6 +7,7 @@ import (
 
 	"github.com/microsoft/TypeScript/tsc/internal/ast"
 	"github.com/microsoft/TypeScript/tsc/internal/checker"
+	"github.com/microsoft/TypeScript/tsc/internal/scanner"
 )
 
 var consumerMethods = map[string]struct{}{
@@ -35,16 +36,16 @@ var asyncAwaitBoundaryCallNames = map[string]struct{}{
 
 var resultTaskStaticConsumerMethods = map[string]struct{}{
 	"catchAll": {}, "catchCause": {}, "orElse": {}, "orElseSucceed": {}, "unwrapOr": {}, "catchReason": {}, "catchReasons": {}, "unwrapReason": {}, "catchTag": {}, "catchTags": {}, "sandbox": {}, "unsandbox": {}, "flatMap": {}, "andThen": {}, "map": {}, "mapError": {}, "mapErr": {}, "filterOrElse": {}, "match": {}, "matchTags": {}, "matchTagsPartial": {}, "tap": {}, "tapError": {}, "tapCause": {}, "tapBoth": {}, "as": {}, "asVoid": {},
-	"scoped": {}, "forkChild": {}, "all": {}, "zip": {}, "firstSuccessOf": {}, "race": {}, "raceFirst": {}, "raceAll": {}, "raceWith": {}, "retry": {}, "retryOrElse": {}, "timeout": {}, "delay": {}, "timed": {}, "ensuring": {}, "onExit": {}, "withResource": {},
+	"scoped": {}, "forkChild": {}, "all": {}, "zip": {}, "firstSuccessOf": {}, "race": {}, "raceFirst": {}, "raceFirstAll": {}, "raceAll": {}, "raceWith": {}, "retry": {}, "retryOrElse": {}, "repeat": {}, "timeout": {}, "delay": {}, "timed": {}, "withSpan": {}, "ensuring": {}, "onExit": {}, "withResource": {},
 	"when": {}, "whenResult": {}, "unless": {}, "unlessResult": {}, "if": {}, "loop": {}, "iterate": {},
-	"inspect": {}, "inspectError": {}, "inspectCause": {}, "inspectBoth": {}, "provideService": {}, "provideServices": {}, "provideServiceResolver": {},
+	"inspect": {}, "inspectError": {}, "inspectCause": {}, "inspectBoth": {}, "provideService": {}, "provideServices": {}, "provideServiceResolver": {}, "provideClock": {}, "provideTracer": {}, "provideScheduler": {},
 	"acquireDisposable": {}, "memoize": {}, "fromTask": {}, "fromResultAsync": {}, "forEach": {}, "validateAll": {}, "combine": {}, "combineWithAllErrors": {},
 	"asyncMap": {}, "asyncAndThen": {}, "liftPredicate": {}, "fromNullishOr": {},
-	"runExit": {}, "runFork": {}, "runPromise": {}, "runResult": {}, "toResultAsync": {},
+	"runExit": {}, "runFork": {}, "runPromise": {}, "runResult": {}, "runSync": {}, "runSyncExit": {}, "toResultAsync": {},
 }
 
 var resultTaskInstanceRunnerMethods = map[string]struct{}{
-	"runExit": {}, "runFork": {}, "runPromise": {}, "runResult": {},
+	"runExit": {}, "runFork": {}, "runPromise": {}, "runResult": {}, "runSync": {}, "runSyncExit": {},
 }
 
 var matchStaticConsumerMethods = map[string]struct{}{
@@ -78,27 +79,29 @@ type fileMutationSummary struct {
 }
 
 type analyzerCache struct {
-	hasResultarPkg             *bool
-	programClassesComputed     bool
-	programClasses             []*ast.Node
-	callbackReceiverReassigned map[*ast.Node]bool
-	staticNamespace            map[*ast.Node]string
-	staticMember               map[*ast.Node][2]string
-	callbackKind               map[*ast.Node]resultCallbackKind
-	identityCallback           map[*ast.Node]bool
-	callbackTargets            map[*ast.Node]cachedNodeTargets
-	fileMutations              map[*ast.SourceFile]*fileMutationSummary
+	hasResultarPkg                   *bool
+	programClassesComputed           bool
+	programClasses                   []*ast.Node
+	callbackReceiverReassigned       map[*ast.Node]bool
+	callbackReceiverReassignedActive map[*ast.Node]bool
+	staticNamespace                  map[*ast.Node]string
+	staticMember                     map[*ast.Node][2]string
+	callbackKind                     map[*ast.Node]resultCallbackKind
+	identityCallback                 map[*ast.Node]bool
+	callbackTargets                  map[*ast.Node]cachedNodeTargets
+	fileMutations                    map[*ast.SourceFile]*fileMutationSummary
 }
 
 func newAnalyzerCache() *analyzerCache {
 	return &analyzerCache{
-		callbackReceiverReassigned: make(map[*ast.Node]bool),
-		staticNamespace:            make(map[*ast.Node]string),
-		staticMember:               make(map[*ast.Node][2]string),
-		callbackKind:               make(map[*ast.Node]resultCallbackKind),
-		identityCallback:           make(map[*ast.Node]bool),
-		callbackTargets:            make(map[*ast.Node]cachedNodeTargets),
-		fileMutations:              make(map[*ast.SourceFile]*fileMutationSummary),
+		callbackReceiverReassigned:       make(map[*ast.Node]bool),
+		callbackReceiverReassignedActive: make(map[*ast.Node]bool),
+		staticNamespace:                  make(map[*ast.Node]string),
+		staticMember:                     make(map[*ast.Node][2]string),
+		callbackKind:                     make(map[*ast.Node]resultCallbackKind),
+		identityCallback:                 make(map[*ast.Node]bool),
+		callbackTargets:                  make(map[*ast.Node]cachedNodeTargets),
+		fileMutations:                    make(map[*ast.SourceFile]*fileMutationSummary),
 	}
 }
 
@@ -525,6 +528,141 @@ func (a *Analyzer) noUnknownResultError(file *ast.SourceFile) []Finding {
 	return findings
 }
 
+func unwrapParens(node *ast.Node) *ast.Node {
+	for node != nil && node.Kind == ast.KindParenthesizedExpression {
+		node = node.Expression()
+	}
+	return node
+}
+
+func needsParensInArrowBody(node *ast.Node, trimmedText string) bool {
+	if node == nil || node.Kind == ast.KindParenthesizedExpression {
+		return false
+	}
+	if strings.HasPrefix(trimmedText, "{") {
+		return true
+	}
+	return node.Kind == ast.KindBinaryExpression &&
+		node.AsBinaryExpression().OperatorToken != nil &&
+		node.AsBinaryExpression().OperatorToken.Kind == ast.KindCommaToken
+}
+
+func (a *Analyzer) isUnwrappableOkCall(expression *ast.Node) (*ast.Node, bool) {
+	callNode := unwrapParens(expression)
+	if callNode == nil || callNode.Kind != ast.KindCallExpression {
+		return nil, false
+	}
+	call := callNode.AsCallExpression()
+	if call.TypeArguments != nil || len(call.Arguments.Nodes) != 1 || call.Arguments.Nodes[0].Kind == ast.KindSpreadElement {
+		return nil, false
+	}
+	callee := unwrapExpression(call.Expression)
+	if callee == nil {
+		return nil, false
+	}
+	name := a.canonicalExpressionName(callee)
+	isPlainOk := (callee.Kind != ast.KindPropertyAccessExpression && (name == "ok" || name == "okAsync")) ||
+		a.isResultarUtilityFunction(callee, "ok") ||
+		a.isResultarUtilityFunction(callee, "okAsync") ||
+		a.staticNamespace(callee, "ok") == "Result" ||
+		a.staticNamespace(callee, "ok") == "ResultAsync" ||
+		a.isResultTaskStaticCall(callee, "ok") ||
+		a.isResultTaskStaticCall(callee, "succeed")
+	if !isPlainOk {
+		return nil, false
+	}
+	return call.Arguments.Nodes[0], true
+}
+
+func (a *Analyzer) isUnwrappableErrCall(expression *ast.Node) (*ast.Node, bool) {
+	callNode := unwrapParens(expression)
+	if callNode == nil || callNode.Kind != ast.KindCallExpression {
+		return nil, false
+	}
+	call := callNode.AsCallExpression()
+	if call.TypeArguments != nil || len(call.Arguments.Nodes) != 1 || call.Arguments.Nodes[0].Kind == ast.KindSpreadElement {
+		return nil, false
+	}
+	callee := unwrapExpression(call.Expression)
+	if callee == nil {
+		return nil, false
+	}
+	name := a.canonicalExpressionName(callee)
+	isPlainErr := (callee.Kind != ast.KindPropertyAccessExpression && (name == "err" || name == "errAsync")) ||
+		a.isResultarUtilityFunction(callee, "err") ||
+		a.isResultarUtilityFunction(callee, "errAsync") ||
+		a.staticNamespace(callee, "err") == "Result" ||
+		a.staticNamespace(callee, "err") == "ResultAsync" ||
+		a.isResultTaskStaticCall(callee, "err") ||
+		a.isResultTaskStaticCall(callee, "fail")
+	if !isPlainErr {
+		return nil, false
+	}
+	return call.Arguments.Nodes[0], true
+}
+
+func (a *Analyzer) preferMapOrMapErrFix(
+	file *ast.SourceFile,
+	nameNode *ast.Node,
+	callback *ast.Node,
+	title string,
+	newMethod string,
+	unwrapFn func(*ast.Node) (*ast.Node, bool),
+) (Fix, bool) {
+	cb := unwrapParens(callback)
+	if cb == nil || (cb.Kind != ast.KindArrowFunction && cb.Kind != ast.KindFunctionExpression) || cb.Body() == nil || cb.Type() != nil {
+		return Fix{}, false
+	}
+	if ast.HasSyntacticModifier(cb, ast.ModifierFlagsAsync) {
+		return Fix{}, false
+	}
+	if cb.Kind == ast.KindFunctionExpression && cb.AsFunctionExpression().AsteriskToken != nil {
+		return Fix{}, false
+	}
+	var retExpr *ast.Node
+	inArrowBody := false
+	if cb.Kind == ast.KindArrowFunction && cb.Body().Kind != ast.KindBlock {
+		retExpr = cb.Body()
+		inArrowBody = true
+	} else if cb.Body().Kind == ast.KindBlock {
+		returnCount := 0
+		var singleReturn *ast.Node
+		visitFunctionBody(cb, func(n *ast.Node) {
+			if n.Kind == ast.KindReturnStatement {
+				returnCount++
+				singleReturn = n
+			}
+		})
+		if returnCount != 1 || singleReturn == nil || singleReturn.Parent != cb.Body() || singleReturn.AsReturnStatement().Expression == nil {
+			return Fix{}, false
+		}
+		retExpr = singleReturn.AsReturnStatement().Expression
+	} else {
+		return Fix{}, false
+	}
+	argNode, ok := unwrapFn(retExpr)
+	if !ok {
+		return Fix{}, false
+	}
+	argText := strings.TrimSpace(nodeSourceText(file, argNode))
+	if inArrowBody && needsParensInArrowBody(argNode, argText) {
+		argText = "(" + argText + ")"
+	}
+	nameRange := scanner.GetRangeOfTokenAtPosition(file, nameNode.Pos()).WithEnd(nameNode.End())
+	retStart := scanner.GetRangeOfTokenAtPosition(file, retExpr.Pos()).Pos()
+	if nameRange.End() > retStart {
+		return Fix{}, false
+	}
+	return Fix{
+		Title: title,
+		Kind:  FixCorrection,
+		Edits: []TextEdit{
+			{Start: nameRange.Pos(), Length: nameRange.Len(), NewText: newMethod},
+			{Start: retStart, Length: retExpr.End() - retStart, NewText: argText},
+		},
+	}, true
+}
+
 func (a *Analyzer) preferMapErr(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
@@ -543,7 +681,11 @@ func (a *Analyzer) preferMapErr(file *ast.SourceFile) []Finding {
 		}
 		finding := newFinding(file, nameNode, "prefer-map-err", a.options.PreferMapErr,
 			fmt.Sprintf("`%s` only replaces the failure with another Err. Use `mapErr` when the Ok value cannot recover.", method), "")
-		finding.Fixes = []Fix{renameFix(file, nameNode, fmt.Sprintf("Replace %s with mapErr", method), "mapErr")}
+		if len(arguments) == 1 && node.AsCallExpression().TypeArguments == nil {
+			if fix, ok := a.preferMapOrMapErrFix(file, nameNode, arguments[0], fmt.Sprintf("Replace %s with mapErr", method), "mapErr", a.isUnwrappableErrCall); ok {
+				finding.Fixes = []Fix{fix}
+			}
+		}
 		findings = append(findings, finding)
 	})
 	return findings
@@ -676,7 +818,11 @@ func (a *Analyzer) preferMap(file *ast.SourceFile) []Finding {
 			message = fmt.Sprintf("%s only wraps the callback value in a successful ResultTask. Use map for a non-fallible transformation.", method)
 		}
 		finding := newFinding(file, nameNode, "prefer-map", a.options.PreferMap, message, "")
-		finding.Fixes = []Fix{renameFix(file, nameNode, fmt.Sprintf("Replace %s with map", method), "map")}
+		if len(arguments) == 1 && node.AsCallExpression().TypeArguments == nil {
+			if fix, ok := a.preferMapOrMapErrFix(file, nameNode, arguments[0], fmt.Sprintf("Replace %s with map", method), "map", a.isUnwrappableOkCall); ok {
+				finding.Fixes = []Fix{fix}
+			}
+		}
 		findings = append(findings, finding)
 	})
 	return findings
@@ -811,6 +957,69 @@ func (a *Analyzer) yieldStarInSafeTry(file *ast.SourceFile) []Finding {
 	return findings
 }
 
+func yieldStarNeedsParens(node *ast.Node) bool {
+	if node == nil || node.Parent == nil {
+		return false
+	}
+	parent := node.Parent
+	switch parent.Kind {
+	case ast.KindParenthesizedExpression, ast.KindExpressionStatement,
+		ast.KindReturnStatement, ast.KindThrowStatement,
+		ast.KindArrayLiteralExpression, ast.KindSpreadElement, ast.KindSpreadAssignment,
+		ast.KindTemplateSpan, ast.KindComputedPropertyName,
+		ast.KindIfStatement, ast.KindWhileStatement, ast.KindDoStatement,
+		ast.KindSwitchStatement, ast.KindCaseClause,
+		ast.KindForStatement, ast.KindForOfStatement, ast.KindForInStatement,
+		ast.KindYieldExpression:
+		return false
+	case ast.KindVariableDeclaration:
+		return parent.AsVariableDeclaration().Initializer != node
+	case ast.KindPropertyAssignment:
+		return parent.AsPropertyAssignment().Initializer != node
+	case ast.KindPropertyDeclaration:
+		return parent.AsPropertyDeclaration().Initializer != node
+	case ast.KindParameter:
+		return parent.AsParameterDeclaration().Initializer != node
+	case ast.KindCallExpression:
+		return parent.AsCallExpression().Expression == node
+	case ast.KindNewExpression:
+		return parent.AsNewExpression().Expression == node
+	case ast.KindElementAccessExpression:
+		return parent.AsElementAccessExpression().Expression == node
+	case ast.KindBinaryExpression:
+		bin := parent.AsBinaryExpression()
+		if bin.OperatorToken == nil {
+			return true
+		}
+		if bin.OperatorToken.Kind == ast.KindCommaToken {
+			return false
+		}
+		if isAssignmentOperatorKind(bin.OperatorToken.Kind) && bin.Right == node {
+			return false
+		}
+		return true
+	case ast.KindConditionalExpression:
+		return parent.AsConditionalExpression().Condition == node
+	default:
+		return true
+	}
+}
+
+func awaitToYieldStarFix(file *ast.SourceFile, awaitNode *ast.Node, title string) Fix {
+	if !yieldStarNeedsParens(awaitNode) {
+		return replaceTokenFix(file, awaitNode, title, "yield*")
+	}
+	awaitRange := scanner.GetRangeOfTokenAtPosition(file, awaitNode.Pos())
+	return Fix{
+		Title: title,
+		Kind:  FixCorrection,
+		Edits: []TextEdit{
+			{Start: awaitRange.Pos(), Length: awaitRange.Len(), NewText: "(yield*"},
+			{Start: awaitNode.End(), Length: 0, NewText: ")"},
+		},
+	}
+}
+
 func (a *Analyzer) yieldStarInResultTaskGen(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
@@ -824,7 +1033,9 @@ func (a *Analyzer) yieldStarInResultTaskGen(file *ast.SourceFile) []Finding {
 			}
 			finding := newFinding(file, bodyNode, "yield-star-in-result-task-gen", a.options.YieldStarInResultTaskGen,
 				"Use `yield*` inside `ResultTask.gen`; plain `yield` is not a supported task or service composition.", "")
-			finding.Fixes = []Fix{replaceTokenFix(file, bodyNode, "Use yield* for this ResultTask value", "yield*")}
+			if bodyNode.AsYieldExpression().Expression != nil {
+				finding.Fixes = []Fix{replaceTokenFix(file, bodyNode, "Use yield* for this ResultTask value", "yield*")}
+			}
 			findings = append(findings, finding)
 		})
 	})
@@ -843,7 +1054,7 @@ func (a *Analyzer) noAwaitInSafeTry(file *ast.SourceFile) []Finding {
 				finding := newFinding(file, bodyNode, "no-await-in-safe-try", a.options.NoAwaitInSafeTry,
 					"Do not use `await` inside `Result.gen` / `Result.fn`. Use `ResultTask.gen` with `yield*` for asynchronous workflows and wrap raw Promises with `ResultTask.tryPromise`.", "")
 				if isResultLikeType(a.checker.GetTypeAtLocation(bodyNode.Expression())) {
-					finding.Fixes = []Fix{replaceTokenFix(file, bodyNode, "Use yield* for this Resultar value", "yield*")}
+					finding.Fixes = []Fix{awaitToYieldStarFix(file, bodyNode, "Use yield* for this Resultar value")}
 				}
 				findings = append(findings, finding)
 			}
@@ -1541,19 +1752,31 @@ func (a *Analyzer) resultGenOrFnBody(node *ast.Node) *ast.Node {
 	return nil
 }
 
+func isGeneratorBodyNode(node *ast.Node) bool {
+	return node != nil && (node.Kind == ast.KindFunctionExpression || node.Kind == ast.KindArrowFunction || node.Kind == ast.KindMethodDeclaration)
+}
+
 func (a *Analyzer) resultTaskGenBody(node *ast.Node) *ast.Node {
 	if node == nil || node.Kind != ast.KindCallExpression {
 		return nil
 	}
 	call := node.AsCallExpression()
-	if (!a.isResultTaskStaticCall(call.Expression, "gen") && !a.isResultTaskStaticCall(call.Expression, "fn")) || len(call.Arguments.Nodes) == 0 {
+	isGen := a.isResultTaskStaticCall(call.Expression, "gen")
+	isFn := a.isResultTaskStaticCall(call.Expression, "fn")
+	if (!isGen && !isFn) || len(call.Arguments.Nodes) == 0 {
 		return nil
 	}
 	body := unwrapExpression(call.Arguments.Nodes[0])
-	if body == nil || (body.Kind != ast.KindFunctionExpression && body.Kind != ast.KindArrowFunction && body.Kind != ast.KindMethodDeclaration) {
-		return nil
+	if isGeneratorBodyNode(body) {
+		return body
 	}
-	return body
+	if isFn && len(call.Arguments.Nodes) >= 2 {
+		body = unwrapExpression(call.Arguments.Nodes[1])
+		if isGeneratorBodyNode(body) {
+			return body
+		}
+	}
+	return nil
 }
 
 func visitFunctionBody(function *ast.Node, visitor func(*ast.Node)) {
@@ -2832,6 +3055,11 @@ func (a *Analyzer) isCallbackReceiverReassigned(node *ast.Node) bool {
 	if res, ok := cache.callbackReceiverReassigned[unwrapped]; ok {
 		return res
 	}
+	if cache.callbackReceiverReassignedActive[unwrapped] {
+		return false
+	}
+	cache.callbackReceiverReassignedActive[unwrapped] = true
+	defer delete(cache.callbackReceiverReassignedActive, unwrapped)
 	callFile := ast.GetSourceFileOfNode(unwrapped)
 	curr := unwrapped
 	var chain []*ast.Node
@@ -2984,9 +3212,11 @@ var curriedResultTransformerMethods = map[string]struct{}{
 	"sandbox":                {},
 	"unsandbox":              {},
 	"retryOrElse":            {},
+	"repeat":                 {},
 	"timeout":                {},
 	"delay":                  {},
 	"timed":                  {},
+	"withSpan":               {},
 	"ensuring":               {},
 	"onExit":                 {},
 	"when":                   {},
@@ -2994,6 +3224,9 @@ var curriedResultTransformerMethods = map[string]struct{}{
 	"provideService":         {},
 	"provideServices":        {},
 	"provideServiceResolver": {},
+	"provideClock":           {},
+	"provideTracer":          {},
+	"provideScheduler":       {},
 }
 
 func isResultarStaticNamespaceName(name string) bool {
@@ -3421,7 +3654,7 @@ func (a *Analyzer) staticMemberAccessFromSymbolDeclarations(sym *ast.Symbol, cal
 func isZeroArgCurriedMethod(member string) bool {
 	switch member {
 	case "asVoid", "sandbox", "unsandbox", "unwrapOrThrow", "_unsafeUnwrap", "_unsafeUnwrapErr",
-		"runResult", "runPromise", "runExit", "runFork", "toResultAsync",
+		"runResult", "runPromise", "runExit", "runFork", "runSync", "runSyncExit", "toResultAsync",
 		"join", "await", "interrupt", "exhaustive", "orElseAbsurd", "option", "result", "tagsExhaustive":
 		return true
 	}
@@ -3888,10 +4121,10 @@ func (a *Analyzer) classifyResultCallbackWithVisited(node *ast.Node, visited map
 	switch ns {
 	case "Result", "ResultAsync", "ResultTask":
 		switch member {
-		case "combine", "all", "combineWithAllErrors", "validateAll", "firstSuccessOf":
+		case "combine", "all", "combineWithAllErrors", "validateAll", "firstSuccessOf", "raceFirstAll":
 			return save(resultCallbackTupleCombiner)
 		case "unwrapOrThrow", "_unsafeUnwrap", "_unsafeUnwrapErr", "isOk", "isErr",
-			"runResult", "runPromise", "runExit", "runFork", "toResultAsync":
+			"runResult", "runPromise", "runExit", "runFork", "runSync", "runSyncExit", "toResultAsync":
 			return save(resultCallbackConsumer)
 		case "fromResult", "fromTask", "fromResultAsync", "asVoid", "sandbox", "unsandbox":
 			return save(resultCallbackTransformer)
@@ -3907,6 +4140,10 @@ func (a *Analyzer) classifyResultCallbackWithVisited(node *ast.Node, visited map
 		if _, ok := fiberStaticConsumerMethods[member]; ok {
 			return save(resultCallbackConsumer)
 		}
+	}
+	if node.Kind == ast.KindPropertyAccessExpression && node.Name() != nil && node.Name().Text() == "runToCompletion" &&
+		isVirtualClockType(a.checker.GetTypeAtLocation(node.AsPropertyAccessExpression().Expression)) {
+		return save(resultCallbackConsumer)
 	}
 	if a.isResultarUtilityFunctionWithVisited(node, "runSync", cloneSymbolVisited(visited)) ||
 		a.isResultarUtilityFunctionWithVisited(node, "runPromise", cloneSymbolVisited(visited)) {
@@ -5956,7 +6193,11 @@ func (a *Analyzer) isConsumedByResultTaskStaticCall(identifier *ast.Node) bool {
 		}
 		if parent.Kind == ast.KindCallExpression {
 			call := parent.AsCallExpression()
-			method, _, _ := methodCall(parent)
+			method, recv, _ := methodCall(parent)
+			if method == "runToCompletion" && len(call.Arguments.Nodes) > 0 && call.Arguments.Nodes[0] == current &&
+				recv != nil && isVirtualClockType(a.checker.GetTypeAtLocation(recv)) {
+				return true
+			}
 			if (method == "withPermit" && len(call.Arguments.Nodes) > 0 && (call.Arguments.Nodes[0] == current || (len(call.Arguments.Nodes) > 1 && call.Arguments.Nodes[1] == current))) ||
 				(method == "withPermits" && len(call.Arguments.Nodes) > 1 && (call.Arguments.Nodes[1] == current || (len(call.Arguments.Nodes) > 2 && call.Arguments.Nodes[2] == current))) {
 				return true
@@ -6547,7 +6788,7 @@ func (a *Analyzer) noAwaitInResultTaskGen(file *ast.SourceFile) []Finding {
 				finding := newFinding(file, bodyNode, "no-await-in-result-task-gen", a.options.NoAwaitInResultTaskGen,
 					"Do not use `await` inside `ResultTask.gen`. Use `yield*` for tasks and services so composition stays lazy and typed.", "")
 				if isResultLikeType(operandType) {
-					finding.Fixes = []Fix{replaceTokenFix(file, bodyNode, "Use yield* for this ResultTask value", "yield*")}
+					finding.Fixes = []Fix{awaitToYieldStarFix(file, bodyNode, "Use yield* for this ResultTask value")}
 				}
 				findings = append(findings, finding)
 			}
@@ -6619,11 +6860,24 @@ func (a *Analyzer) preferOrElseSucceed(file *ast.SourceFile) []Finding {
 		}
 		finding := newFinding(file, nameNode, "prefer-or-else-succeed", a.options.PreferOrElseSucceed,
 			fmt.Sprintf("`%s` only wraps a fallback value in Ok without inspecting the error. Use `orElseSucceed` for infallible fallback recovery.", method), "")
-		if len(returned) == 1 && !isStatic {
-			unwrapped := unwrapExpression(returned[0])
-			argNode := unwrapped.AsCallExpression().Arguments.Nodes[0]
-			argText := strings.TrimSpace(nodeSourceText(file, argNode))
-			finding.Fixes = []Fix{replaceSpanFix(file, nameNode, node, "Replace with orElseSucceed", fmt.Sprintf("orElseSucceed(() => %s)", argText))}
+		if len(returned) == 1 && !isStatic && len(arguments) == 1 && node.AsCallExpression().TypeArguments == nil {
+			cb := unwrapParens(arguments[0])
+			simpleCallback := cb != nil &&
+				(cb.Kind == ast.KindArrowFunction || cb.Kind == ast.KindFunctionExpression) &&
+				cb.Body() != nil && cb.Type() == nil &&
+				!ast.HasSyntacticModifier(cb, ast.ModifierFlagsAsync) &&
+				!(cb.Kind == ast.KindFunctionExpression && cb.AsFunctionExpression().AsteriskToken != nil) &&
+				((cb.Kind == ast.KindArrowFunction && cb.Body().Kind != ast.KindBlock) ||
+					(cb.Body().Kind == ast.KindBlock && len(cb.Body().Statements()) == 1 && cb.Body().Statements()[0].Kind == ast.KindReturnStatement))
+			if simpleCallback {
+				if argNode, ok := a.isUnwrappableOkCall(returned[0]); ok {
+					argText := strings.TrimSpace(nodeSourceText(file, argNode))
+					if needsParensInArrowBody(argNode, argText) {
+						argText = "(" + argText + ")"
+					}
+					finding.Fixes = []Fix{replaceSpanFix(file, nameNode, node, "Replace with orElseSucceed", fmt.Sprintf("orElseSucceed(() => %s)", argText))}
+				}
+			}
 		}
 		findings = append(findings, finding)
 	})
@@ -6806,6 +7060,25 @@ func (a *Analyzer) preferTapError(file *ast.SourceFile) []Finding {
 	return findings
 }
 
+func isSideEffectFreeVoidOperand(node *ast.Node) bool {
+	node = unwrapExpression(node)
+	if node == nil {
+		return false
+	}
+	switch node.Kind {
+	case ast.KindNumericLiteral, ast.KindBigIntLiteral, ast.KindStringLiteral,
+		ast.KindNoSubstitutionTemplateLiteral, ast.KindTrueKeyword, ast.KindFalseKeyword,
+		ast.KindNullKeyword:
+		return true
+	case ast.KindIdentifier:
+		return node.Text() == "undefined"
+	case ast.KindVoidExpression:
+		return isSideEffectFreeVoidOperand(node.Expression())
+	default:
+		return false
+	}
+}
+
 func isUndefinedOrVoidExpression(node *ast.Node) bool {
 	node = unwrapExpression(node)
 	if node == nil {
@@ -6814,7 +7087,7 @@ func isUndefinedOrVoidExpression(node *ast.Node) bool {
 	if node.Kind == ast.KindIdentifier && node.Text() == "undefined" {
 		return true
 	}
-	return node.Kind == ast.KindVoidExpression
+	return node.Kind == ast.KindVoidExpression && isSideEffectFreeVoidOperand(node.Expression())
 }
 
 func (a *Analyzer) preferAsVoid(file *ast.SourceFile) []Finding {
@@ -7153,6 +7426,156 @@ func (a *Analyzer) noUnnecessaryErrWrapInGen(file *ast.SourceFile) []Finding {
 	return findings
 }
 
+func isLeftmostInStatementOrArrow(node *ast.Node) (inStmt bool, inArrow bool) {
+	curr := node
+	for curr != nil && curr.Parent != nil {
+		parent := curr.Parent
+		switch parent.Kind {
+		case ast.KindExpressionStatement:
+			return true, false
+		case ast.KindArrowFunction:
+			if parent.Body() == curr {
+				return false, true
+			}
+			return false, false
+		case ast.KindPropertyAccessExpression:
+			if parent.AsPropertyAccessExpression().Expression == curr {
+				curr = parent
+				continue
+			}
+		case ast.KindElementAccessExpression:
+			if parent.AsElementAccessExpression().Expression == curr {
+				curr = parent
+				continue
+			}
+		case ast.KindCallExpression:
+			if parent.AsCallExpression().Expression == curr {
+				curr = parent
+				continue
+			}
+		case ast.KindTaggedTemplateExpression:
+			if parent.AsTaggedTemplateExpression().Tag == curr {
+				curr = parent
+				continue
+			}
+		case ast.KindPostfixUnaryExpression:
+			if parent.AsPostfixUnaryExpression().Operand == curr {
+				curr = parent
+				continue
+			}
+		case ast.KindBinaryExpression:
+			if parent.AsBinaryExpression().Left == curr {
+				curr = parent
+				continue
+			}
+		case ast.KindConditionalExpression:
+			if parent.AsConditionalExpression().Condition == curr {
+				curr = parent
+				continue
+			}
+		case ast.KindAsExpression, ast.KindSatisfiesExpression, ast.KindNonNullExpression:
+			if parent.Expression() == curr {
+				curr = parent
+				continue
+			}
+		}
+		return false, false
+	}
+	return false, false
+}
+
+func needsParensWhenReplacing(replacement, replacedNode *ast.Node, trimmedText string) bool {
+	if replacement == nil || replacedNode == nil || replacement.Kind == ast.KindParenthesizedExpression {
+		return false
+	}
+	parent := replacedNode.Parent
+	if parent == nil || parent.Kind == ast.KindParenthesizedExpression {
+		return false
+	}
+	inStmt, inArrow := isLeftmostInStatementOrArrow(replacedNode)
+	if inArrow && strings.HasPrefix(trimmedText, "{") {
+		return true
+	}
+	if inStmt && (strings.HasPrefix(trimmedText, "{") ||
+		strings.HasPrefix(trimmedText, "function") ||
+		strings.HasPrefix(trimmedText, "class") ||
+		strings.HasPrefix(trimmedText, "async function")) {
+		return true
+	}
+	switch replacement.Kind {
+	case ast.KindIdentifier, ast.KindThisKeyword, ast.KindSuperKeyword,
+		ast.KindTrueKeyword, ast.KindFalseKeyword, ast.KindNullKeyword,
+		ast.KindStringLiteral, ast.KindNoSubstitutionTemplateLiteral, ast.KindTemplateExpression,
+		ast.KindRegularExpressionLiteral, ast.KindArrayLiteralExpression, ast.KindBigIntLiteral:
+		return false
+	case ast.KindNumericLiteral:
+		return parent.Kind == ast.KindPropertyAccessExpression && parent.AsPropertyAccessExpression().Expression == replacedNode
+	case ast.KindObjectLiteralExpression:
+		return false
+	case ast.KindCallExpression, ast.KindPropertyAccessExpression, ast.KindElementAccessExpression, ast.KindTaggedTemplateExpression:
+		if replacement.Kind == ast.KindCallExpression && parent.Kind == ast.KindNewExpression && parent.AsNewExpression().Expression == replacedNode {
+			return true
+		}
+		if ast.IsOptionalChain(replacement) {
+			switch parent.Kind {
+			case ast.KindPropertyAccessExpression:
+				return parent.AsPropertyAccessExpression().Expression == replacedNode
+			case ast.KindElementAccessExpression:
+				return parent.AsElementAccessExpression().Expression == replacedNode
+			case ast.KindCallExpression:
+				return parent.AsCallExpression().Expression == replacedNode
+			case ast.KindNewExpression:
+				return parent.AsNewExpression().Expression == replacedNode
+			case ast.KindTaggedTemplateExpression:
+				return parent.AsTaggedTemplateExpression().Tag == replacedNode
+			case ast.KindNonNullExpression:
+				return parent.Expression() == replacedNode
+			}
+		}
+		return false
+	}
+	isComma := replacement.Kind == ast.KindBinaryExpression &&
+		replacement.AsBinaryExpression().OperatorToken != nil &&
+		replacement.AsBinaryExpression().OperatorToken.Kind == ast.KindCommaToken
+	if isComma {
+		switch parent.Kind {
+		case ast.KindExpressionStatement, ast.KindReturnStatement, ast.KindThrowStatement,
+			ast.KindIfStatement, ast.KindWhileStatement, ast.KindDoStatement,
+			ast.KindSwitchStatement, ast.KindForStatement:
+			return false
+		default:
+			return true
+		}
+	}
+	switch parent.Kind {
+	case ast.KindExpressionStatement, ast.KindReturnStatement, ast.KindThrowStatement,
+		ast.KindIfStatement, ast.KindWhileStatement, ast.KindDoStatement,
+		ast.KindSwitchStatement, ast.KindCaseClause,
+		ast.KindForStatement, ast.KindForOfStatement, ast.KindForInStatement,
+		ast.KindArrayLiteralExpression, ast.KindSpreadElement, ast.KindSpreadAssignment,
+		ast.KindTemplateSpan, ast.KindComputedPropertyName:
+		return false
+	case ast.KindArrowFunction:
+		return parent.Body() != replacedNode
+	case ast.KindVariableDeclaration:
+		return parent.AsVariableDeclaration().Initializer != replacedNode
+	case ast.KindPropertyAssignment:
+		return parent.AsPropertyAssignment().Initializer != replacedNode
+	case ast.KindPropertyDeclaration:
+		return parent.AsPropertyDeclaration().Initializer != replacedNode
+	case ast.KindParameter:
+		return parent.AsParameterDeclaration().Initializer != replacedNode
+	case ast.KindCallExpression:
+		return parent.AsCallExpression().Expression == replacedNode
+	case ast.KindNewExpression:
+		return parent.AsNewExpression().Expression == replacedNode
+	case ast.KindElementAccessExpression:
+		return parent.AsElementAccessExpression().Expression == replacedNode
+	default:
+		return true
+	}
+}
+
 func (a *Analyzer) unnecessaryPipe(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
@@ -7161,19 +7584,28 @@ func (a *Analyzer) unnecessaryPipe(file *ast.SourceFile) []Finding {
 		}
 		call := node.AsCallExpression()
 		method, receiver, nameNode := methodCall(node)
-		if method == "pipe" {
-			if len(call.Arguments.Nodes) == 0 && isResultLikeType(a.checker.GetTypeAtLocation(receiver)) {
-				findings = append(findings, newFinding(file, nameNode, "unnecessary-pipe", a.options.UnnecessaryPipe,
-					"`.pipe()` without arguments is a no-op; use the receiver directly.", ""))
-			}
+		if method == "pipe" && len(call.Arguments.Nodes) == 0 && isResultLikeType(a.checker.GetTypeAtLocation(receiver)) {
+			findings = append(findings, newFinding(file, nameNode, "unnecessary-pipe", a.options.UnnecessaryPipe,
+				"`.pipe()` without arguments is a no-op; use the receiver directly.", ""))
 			return
 		}
-		if a.canonicalExpressionName(call.Expression) == "pipe" && len(call.Arguments.Nodes) == 1 {
-			arg := call.Arguments.Nodes[0]
+		if len(call.Arguments.Nodes) != 1 {
+			return
+		}
+		arg := call.Arguments.Nodes[0]
+		if arg.Kind == ast.KindSpreadElement {
+			return
+		}
+		if a.isResultarUtilityFunction(call.Expression, "pipe") {
 			finding := newFinding(file, node, "unnecessary-pipe", a.options.UnnecessaryPipe,
 				"`pipe` with a single argument is a no-op; use the value directly.", "")
-			argText := strings.TrimSpace(nodeSourceText(file, arg))
-			finding.Fixes = []Fix{replaceSpanFix(file, node, node, "Unwrap single-argument pipe", argText)}
+			if call.TypeArguments == nil {
+				argText := strings.TrimSpace(nodeSourceText(file, arg))
+				if needsParensWhenReplacing(arg, node, argText) {
+					argText = "(" + argText + ")"
+				}
+				finding.Fixes = []Fix{replaceSpanFix(file, node, node, "Unwrap single-argument pipe", argText)}
+			}
 			findings = append(findings, finding)
 		}
 	})
@@ -7181,7 +7613,7 @@ func (a *Analyzer) unnecessaryPipe(file *ast.SourceFile) []Finding {
 }
 
 var taskRunnerMethods = map[string]struct{}{
-	"runExit": {}, "runFork": {}, "runPromise": {}, "runResult": {}, "toResultAsync": {},
+	"runExit": {}, "runFork": {}, "runPromise": {}, "runResult": {}, "runSync": {}, "runSyncExit": {}, "toResultAsync": {},
 }
 
 func (a *Analyzer) noRunInsideGen(file *ast.SourceFile) []Finding {

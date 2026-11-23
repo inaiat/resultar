@@ -15,12 +15,12 @@ const config: UserConfig = defineConfig({
   staged: { "*": "vp check --fix" },
   pack: {
     clean: true,
-    dts: true,
+    dts: { sourcemap: false },
     deps: { onlyBundle: false },
     entry: ["src/index.ts"],
     format: ["esm"],
     outExtensions: () => ({ dts: ".d.ts", js: ".js" }),
-    sourcemap: true,
+    sourcemap: false,
   },
   fmt: { ignorePatterns, objectWrap: "collapse" },
   lint: {

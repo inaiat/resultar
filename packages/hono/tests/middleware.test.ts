@@ -193,6 +193,126 @@ test("cleanup failures remain typed and repeated middleware is rejected", async 
   await other.close();
 });
 
+test("outer middleware throwing after next() releases Tier 0 and Tier 2 scopes without hanging close()", async () => {
+  // Tier 0 (pure singleton value)
+  const tier0 = createHonoServices(createModule().value("answer", 42));
+  const tier0App = new Hono();
+  tier0App.onError((error) => new Response(`caught:${error.message}`, { status: 500 }));
+  tier0App.use("*", async (_c, next) => {
+    await next();
+    throw new Error("outer-tier0");
+  });
+  tier0App.get("/", tier0.middleware(["answer"]), (c) => c.text(String(c.var.services.answer)));
+  expect(await (await tier0App.request("/")).text()).toBe("caught:outer-tier0");
+  expect((await tier0.close()).isOk()).toBe(true);
+
+  // Tier 2 (scoped resource) with custom onError returning a response
+  const { services, events } = fixture();
+  const tier2 = createHonoServices(services);
+  const tier2App = new Hono();
+  tier2App.onError((error) => new Response(`caught:${error.message}`, { status: 500 }));
+  tier2App.use("*", async (_c, next) => {
+    await next();
+    throw new Error("outer-tier2");
+  });
+  tier2App.get("/", tier2.middleware(["local"]), (c) => c.text(String(c.var.services.local.id)));
+  expect(await (await tier2App.request("/")).text()).toBe("caught:outer-tier2");
+  expect((await tier2.close()).isOk()).toBe(true);
+  expect(events).toEqual(["open root", "close child", "close root"]);
+
+  // Tier 2 when onError itself rethrows (never assigns c.res)
+  const rethrowFixture = fixture();
+  const rethrowDi = createHonoServices(rethrowFixture.services);
+  const rethrowApp = new Hono();
+  rethrowApp.onError((error) => {
+    throw error;
+  });
+  rethrowApp.use("*", async (_c, next) => {
+    await next();
+    throw new Error("outer-rethrow");
+  });
+  rethrowApp.get("/", rethrowDi.middleware(["local"]), (c) =>
+    c.text(String(c.var.services.local.id)),
+  );
+  await expect(rethrowApp.request("/")).rejects.toThrow("outer-rethrow");
+  expect((await rethrowDi.close()).isOk()).toBe(true);
+  expect(rethrowFixture.events).toEqual(["open root", "close child", "close root"]);
+});
+
+test("outer middleware replacing c.res releases Tier 0 and Tier 2 scopes while preserving streaming transforms", async () => {
+  // Tier 0 replacement
+  const tier0 = createHonoServices(createModule().value("answer", 42));
+  const tier0App = new Hono();
+  tier0App.use("*", async (c, next) => {
+    await next();
+    c.res = new Response("replaced-tier0");
+  });
+  tier0App.get("/", tier0.middleware(["answer"]), (c) => c.text(String(c.var.services.answer)));
+  expect(await (await tier0App.request("/")).text()).toBe("replaced-tier0");
+  expect((await tier0.close()).isOk()).toBe(true);
+
+  // Tier 2 replacement (including clearing c.res = undefined first)
+  const { services, events } = fixture();
+  const tier2 = createHonoServices(services);
+  const tier2App = new Hono();
+  tier2App.use("/replace", async (c, next) => {
+    await next();
+    c.res = new Response("replaced-tier2");
+  });
+  tier2App.use("/reset", async (c, next) => {
+    await next();
+    c.res = undefined as unknown as Response;
+    c.res = new Response("reset-tier2");
+  });
+  tier2App.get("/replace", tier2.middleware(["local"]), (c) =>
+    c.text(String(c.var.services.local.id)),
+  );
+  tier2App.get("/reset", tier2.middleware(["local"]), (c) =>
+    c.text(String(c.var.services.local.id)),
+  );
+  expect(await (await tier2App.request("/replace")).text()).toBe("replaced-tier2");
+  expect(await (await tier2App.request("/reset")).text()).toBe("reset-tier2");
+  expect((await tier2.close()).isOk()).toBe(true);
+  expect(events).toEqual(["open root", "close child", "close child", "close root"]);
+
+  // Preserving body (header mutation + wrapping same body + pipeThrough) still drains normally
+  const streamFixture = fixture();
+  const streamDi = createHonoServices(streamFixture.services);
+  const streamApp = new Hono();
+  streamApp.use("*", async (c, next) => {
+    await next();
+    c.header("x-outer", "1");
+    c.res = new Response(c.res.body, c.res);
+  });
+  streamApp.get(
+    "/stream",
+    streamDi.middleware(["local"]),
+    () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("chunk"));
+          },
+        }),
+      ),
+  );
+  const response = await streamApp.request("/stream");
+  expect(response.headers.get("x-outer")).toBe("1");
+  const reader = response.body?.getReader();
+  if (reader === undefined) throw new Error("Expected response body");
+  await reader.read();
+  expect(streamFixture.events).toEqual(["open root"]);
+  let closed = false;
+  const closing = streamDi.close().then(() => {
+    closed = true;
+  });
+  await Promise.resolve();
+  expect(closed).toBe(false);
+  await reader.cancel();
+  await closing;
+  expect(streamFixture.events).toEqual(["open root", "close child", "close root"]);
+});
+
 test("different service owners cannot overwrite the same Hono variable", async () => {
   const first = createHonoServices(createModule().value("answer", 1));
   const second = createHonoServices(createModule().value("answer", 2));

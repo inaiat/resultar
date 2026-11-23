@@ -1,4 +1,9 @@
-import { compileJitFunction, MAX_JIT_STEPS, serializeStringLiteral } from '../core/jit.js'
+import {
+  canUseJit,
+  compileJitFunction,
+  MAX_JIT_STEPS,
+  serializeStringLiteral,
+} from '../core/jit.js'
 import type { Cause } from './cause.js'
 import type { Exit } from './result-task.js'
 import type { ResultTaskRuntimeContext } from './task-service.js'
@@ -116,7 +121,12 @@ const collectChain = (rootTask: TaskNodeLike): CollectedChain | undefined => {
   let cursor = rootTask
 
   while (cursor.op >= OP_FLAT_MAP) {
-    if (!isCompilableCombinator(cursor.op) || reversed.length >= MAX_JIT_STEPS) {
+    if (
+      !isCompilableCombinator(cursor.op) ||
+      reversed.length >= MAX_JIT_STEPS ||
+      (cursor.op === OP_CATCH_TAG &&
+        typeof (cursor.continuation as CatchTagContinuation).tag !== 'string')
+    ) {
       return undefined
     }
     reversed.push(cursor)
@@ -307,7 +317,13 @@ ${body}
       ex = died(createCauseError(c));
     } else if (c._tag === "Fail") {
       const err = c.error;
-      if (typeof err === "object" && err !== null && "_tag" in err && err._tag === ${tagLit}) {
+      let matched = false;
+      try {
+        matched = typeof err === "object" && err !== null && "_tag" in err && err._tag === ${tagLit};
+      } catch (e) {
+        ex = died(e);
+      }
+      if (matched) {
 ${body}
       }
     }
@@ -324,7 +340,12 @@ ${body}
     if (c._tag === "Sequential" || c._tag === "Parallel") {
       ex = died(createCauseError(c));
     } else if (c._tag === "Fail") {
-      const h = getTaggedHandler(c.error, ${handlersParam});
+      let h = undefined;
+      try {
+        h = getTaggedHandler(c.error, ${handlersParam});
+      } catch (e) {
+        ex = died(e);
+      }
       if (h !== undefined) {
 ${body}
       }
@@ -349,6 +370,7 @@ export const compileTaskChain = (
       context: ResultTaskRuntimeContext,
     ) => Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>)
   | undefined => {
+  if (!canUseJit()) return undefined
   const collected = collectChain(rootTask)
   if (collected === undefined) return undefined
 

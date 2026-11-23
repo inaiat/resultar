@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,19 +24,32 @@ import (
 	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/project"
 )
 
+func sameFilePathForOS(left, right, goos string) bool {
+	a, b := filepath.Clean(left), filepath.Clean(right)
+	if goos == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func sameFilePath(left, right string) bool {
+	return sameFilePathForOS(left, right, runtime.GOOS)
+}
+
 type lspServer struct {
-	reader           *bufio.Reader
-	writer           io.Writer
-	project          string
-	rootPath         string
-	shutdown         bool
-	exited           bool
-	documents        map[string]lspDocument
-	cacheDiagnostics []output.Diagnostic
-	cacheProjectTime time.Time
-	cacheValid       bool
-	cacheOpened      *project.Opened
-	pendingPublish   bool
+	reader            *bufio.Reader
+	writer            io.Writer
+	project           string
+	rootPath          string
+	shutdown          bool
+	exited            bool
+	documents         map[string]lspDocument
+	cacheDiagnostics  []output.Diagnostic
+	cacheProjectTime  time.Time
+	cacheValid        bool
+	cacheOpened       *project.Opened
+	pendingPublish    bool
+	resetPublishTimer bool
 }
 
 type lspDocument struct {
@@ -174,8 +188,11 @@ func (s *lspServer) serve() int {
 			if s.exited {
 				return 0
 			}
-			if s.pendingPublish && !s.shutdown {
-				timer.Reset(150 * time.Millisecond)
+			if s.resetPublishTimer {
+				s.resetPublishTimer = false
+				if s.pendingPublish && !s.shutdown {
+					timer.Reset(150 * time.Millisecond)
+				}
 			}
 		case <-timer.C:
 			if s.pendingPublish && !s.shutdown {
@@ -262,6 +279,7 @@ func (s *lspServer) handle(message lspMessage) error {
 		}
 		s.invalidateDiagnostics()
 		s.pendingPublish = true
+		s.resetPublishTimer = true
 		return nil
 	case "textDocument/didSave":
 		var params struct {
@@ -326,7 +344,7 @@ func (s *lspServer) handle(message lspMessage) error {
 		}
 		items := []lspDiagnostic{}
 		for _, diagnostic := range diagnostics {
-			if filepath.Clean(diagnostic.File) == filepath.Clean(uriToPath(params.TextDocument.URI)) {
+			if sameFilePath(diagnostic.File, uriToPath(params.TextDocument.URI)) {
 				items = append(items, s.diagnostic(diagnostic))
 			}
 		}
@@ -377,7 +395,7 @@ func (s *lspServer) publish(uri string) error {
 	path := uriToPath(uri)
 	filtered := make([]lspDiagnostic, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
-		if path == "" || filepath.Clean(path) == filepath.Clean(diagnostic.File) {
+		if path == "" || sameFilePath(path, diagnostic.File) {
 			filtered = append(filtered, s.diagnostic(diagnostic))
 		}
 	}
@@ -461,7 +479,7 @@ func (s *lspServer) codeActions(uri string, requested lspRange) ([]lspCodeAction
 	path := uriToPath(uri)
 	actions := make([]lspCodeAction, 0)
 	for _, diagnostic := range diagnostics {
-		if path != "" && filepath.Clean(path) != filepath.Clean(diagnostic.File) {
+		if path != "" && !sameFilePath(path, diagnostic.File) {
 			continue
 		}
 		if !rangeIntersects(s.diagnostic(diagnostic).Range, requested) {
@@ -503,9 +521,6 @@ func (s *lspServer) codeActions(uri string, requested lspRange) ([]lspCodeAction
 }
 
 func rangeIntersects(left, right lspRange) bool {
-	if right.Start.Line == 0 && right.Start.Character == 0 && right.End.Line == 0 && right.End.Character == 0 {
-		return true
-	}
 	return positionBefore(left.Start, right.End) && positionBefore(right.Start, left.End)
 }
 
@@ -654,13 +669,13 @@ func offsetForPosition(text string, position lspPosition) int {
 }
 func (s *lspServer) snapshotText(path string) string {
 	for uri, document := range s.documents {
-		if filepath.Clean(uriToPath(uri)) == filepath.Clean(path) {
+		if sameFilePath(uriToPath(uri), path) {
 			return document.Text
 		}
 	}
 	if s.cacheOpened != nil {
 		for _, file := range s.cacheOpened.Program.SourceFiles() {
-			if filepath.Clean(string(file.FileName())) == filepath.Clean(path) {
+			if sameFilePath(string(file.FileName()), path) {
 				return file.Text()
 			}
 		}
@@ -686,6 +701,8 @@ func (s *lspServer) versionedEdit(uri string, edits []lspTextEdit) lspWorkspaceE
 	return lspWorkspaceEdit{DocumentChanges: []lspDocumentEdit{{TextDocument: lspVersionedDocument{URI: uri, Version: version}, Edits: edits}}}
 }
 func (s *lspServer) publishAll() error {
+	s.pendingPublish = false
+	s.resetPublishTimer = false
 	uris := make([]string, 0, len(s.documents))
 	for uri := range s.documents {
 		uris = append(uris, uri)

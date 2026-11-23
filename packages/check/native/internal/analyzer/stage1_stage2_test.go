@@ -244,7 +244,8 @@ export const tapErrOrElse = task.orElse((e) => {
 
 // 4. prefer-as-void
 export const asVoidUndef = res.map(() => undefined)
-export const asVoidExpr = task.map((x) => void sideEffect(x))
+export const asVoidExpr = task.map(() => void 0)
+export const asVoidSideEffectKept = task.map((x) => void sideEffect(x))
 
 // 5. prefer-filter-or-else
 export const filterTernary = res.andThen((x) => (x > 0 ? ok(x) : err('neg')))

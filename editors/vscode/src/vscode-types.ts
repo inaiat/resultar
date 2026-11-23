@@ -164,7 +164,8 @@ export interface VscodeApi {
   readonly workspace: {
     readonly workspaceFolders?: readonly VscodeWorkspaceFolder[];
     readonly textDocuments: readonly VscodeTextDocument[];
-    getConfiguration(section: string): VscodeWorkspaceConfiguration;
+    getWorkspaceFolder?(uri: VscodeUri): VscodeWorkspaceFolder | undefined;
+    getConfiguration(section: string, scope?: VscodeUri): VscodeWorkspaceConfiguration;
     onDidOpenTextDocument(listener: (doc: VscodeTextDocument) => unknown): VscodeDisposable;
     onDidChangeTextDocument(
       listener: (event: { readonly document: VscodeTextDocument }) => unknown,
@@ -172,7 +173,15 @@ export interface VscodeApi {
     onDidSaveTextDocument(listener: (doc: VscodeTextDocument) => unknown): VscodeDisposable;
     onDidCloseTextDocument(listener: (doc: VscodeTextDocument) => unknown): VscodeDisposable;
     onDidChangeConfiguration(
-      listener: (event: { affectsConfiguration(section: string): boolean }) => unknown,
+      listener: (event: {
+        affectsConfiguration(section: string, scope?: VscodeUri): boolean;
+      }) => unknown,
+    ): VscodeDisposable;
+    onDidChangeWorkspaceFolders?(
+      listener: (event: {
+        readonly added: readonly VscodeWorkspaceFolder[];
+        readonly removed: readonly VscodeWorkspaceFolder[];
+      }) => unknown,
     ): VscodeDisposable;
     createFileSystemWatcher(globPattern: string): VscodeFileSystemWatcher;
   };

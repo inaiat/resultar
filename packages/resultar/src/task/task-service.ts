@@ -133,6 +133,7 @@ export interface ResultTaskRuntimeContext {
   readonly locals?: TaskLocalsCell | undefined
   readonly tracer?: TaskTracer | undefined
   readonly spanStack?: SpanStackNode | undefined
+  readonly acquiring?: boolean | undefined
 }
 
 /** Supplies runtime defaults when an internal executor receives a context without time policies. */
@@ -340,6 +341,7 @@ export const withServices = (
   locals: context.locals,
   tracer: context.tracer,
   spanStack: context.spanStack,
+  acquiring: context.acquiring,
 })
 
 export const withScope = (
@@ -411,6 +413,7 @@ export const withNamedServices = (
   locals: context.locals,
   tracer: context.tracer,
   spanStack: context.spanStack,
+  acquiring: context.acquiring,
 })
 
 export const withServiceResolver = (
@@ -428,6 +431,7 @@ export const withServiceResolver = (
   locals: context.locals,
   tracer: context.tracer,
   spanStack: context.spanStack,
+  acquiring: context.acquiring,
 })
 
 export const withLocals = (
@@ -445,6 +449,7 @@ export const withLocals = (
   locals,
   tracer: context.tracer,
   spanStack: context.spanStack,
+  acquiring: context.acquiring,
 })
 
 export const withSpanStack = (
@@ -462,6 +467,22 @@ export const withSpanStack = (
   locals: context.locals,
   tracer: context.tracer,
   spanStack,
+  acquiring: context.acquiring,
+})
+
+export const withAcquiring = (context: ResultTaskRuntimeContext): ResultTaskRuntimeContext => ({
+  namedServices: context.namedServices,
+  services: context.services,
+  serviceResolver: context.serviceResolver,
+  signal: context.signal,
+  scope: context.scope,
+  clock: context.clock,
+  scheduling: context.scheduling,
+  cleanup: context.cleanup,
+  locals: context.locals,
+  tracer: context.tracer,
+  spanStack: context.spanStack,
+  acquiring: true,
 })
 
 export const EMPTY_NAMED_SERVICES: ReadonlyMap<string, unknown> = new Map()

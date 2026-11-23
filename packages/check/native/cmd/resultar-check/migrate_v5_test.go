@@ -3003,3 +3003,44 @@ export const eager = R.okAsync(1);`
 		t.Fatalf("lost import binding: %s", data)
 	}
 }
+
+func TestMigratePreservesNonNullAndTypeAssertedReceivers(t *testing.T) {
+	const source = `import { Result, ResultTask } from "resultar";
+
+declare const maybeTask: ResultTask<number, string> | undefined;
+declare const maybeRes: Result<number, string> | undefined;
+declare const raw: unknown;
+
+export const a = maybeTask!.toResultAsync();
+export const b = (raw as ResultTask<number, string>).toResultAsync();
+export const c = maybeRes!.asyncMap(async (v) => v + 1);
+export async function d() {
+  return await (raw as ResultTask<number, string>).runResult().unwrapOrThrow();
+}
+export const dContract = (raw as ResultTask<number, string>).runResult().map((v) => v + 1);
+export const e = Result.gen(function* () {
+  return yield* maybeRes!.safeUnwrap();
+});
+`
+	_, config, path := writeMigrateProject(t, source, v4RequestTypes)
+	if code, items := runMigrateJSON(t, config, "--fix"); code != 0 {
+		t.Fatalf("migrate --fix failed: code=%d items=%+v", code, items)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixed := string(data)
+	for _, want := range []string{
+		`ResultAsync.fromTask(maybeTask!)`,
+		`ResultAsync.fromTask((raw as ResultTask<number, string>))`,
+		`asyncMap(maybeRes!, async (v) => v + 1)`,
+		`(raw as ResultTask<number, string>).runPromise()`,
+		`new ResultAsync((raw as ResultTask<number, string>).runResult()).map((v) => v + 1)`,
+		`return yield* maybeRes!;`,
+	} {
+		if !strings.Contains(fixed, want) {
+			t.Fatalf("expected %q in migrated output:\n%s", want, fixed)
+		}
+	}
+}

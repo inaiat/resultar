@@ -346,22 +346,38 @@ const renderDocs = (page: DocPage): string => {
 };
 
 const renderWaterfall = (result: PlaygroundRunResult): string => {
-  if (result.spans.length === 0) return "";
-  const minStart = Math.min(...result.spans.map((span) => span.startTime));
+  const validSpans = result.spans.filter((span) => Number.isFinite(span.startTime));
+  if (validSpans.length === 0) return "";
+  const minStart = Math.min(...validSpans.map((span) => span.startTime));
   const maxEnd = Math.max(
-    ...result.spans.map((span) => span.endTime ?? span.startTime + (span.durationMs ?? 1)),
+    ...validSpans.map((span) => {
+      if (span.endTime !== undefined && Number.isFinite(span.endTime)) return span.endTime;
+      const fallbackDur =
+        span.durationMs !== undefined && Number.isFinite(span.durationMs)
+          ? Math.max(0, span.durationMs)
+          : 1;
+      return span.startTime + fallbackDur;
+    }),
   );
-  const totalRange = Math.max(1, maxEnd - minStart);
+  const rawRange = maxEnd - minStart;
+  const totalRange = Number.isFinite(rawRange) && rawRange > 0 ? Math.max(1, rawRange) : 1;
 
   return `
     <div class="waterfall">
-      <div class="waterfall-title">Span Waterfall (${result.spans.length} spans)</div>
-      ${result.spans
+      <div class="waterfall-title">Span Waterfall (${validSpans.length} spans)</div>
+      ${validSpans
         .map((span) => {
-          const leftPct = ((span.startTime - minStart) / totalRange) * 100;
-          const dur =
-            span.durationMs ?? Math.max(0, (span.endTime ?? span.startTime) - span.startTime);
-          const widthPct = Math.max(3, (dur / totalRange) * 100);
+          const rawLeftPct = ((span.startTime - minStart) / totalRange) * 100;
+          const leftPct = Number.isFinite(rawLeftPct) ? Math.min(100, Math.max(0, rawLeftPct)) : 0;
+          const computedDur =
+            span.durationMs !== undefined && Number.isFinite(span.durationMs)
+              ? span.durationMs
+              : (span.endTime !== undefined && Number.isFinite(span.endTime)
+                  ? span.endTime
+                  : span.startTime) - span.startTime;
+          const dur = Number.isFinite(computedDur) ? Math.max(0, computedDur) : 0;
+          const rawWidthPct = (dur / totalRange) * 100;
+          const widthPct = Number.isFinite(rawWidthPct) ? Math.max(3, rawWidthPct) : 3;
           const failed = span.exit?._tag === "Failure";
           const attrs = Object.entries(span.attributes)
             .map(([k, v]) => `${k}=${String(v)}`)

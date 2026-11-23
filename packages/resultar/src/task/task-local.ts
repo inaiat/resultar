@@ -76,7 +76,12 @@ const make = <A>(defaultValue: A, name?: string): TaskLocal<A> => {
   const locally = ((...args: readonly unknown[]): unknown => {
     const value = args[0] as A
     if (args.length === 1) {
-      return <B, E, R>(task: ResultTask<B, E, R>) => runLocally(() => value, task)
+      return <B, E, R>(task: ResultTask<B, E, R>) => {
+        if (!isResultTask(task)) {
+          throw new TypeError('TaskLocal.locally requires a ResultTask')
+        }
+        return runLocally(() => value, task)
+      }
     }
     const task = args[1]
     if (!isResultTask(task)) {
@@ -88,7 +93,12 @@ const make = <A>(defaultValue: A, name?: string): TaskLocal<A> => {
   const locallyWith = ((...args: readonly unknown[]): unknown => {
     const fn = args[0] as (current: A) => A
     if (args.length === 1) {
-      return <B, E, R>(task: ResultTask<B, E, R>) => runLocally(fn, task)
+      return <B, E, R>(task: ResultTask<B, E, R>) => {
+        if (!isResultTask(task)) {
+          throw new TypeError('TaskLocal.locallyWith requires a ResultTask')
+        }
+        return runLocally(fn, task)
+      }
     }
     const task = args[1]
     if (!isResultTask(task)) {

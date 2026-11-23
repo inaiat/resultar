@@ -440,7 +440,10 @@ const die = (cause: unknown): RuntimeTask<never> =>
 const assertTokenSync = (value: unknown): void => {
   if (
     value instanceof ResultTask ||
-    (value !== null && typeof value === "object" && "then" in value)
+    (value !== null &&
+      (typeof value === "object" || typeof value === "function") &&
+      "then" in value &&
+      typeof value.then === "function")
   ) {
     throw new TypeError("Use service(name, task) for asynchronous initialization");
   }
@@ -462,6 +465,7 @@ class RuntimeScope {
         readonly keys: readonly string[];
         readonly localCount: number;
         readonly singleLocalKey: string | undefined;
+        readonly requestedBy: ServiceLifetime | undefined;
         readonly plan: CompiledSyncPlan | undefined;
       }
     | undefined = undefined;
@@ -512,6 +516,7 @@ class RuntimeScope {
   public getSyncPlan(
     keys: readonly string[],
     localKeys: readonly string[],
+    requestedBy?: ServiceLifetime,
   ): CompiledSyncPlan | undefined {
     for (const localKey of localKeys) {
       if (this.definitions.has(localKey)) return undefined;
@@ -525,16 +530,17 @@ class RuntimeScope {
       last.envFlag === envFlag &&
       last.keys === keys &&
       last.localCount === localKeys.length &&
+      last.requestedBy === requestedBy &&
       (localKeys.length === 0 || (localKeys.length === 1 && last.singleLocalKey === localKeys[0]))
     ) {
       return last.plan;
     }
-    const cacheKey = JSON.stringify([envFlag, keys, localKeys]);
+    const cacheKey = JSON.stringify([envFlag, keys, localKeys, requestedBy ?? ""]);
     let plan: CompiledSyncPlan | undefined = undefined;
     if (this.syncPlans.has(cacheKey)) {
       plan = this.syncPlans.get(cacheKey);
     } else {
-      plan = compileSyncSubgraph(this.definitions, keys, localKeys, assertSynchronous);
+      plan = compileSyncSubgraph(this.definitions, keys, localKeys, assertSynchronous, requestedBy);
       if (this.syncPlans.size < MAX_PLAN_CACHE_SIZE) {
         this.syncPlans.set(cacheKey, plan);
       }
@@ -545,6 +551,7 @@ class RuntimeScope {
         keys,
         localCount: localKeys.length,
         singleLocalKey: localKeys[0],
+        requestedBy,
         plan,
       };
     }
@@ -699,6 +706,14 @@ class RuntimeScope {
     if (this.disposing || this.root.disposing)
       return die(new TypeError("Cannot resolve from a closed service scope"));
 
+    if (path.some((node) => node.name === key)) {
+      return die(
+        new TypeError(
+          `Cyclic dependencies detected: ${[...path.map((node) => node.name), key].join(" -> ")}`,
+        ),
+      );
+    }
+
     const scope = owner ?? this;
     let resolution = owner?.tasks.get(key);
     if (resolution === undefined) {
@@ -751,7 +766,7 @@ class RuntimeScope {
   ) {
     return tryResult(
       () => {
-        if (this.closed || this.root.closed)
+        if (this.disposing || this.root.disposing)
           throw new ServiceAccessError("closed", key, "Cannot resolve from a closed service scope");
         const definition = this.definitions.get(key);
         if (definition === undefined)
@@ -935,7 +950,7 @@ const scopedUse =
     const localKeys = locals === EMPTY_LOCALS ? [] : Object.keys(locals);
     const syncPlan =
       requestedBy === undefined || requestedBy === "singleton"
-        ? runtime.getSyncPlan(dependencies, localKeys)
+        ? runtime.getSyncPlan(dependencies, localKeys, requestedBy)
         : undefined;
     const usablePlan = syncPlan !== undefined && syncPlan.tier === 0 ? syncPlan : undefined;
     const task = ResultTask.gen(function* runScopedUse() {

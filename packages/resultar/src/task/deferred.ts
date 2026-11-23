@@ -5,13 +5,7 @@ import { ResultTask } from './result-task.js'
 import type { Exit } from './result-task.js'
 import { createRuntimeTask, runRuntimeTask } from './task-runtime-bridge.js'
 import { copyCauseSpans } from './tracer.js'
-import { transformCause } from './cause-transform.js'
-
-const isolateExitForObserver = <A, E>(exit: Exit<A, E>): Exit<A, E> => {
-  if (exit._tag === 'Success') return exit
-  // eslint-disable-next-line prefer-object-spread -- Keep the public failure payload by identity.
-  return failure(transformCause(exit.cause, (leaf) => Object.assign({}, leaf)) as Cause<E>)
-}
+import { isolateExitForObserver, transformCause } from './cause-transform.js'
 
 const interruptedCompletion = (
   exit: Exit<unknown, unknown>,

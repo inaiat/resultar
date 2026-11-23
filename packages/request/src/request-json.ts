@@ -37,9 +37,9 @@ const timeoutErrorNames = new Set([
 
 type NormalizedJsonResponseData = {
   readonly headers: RequestHeaders;
-  readonly json: () => Promise<unknown>;
+  readonly json: (signal: AbortSignal) => Promise<unknown>;
   readonly statusCode: number;
-  readonly text: () => Promise<string>;
+  readonly text: (signal: AbortSignal) => Promise<string>;
 };
 
 type ErrorWithName = Error & { readonly name: string };
@@ -62,6 +62,9 @@ const safeSerialize = (value: unknown): string => {
     .unwrapOr("Unknown error");
 };
 
+const serializeHeadersForMessage = (headers: RequestHeaders): unknown =>
+  headers instanceof Headers ? Object.fromEntries(headers.entries()) : headers;
+
 /** Error cause containing the body, headers, and status of an unsuccessful HTTP response. */
 export class HttpResponseErrorCauseError extends Error {
   readonly body: string;
@@ -77,7 +80,7 @@ export class HttpResponseErrorCauseError extends Error {
     readonly headers: RequestHeaders;
     readonly statusCode: number;
   }) {
-    super(safeSerialize({ body, headers, statusCode }));
+    super(safeSerialize({ body, headers: serializeHeadersForMessage(headers), statusCode }));
     this.name = "HttpResponseErrorCauseError";
     this.body = body;
     this.headers = headers;
@@ -164,24 +167,6 @@ const isUndiciJsonResponseRecord = (response: Record<PropertyKey, unknown>) => {
   );
 };
 
-const normalizeResponse = (response: RequestJsonResponseData): NormalizedJsonResponseData => {
-  if (isUndiciJsonResponseData(response)) {
-    return {
-      headers: response.headers,
-      json: () => response.body.json(),
-      statusCode: response.statusCode,
-      text: () => response.body.text(),
-    };
-  }
-
-  return {
-    headers: response.headers,
-    json: () => response.json(),
-    statusCode: response.status,
-    text: () => response.text(),
-  };
-};
-
 const invalidJsonErrors = new WeakSet<RequestError>();
 
 const isRequestAbortError = (error: RequestError): boolean =>
@@ -231,16 +216,123 @@ const createHttpResponseRequestError = (
     }),
   );
 
+const getAbortReason = (signal: AbortSignal): unknown =>
+  signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+
+const cancelResponseBody = (response: RequestJsonResponseData, reason: unknown): unknown => {
+  const body: unknown = "body" in response ? response.body : undefined;
+  if (!isRecord(body)) return undefined;
+  if (typeof body.cancel === "function" && body.locked !== true) {
+    return Reflect.apply(body.cancel, body, [reason]);
+  }
+  if (typeof body.destroy === "function") {
+    return Reflect.apply(body.destroy, body, [reason instanceof Error ? reason : undefined]);
+  }
+  return undefined;
+};
+
+const readWithSignal = async <T>(
+  read: () => Promise<T>,
+  cancel: (reason: unknown) => unknown,
+  signal: AbortSignal,
+): Promise<T> => {
+  const { promise, resolve, reject } = Promise.withResolvers<T>();
+  const onAbort = () => {
+    const reason = getAbortReason(signal);
+    reject(reason);
+    const canceled = fromThrowable(() => cancel(reason))();
+    if (canceled.isOk()) disarmPromiseLike(canceled.value).unwrapOr(false);
+  };
+  if (signal.aborted) {
+    onAbort();
+    return promise;
+  }
+
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    try {
+      read().then(resolve, reject);
+    } catch (error) {
+      reject(error);
+    }
+    return await promise;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+};
+
+const readFetchBody = async (
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+): Promise<string> => {
+  const reader = body.getReader();
+  try {
+    return await readWithSignal(
+      async () => {
+        const decoder = new TextDecoder();
+        let text = "";
+        for (;;) {
+          // eslint-disable-next-line no-await-in-loop -- Read and decode body chunks in stream order.
+          const { done, value } = await reader.read();
+          if (done) return text + decoder.decode();
+          text += decoder.decode(value, { stream: true });
+        }
+      },
+      (reason) => reader.cancel(reason),
+      signal,
+    );
+  } finally {
+    reader.releaseLock();
+  }
+};
+
+const normalizeResponse = (response: RequestJsonResponseData): NormalizedJsonResponseData => {
+  const cancel = (reason: unknown) => cancelResponseBody(response, reason);
+  if (isUndiciJsonResponseData(response)) {
+    return {
+      headers: response.headers,
+      json: (signal) => readWithSignal(() => response.body.json(), cancel, signal),
+      statusCode: response.statusCode,
+      text: (signal) => readWithSignal(() => response.body.text(), cancel, signal),
+    };
+  }
+
+  const getFetchBody = (method: "json" | "text") => {
+    const body =
+      response instanceof Response &&
+      response[method] === Response.prototype[method] &&
+      !response.bodyUsed
+        ? response.body
+        : undefined;
+    return body?.locked === false ? body : undefined;
+  };
+  return {
+    headers: response.headers,
+    json: (signal) => {
+      const body = getFetchBody("json");
+      return body === undefined
+        ? readWithSignal(() => response.json(), cancel, signal)
+        : readFetchBody(body, signal).then((text): unknown => JSON.parse(text));
+    },
+    statusCode: response.status,
+    text: (signal) => {
+      const body = getFetchBody("text");
+      return body === undefined
+        ? readWithSignal(() => response.text(), cancel, signal)
+        : readFetchBody(body, signal);
+    },
+  };
+};
+
 const handleHttpErrors = <T extends RequestJsonResponseData>(
   response: T,
 ): ResultTask<T, RequestError> => {
   const normalized = normalizeResponse(response);
 
   if (normalized.statusCode >= 400 && normalized.statusCode < 600) {
-    return ResultTask.tryPromise({
-      catch: baseRequestErrorHandler,
-      try: () => normalized.text(),
-    }).andThen((body) => err(createHttpResponseRequestError(body, normalized)));
+    return ResultTask.tryPromise({ catch: baseRequestErrorHandler, try: normalized.text }).andThen(
+      (body) => err(createHttpResponseRequestError(body, normalized)),
+    );
   }
 
   return ResultTask.ok(response);
@@ -377,15 +469,13 @@ const executeRequestJson = <T, R extends RequestJsonResponseData = RequestJsonRe
   retry: RequestJsonRetry | undefined,
 ): ResultTask<T, Error> => {
   if (typeof request !== "function") {
-    const invalidSourceError = RequestError.integrationError(
-      "JSON request requires a request factory",
+    const invalidSourceTask = ResultTask.err(
+      RequestError.integrationError("JSON request requires a request factory"),
     );
 
-    return ResultTask.err(
-      mapError === undefined
-        ? invalidSourceError
-        : mapRequestJsonError(mapError)(invalidSourceError),
-    );
+    return mapError === undefined
+      ? invalidSourceTask
+      : invalidSourceTask.mapErr(mapRequestJsonError(mapError));
   }
 
   const attemptTask = ResultTask.tryPromise({
@@ -396,7 +486,7 @@ const executeRequestJson = <T, R extends RequestJsonResponseData = RequestJsonRe
     .andThen((response) =>
       ResultTask.tryPromise({
         catch: jsonParseErrorHandler,
-        try: () => normalizeResponse(response).json(),
+        try: (signal) => normalizeResponse(response).json(signal),
       }),
     )
     .andThen((value) => decodeJsonResponseValue(decode, value, validationError));

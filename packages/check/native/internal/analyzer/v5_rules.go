@@ -327,7 +327,7 @@ func (a *Analyzer) collectSymbolUsageIntent(searchRoot *ast.Node, sym *ast.Symbo
 }
 
 func (a *Analyzer) ambiguousSuccessMember(operand *ast.Node, name string) bool {
-	if name != "value" && name != "error" {
+	if _, ok := resultOnlyMemberNames[name]; !ok {
 		return false
 	}
 	args := typeArguments(a.checker, a.checker.GetTypeAtLocation(operand))
@@ -506,9 +506,40 @@ func operandNeedsParensForMemberAccess(node *ast.Node) bool {
 	}
 }
 
+func hasCommentTrivia(gap string) bool {
+	return strings.Contains(gap, "//") || strings.Contains(gap, "/*")
+}
+
 func removeAwaitFix(file *ast.SourceFile, awaitNode, operand *ast.Node) Fix {
-	awaitStart := scanner.GetRangeOfTokenAtPosition(file, awaitNode.Pos()).Pos()
+	awaitRange := scanner.GetRangeOfTokenAtPosition(file, awaitNode.Pos())
+	awaitStart := awaitRange.Pos()
+	awaitEnd := awaitRange.End()
 	operandStart := scanner.GetRangeOfTokenAtPosition(file, operand.Pos()).Pos()
+	text := file.Text()
+	gap := text[awaitEnd:operandStart]
+	if hasCommentTrivia(gap) {
+		deleteEnd := awaitEnd
+		for deleteEnd < operandStart && (text[deleteEnd] == ' ' || text[deleteEnd] == '\t') {
+			deleteEnd++
+		}
+		if awaitNode.Parent != nil &&
+			(awaitNode.Parent.Kind == ast.KindReturnStatement || awaitNode.Parent.Kind == ast.KindThrowStatement) &&
+			strings.ContainsAny(gap, "\r\n") {
+			return Fix{
+				Title: "Remove redundant await on ResultTask",
+				Kind:  FixCorrection,
+				Edits: []TextEdit{
+					{Start: awaitStart, Length: deleteEnd - awaitStart, NewText: "("},
+					{Start: operand.End(), Length: 0, NewText: ")"},
+				},
+			}
+		}
+		return Fix{
+			Title: "Remove redundant await on ResultTask",
+			Kind:  FixCorrection,
+			Edits: []TextEdit{{Start: awaitStart, Length: deleteEnd - awaitStart, NewText: ""}},
+		}
+	}
 	return Fix{
 		Title: "Remove redundant await on ResultTask",
 		Kind:  FixCorrection,

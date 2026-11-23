@@ -1,6 +1,11 @@
 import type { ErrResult } from '../result/result.js'
 
-import { compileJitFunction, formatPropertyAccess, serializeStringLiteral } from '../core/jit.js'
+import {
+  canUseJit,
+  compileJitFunction,
+  formatPropertyAccess,
+  serializeStringLiteral,
+} from '../core/jit.js'
 import { isRedacted, stringifyRedacted, type Redacted } from '../core/redacted.js'
 import { ResultTask } from '../task/result-task.js'
 import { err as resultErr } from '../result/result.js'
@@ -375,8 +380,13 @@ const stringifySymbolTemplateValue = (value: unknown): string => {
 const stringifyFunctionTemplateValue = (value: unknown): string =>
   (value as { readonly name: string }).name
 
-const stringifyObjectTemplateValue = (value: unknown): string =>
-  JSON.stringify(value) ?? Object.prototype.toString.call(value)
+const stringifyObjectTemplateValue = (value: unknown): string => {
+  try {
+    return JSON.stringify(value) ?? Object.prototype.toString.call(value)
+  } catch {
+    return Object.prototype.toString.call(value)
+  }
+}
 
 type StringifiableTemplateValueType =
   | 'bigint'
@@ -442,6 +452,17 @@ const formatTemplateValue = (value: unknown): string => {
   return stringifyTemplateValue(value)
 }
 
+const hasTemplateValue = (values: Record<string, unknown>, key: string): boolean => {
+  if (Object.hasOwn(values, key)) return true
+  if (Object.hasOwn(Object.prototype, key)) return false
+  let current = Object.getPrototypeOf(values) as object | null
+  while (current !== null && current !== Object.prototype) {
+    if (Object.hasOwn(current, key)) return true
+    current = Object.getPrototypeOf(current) as object | null
+  }
+  return false
+}
+
 const buildFallbackInterpolator =
   (template: string, parsed: ParsedMessageTemplate) =>
   (values?: Record<string, unknown>): string => {
@@ -449,7 +470,7 @@ const buildFallbackInterpolator =
     let output = parsed.prefix
 
     for (const { key, tail } of parsed.segments) {
-      const raw = values[key]
+      const raw = hasTemplateValue(values, key) ? values[key] : undefined
       output += raw === undefined ? `$${key}` : formatTemplateValue(raw)
       output += tail
     }
@@ -462,10 +483,12 @@ const buildJitInterpolator = (
   template: string,
   parsed: ParsedMessageTemplate,
 ): ((values?: Record<string, unknown>) => string) | undefined => {
+  if (!canUseJit()) return undefined
   const { prefix, segments } = parsed
   const lines = [`let output = ${serializeStringLiteral(prefix)};`]
   for (const { key, tail } of segments) {
-    lines.push(`{ const value = ${formatPropertyAccess('p', key)};
+    const keyLit = serializeStringLiteral(key)
+    lines.push(`{ const value = hasValue(p, ${keyLit}) ? ${formatPropertyAccess('p', key)} : undefined;
       output += typeof value === "string" || typeof value === "number" ? value :
         value === undefined ? ${serializeStringLiteral(`$${key}`)} : format(value);
       ${tail === '' ? '' : `output += ${serializeStringLiteral(tail)};`} }`)
@@ -475,9 +498,11 @@ const buildJitInterpolator = (
     ${lines.join('\n')}
     return output;
   }`
-  return compileJitFunction<(values?: Record<string, unknown>) => string>(['format'], body, [
-    formatTemplateValue,
-  ])
+  return compileJitFunction<(values?: Record<string, unknown>) => string>(
+    ['format', 'hasValue'],
+    body,
+    [formatTemplateValue, hasTemplateValue],
+  )
 }
 /* Stryker restore all */
 
@@ -488,7 +513,7 @@ const compileMessageInterpolator = (
   if (template === defaultMessageTemplate) {
     return (values) => {
       if (values === undefined || values === null) return defaultMessageTemplate
-      const raw = values['message']
+      const raw = hasTemplateValue(values, 'message') ? values['message'] : undefined
       return raw === undefined ? defaultMessageTemplate : formatTemplateValue(raw)
     }
   }
@@ -552,10 +577,7 @@ const shouldCopyMetadata = (target: object, owner: object, key: string): boolean
 
 const copyOwnMetadata = (target: object, props: Record<string, unknown>): void => {
   for (const key in props) {
-    if (
-      Object.hasOwn(props, key) &&
-      !reservedTemplateVariables.has(key as ReservedTemplateVariable)
-    ) {
+    if (Object.hasOwn(props, key) && shouldCopyMetadata(target, props, key)) {
       assignReadonly(target, key, props[key])
     }
   }
@@ -587,6 +609,9 @@ const copyVisibleMetadata = (target: object, props: object): void => {
   }
 }
 
+const TAGGED_ERROR_TO_JSON = Symbol('resultar.taggedError.toJSON')
+const TAGGED_ERROR_DEFAULT_TO_JSON = Symbol('resultar.taggedError.defaultToJSON')
+
 const serializeTaggedValue = (value: unknown): unknown =>
   isRedacted(value) ? stringifyRedacted(value) : value
 
@@ -600,6 +625,17 @@ const serializeCause = (cause: unknown, seen = new Set<Error>()): unknown => {
   }
 
   seen.add(cause)
+
+  if (TAGGED_ERROR_TO_JSON in cause) {
+    const tagged = cause as unknown as {
+      readonly toJSON: () => object
+      readonly [TAGGED_ERROR_TO_JSON]: (visited: Set<Error>) => object
+      readonly [TAGGED_ERROR_DEFAULT_TO_JSON]: () => object
+    }
+    return tagged.toJSON === tagged[TAGGED_ERROR_DEFAULT_TO_JSON]
+      ? tagged[TAGGED_ERROR_TO_JSON](seen)
+      : tagged.toJSON()
+  }
 
   const json: Record<string, unknown> = {
     message: cause.message,
@@ -759,6 +795,10 @@ const createTaggedErrorClass = <
      * Serializes the tagged error, metadata, and cause chain.
      */
     public toJSON(): object {
+      return this[TAGGED_ERROR_TO_JSON](new Set<Error>([this]))
+    }
+
+    public [TAGGED_ERROR_TO_JSON](seen: Set<Error>): object {
       const json: Record<string, unknown> = {
         _tag: this._tag,
         fingerprint: this.fingerprint,
@@ -768,7 +808,7 @@ const createTaggedErrorClass = <
       }
 
       if (this.cause !== undefined) {
-        json['cause'] = serializeCause(this.cause)
+        json['cause'] = serializeCause(this.cause, seen)
       }
 
       for (const [key, value] of Object.entries(this)) {
@@ -786,7 +826,26 @@ const createTaggedErrorClass = <
     }
   }
 
+  Object.defineProperty(GeneratedTaggedError.prototype, TAGGED_ERROR_DEFAULT_TO_JSON, {
+    value: Object.getOwnPropertyDescriptor(GeneratedTaggedError.prototype, 'toJSON')?.value,
+  })
+
   return GeneratedTaggedError as unknown as TaggedErrorClass<Tag, MessageTemplate, Base>
+}
+
+const copyEnumProps = (target: Record<PropertyKey, unknown>, props: object): void => {
+  for (const key in props) {
+    if (Object.hasOwn(props, key) && key !== '_tag') {
+      const field = (props as Record<string, unknown>)[key]
+      if (key === '__proto__') assignReadonly(target, key, field)
+      else target[key] = field
+    }
+  }
+  for (const sym of Object.getOwnPropertySymbols(props)) {
+    if (Object.prototype.propertyIsEnumerable.call(props, sym)) {
+      target[sym] = (props as Record<symbol, unknown>)[sym]
+    }
+  }
 }
 
 /**
@@ -830,7 +889,13 @@ export const taggedEnum = <
       },
     ): ReturnType {
       const handler = getTaggedHandler<ReturnType>(value, handlers)
-      if (handler === undefined) throw new Error(`No tagged enum handler for ${String(value._tag)}`)
+      if (handler === undefined) {
+        const tag =
+          typeof value === 'object' && value !== null && '_tag' in value
+            ? (value as { readonly _tag?: unknown })._tag
+            : value
+        throw new Error(`No tagged enum handler for ${String(tag)}`)
+      }
       return handler(value)
     },
   }
@@ -850,18 +915,10 @@ export const taggedEnum = <
       let ctor = constructors.get(property)
       if (ctor === undefined) {
         ctor = (props?: object): object => {
-          const value: Record<string, unknown> = { _tag: property }
-
-          if (props !== undefined) {
-            for (const key in props) {
-              if (Object.hasOwn(props, key) && key !== '_tag') {
-                const field = (props as Record<string, unknown>)[key]
-                if (key === '__proto__') assignReadonly(value, key, field)
-                else value[key] = field
-              }
-            }
+          const value: Record<PropertyKey, unknown> = { _tag: property }
+          if (props !== undefined && props !== null) {
+            copyEnumProps(value, props)
           }
-
           return Object.freeze(value)
         }
         constructors.set(property, ctor)
