@@ -53,8 +53,13 @@
     "prepublishOnly": "vp pack",
     "smoke:package": "pnpm run build && pnpm run native:build:current && vpx scripts/smoke-package.ts"
   },
+  "dependencies": {
+    "jsonc-parser": "3.3.1"
+  },
   "devDependencies": {
     "@types/node": "catalog:",
+    "resultar": "workspace:*",
+    "resultar-request": "workspace:*",
     "vite-plus": "catalog:",
     "vscode-json-languageservice": "5.6.1"
   },

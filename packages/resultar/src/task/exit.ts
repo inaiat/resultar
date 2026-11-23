@@ -25,6 +25,12 @@ export const combineExits = (
 }
 
 export const NEVER_ABORTED_SIGNAL: AbortSignal = new AbortController().signal
+// The shared signal has no controller capable of aborting it. Holding abort
+// callbacks here would retain their closures for the lifetime of the process.
+Object.defineProperties(NEVER_ABORTED_SIGNAL, {
+  addEventListener: { value: () => undefined },
+  removeEventListener: { value: () => undefined },
+})
 
 type AbortListener = () => void
 

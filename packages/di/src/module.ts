@@ -1113,7 +1113,7 @@ const settleFastResponse = (
     return Promise.resolve(attachFastStreamLifecycle(runtime, signal, response));
   } catch (error) {
     runtime.endChild();
-    return Promise.reject(new Error("Request scope failed", { cause: error }));
+    return Promise.reject(new Error("Request scope failed", { cause: { _tag: "Fail", error } }));
   }
 };
 
@@ -1127,7 +1127,10 @@ const runFastFetch = (
   if (runtime.isClosedOrDisposing()) {
     return Promise.reject(
       new Error("Request scope failed", {
-        cause: new TypeError("Cannot create a child from a closed service scope"),
+        cause: {
+          _tag: "Die",
+          defect: new TypeError("Cannot create a child from a closed service scope"),
+        },
       }),
     );
   }
@@ -1136,12 +1139,18 @@ const runFastFetch = (
   }
   runtime.beginChild();
   let responseOrPromise: Response | Promise<Response> | undefined = undefined;
+  let services: RuntimeServices = EMPTY_LOCALS;
   try {
-    const services = plan.resolve(runtime.root.cache, locals);
+    services = plan.resolve(runtime.root.cache, locals);
+  } catch (defect) {
+    runtime.endChild();
+    return Promise.reject(new Error("Request scope failed", { cause: { _tag: "Die", defect } }));
+  }
+  try {
     responseOrPromise = handle(services, request);
   } catch (error) {
     runtime.endChild();
-    return Promise.reject(new Error("Request scope failed", { cause: error }));
+    return Promise.reject(new Error("Request scope failed", { cause: { _tag: "Fail", error } }));
   }
   if (!isPromiseLike(responseOrPromise)) {
     return settleFastResponse(runtime, request.signal, responseOrPromise);
@@ -1150,7 +1159,7 @@ const runFastFetch = (
     (response) => settleFastResponse(runtime, request.signal, response),
     (error: unknown) => {
       runtime.endChild();
-      throw new Error("Request scope failed", { cause: error });
+      throw new Error("Request scope failed", { cause: { _tag: "Fail", error } });
     },
   );
 };

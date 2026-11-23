@@ -29,6 +29,8 @@ export interface VscodeTextDocument {
   readonly languageId: string;
   readonly version: number;
   readonly fileName: string;
+  readonly isDirty?: boolean;
+  save?(): PromiseLike<boolean>;
   getText(): string;
 }
 

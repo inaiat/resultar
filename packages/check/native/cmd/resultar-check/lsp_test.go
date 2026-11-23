@@ -46,3 +46,26 @@ func TestToLSPDiagnostic(t *testing.T) {
 		t.Fatalf("unexpected LSP diagnostic: %#v", diagnostic)
 	}
 }
+
+func TestSemanticErrorKeepsResultTaskQuickFix(t *testing.T) {
+	_, config, _ := writeMigrateProject(t, `import { ResultTask, type Result } from "resultar";
+export async function read(): Promise<Result<number>> { return await ResultTask.ok(1) }
+`, v4RequestTypes)
+	server := lspServer{project: config}
+	diagnostics, err := server.diagnostics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var semantic, quickFix bool
+	for _, d := range diagnostics {
+		semantic = semantic || d.Code != 0
+		for _, fix := range d.Fixes {
+			for _, edit := range fix.Edits {
+				quickFix = quickFix || d.Rule == "no-await-result-task" && edit.NewText == ".runResult()"
+			}
+		}
+	}
+	if !semantic || !quickFix {
+		t.Fatalf("want compiler error and ResultTask quickfix, got %+v", diagnostics)
+	}
+}

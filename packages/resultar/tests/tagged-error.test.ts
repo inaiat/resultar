@@ -11,6 +11,7 @@ import {
   isError,
   matchError,
   matchErrorPartial,
+  taggedEnum,
 } from '../src/index.js'
 
 class UserNotFoundError extends createTaggedError({
@@ -48,7 +49,21 @@ const createKnownTaggedError = (): UserNotFoundError | DatabaseError =>
 const createUnknownTaggedError = (): UserNotFoundError | DatabaseError =>
   new DatabaseError({ operation: 'write' })
 
+it('constructs tagged variants whose names also exist on Object.prototype', () => {
+  const names = taggedEnum<{ constructor: object; toString: object; __proto__: object }>()
+  for (const tag of ['constructor', 'toString', '__proto__'] as const) {
+    const value = names[tag]({})
+    equal(value._tag, tag)
+    equal(names.$is(tag, value), true)
+  }
+})
+
 describe('tagged errors', async () => {
+  it('concatenates adjacent numeric placeholders', () => {
+    const Adjacent = createTaggedError({ name: 'Adjacent', message: '$a$b failed' })
+    equal(new Adjacent({ a: 10, b: 20 }).message, '1020 failed')
+  })
+
   it('creates a typed Error subclass with interpolated props', () => {
     const error = new UserNotFoundError({ id: '123', source: 'users' })
 
@@ -194,6 +209,21 @@ describe('tagged errors', async () => {
     })
 
     equal(message, 'user: 789')
+  })
+
+  it('only dispatches prototype-shaped tags to explicitly supplied handlers', () => {
+    for (const tag of ['toString', 'constructor', '__proto__']) {
+      const problem = Object.assign(new Error('fallback'), { _tag: tag })
+      equal(
+        matchErrorPartial(problem, {} as never, (e) => e.message),
+        'fallback',
+      )
+      equal(
+        matchErrorPartial(problem, { [tag]: () => 'handled' } as never, () => 'fallback'),
+        'handled',
+      )
+      deepEqual(ResultTaskValue.err(problem).catchTags({}).runSync(), Result.err(problem))
+    }
   })
 
   it('matches partial handlers with fallback', () => {
@@ -533,4 +563,64 @@ describe('tagged error types', async () => {
       })
     }
   })
+})
+
+it('keeps enum factories awaitable as plain values and copies reserved object keys as data', async () => {
+  const variants = taggedEnum<{ Item: { label: string } }>()
+  equal(Reflect.get(variants, 'then'), undefined)
+  equal(await Promise.resolve(variants), variants)
+  const props = Object.defineProperty({ label: 'x' }, '__proto__', {
+    value: 'metadata',
+    enumerable: true,
+  })
+  const item = variants.Item(props)
+  equal(Object.getPrototypeOf(item), Object.prototype)
+  equal(Object.getOwnPropertyDescriptor(item, '__proto__')?.value, 'metadata')
+  const record = new StaticMessageError()
+  Object.defineProperty(record, 'valueOf', { value: 'extra', enumerable: true })
+  deepEqual(Object.getOwnPropertyDescriptor(record.toJSON(), 'valueOf'), {
+    value: 'extra',
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
+})
+
+it('invokes synchronous try and generator options with their receiver', () => {
+  function recover(this: { marker: number }) {
+    return this.marker
+  }
+  const opts = {
+    marker: 7,
+    try() {
+      return this.marker
+    },
+    catch: recover,
+  }
+  equal(Result.try(opts).unwrapOr(0), 7)
+  const failed = {
+    marker: 7,
+    catch: recover,
+    try() {
+      throw new Error('stop')
+    },
+  }
+  deepEqual(Result.try(failed), Result.err(7))
+  const gen = {
+    marker: 7,
+    catch: recover,
+    *try() {
+      return yield* Result.ok(this.marker)
+    },
+  }
+  deepEqual(Result.gen(gen), Result.ok(7))
+  const broken = {
+    marker: 7,
+    catch: recover,
+    *try() {
+      yield* Result.ok(0)
+      throw new Error('stop')
+    },
+  }
+  deepEqual(Result.gen(broken), Result.err(7))
 })

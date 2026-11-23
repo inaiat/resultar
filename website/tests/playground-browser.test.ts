@@ -329,7 +329,7 @@ class HeadlessBrowser {
         resolveExit();
       });
     });
-    rmSync(this.userDataDir, { recursive: true, force: true });
+    rmSync(this.userDataDir, { recursive: true, force: true, maxRetries: 5 });
   }
 }
 
@@ -351,6 +351,17 @@ void test("the home page links to the full benchmark report", async (context) =>
   });
 
   await browser.navigate(url);
+  await browser.evalJs(`document.querySelector('[data-action="open-search"]').click()`);
+  const composing = await browser.evalJs<boolean>(`(() => {
+    const input = document.querySelector("#search-input");
+    input.value = "ResultTask";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true }));
+    return document.querySelector("#search-input") === input;
+  })()`);
+  assert.equal(composing, true);
+  await browser.evalJs(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`);
+
   await browser.evalJs(
     `document.querySelector('.hero-actions a[href="#/docs/benchmarks"]').click()`,
   );

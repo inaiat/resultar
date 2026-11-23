@@ -307,6 +307,7 @@ const createQueue = <A>(capacity: number): Queue<A> => {
 
   const offerAll = (values: Iterable<A>): ResultTask<boolean> =>
     ResultTask.gen(function* () {
+      if (closed) return false
       for (const value of values) {
         const accepted = yield* offer(value)
         if (!accepted) return false
@@ -356,7 +357,7 @@ const createQueue = <A>(capacity: number): Queue<A> => {
       }),
     takeAll: () => ResultTask.sync(() => drainBuffered(bufferedSize())),
     takeUpTo: (max) => {
-      assertNonNegativeLimit(max)
+      if (max !== Infinity) assertNonNegativeLimit(max)
       return ResultTask.sync(() => drainBuffered(max))
     },
     shutdown,

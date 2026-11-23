@@ -1,4 +1,5 @@
 import { deepEqual, equal, ok as assertOk, rejects } from 'node:assert/strict'
+import { getEventListeners } from 'node:events'
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
 import {
@@ -8,12 +9,107 @@ import {
   Fiber,
   ResultTask,
   ResultTaskCauseError,
+  Result,
   err,
   ok,
 } from '../src/index.js'
-import type { Exit, FiberHandle, Result, ResultTaskScope } from '../src/index.js'
+import type { Exit, FiberHandle, ResultTaskScope } from '../src/index.js'
 
 describe('ResultTask instance runners', () => {
+  it('runs the andThen continuation once when it returns a sync task', async () => {
+    let calls = 0
+    const task = ResultTask.ok(1).andThen((value) => {
+      calls += 1
+      return ResultTask.sync(() => value + 1)
+    })
+    deepEqual(await task.runResult(), ok(2))
+    equal(calls, 1)
+  })
+
+  it('passes a native signal to fetch without retaining abort listeners on the shared signal', async () => {
+    const task = ResultTask.tryPromise(async (signal) => {
+      signal.addEventListener('abort', () => undefined)
+      equal(getEventListeners(signal, 'abort').length, 0)
+      const response = await fetch('data:text/plain,ok', { signal })
+      return response.text()
+    })
+    deepEqual(await task.runResult(), ok('ok'))
+  })
+
+  it('trampolines nested suspensions for synchronous execution', () => {
+    const countdown = (n: number): ResultTask<number> =>
+      n === 0 ? ResultTask.ok(42) : ResultTask.suspend(() => countdown(n - 1))
+    deepEqual(countdown(50_000).runSync(), ok(42))
+  })
+
+  it('distinguishes zero arguments from a supplied undefined', () => {
+    const countArgs = (...args: readonly unknown[]) => args.length
+    const safe = Result.fromThrowable(countArgs)
+    const task = ResultTask.fn(function* (...args: readonly unknown[]) {
+      return yield* ResultTask.ok(args.length)
+    })
+    deepEqual(safe(), ok(0))
+    deepEqual(safe(undefined), ok(1))
+    deepEqual(task().runSync(), ok(0))
+    deepEqual(task(undefined).runSync(), ok(1))
+  })
+
+  it('binds both tryPromise methods to their options', async () => {
+    const options = {
+      message: 'mapped',
+      try() {
+        return Promise.reject(new Error(this.message))
+      },
+      catch(cause: unknown) {
+        return [this.message, (cause as Error).message]
+      },
+    }
+    deepEqual(await ResultTask.tryPromise(options).runResult(), err(['mapped', 'mapped']))
+  })
+
+  it('adopts foreign thenables once and preserves mapper defects', async () => {
+    let calls = 0
+    let maps = 0
+    const defect = new Error('mapper defect')
+    const rejected = {
+      then(_ok: unknown, fail: (reason: string) => void) {
+        fail('bad')
+      },
+    } as unknown as PromiseLike<number>
+    const factory = () => {
+      calls += 1
+      return rejected
+    }
+    const result = ResultTask.tryPromise(factory).runResult()
+    assertOk(result instanceof Promise)
+    deepEqual(await result, err('bad'))
+    await rejects(
+      ResultTask.tryPromise(factory, () => {
+        maps += 1
+        throw defect
+      }).runResult(),
+      defect,
+    )
+    equal(calls, 2)
+    equal(maps, 1)
+  })
+
+  it('rejects with the original mapper defect for both factory throws and rejected promises', async () => {
+    const defect = { source: 'mapper' }
+    const syncThrow = (): never => {
+      throw new Error('input')
+    }
+    const asyncReject = () => Promise.reject(new Error('input'))
+    for (const factory of [syncThrow, asyncReject]) {
+      const task = ResultTask.tryPromise(factory, () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- Foreign code can throw arbitrary values.
+        throw defect
+      })
+      await rejects(task.runResult(), (reason: unknown) => reason === defect)
+      await rejects(task.runResult({}), (reason: unknown) => reason === defect)
+    }
+  })
+
   it('starts a fresh execution for each runner and stores methods on the prototype', async () => {
     let executions = 0
     const task = ResultTask.sync(() => {

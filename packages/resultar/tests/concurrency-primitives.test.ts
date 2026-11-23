@@ -88,6 +88,14 @@ describe('Ref, Deferred, and Queue concurrency primitives', () => {
     )
   })
 
+  it('drains all available values and rejects empty offers after shutdown', () => {
+    const queue = Queue.unbounded<number>()
+    queue.offerAll([1, 2]).runSync()
+    deepEqual(queue.takeUpTo(Infinity).runSync(), ok([1, 2]))
+    queue.shutdown().runSync()
+    deepEqual(queue.offerAll([]).runSync(), ok(false))
+  })
+
   it('drains buffered items after Queue.shutdown and interrupts empty takers', async () => {
     const queue = Queue.unbounded<number>()
     equal(queue.capacity, Infinity)
@@ -376,6 +384,14 @@ describe('Ref, Deferred, and Queue concurrency primitives', () => {
     deepEqual(queue.takeAll().runSync(), ok([cycles, cycles + 1]))
     // Ring buffer stays at O(capacity); heap delta must remain small (well under 8 MB).
     equal(heapAfter - heapBefore < 8 * 1024 * 1024, true)
+  }, 20_000)
+
+  it('keeps an interrupted completer from settling a shared Deferred', async () => {
+    const gate = Deferred.make<number>()
+    const fiber = gate.complete(ResultTask.never()).runFork()
+    await fiber.interrupt().runPromise()
+    deepEqual(gate.poll().runSync(), ok(undefined))
+    deepEqual(gate.succeed(2).runSync(), ok(true))
   })
 
   it('isolates Deferred failure span traces per observer while preserving origin traces', async () => {
@@ -498,4 +514,37 @@ describe('Ref, Deferred, and Queue concurrency primitives', () => {
     // Already buffered item remains drainable
     deepEqual(queue.take().runSync(), ok('buffered'))
   })
+})
+
+it('keeps interruption, finalizer defects and spans when the completing fiber aborts', async () => {
+  for (const asyncLeaf of [false, true]) {
+    const gate = Deferred.make<number, string>()
+    const controller = new AbortController()
+    const defect = new Error('cleanup')
+    const stop = () => {
+      controller.abort('stop')
+      return 1
+    }
+    const work = asyncLeaf
+      ? ResultTask.fromPromise(() => Promise.resolve(stop()))
+      : ResultTask.sync(stop)
+    const task = work
+      .ensuring(() => ResultTask.err('release'))
+      .ensuring(() =>
+        ResultTask.sync(() => {
+          throw defect
+        }),
+      )
+      .withSpan('read')
+    const exit = await gate.complete(task).runExit({ signal: controller.signal })
+    equal(exit._tag, 'Failure')
+    if (exit._tag === 'Failure') {
+      deepEqual(exit.cause, Cause.sequential(Cause.interrupt('stop'), Cause.die(defect)))
+      deepEqual(
+        Cause.spans(exit.cause).map((span) => span.name),
+        ['read'],
+      )
+    }
+    deepEqual(gate.isDone().runSync(), ok(false))
+  }
 })

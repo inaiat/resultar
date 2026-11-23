@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -63,39 +64,79 @@ func runMigrateV5(args []string) int {
 		return 1
 	}
 
-	opened, diagnostics, err := project.Open(projectPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	if len(diagnostics) > 0 {
-		printHumanDiagnostics(tsDiagnostics(diagnostics))
-		return 1
-	}
-	options, err := config.Load(opened.ConfigPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-
 	ctx := context.Background()
-	rawItems, err := analyzer.MigrateV5(ctx, opened.Program, opened.Directory, options)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-
-	items := make([]analyzer.MigrationItem, 0, len(rawItems))
-	for _, item := range rawItems {
-		if matchesFile(item.File, fileFilter, opened.Directory) {
-			items = append(items, item)
-		}
-	}
-
-	if fixMode {
-		if err := applyMigrationEdits(opened, items); err != nil {
+	overlay := make(map[string]string)
+	seenStates := make(map[[sha256.Size]byte]bool)
+	var items []analyzer.MigrationItem
+	seenReviews := map[[4]string]bool{}
+	for pass := 0; ; pass++ {
+		opened, diagnostics, err := project.OpenWithOverlay(projectPath, overlay)
+		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
+		}
+		if len(diagnostics) > 0 {
+			printHumanDiagnostics(tsDiagnostics(diagnostics))
+			return 1
+		}
+		if syntax := collectSyntacticDiagnostics(ctx, opened.Program, opened.Program.SourceFiles()); len(syntax) > 0 {
+			printHumanDiagnostics(syntax)
+			return 1
+		}
+		options, err := config.Load(opened.ConfigPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		raw, err := analyzer.MigrateV5(ctx, opened.Program, opened.Directory, options)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		var batch []analyzer.MigrationItem
+		for _, item := range raw {
+			if matchesFile(item.File, fileFilter, opened.Directory) {
+				batch = append(batch, item)
+			}
+		}
+		stageMigrationEdits(opened, batch, overlay)
+		changed := false
+		for _, item := range batch {
+			if item.Kind == analyzer.MigrationReview {
+				key := [4]string{item.File, item.Category, item.Original, item.Reason}
+				if pass == 0 || !seenReviews[key] {
+					items = append(items, item)
+					seenReviews[key] = true
+				}
+			}
+			if item.Applied {
+				changed = true
+				item.Applied = fixMode
+				items = append(items, item)
+			}
+		}
+		if !changed {
+			break
+		}
+		// JSON orders map keys, so equivalent overlays have the same fingerprint.
+		contents, err := json.Marshal(overlay)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		state := sha256.Sum256(contents)
+		if seenStates[state] {
+			fmt.Fprintln(os.Stderr, "Migration did not converge: repeated source state.")
+			return 1
+		}
+		seenStates[state] = true
+	}
+	if fixMode {
+		for path, contents := range overlay {
+			if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
 		}
 	}
 
@@ -119,7 +160,7 @@ func runMigrateV5(args []string) int {
 	return 0
 }
 
-func applyMigrationEdits(opened *project.Opened, items []analyzer.MigrationItem) error {
+func stageMigrationEdits(opened *project.Opened, items []analyzer.MigrationItem, overlay map[string]string) {
 	sourceByFile := make(map[string]string, len(opened.Program.SourceFiles()))
 	for _, file := range opened.Program.SourceFiles() {
 		sourceByFile[filepath.Clean(string(file.FileName()))] = file.Text()
@@ -197,18 +238,11 @@ func applyMigrationEdits(opened *project.Opened, items []analyzer.MigrationItem)
 		if updated == source {
 			continue
 		}
-		mode := os.FileMode(0o644)
-		if info, err := os.Stat(path); err == nil {
-			mode = info.Mode()
-		}
-		if err := os.WriteFile(path, []byte(updated), mode); err != nil {
-			return fmt.Errorf("write migrated file %s: %w", path, err)
-		}
+		overlay[path] = updated
 		for _, idx := range acceptedIndices {
 			items[idx].Applied = true
 		}
 	}
-	return nil
 }
 
 func printHumanMigrationReport(items []analyzer.MigrationItem, cwd string, fixMode bool) {

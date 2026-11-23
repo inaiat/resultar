@@ -4,7 +4,7 @@ import type { Cause } from './cause.js'
 const cleanupCauses = new WeakSet<object>()
 
 export const markCleanupCause = (cause: Cause<unknown> | undefined): void => {
-  cleanupCauses.add(cause as object)
+  if (cause !== undefined) cleanupCauses.add(cause)
 }
 
 export const isCleanupCause = (cause: Cause<unknown>): boolean => cleanupCauses.has(cause)

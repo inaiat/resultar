@@ -173,6 +173,12 @@ export const insideGen = ResultTask.gen(async function* () {
   return res
 })
 
+declare const labelled: ResultTask<{ label: string }, Error>
+declare const optionalValue: ResultTask<{ value: number } | undefined, Error>
+export async function mixedKeys() { const {value, label} = await labelled; return [value, label] }
+export async function ambiguousDirect() { return (await optionalValue).value }
+export async function ambiguousAlias() { const res = await optionalValue; return res.value }
+
 // 7. Valid execution boundary: awaiting .runResult() or .runPromise() -> 0 findings
 export async function validBoundary(): Promise<Result<string, Error>> {
   const value = await lookup().runPromise()
@@ -205,8 +211,8 @@ export async function validBoundary(): Promise<Result<string, Error>> {
 		}
 	}
 
-	if len(awaitFindings) != 13 {
-		t.Fatalf("expected 13 no-await-result-task findings, got %d: %#v", len(awaitFindings), awaitFindings)
+	if len(awaitFindings) != 16 {
+		t.Fatalf("expected 16 no-await-result-task findings, got %d: %#v", len(awaitFindings), awaitFindings)
 	}
 
 	// Verify autofix availability per case.
@@ -228,6 +234,9 @@ export async function validBoundary(): Promise<Result<string, Error>> {
 		{false, ".provideServices"}, // noFixMissingServices
 		{false, "union containing"}, // noFixMixedUnion
 		{false, "yield*"},           // insideGen
+		{false, ".runResult()"},     // mixedKeys
+		{false, ".runResult()"},     // ambiguousDirect
+		{false, ".runResult()"},     // ambiguousAlias
 	}
 	for i, exp := range expectations {
 		f := awaitFindings[i]
@@ -260,6 +269,8 @@ let count = 0
 
 // 1. ResultTask -> suggests tap / tapError with safe fix
 export const t1 = task.map((x) => {
+  const local = { get current(): number { return x } }
+  log(local.current)
   log(x)
   return x
 })
@@ -293,6 +304,24 @@ export const a2 = ra.mapErr((e) => {
   log(e)
   return e
 })
+declare const optional: ResultTask<number | undefined, Error | undefined>
+export const defaultValue = optional.map((x = 7) => { log(x); return x })
+export const restValue = optional.map((...xs) => { log(xs); return xs })
+export const defaultError = optional.mapErr((e = new Error()) => { log(e); return e })
+export const restError = optional.mapErr((...es) => { log(es); return es })
+declare const account: Result<{ status: number }, { status: number }>
+export const getterRead = account.map(x => { void x.status; return x })
+export const computedGetterRead = account.mapErr(x => { void x["status"]; return x })
+export const destructuredGetter = account.map(x => { const { status } = x; void status; return x })
+export const spreadGetter = account.map(x => { void { ...x }; return x })
+declare const big: Result<bigint, bigint>
+export const divides = big.mapErr(x => { void (x / 0n); return x })
+export const generator = task.map(function* (x) { yield x + 1; return x })
+export const generatorError = task.mapErr(function* (e) { yield e.message; return e })
+export const changed = task.map(x => { x += 10; return x })
+export const reassigned = task.mapErr(e => { e = new Error(); return e })
+export const shadow = task.map(x => { if (x) { const x = 2; return x }; return x })
+export const empty = task.map(x => { if (x) return; return x })
 void count
 `
 	dir := writeV5Fixture(t, source)
@@ -320,6 +349,11 @@ void count
 		{"prefer-tap", "`inspect`", true},             // rSafe
 		{"prefer-tap", "`inspect`", false},            // a1
 		{"prefer-tap-error", "`inspectError`", false}, // a2
+		{"prefer-tap", "`inspect`", false},            // getterRead
+		{"prefer-tap-error", "`inspectError`", false}, // computedGetterRead
+		{"prefer-tap", "`inspect`", false},            // destructuredGetter
+		{"prefer-tap", "`inspect`", false},            // spreadGetter
+		{"prefer-tap-error", "`inspectError`", false}, // divides
 	}
 	if len(findings) != len(wants) {
 		t.Fatalf("got %d findings, want %d: %#v", len(findings), len(wants), findings)

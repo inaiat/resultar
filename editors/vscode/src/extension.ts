@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
+import crossSpawn from "cross-spawn";
 import { createRequire } from "node:module";
-import { relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, sep } from "node:path";
 
 import { ResultarLspClient } from "./lsp-client.js";
 import {
@@ -138,7 +138,7 @@ const runCliCommand = async (
   cwd: string,
 ): Promise<CliRunResult> =>
   new Promise<CliRunResult>((resolveResult) => {
-    const child = spawn(resolved.command, [...resolved.baseArgs, ...extraArgs], {
+    const child = crossSpawn.spawn(resolved.command, [...resolved.baseArgs, ...extraArgs], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -205,6 +205,8 @@ export const activateWithApi = (
 
   let client: ResultarLspClient | undefined = undefined;
   let starting = false;
+  let restartPending = false;
+  let disposed = false;
 
   const getWorkspaceRoot = (): string | undefined =>
     api.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -246,7 +248,9 @@ export const activateWithApi = (
   };
 
   const startClient = async (): Promise<void> => {
+    if (disposed) return;
     if (starting) {
+      restartPending = true;
       return;
     }
     const workspaceRoot = getWorkspaceRoot();
@@ -265,6 +269,7 @@ export const activateWithApi = (
     starting = true;
     try {
       await stopClient();
+      if (disposed) return;
       diagnostics.clear();
       statusBar.text = "$(sync~spin) Resultar";
 
@@ -295,16 +300,17 @@ export const activateWithApi = (
           onLog: (line) => {
             output.appendLine(line);
           },
-          onExit: (code) => {
-            if (code !== 0 && code !== null) {
+          onExit: (code, signal) => {
+            if (code !== 0 || signal !== null) {
               statusBar.text = "$(error) Resultar";
-              statusBar.tooltip = `Resultar Check exited with code ${code} — run Restart Language Server`;
+              statusBar.tooltip = `Resultar Check exited with ${signal ?? code} — run Restart Language Server`;
             }
           },
         });
 
-      await nextClient.start(workspaceRoot);
       client = nextClient;
+      await nextClient.start(workspaceRoot);
+      if (disposed || client !== nextClient) return;
       updateStatusBar(statusBar, diagnostics);
 
       for (const doc of api.workspace.textDocuments) {
@@ -318,6 +324,7 @@ export const activateWithApi = (
         }
       }
     } catch (error: unknown) {
+      if (disposed) return;
       const message = error instanceof Error ? error.message : String(error);
       output.appendLine(`Failed to start resultar-check lsp: ${message}`);
       statusBar.text = "$(error) Resultar";
@@ -327,6 +334,10 @@ export const activateWithApi = (
       );
     } finally {
       starting = false;
+      if (restartPending && !disposed) {
+        restartPending = false;
+        await startClient();
+      }
     }
   };
 
@@ -348,11 +359,24 @@ export const activateWithApi = (
         );
         return;
       }
-      const projectDir = resolve(workspaceRoot, settings.project, "..");
-      const rel = relative(projectDir, activeDoc.fileName).replaceAll(sep, "/");
-      args.push("--file", rel);
+      args.push("--file", activeDoc.fileName);
     }
 
+    const documents = singleFile
+      ? [api.window.activeTextEditor?.document]
+      : api.workspace.textDocuments;
+    const dirty = documents.filter((doc): doc is VscodeTextDocument => {
+      if (doc?.isDirty !== true || !isSupportedDocument(doc)) return false;
+      const path = relative(workspaceRoot, doc.fileName);
+      return singleFile || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+    });
+    const saved = await Promise.all(dirty.map(async (doc) => doc.save?.()));
+    if (saved.some((ok) => ok !== true)) {
+      void api.window.showWarningMessage(
+        "Resultar Check: save modified TypeScript files before applying fixes.",
+      );
+      return;
+    }
     output.appendLine(`Running: ${resolved.command} ${[...resolved.baseArgs, ...args].join(" ")}`);
     const result = await runCliCommand(resolved, args, workspaceRoot);
     if (result.stderr.trim().length > 0) {
@@ -450,6 +474,7 @@ export const activateWithApi = (
   const controller: ExtensionController = {
     restart: startClient,
     dispose: async () => {
+      disposed = true;
       await stopClient();
       diagnostics.dispose();
       statusBar.dispose();
@@ -503,8 +528,8 @@ export const activateWithApi = (
       }
     }),
     api.commands.registerCommand("resultarCheck.restart", () => void startClient()),
-    api.commands.registerCommand("resultarCheck.fixWorkspace", () => void runFix(false)),
-    api.commands.registerCommand("resultarCheck.fixFile", () => void runFix(true)),
+    api.commands.registerCommand("resultarCheck.fixWorkspace", async () => runFix(false)),
+    api.commands.registerCommand("resultarCheck.fixFile", async () => runFix(true)),
     api.commands.registerCommand("resultarCheck.showOverview", () => void showOverview()),
     api.commands.registerCommand("resultarCheck.showOutput", () => {
       output.show(true);

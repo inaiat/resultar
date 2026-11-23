@@ -1,6 +1,7 @@
 import type { ResultTask } from "resultar";
 import type { Static, TSchema } from "typebox";
 import { Compile, type Validator } from "typebox/compile";
+import { Environment } from "typebox/system";
 import Value from "typebox/value";
 
 import {
@@ -42,7 +43,13 @@ const isJitDisabled = (): boolean => {
 };
 
 const getCompiledValidator = (schema: TSchema): Validator | undefined => {
-  if (isJitDisabled() || uncompilableSchemas.has(schema)) {
+  if (
+    typeof schema !== "object" ||
+    schema === null ||
+    isJitDisabled() ||
+    !Environment.CanEvaluate() ||
+    uncompilableSchemas.has(schema)
+  ) {
     return undefined;
   }
   const cached = compiledValidators.get(schema);
@@ -66,15 +73,15 @@ const getTypeBoxErrors = (schema: TSchema, value: unknown) =>
     path: error.instancePath,
   }));
 
-const decodeWithTypeBoxSchema = <S extends TSchema>(schema: S) => {
-  const validator = getCompiledValidator(schema);
-  return (value: unknown): RequestJsonDecodeResult<Static<S>> => {
+const decodeWithTypeBoxSchema =
+  <S extends TSchema>(schema: S) =>
+  (value: unknown): RequestJsonDecodeResult<Static<S>> => {
+    const validator = getCompiledValidator(schema);
     const valid = validator === undefined ? Value.Check(schema, value) : validator.Check(value);
     return valid
       ? { success: true, value: value as Static<S> }
       : { errors: getTypeBoxErrors(schema, value), success: false };
   };
-};
 
 /**
  * Builds a lazy, repeatable `ResultTask` for a JSON request factory validated with TypeBox.

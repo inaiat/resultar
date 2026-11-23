@@ -4,7 +4,7 @@ import { compileJitFunction, formatPropertyAccess, serializeStringLiteral } from
 import { isRedacted, stringifyRedacted, type Redacted } from '../core/redacted.js'
 import { ResultTask } from '../task/result-task.js'
 import { err as resultErr } from '../result/result.js'
-import { isError } from './tagged-match.js'
+import { getTaggedHandler, isError, matchTaggedOr } from './tagged-match.js'
 
 export { isError } from './tagged-match.js'
 
@@ -312,7 +312,7 @@ type TaggedEnumConstructor<
  * Factory returned by `taggedEnum`.
  */
 export type TaggedEnumFactory<Members extends Record<string, object>> = {
-  readonly [Tag in keyof Members]: TaggedEnumConstructor<Members, Tag>
+  readonly [Tag in Exclude<keyof Members, 'then'>]: TaggedEnumConstructor<Members, Tag>
 } & {
   /**
    * Narrows a value to a tagged enum member.
@@ -463,43 +463,20 @@ const buildJitInterpolator = (
   parsed: ParsedMessageTemplate,
 ): ((values?: Record<string, unknown>) => string) | undefined => {
   const { prefix, segments } = parsed
-  const varLines: string[] = []
-  const parts: string[] = []
-  const singleBareVariable = segments.length === 1 && prefix === '' && segments[0]?.tail === ''
-
-  if (prefix !== '') {
-    parts.push(serializeStringLiteral(prefix))
+  const lines = [`let output = ${serializeStringLiteral(prefix)};`]
+  for (const { key, tail } of segments) {
+    lines.push(`{ const value = ${formatPropertyAccess('p', key)};
+      output += typeof value === "string" || typeof value === "number" ? value :
+        value === undefined ? ${serializeStringLiteral(`$${key}`)} : format(value);
+      ${tail === '' ? '' : `output += ${serializeStringLiteral(tail)};`} }`)
   }
-
-  for (const [index, { key, tail }] of segments.entries()) {
-    const varName = `v${String(index)}`
-    const propExpr = formatPropertyAccess('p', key)
-    const missingLiteral = serializeStringLiteral(`$${key}`)
-    varLines.push(`const ${varName} = ${propExpr};`)
-
-    if (singleBareVariable) {
-      parts.push(
-        `(${varName} === undefined ? ${missingLiteral} : typeof ${varName} === "string" ? ${varName} : typeof ${varName} === "number" ? String(${varName}) : s(${varName}))`,
-      )
-    } else {
-      parts.push(
-        `(${varName} === undefined ? ${missingLiteral} : typeof ${varName} === "string" || typeof ${varName} === "number" ? ${varName} : s(${varName}))`,
-      )
-    }
-
-    if (tail !== '') {
-      parts.push(serializeStringLiteral(tail))
-    }
-  }
-
   const body = `return function resultarInterpolate(p) {
-  if (p === undefined || p === null) return ${serializeStringLiteral(template)};
-  ${varLines.join('\n  ')}
-  return ${parts.join(' + ')};
-}`
-
-  return compileJitFunction<(values?: Record<string, unknown>) => string>(['s'], body, [
-    stringifyTemplateValue,
+    if (p === undefined || p === null) return ${serializeStringLiteral(template)};
+    ${lines.join('\n')}
+    return output;
+  }`
+  return compileJitFunction<(values?: Record<string, unknown>) => string>(['format'], body, [
+    formatTemplateValue,
   ])
 }
 /* Stryker restore all */
@@ -795,8 +772,13 @@ const createTaggedErrorClass = <
       }
 
       for (const [key, value] of Object.entries(this)) {
-        if (!(key in json) && key !== 'cause' && key !== 'stack') {
-          json[key] = serializeTaggedValue(value)
+        if (!Object.hasOwn(json, key) && key !== 'cause' && key !== 'stack') {
+          Object.defineProperty(json, key, {
+            value: serializeTaggedValue(value),
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          })
         }
       }
 
@@ -847,14 +829,8 @@ export const taggedEnum = <
         readonly [Tag in keyof Members]: (value: TaggedEnumMember<Members, Tag>) => ReturnType
       },
     ): ReturnType {
-      const handler = handlers[value._tag] as
-        | ((value: TaggedEnum<Members>) => ReturnType)
-        | undefined
-
-      if (handler === undefined) {
-        throw new Error(`No tagged enum handler for ${String(value._tag)}`)
-      }
-
+      const handler = getTaggedHandler<ReturnType>(value, handlers)
+      if (handler === undefined) throw new Error(`No tagged enum handler for ${String(value._tag)}`)
       return handler(value)
     },
   }
@@ -863,11 +839,11 @@ export const taggedEnum = <
 
   return new Proxy(target, {
     get(base, property, receiver) {
-      if (property in base) {
+      if (Object.hasOwn(base, property)) {
         return Reflect.get(base, property, receiver) as unknown
       }
 
-      if (typeof property !== 'string') {
+      if (typeof property !== 'string' || property === 'then') {
         return undefined
       }
 
@@ -879,7 +855,9 @@ export const taggedEnum = <
           if (props !== undefined) {
             for (const key in props) {
               if (Object.hasOwn(props, key) && key !== '_tag') {
-                value[key] = (props as Record<string, unknown>)[key]
+                const field = (props as Record<string, unknown>)[key]
+                if (key === '__proto__') assignReadonly(value, key, field)
+                else value[key] = field
               }
             }
           }
@@ -912,20 +890,10 @@ export const taggedEnum = <
 export const matchError = <ErrorType extends Error, ReturnType>(
   error: ErrorType,
   handlers: MatchHandlers<ErrorType, ReturnType>,
-): ReturnType => {
-  if ('_tag' in error && typeof error._tag === 'string' && error._tag in handlers) {
-    const handler = handlers[error._tag as keyof typeof handlers] as (
-      error: ErrorType,
-    ) => ReturnType
-    return handler(error)
-  }
-
-  if (handlers.Error) {
-    return (handlers.Error as (error: ErrorType) => ReturnType)(error)
-  }
-
-  throw error
-}
+): ReturnType =>
+  matchTaggedOr(error, handlers, () => {
+    throw error
+  })
 
 /**
  * Partially matches an `Error` union by `_tag`, falling back to `handlers.Error` and finally `fallback`.
@@ -945,17 +913,4 @@ export const matchErrorPartial = <ErrorType extends Error, ReturnType>(
   error: ErrorType,
   handlers: PartialMatchHandlers<ErrorType, ReturnType>,
   fallback: (error: ErrorType) => ReturnType,
-): ReturnType => {
-  if ('_tag' in error && typeof error._tag === 'string' && error._tag in handlers) {
-    const handler = handlers[error._tag as keyof typeof handlers]
-    if (handler) {
-      return (handler as (error: ErrorType) => ReturnType)(error)
-    }
-  }
-
-  if (handlers.Error) {
-    return (handlers.Error as (error: ErrorType) => ReturnType)(error)
-  }
-
-  return fallback(error)
-}
+): ReturnType => matchTaggedOr(error, handlers, fallback)

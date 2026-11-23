@@ -45,7 +45,8 @@ test("native routes infer variables and acquire only for matching middleware", a
   expect(await (await app.request("/public")).text()).toBe("public");
   expect(await (await app.request("/missing")).text()).toBe("404 Not Found");
   expect(events).toEqual([]);
-  const responses = await Promise.all([app.request("/private"), app.request("/private")]);
+  const sharedRequest = new Request("http://localhost/private");
+  const responses = await Promise.all([app.fetch(sharedRequest), app.fetch(sharedRequest)]);
   const bodies = await Promise.all(responses.map((r) => r.json()));
   expect(bodies[0]).not.toEqual(bodies[1]);
   expect(events).toEqual(["open root", "close child", "close child"]);

@@ -113,10 +113,9 @@ const app = createHonoApp(
     }),
   },
   configureRoutes,
-)(
-  // At the server boundary, stop startup if initialization fails.
-  await app.ready(),
-).unwrapOrThrow();
+);
+// At the server boundary, stop startup if initialization fails.
+(await app.ready()).unwrapOrThrow();
 ```
 
 The task's requirements are checked against the module. A failed task closes the root and prevents

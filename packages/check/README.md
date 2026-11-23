@@ -523,8 +523,7 @@ The npm package exposes:
 - `resultar-check/schema.json` for editor completion and configuration validation;
 - one optional native package for the current operating system and architecture.
 
-It does not expose a JavaScript diagnostics API, editor extension, TypeScript plugin implementation,
-or JSR package. The Node entry point only selects and executes the matching native binary.
+The Node entry point selects and executes the matching native binary. The [VS Code extension](../../editors/vscode/README.md) uses its stdio LSP. The migration preview simulates successive edits in memory. Run `migrate-v5 --fix` to write the converged changes, then review any reported manual migrations.
 
 For backend architecture, local Go commands, and TypeScript-Go revision details, see the
 [native backend README](native/README.md). For an executable catalog of every rule, see the

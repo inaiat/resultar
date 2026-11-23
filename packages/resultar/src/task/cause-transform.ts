@@ -1,3 +1,4 @@
+import { copyCauseSpans } from './tracer.js'
 import type { Cause } from './cause.js'
 import { isCleanupCause, markCleanupCause } from './cleanup-cause.js'
 
@@ -5,6 +6,7 @@ const inheritCleanupCause = (
   original: Cause<unknown>,
   transformed: Cause<unknown> | undefined,
 ): Cause<unknown> | undefined => {
+  if (transformed !== undefined && original !== transformed) copyCauseSpans(original, transformed)
   if (isCleanupCause(original)) markCleanupCause(transformed)
   return transformed
 }

@@ -72,14 +72,21 @@ const getRequestAbortReason = (request: FastifyRequest, reply: FastifyReply): un
   if (reply.raw.destroyed && !reply.raw.writableFinished) {
     return new Error("Response connection closed");
   }
-  if (!request.signal.aborted) return undefined;
-  const reason: unknown = request.signal.reason;
+  const signal = request.signal;
+  if (!signal.aborted) {
+    return request.raw.destroyed && !request.raw.complete
+      ? new DOMException("This operation was aborted", "AbortError")
+      : undefined;
+  }
+  const reason: unknown = signal.reason;
   // Fastify 5.12 emits a generic abort on IncomingMessage.close, including a fully
   // received body. The response close/error listeners own disconnects after upload.
   if (request.raw.complete && reason instanceof DOMException && reason.name === "AbortError") {
     return undefined;
   }
-  return reason ?? new DOMException("This operation was aborted", "AbortError");
+  return reason === undefined
+    ? new DOMException("This operation was aborted", "AbortError")
+    : reason;
 };
 
 const createClosedScopeError = (): ResultTaskCauseError =>
@@ -124,7 +131,8 @@ const attachRequest = (request: FastifyRequest, reply: FastifyReply): RequestSta
   request.signal.addEventListener("abort", abort, { once: true });
   reply.raw.once("close", disconnect);
   reply.raw.once("error", transportError);
-  if (request.signal.aborted) abort();
+  const reason = getRequestAbortReason(request, reply);
+  if (reason !== undefined) controller.abort(reason);
   return {
     controller,
     exposed: false,
@@ -241,10 +249,28 @@ const addCallbackRequestHook = (
   }
 };
 
+const failHook = (
+  done: HookHandlerDoneFunction,
+  reason: unknown,
+  mapError: (error: unknown) => unknown = preserveNativeError,
+): void => {
+  let error: unknown = reason;
+  try {
+    error = mapError(reason);
+  } catch (mappingError) {
+    error = mappingError;
+  }
+  // Fastify advances to the next hook on any falsy callback argument.
+  const stopsHookChain = Boolean(error);
+  done(
+    stopsHookChain ? (error as Error) : new Error("Request service hook failed", { cause: error }),
+  );
+};
+
 const settleIntoDone = (promise: PromiseLike<unknown>, done: HookHandlerDoneFunction): void => {
   promise.then(
     () => done(),
-    (error: unknown) => done(error as Error),
+    (error: unknown) => failHook(done, error),
   );
 };
 
@@ -256,14 +282,14 @@ const executeFastPlan = (
   const { plan, bridge, fastActiveKey, mapError } = ctx;
   const { request, reply, done } = invocation;
   if (bridge.isClosed()) {
-    done(mapError(createClosedScopeError()) as Error);
+    failHook(done, createClosedScopeError(), mapError);
     return;
   }
   let services: RuntimeServices = EMPTY_SERVICES;
   try {
     services = plan.resolve(bridge.rootCache, locals);
   } catch (error) {
-    done(mapError(new ResultTaskCauseError({ _tag: "Die", defect: error })) as Error);
+    failHook(done, new ResultTaskCauseError({ _tag: "Die", defect: error }), mapError);
     return;
   }
   bridge.beginChild();
@@ -302,7 +328,7 @@ const registerStaticFastHooks = (
   addCallbackRequestHook(app, config.requestHook, (request, reply, done) => {
     const abortReason = getRequestAbortReason(request, reply);
     if (abortReason !== undefined) {
-      done(config.mapError(abortReason) as Error);
+      failHook(done, abortReason, config.mapError);
       return;
     }
     executeFastPlan(execCtx, EMPTY_SERVICES, { request, reply, done });
@@ -348,14 +374,14 @@ const registerDynamicFastHooks = (
 
   const applyResolvedLocals = (rawLocals: object | undefined, invocation: HookInvocation): void => {
     const { request, reply, done } = invocation;
+    const abortReason = getRequestAbortReason(request, reply);
+    if (abortReason !== undefined) {
+      failHook(done, abortReason, config.mapError);
+      return;
+    }
     const locals = (rawLocals ?? EMPTY_SERVICES) as RuntimeServices;
     const plan = resolvePlanForLocals(locals);
     if (plan !== undefined) {
-      const abortReason = getRequestAbortReason(request, reply);
-      if (abortReason !== undefined) {
-        done(config.mapError(abortReason) as Error);
-        return;
-      }
       executeFastPlan(
         { plan, bridge, fastActiveKey, mapError: config.mapError },
         locals,
@@ -367,18 +393,24 @@ const registerDynamicFastHooks = (
   };
 
   addCallbackRequestHook(app, config.requestHook, (request, reply, done) => {
+    // Fastify starts listening for disconnects on the first read of request.signal.
+    const reason = getRequestAbortReason(request, reply);
+    if (reason !== undefined) {
+      failHook(done, reason, config.mapError);
+      return;
+    }
     let localsOrPromise: object | Promise<object> = EMPTY_SERVICES;
     try {
       localsOrPromise = getLocals(request);
     } catch (error) {
-      done(config.mapError(error) as Error);
+      failHook(done, error, config.mapError);
       return;
     }
     const invocation: HookInvocation = { request, reply, done };
     if (isPromiseLike(localsOrPromise)) {
       localsOrPromise.then(
         (resolved) => applyResolvedLocals(resolved, invocation),
-        (error: unknown) => done(config.mapError(error) as Error),
+        (error: unknown) => failHook(done, error, config.mapError),
       );
       return;
     }

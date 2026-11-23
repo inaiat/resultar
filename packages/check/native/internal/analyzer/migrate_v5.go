@@ -286,17 +286,19 @@ func (s *fileMigrationState) useAsyncNamespace(info *coreNamespaceInfo) string {
 	return info.asyncAlias
 }
 
-func collectDeclaredIdentifiers(file *ast.SourceFile, out map[string]bool) {
+func collectDeclaredIdentifiers(file *ast.SourceFile, out map[string]bool) map[string]bool {
+	localDeclarations := make(map[string]bool)
 	visit(file.AsNode(), func(node *ast.Node) {
 		if node == nil {
 			return
 		}
 		switch node.Kind {
 		case ast.KindVariableDeclaration, ast.KindBindingElement, ast.KindParameter,
-			ast.KindFunctionDeclaration, ast.KindClassDeclaration,
+			ast.KindFunctionDeclaration, ast.KindClassDeclaration, ast.KindFunctionExpression, ast.KindClassExpression, ast.KindModuleDeclaration, ast.KindImportEqualsDeclaration,
 			ast.KindInterfaceDeclaration, ast.KindTypeAliasDeclaration, ast.KindEnumDeclaration:
 			if name := node.Name(); name != nil && name.Kind == ast.KindIdentifier {
 				out[name.Text()] = true
+				localDeclarations[name.Text()] = true
 			}
 		case ast.KindNamespaceImport:
 			if name := node.Name(); name != nil && name.Kind == ast.KindIdentifier {
@@ -326,6 +328,7 @@ func collectDeclaredIdentifiers(file *ast.SourceFile, out map[string]bool) {
 			out[spec.Name().Text()] = true
 		}
 	})
+	return localDeclarations
 }
 
 func classifyResultarModule(moduleName string) string {
@@ -476,6 +479,10 @@ func (a *Analyzer) isResultarDeclaredType(type_ *checker.Type) bool {
 }
 
 func (a *Analyzer) migrateFileV5(file *ast.SourceFile) []MigrationItem {
+	return a.planFileMigration(file, make(map[*ast.Node]bool))
+}
+
+func (a *Analyzer) planFileMigration(file *ast.SourceFile, skipped map[*ast.Node]bool) []MigrationItem {
 	state := &fileMigrationState{
 		neededAsyncValues:  make(map[string]asyncSpecifierNeed),
 		asyncValueBindings: make(map[string]string),
@@ -487,7 +494,7 @@ func (a *Analyzer) migrateFileV5(file *ast.SourceFile) []MigrationItem {
 		prunedCoreSpecs:    make(map[*ast.ImportSpecifier]bool),
 	}
 
-	collectDeclaredIdentifiers(file, state.usedIdentNames)
+	localDeclarations := collectDeclaredIdentifiers(file, state.usedIdentNames)
 
 	items := make([]MigrationItem, 0)
 	var coreImportDecls []*ast.Node
@@ -518,7 +525,7 @@ func (a *Analyzer) migrateFileV5(file *ast.SourceFile) []MigrationItem {
 		}
 		moduleName := decl.ModuleSpecifier.Text()
 		switch moduleName {
-		case "resultar", "resultar-app":
+		case "resultar", "resultar-app", "resultar/result", "resultar/task":
 			if state.resultarImportDecl == nil {
 				state.resultarImportDecl = stmt
 			}
@@ -541,7 +548,12 @@ func (a *Analyzer) migrateFileV5(file *ast.SourceFile) []MigrationItem {
 			if state.asyncImportDecl == nil {
 				state.asyncImportDecl = stmt
 			}
-			state.asyncImportDecls = append(state.asyncImportDecls, stmt)
+			if decl.ImportClause != nil {
+				bindings := decl.ImportClause.AsImportClause().NamedBindings
+				if bindings != nil && bindings.Kind == ast.KindNamedImports {
+					state.asyncImportDecls = append(state.asyncImportDecls, stmt)
+				}
+			}
 			if decl.ImportClause != nil {
 				collectAsyncValueBindings(decl.ImportClause.AsImportClause(), state.asyncValueBindings)
 			}
@@ -555,6 +567,14 @@ func (a *Analyzer) migrateFileV5(file *ast.SourceFile) []MigrationItem {
 					}
 				}
 			}
+		}
+	}
+
+	// Rewrites can occur inside a nested scope that shadows a value import.
+	// Keep that import for its original uses and choose a fresh alias for generated references.
+	for name, local := range state.asyncValueBindings {
+		if localDeclarations[local] {
+			delete(state.asyncValueBindings, name)
 		}
 	}
 
@@ -591,14 +611,36 @@ func (a *Analyzer) migrateFileV5(file *ast.SourceFile) []MigrationItem {
 	consumedNodes := make(map[*ast.Node]bool)
 
 	// Walk AST for call expressions, namespace member accesses, and renamed requestJson*Task identifier references.
+	var accepted []TextEdit
+	hadConflict := false
 	visit(file.AsNode(), func(node *ast.Node) {
-		if consumedNodes[node] {
+		if consumedNodes[node] || skipped[node] {
 			return
 		}
+		start := len(items)
+		defer func() {
+			for _, candidate := range items[start:] {
+				for _, edit := range candidate.Edits {
+					end := edit.Start + edit.Length
+					index := sort.Search(len(accepted), func(i int) bool { return accepted[i].Start+accepted[i].Length > edit.Start })
+					if index < len(accepted) && accepted[index].Start < end {
+						skipped[node] = true
+						hadConflict = true
+						return
+					}
+					accepted = append(accepted, TextEdit{})
+					copy(accepted[index+1:], accepted[index:])
+					accepted[index] = edit
+				}
+			}
+		}()
 		switch node.Kind {
 		case ast.KindCallExpression:
 			items = append(items, a.migrateCallV5(file, node, state, consumedNodes)...)
 		case ast.KindPropertyAccessExpression:
+			if item := a.reviewRemovedMethodReference(file, node); item != nil {
+				items = append(items, *item)
+			}
 			items = append(items, a.migrateNamespaceAccessV5(file, node.Expression(), node.Name(), state)...)
 		case ast.KindQualifiedName:
 			qn := node.AsQualifiedName()
@@ -639,6 +681,11 @@ func (a *Analyzer) migrateFileV5(file *ast.SourceFile) []MigrationItem {
 		}
 	})
 
+	if hadConflict {
+		// Recompute import requirements from only the surviving body rewrites.
+		return a.planFileMigration(file, skipped)
+	}
+
 	// Prune core import specifiers (e.g. `Result` or `ResultTask`) ONLY when our own rewrites
 	// (such as `Result.gen` -> `ResultAsync.gen`) removed their last remaining reference in this file.
 	if len(state.replacedCoreNodes) > 0 {
@@ -670,65 +717,54 @@ func (a *Analyzer) migrateFileV5(file *ast.SourceFile) []MigrationItem {
 	// or had all references rewritten away (e.g. `R.Result.gen` -> `ResultAsync.gen`).
 	for _, nsSym := range coreNamespaceOrder {
 		info := state.coreNamespaces[nsSym]
-		if info.asyncAlias == "" {
-			if info.movedRefs > 0 && info.movedRefs == info.totalRefs {
-				quote, semi := detectImportStyle(file, info.decl)
-				orig := nodeSourceText(file, info.decl)
-				if len(missingNamed) > 0 && len(state.asyncImportDecls) == 0 && info.decl == insertAnchor {
-					replacement := formatNamedAsyncImport(missingNamed, quote, semi)
-					for _, n := range missingNamed {
-						satisfiedLocalValues[n.localName] = true
-					}
-					missingNamed = nil
-					edit := replaceSpanFix(file, info.decl, info.decl, "Replace unused resultar namespace import with resultar/async import", replacement).Edits[0]
-					items = append(items, makeMigrationItem(
-						file, info.decl, MigrationEdit, "async-subpath-import",
-						orig, replacement,
-						fmt.Sprintf("Replace unused namespace import `%s` with `resultar/async` import.", info.localName),
-						[]TextEdit{edit},
-					))
-				} else {
-					edit := deleteStatementEdit(file, info.decl, "Remove unused resultar namespace import")
-					items = append(items, makeMigrationItem(
-						file, info.decl, MigrationEdit, "async-subpath-import",
-						orig, "",
-						fmt.Sprintf("Remove unused namespace import `%s` after migrating its usages to `resultar/async`.", info.localName),
-						[]TextEdit{edit},
-					))
+		if info.movedRefs == 0 {
+			continue
+		}
+		decl := info.decl.AsImportDeclaration()
+		clause := decl.ImportClause.AsImportClause()
+		keyword := "import"
+		if clause.PhaseModifier == ast.KindTypeKeyword {
+			keyword = "import type"
+		}
+		quote, semi := detectImportStyle(file, info.decl)
+		nsLine := ""
+		if info.asyncAlias != "" {
+			nsLine = fmt.Sprintf("%s * as %s from %sresultar/async%s%s", keyword, info.asyncAlias, quote, quote, semi)
+		}
+		if info.movedRefs != info.totalRefs {
+			if nsLine != "" {
+				extraInsertLines = append(extraInsertLines, nsLine)
+				if insertAnchor == nil {
+					insertAnchor = info.decl
 				}
 			}
 			continue
 		}
-		quote, semi := detectImportStyle(file, info.decl)
-		nsKeyword := "import"
-		if clause := info.decl.AsImportDeclaration().ImportClause; clause != nil && clause.AsImportClause().PhaseModifier == ast.KindTypeKeyword {
-			nsKeyword = "import type"
+		var lines []string
+		if clause.Name() != nil {
+			// Only the namespace references moved. The default binding has its own review item.
+			lines = append(lines, formatCoreImport(keyword, clause.Name(), nil, quote, decl.ModuleSpecifier.Text(), semi))
 		}
-		nsLine := fmt.Sprintf("%s * as %s from %sresultar/async%s%s", nsKeyword, info.asyncAlias, quote, quote, semi)
-		if info.movedRefs > 0 && info.movedRefs == info.totalRefs {
-			// Every reference to the namespace moved to `resultar/async` — replace the original import directly.
-			replacement := nsLine
-			if len(missingNamed) > 0 && len(state.asyncImportDecls) == 0 && info.decl == insertAnchor {
-				replacement += "\n" + formatNamedAsyncImport(missingNamed, quote, semi)
-				for _, n := range missingNamed {
-					satisfiedLocalValues[n.localName] = true
-				}
-				missingNamed = nil
+		if nsLine != "" {
+			lines = append(lines, nsLine)
+		}
+		if len(missingNamed) > 0 && len(state.asyncImportDecls) == 0 && info.decl == insertAnchor {
+			lines = append(lines, formatNamedAsyncImport(missingNamed, quote, semi))
+			for _, n := range missingNamed {
+				satisfiedLocalValues[n.localName] = true
 			}
-			orig := nodeSourceText(file, info.decl)
-			edit := replaceSpanFix(file, info.decl, info.decl, "Move eager namespace import to resultar/async", replacement).Edits[0]
-			items = append(items, makeMigrationItem(
-				file, info.decl, MigrationEdit, "async-subpath-import",
-				orig, replacement,
-				fmt.Sprintf("Move eager namespace import `%s` to `%s` from `resultar/async`.", info.localName, info.asyncAlias),
-				[]TextEdit{edit},
-			))
+			missingNamed = nil
+		}
+		replacement := strings.Join(lines, "\n")
+		reason := fmt.Sprintf("Update namespace import `%s` after migrating its eager references.", info.localName)
+		var edit TextEdit
+		if replacement == "" {
+			edit = deleteStatementEdit(file, info.decl, reason)
 		} else {
-			extraInsertLines = append(extraInsertLines, nsLine)
-			if insertAnchor == nil {
-				insertAnchor = info.decl
-			}
+			edit = replaceSpanFix(file, info.decl, info.decl, reason, replacement).Edits[0]
 		}
+		items = append(items, makeMigrationItem(file, info.decl, MigrationEdit, "async-subpath-import",
+			nodeSourceText(file, info.decl), replacement, reason, []TextEdit{edit}))
 	}
 
 	editedAsyncDecls := make(map[*ast.Node]bool)
@@ -762,6 +798,14 @@ func (a *Analyzer) migrateFileV5(file *ast.SourceFile) []MigrationItem {
 	if len(extraInsertLines) > 0 {
 		combined := strings.Join(extraInsertLines, "\n")
 		insertAt := 0
+		if strings.HasPrefix(file.Text(), "\uFEFF") {
+			insertAt = len("\uFEFF")
+		}
+		if strings.HasPrefix(file.Text()[insertAt:], "#!") {
+			if end := strings.IndexByte(file.Text()[insertAt:], '\n'); end >= 0 {
+				insertAt += end + 1
+			}
+		}
 		prefix := ""
 		suffix := "\n"
 		anchor := file.AsNode()
@@ -770,6 +814,21 @@ func (a *Analyzer) migrateFileV5(file *ast.SourceFile) []MigrationItem {
 			insertAt = insertAnchor.End()
 			prefix = "\n"
 			suffix = ""
+			for i := range items {
+				for j := range items[i].Edits {
+					edit := &items[i].Edits[j]
+					end := edit.Start + edit.Length
+					if edit.Start < insertAt && insertAt <= end {
+						// Attach both changes to the same import, including its original line ending.
+						if edit.NewText != "" {
+							edit.NewText += "\n"
+						}
+						edit.NewText += combined + file.Text()[insertAt:end]
+						items[i].Replacement = strings.TrimSpace(edit.NewText)
+						return items
+					}
+				}
+			}
 		}
 		items = append(items, makeMigrationItem(
 			file, anchor, MigrationEdit, "async-subpath-import",
@@ -816,6 +875,9 @@ func (a *Analyzer) migrateNamespaceAccessV5(file *ast.SourceFile, left *ast.Node
 
 	// 2. `import * as Req from "resultar-request*"` -> `Req.requestJsonTask` -> `Req.requestJson`
 	if state.requestNamespaces[sym] {
+		if member == "RequestJsonSource" {
+			return []MigrationItem{removedRequestSource(file, right)}
+		}
 		if newName, ok := requestTaskRenames[member]; ok {
 			edit := renameFix(file, right, "Rename "+member+" to "+newName, newName).Edits[0]
 			return []MigrationItem{makeMigrationItem(
@@ -1028,6 +1090,25 @@ func formatExportSpecifier(file *ast.SourceFile, s *ast.ExportSpecifier, include
 	return strings.Join(parts, " ")
 }
 
+func callTypeArgs(file *ast.SourceFile, call *ast.Node) string {
+	args := call.AsCallExpression().TypeArguments
+	if args == nil {
+		return ""
+	}
+	return "<" + joinNodesText(file, args.Nodes) + ">"
+}
+
+func formatCoreImport(keyword string, defaultName *ast.Node, named []string, quote, module, semi string) string {
+	var bindings []string
+	if defaultName != nil {
+		bindings = append(bindings, defaultName.Text())
+	}
+	if len(named) > 0 {
+		bindings = append(bindings, "{ "+strings.Join(named, ", ")+" }")
+	}
+	return fmt.Sprintf("%s %s from %s%s%s%s", keyword, strings.Join(bindings, ", "), quote, module, quote, semi)
+}
+
 func migrateCoreImport(
 	file *ast.SourceFile,
 	stmt *ast.Node,
@@ -1040,8 +1121,12 @@ func migrateCoreImport(
 		return nil
 	}
 	clause := decl.ImportClause.AsImportClause()
+	var items []MigrationItem
+	if clause.Name() != nil {
+		items = append(items, makeMigrationItem(file, clause.Name(), MigrationReview, "removed-v4-import", clause.Name().Text(), "tryResult", "The default export was removed. Review this binding and migrate to tryResult.", nil))
+	}
 	if clause.NamedBindings == nil || clause.NamedBindings.Kind != ast.KindNamedImports {
-		return nil
+		return items
 	}
 	quote, semi := detectImportStyle(file, stmt)
 	moduleName := decl.ModuleSpecifier.Text()
@@ -1050,7 +1135,6 @@ func migrateCoreImport(
 	var coreSpecs []*ast.ImportSpecifier
 	var asyncSpecs []*ast.ImportSpecifier
 	prunedCount := 0
-	items := make([]MigrationItem, 0)
 
 	for _, specNode := range clause.NamedBindings.AsNamedImports().Elements.Nodes {
 		spec := specNode.AsImportSpecifier()
@@ -1100,7 +1184,7 @@ func migrateCoreImport(
 			satisfiedValues[importedName] = true
 			satisfiedLocalValues[localName] = true
 		} else if !isWholeTypeOnly && !spec.IsTypeOnly {
-			if spec.PropertyName == nil {
+			if spec.PropertyName == nil && (!needed || need.localName == localName) {
 				satisfiedValues[importedName] = true
 			}
 			satisfiedLocalValues[localName] = true
@@ -1138,7 +1222,7 @@ func migrateCoreImport(
 		if isWholeTypeOnly {
 			coreKeyword = "import type"
 		}
-		replacement := fmt.Sprintf("%s { %s } from %s%s%s%s", coreKeyword, strings.Join(coreFormatted, ", "), quote, moduleName, quote, semi)
+		replacement := formatCoreImport(coreKeyword, clause.Name(), coreFormatted, quote, moduleName, semi)
 		edit := replaceSpanFix(file, stmt, stmt, "Remove redundant type-only ResultAsync specifiers", replacement).Edits[0]
 		items = append(items, makeMigrationItem(
 			file, stmt, MigrationEdit, "async-subpath-import",
@@ -1178,7 +1262,7 @@ func migrateCoreImport(
 	asyncLine := fmt.Sprintf("%s { %s } from %sresultar/async%s%s", asyncImportKeyword, strings.Join(asyncFormatted, ", "), quote, quote, semi)
 
 	var replacement string
-	if len(coreSpecs) == 0 {
+	if len(coreSpecs) == 0 && clause.Name() == nil {
 		replacement = asyncLine
 	} else {
 		coreFormatted := make([]string, 0, len(coreSpecs))
@@ -1189,7 +1273,7 @@ func migrateCoreImport(
 		if isWholeTypeOnly {
 			coreKeyword = "import type"
 		}
-		coreLine := fmt.Sprintf("%s { %s } from %s%s%s%s", coreKeyword, strings.Join(coreFormatted, ", "), quote, moduleName, quote, semi)
+		coreLine := formatCoreImport(coreKeyword, clause.Name(), coreFormatted, quote, moduleName, semi)
 		replacement = coreLine + "\n" + asyncLine
 	}
 
@@ -1668,6 +1752,11 @@ func migrateCoreExportDecl(file *ast.SourceFile, stmt *ast.Node) []MigrationItem
 	return items
 }
 
+func removedRequestSource(file *ast.SourceFile, node *ast.Node) MigrationItem {
+	return makeMigrationItem(file, node, MigrationReview, "removed-request-json-source", nodeSourceText(file, node), "",
+		"RequestJsonSource was removed. Update the input type for the lazy request factory.", nil)
+}
+
 func migrateRequestExportDecl(file *ast.SourceFile, stmt *ast.Node) []MigrationItem {
 	expDecl := stmt.AsExportDeclaration()
 	if expDecl.ModuleSpecifier == nil || expDecl.ModuleSpecifier.Kind != ast.KindStringLiteral {
@@ -1693,6 +1782,7 @@ func migrateRequestExportDecl(file *ast.SourceFile, stmt *ast.Node) []MigrationI
 
 	specNodes := expDecl.ExportClause.AsNamedExports().Elements.Nodes
 	formatted := make([]string, 0, len(specNodes))
+	var reviews []MigrationItem
 	changed := false
 	for _, specNode := range specNodes {
 		spec := specNode.AsExportSpecifier()
@@ -1701,6 +1791,9 @@ func migrateRequestExportDecl(file *ast.SourceFile, stmt *ast.Node) []MigrationI
 		sourceName := spec.Name().Text()
 		if spec.PropertyName != nil {
 			sourceName = spec.PropertyName.Text()
+		}
+		if sourceName == "RequestJsonSource" {
+			reviews = append(reviews, removedRequestSource(file, specNode))
 		}
 		if newName, ok := requestTaskRenames[sourceName]; ok {
 			changed = true
@@ -1717,7 +1810,7 @@ func migrateRequestExportDecl(file *ast.SourceFile, stmt *ast.Node) []MigrationI
 		formatted = append(formatted, formatExportSpecifier(file, spec, !isWholeTypeOnly))
 	}
 	if !changed {
-		return nil
+		return reviews
 	}
 	exportKeyword := "export"
 	if isWholeTypeOnly {
@@ -1726,12 +1819,12 @@ func migrateRequestExportDecl(file *ast.SourceFile, stmt *ast.Node) []MigrationI
 	replacement := fmt.Sprintf("%s { %s } from %s%s%s%s", exportKeyword, strings.Join(formatted, ", "), quote, moduleName, quote, semi)
 	orig := nodeSourceText(file, stmt)
 	edit := replaceSpanFix(file, stmt, stmt, "Preserve requestJson*Task re-export via canonical v5 name", replacement).Edits[0]
-	return []MigrationItem{makeMigrationItem(
+	return append(reviews, makeMigrationItem(
 		file, stmt, MigrationEdit, "request-task-rename",
 		orig, replacement,
 		"Re-export canonical v5 Task-native symbol while preserving the existing public export name.",
 		[]TextEdit{edit},
-	)}
+	))
 }
 
 func (a *Analyzer) migrateRequestImport(file *ast.SourceFile, stmt *ast.Node, state *fileMigrationState) []MigrationItem {
@@ -1751,6 +1844,7 @@ func (a *Analyzer) migrateRequestImport(file *ast.SourceFile, stmt *ast.Node, st
 	seen := make(map[string]bool, len(specNodes))
 	formatted := make([]string, 0, len(specNodes))
 	changed := false
+	var reviews []MigrationItem
 
 	for _, specNode := range specNodes {
 		spec := specNode.AsImportSpecifier()
@@ -1758,6 +1852,9 @@ func (a *Analyzer) migrateRequestImport(file *ast.SourceFile, stmt *ast.Node, st
 		importedName := localName
 		if spec.PropertyName != nil {
 			importedName = spec.PropertyName.Text()
+		}
+		if importedName == "RequestJsonSource" {
+			reviews = append(reviews, removedRequestSource(file, specNode))
 		}
 		if newName, ok := requestTaskRenames[importedName]; ok {
 			changed = true
@@ -1794,7 +1891,7 @@ func (a *Analyzer) migrateRequestImport(file *ast.SourceFile, stmt *ast.Node, st
 	}
 
 	if !changed {
-		return nil
+		return reviews
 	}
 	importKeyword := "import"
 	if isWholeTypeOnly {
@@ -1803,12 +1900,60 @@ func (a *Analyzer) migrateRequestImport(file *ast.SourceFile, stmt *ast.Node, st
 	replacement := fmt.Sprintf("%s { %s } from %s%s%s%s", importKeyword, strings.Join(formatted, ", "), quote, moduleName, quote, semi)
 	orig := nodeSourceText(file, stmt)
 	edit := replaceSpanFix(file, stmt, stmt, "Rename requestJson*Task imports to canonical v5 names", replacement).Edits[0]
-	return []MigrationItem{makeMigrationItem(
+	return append(reviews, makeMigrationItem(
 		file, stmt, MigrationEdit, "request-task-rename",
 		orig, replacement,
 		"Rename `requestJson*Task` imports to canonical v5 Task-native symbols.",
 		[]TextEdit{edit},
-	)}
+	))
+}
+
+// References can escape into a callback; a mechanical rename cannot establish its calling convention.
+func (a *Analyzer) reviewRemovedMethodReference(file *ast.SourceFile, node *ast.Node) *MigrationItem {
+	if node.Parent == nil || node.Name() == nil || (node.Parent.Kind == ast.KindCallExpression && node.Parent.Expression() == node) {
+		return nil
+	}
+	method := node.Name().Text()
+	task := deprecatedResultTaskAliases[method]
+	result := deprecatedResultStaticAliases[method]
+	instance := ""
+	switch method {
+	case "toResultAsync":
+		task = "ResultAsync.fromTask"
+	case "asyncMap", "asyncAndThen":
+		result, instance = method+" from resultar/async", method+" from resultar/async"
+	case "safeUnwrap":
+		instance = "yield* result"
+	case "tap":
+		instance = "inspect"
+	case "tapError":
+		instance = "inspectError"
+	}
+	if task == "" && result == "" && instance == "" {
+		return nil
+	}
+	receiver := node.Expression()
+	target := ""
+	group, exported, ok := a.resolvePackageExport(receiver)
+	if ok && (group == "core" || group == "app") {
+		switch exported {
+		case "ResultTask":
+			target = task
+		case "Result":
+			target = result
+		}
+	} else if typ := a.checker.GetTypeAtLocation(receiver); a.isResultarDeclaredType(typ) {
+		if isResultTaskLikeType(typ) {
+			target = task
+		} else if a.isResultarSyncType(typ) {
+			target = instance
+		}
+	}
+	if target == "" {
+		return nil
+	}
+	item := makeMigrationItem(file, node, MigrationReview, "removed-method-reference", nodeSourceText(file, node), target, "Update this reference to the v5 API after verifying its overload and receiver.", nil)
+	return &item
 }
 
 func (a *Analyzer) migrateCallV5(file *ast.SourceFile, node *ast.Node, state *fileMigrationState, consumed map[*ast.Node]bool) []MigrationItem {
@@ -1851,7 +1996,7 @@ func (a *Analyzer) migrateCallV5(file *ast.SourceFile, node *ast.Node, state *fi
 	method := methodNode.Text()
 
 	// 2. Check chained call on `<task>.runResult(...)` or `ResultTask.runResult(...)`
-	if receiver.Kind == ast.KindCallExpression && a.isRunResultCall(receiver) {
+	if receiver.Kind == ast.KindCallExpression && a.isRunResultCall(receiver) && !a.runResultExpectsResultAsync(file, receiver) {
 		consumed[receiver] = true
 		if item, ok := a.migrateRunResultChain(file, node, receiver, method, call.Arguments.Nodes, state); ok {
 			items = append(items, item)
@@ -1862,14 +2007,23 @@ func (a *Analyzer) migrateCallV5(file *ast.SourceFile, node *ast.Node, state *fi
 	// 2b. Check bare `<task>.runResult(...)` / `ResultTask.runResult(...)` escaping into a ResultAsync / StrictResultAsync contract
 	if a.isRunResultCall(node) {
 		if a.runResultExpectsResultAsync(file, node) {
-			asyncName := state.useAsyncValue("ResultAsync")
 			nodeText := strings.TrimSpace(nodeSourceText(file, node))
+			optional := ast.IsOptionalChain(node)
+			if optional && (propAccess.Expression.Kind != ast.KindIdentifier || propAccess.QuestionDotToken == nil || call.QuestionDotToken != nil) {
+				return []MigrationItem{makeMigrationItem(file, node, MigrationReview, "run-result-async-contract", nodeText, "",
+					"Narrow the optional task before wrapping runResult() to preserve evaluation order and undefined.", nil)}
+			}
+			asyncName := state.useAsyncValue("ResultAsync")
 			replacement := fmt.Sprintf("new %s(%s)", asyncName, nodeText)
+			if optional {
+				name := propAccess.Expression.Text()
+				replacement = fmt.Sprintf("(%s == null ? undefined : new %s(%s.runResult(%s)))", name, asyncName, name, joinNodesText(file, call.Arguments.Nodes))
+			}
 			edit := replaceSpanFix(file, node, node, "Wrap runResult() in new "+asyncName+"(...) to preserve ResultAsync contract", replacement).Edits[0]
 			items = append(items, makeMigrationItem(
 				file, node, MigrationEdit, "run-result-async-contract",
 				nodeText, replacement,
-				fmt.Sprintf("`runResult()` returns a native `Promise<Result<...>>` in v5; wrap with `new %s(%s)` (from `resultar/async`) to preserve the `ResultAsync` / `StrictResultAsync` contract.", asyncName, nodeText),
+				"Preserve the eager ResultAsync contract with the compatibility constructor from resultar/async.",
 				[]TextEdit{edit},
 			))
 			return items
@@ -1890,8 +2044,15 @@ func (a *Analyzer) migrateCallV5(file *ast.SourceFile, node *ast.Node, state *fi
 
 	// 3. Static calls resolved via TypeScript symbol to Resultar's ResultTask / Result / ResultAsync
 	if pkgGroup, exportName, ok := a.resolvePackageExport(receiver); ok && (pkgGroup == "core" || pkgGroup == "async" || pkgGroup == "app") {
+		if (exportName == "Result" || exportName == "ResultTask") && method == "match" && len(call.Arguments.Nodes) > 0 && len(call.Arguments.Nodes) <= 2 {
+			arg := call.Arguments.Nodes[len(call.Arguments.Nodes)-1]
+			return a.migrateLegacyMatchObject(file, arg, exportName == "ResultTask")
+		}
 		switch exportName {
 		case "ResultTask":
+			if method == "retry" && len(call.Arguments.Nodes) > 0 && unwrapExpression(call.Arguments.Nodes[len(call.Arguments.Nodes)-1]).Kind == ast.KindObjectLiteralExpression {
+				return []MigrationItem{makeMigrationItem(file, node, MigrationReview, "retry-policy", nodeSourceText(file, node), "", "Pass Retry.policy(options) to retry in v5; check callbacks and cancellation before migrating.", nil)}
+			}
 			if replacement, isAlias := deprecatedResultTaskAliases[method]; isAlias {
 				edit := renameFix(file, methodNode, "Rename ResultTask."+method+" to ResultTask."+replacement, replacement).Edits[0]
 				items = append(items, makeMigrationItem(
@@ -1968,9 +2129,9 @@ func (a *Analyzer) migrateCallV5(file *ast.SourceFile, node *ast.Node, state *fi
 	receiverType := a.checker.GetTypeAtLocation(receiver)
 
 	// 4a. TaggedErrorClass.errAsync(...)
-	if method == "errAsync" {
+	if method == "errAsync" && len(a.checker.GetConstructSignatures(receiverType)) > 0 {
 		callType := a.checker.GetTypeAtLocation(node)
-		if isResultAsyncLikeType(callType) && a.isResultarDeclaredType(callType) {
+		if isResultAsyncLikeType(callType) && a.isResultarDeclaredType(a.checker.GetTypeAtLocation(methodNode)) {
 			recvText := strings.TrimSpace(nodeSourceText(file, receiver))
 			items = append(items, makeMigrationItem(
 				file, node, MigrationReview, "removed-tagged-err-async",
@@ -1984,6 +2145,9 @@ func (a *Analyzer) migrateCallV5(file *ast.SourceFile, node *ast.Node, state *fi
 
 	// 4b. ResultTask instance aliases, toResultAsync, and legacy match keys
 	if isResultTaskLikeType(receiverType) && a.isResultarDeclaredType(receiverType) {
+		if method == "retry" && len(call.Arguments.Nodes) == 1 && unwrapExpression(call.Arguments.Nodes[0]).Kind == ast.KindObjectLiteralExpression {
+			return []MigrationItem{makeMigrationItem(file, node, MigrationReview, "retry-policy", nodeSourceText(file, node), "", "Pass Retry.policy(options) to retry in v5; check callbacks and cancellation before migrating.", nil)}
+		}
 		if replacement, ok := deprecatedResultTaskAliases[method]; ok && (method == "flatMap" || method == "mapError" || method == "catchAll") {
 			edit := renameFix(file, methodNode, "Rename ."+method+" to ."+replacement, replacement).Edits[0]
 			items = append(items, makeMigrationItem(
@@ -2034,10 +2198,30 @@ func (a *Analyzer) migrateCallV5(file *ast.SourceFile, node *ast.Node, state *fi
 				))
 				return items
 			}
+			typeArgs := ""
+			if call.TypeArguments != nil {
+				inputs := typeArguments(a.checker, receiverType)
+				var args []string
+				if len(inputs) >= 2 {
+					for _, input := range inputs[:2] {
+						name := a.checker.TypeToString(input)
+						switch name {
+						case "never", "unknown", "any", "string", "number", "bigint", "boolean", "symbol", "null", "undefined", "void":
+							args = append(args, name)
+						}
+					}
+				}
+				if len(args) != 2 {
+					return []MigrationItem{makeMigrationItem(file, node, MigrationReview, "result-async-helper",
+						nodeSourceText(file, node), "", "Preserve the explicit type arguments when moving to the standalone helper, including the receiver's success and error types.", nil)}
+				}
+				args = append(args, joinNodesText(file, call.TypeArguments.Nodes))
+				typeArgs = "<" + strings.Join(args, ", ") + ">"
+			}
 			helperName := state.useAsyncValue(method)
-			recvText := strings.TrimSpace(nodeSourceText(file, receiver))
+			recvText := strings.TrimSpace(nodeSourceText(file, propAccess.Expression))
 			argText := strings.TrimSpace(nodeSourceText(file, call.Arguments.Nodes[0]))
-			replacement := fmt.Sprintf("%s(%s, %s)", helperName, recvText, argText)
+			replacement := fmt.Sprintf("%s%s(%s, %s)", helperName, typeArgs, recvText, argText)
 			edit := replaceSpanFix(file, node, node, "Use standalone "+helperName+" from resultar/async", replacement).Edits[0]
 			items = append(items, makeMigrationItem(
 				file, node, MigrationEdit, "result-async-helper",
@@ -2922,7 +3106,11 @@ func (a *Analyzer) migrateRunResultChain(
 		if innerCallee.QuestionDotToken != nil {
 			dot = "?."
 		}
-		replacement := fmt.Sprintf("%s%srunPromise(%s)", innerRecvText, dot, innerArgsText)
+		callDot := ""
+		if runResultCall.AsCallExpression().QuestionDotToken != nil {
+			callDot = "?."
+		}
+		replacement := fmt.Sprintf("%s%srunPromise%s(%s)", innerRecvText, dot, callDot, innerArgsText)
 		edit := replaceSpanFix(file, outerCall, outerCall, "Replace runResult().unwrapOrThrow() with runPromise()", replacement).Edits[0]
 		return makeMigrationItem(
 			file, outerCall, MigrationEdit, "run-result-unwrap-or-throw",
@@ -2980,7 +3168,7 @@ func (a *Analyzer) migrateRunResultChain(
 			}
 		}
 
-		paramName := chooseSafeParamName(file, args)
+		paramName := chooseSafeParamName(args)
 		var argsText string
 		if method == "match" && len(args) == 1 {
 			// Normalize legacy `{ ok, error }` / `{ ok, ['error'] }` -> `{ ok, err }` in the SAME pass
@@ -2989,7 +3177,7 @@ func (a *Analyzer) migrateRunResultChain(
 		} else {
 			argsText = joinNodesText(file, args)
 		}
-		replacement := fmt.Sprintf("%s%sthen((%s) => %s.%s(%s))", thenRecvText, thenDot, paramName, paramName, method, argsText)
+		replacement := fmt.Sprintf("%s%sthen((%s) => %s.%s(%s))", thenRecvText, thenDot, paramName, paramName, method+callTypeArgs(file, outerCall), argsText)
 		edit := replaceSpanFix(file, outerCall, outerCall, "Chain .then() after runResult()", replacement).Edits[0]
 		return makeMigrationItem(
 			file, outerCall, MigrationEdit, "run-result-match",
@@ -3002,9 +3190,9 @@ func (a *Analyzer) migrateRunResultChain(
 	// 3. task.runResult(opts).unwrapOr(fallback)
 	if method == "unwrapOr" && len(args) == 1 {
 		if a.isSafePostSettlementFallback(file, args[0], outerCall) {
-			paramName := chooseSafeParamName(file, args)
+			paramName := chooseSafeParamName(args)
 			fallbackText := strings.TrimSpace(nodeSourceText(file, args[0]))
-			replacement := fmt.Sprintf("%s%sthen((%s) => %s.unwrapOr(%s))", thenRecvText, thenDot, paramName, paramName, fallbackText)
+			replacement := fmt.Sprintf("%s%sthen((%s) => %s.unwrapOr%s(%s))", thenRecvText, thenDot, paramName, paramName, callTypeArgs(file, outerCall), fallbackText)
 			edit := replaceSpanFix(file, outerCall, outerCall, "Chain .then() for unwrapOr after runResult()", replacement).Edits[0]
 			return makeMigrationItem(
 				file, outerCall, MigrationEdit, "run-result-unwrap-or",
@@ -3424,36 +3612,26 @@ func (a *Analyzer) isSafePostSettlementHandlerArg(file *ast.SourceFile, node *as
 	}
 }
 
-func chooseSafeParamName(file *ast.SourceFile, args []*ast.Node) string {
-	combined := joinNodesText(file, args)
-	for _, candidate := range []string{"r", "_r", "_res", "_result"} {
-		if !containsIdentifierWord(combined, candidate) {
+func chooseSafeParamName(args []*ast.Node) string {
+	used := make(map[string]bool)
+	for _, arg := range args {
+		visit(arg, func(node *ast.Node) {
+			if node.Kind == ast.KindIdentifier {
+				used[node.Text()] = true
+			}
+		})
+	}
+	for _, candidate := range []string{"r", "_r", "_res", "_result", "__result"} {
+		if !used[candidate] {
 			return candidate
 		}
 	}
-	return "__result"
-}
-
-func containsIdentifierWord(text, word string) bool {
-	idx := 0
-	for {
-		pos := strings.Index(text[idx:], word)
-		if pos < 0 {
-			return false
+	for i := 1; ; i++ {
+		candidate := fmt.Sprintf("__result%d", i)
+		if !used[candidate] {
+			return candidate
 		}
-		start := idx + pos
-		end := start + len(word)
-		leftOk := start == 0 || !isIdentChar(text[start-1])
-		rightOk := end == len(text) || !isIdentChar(text[end])
-		if leftOk && rightOk {
-			return true
-		}
-		idx = start + 1
 	}
-}
-
-func isIdentChar(ch byte) bool {
-	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '$'
 }
 
 func isAsyncGeneratorCallback(arg *ast.Node) bool {
@@ -3500,6 +3678,14 @@ func typeReturnsAsyncGenerator(c *checker.Checker, t *checker.Type) bool {
 		name := typeSymbolName(ret)
 		if name == "AsyncGenerator" || name == "AsyncIterableIterator" {
 			return true
+		}
+		if ret.Flags()&checker.TypeFlagsObject != 0 && ret.ObjectFlags()&checker.ObjectFlagsReference != 0 {
+			if target := ret.Target(); target != nil && target.Symbol() != nil {
+				n := target.Symbol().Name()
+				if n == "AsyncGenerator" || n == "AsyncIterableIterator" {
+					return true
+				}
+			}
 		}
 		if sym := ret.Symbol(); sym != nil && (sym.Name() == "AsyncGenerator" || sym.Name() == "AsyncIterableIterator") {
 			return true

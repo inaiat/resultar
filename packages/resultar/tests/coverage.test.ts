@@ -1601,12 +1601,7 @@ describe('coverage-focused public behavior', () => {
           throw 'fastpath-andthen-non-error'
         })
         .runResult(),
-    ).rejects.toThrow(
-      expect.objectContaining({
-        message: 'fastpath-andthen-non-error',
-        cause: 'fastpath-andthen-non-error',
-      }),
-    )
+    ).rejects.toBe('fastpath-andthen-non-error')
 
     // runTryPromiseResult fast-path branches (result-task.ts:5742, 5754-5757, 5776, 5785)
     await expect(
@@ -1649,9 +1644,7 @@ describe('coverage-focused public behavior', () => {
           throw 'sync-catch-non-error'
         },
       }).runResult(),
-    ).rejects.toThrow(
-      expect.objectContaining({ message: 'sync-catch-non-error', cause: 'sync-catch-non-error' }),
-    )
+    ).rejects.toBe('sync-catch-non-error')
 
     // canonicalRetryDelay zero-delay uninterruptible fast-path with resolving async onRetry (task-helpers.ts:208)
     let retryAttempts = 0

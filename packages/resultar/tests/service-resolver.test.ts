@@ -77,3 +77,16 @@ describe('service resolver guarantees', () => {
     expect(await ResultTask.runPromise(provided)).toBe('outer provider')
   })
 })
+
+test('resumes synchronous providers in the same runSync call', () => {
+  const name = ResultTask.service<string, 'name'>('name')
+  const workflow = ResultTask.gen(function* () {
+    return yield* name
+  })
+  expect(
+    workflow.provideServiceResolver({ name: () => ResultTask.ok('Ada') }).runSyncExit(),
+  ).toEqual({ _tag: 'Success', value: 'Ada' })
+  expect(
+    workflow.provideServiceResolver({ name: () => ResultTask.err('offline') }).runSyncExit(),
+  ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: 'offline' } })
+})

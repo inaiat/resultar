@@ -1057,11 +1057,7 @@ const runResultAsyncRetryAttempts = async <T, E, U, F>(
   const startedAt = performance.now()
   let attempt = 0
 
-  while (true) {
-    if (signal.aborted) {
-      return Result.err(createResultAsyncRetryAbortError(signal))
-    }
-
+  while (!signal.aborted) {
     // eslint-disable-next-line no-await-in-loop
     const result = await task(attempt, signal)
 
@@ -1111,6 +1107,7 @@ const runResultAsyncRetryAttempts = async <T, E, U, F>(
 
     attempt += 1
   }
+  return Result.err(createResultAsyncRetryAbortError(signal))
 }
 
 const retryResultAsyncTask = <T, E>(

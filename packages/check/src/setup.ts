@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
+import { applyEdits, modify, parse, type JSONPath, type ParseError } from "jsonc-parser";
+
 type JsonRecord = Record<string, unknown>;
 export type EditorTarget = "zed" | "vscode" | "cursor" | "all";
 
@@ -93,11 +95,8 @@ const projectPathFrom = (root: string, project: string): string =>
 
 const normalizedProjectPath = (root: string, projectPath: string): string => {
   const projectRelative = relative(root, projectPath);
-  if (
-    projectRelative === "" ||
-    projectRelative.startsWith(`..${sep}`) ||
-    isAbsolute(projectRelative)
-  ) {
+  if (projectRelative === "") return ".";
+  if (projectRelative.startsWith(`..${sep}`) || isAbsolute(projectRelative)) {
     return projectPath.replaceAll(sep, "/");
   }
   return projectRelative.replaceAll(sep, "/");
@@ -169,12 +168,47 @@ const generatedCursorRule = (project: string): string =>
   ].join("\n");
 
 const readJsonRecord = (filePath: string): JsonRecord => {
-  const parsed: unknown = JSON.parse(readFileSync(filePath, "utf8"));
+  const errors: ParseError[] = [];
+  const parsed: unknown = parse(readFileSync(filePath, "utf8"), errors, {
+    allowTrailingComma: true,
+  });
+  if (errors.length > 0)
+    throw new SyntaxError(`Invalid JSONC in ${filePath} at offset ${errors[0]?.offset}`);
   if (!isRecord(parsed)) {
     // resultar-check-disable-next-line prefer-tagged-error
     throw new Error(`${filePath} must contain a JSON object`);
   }
   return parsed;
+};
+
+const writeEditorSettings = (path: string, next: JsonRecord): void => {
+  if (!existsSync(path)) {
+    writeFileSync(path, `${JSON.stringify(next, undefined, 2)}\n`, "utf8");
+    return;
+  }
+  let source = readFileSync(path, "utf8");
+  const formattingOptions = {
+    insertSpaces: true,
+    tabSize: 2,
+    eol: source.includes("\r\n") ? "\r\n" : "\n",
+  };
+  const update = (keys: JSONPath, before: unknown, after: unknown): void => {
+    if (before === after) return;
+    if (isRecord(before) && isRecord(after)) {
+      for (const [key, value] of Object.entries(after)) update([...keys, key], before[key], value);
+      for (const key of Object.keys(before)) {
+        if (!Object.hasOwn(after, key)) update([...keys, key], before[key], undefined);
+      }
+    } else if (Array.isArray(before) && Array.isArray(after)) {
+      for (const [index, value] of after.entries()) update([...keys, index], before[index], value);
+      for (let index = before.length - 1; index >= after.length; index -= 1)
+        update([...keys, index], before[index], undefined);
+    } else {
+      source = applyEdits(source, modify(source, keys, after, { formattingOptions }));
+    }
+  };
+  update([], readJsonRecord(path), next);
+  writeFileSync(path, source, "utf8");
 };
 
 const mergeZedSettings = (existing: JsonRecord, generated: JsonRecord): JsonRecord => {
@@ -188,8 +222,28 @@ const mergeZedSettings = (existing: JsonRecord, generated: JsonRecord): JsonReco
     const section: JsonRecord = { ...existingValue };
     for (const [entryKey, entryValue] of Object.entries(generatedValue)) {
       const previous = existingValue[entryKey];
-      section[entryKey] =
-        isRecord(previous) && isRecord(entryValue) ? { ...previous, ...entryValue } : entryValue;
+      if (isRecord(previous) && isRecord(entryValue)) {
+        const mergedEntry = { ...previous, ...entryValue };
+        if (
+          Array.isArray(previous.language_servers) &&
+          Array.isArray(entryValue.language_servers)
+        ) {
+          const servers = previous.language_servers as unknown[];
+          const added = (entryValue.language_servers as unknown[]).filter(
+            (server) => !servers.includes(server) && !servers.includes(`!${String(server)}`),
+          );
+          const wildcard = servers.indexOf("...");
+          const insertAt = wildcard === -1 ? servers.length : wildcard;
+          mergedEntry.language_servers = [
+            ...servers.slice(0, insertAt),
+            ...added,
+            ...servers.slice(insertAt),
+          ];
+        }
+        section[entryKey] = mergedEntry;
+      } else {
+        section[entryKey] = entryValue;
+      }
     }
     merged[key] = section;
   }
@@ -234,7 +288,7 @@ const writeZedSetup = (root: string, project: string, force: boolean): WriteActi
     }
     settings = mergeZedSettings(readJsonRecord(settingsPath), generated);
   }
-  writeFileSync(settingsPath, `${JSON.stringify(settings, undefined, 2)}\n`, "utf8");
+  writeEditorSettings(settingsPath, settings);
   return resolveAction(existed, force);
 };
 
@@ -263,7 +317,7 @@ const writeVscodeExtensions = (root: string, force: boolean): WriteAction => {
     }
     payload = mergeVscodeExtensions(readJsonRecord(extensionsPath));
   }
-  writeFileSync(extensionsPath, `${JSON.stringify(payload, undefined, 2)}\n`, "utf8");
+  writeEditorSettings(extensionsPath, payload);
   return resolveAction(existed, force);
 };
 
@@ -280,7 +334,7 @@ const writeVscodeTasks = (root: string, project: string, force: boolean): WriteA
     }
     payload = mergeVscodeTasks(readJsonRecord(tasksPath), tasks);
   }
-  writeFileSync(tasksPath, `${JSON.stringify(payload, undefined, 2)}\n`, "utf8");
+  writeEditorSettings(tasksPath, payload);
   return resolveAction(existed, force);
 };
 
@@ -485,7 +539,11 @@ export const runDoctor = (args: readonly string[]): number => {
         binaryHealthy ? localBinary : "missing; run pnpm install",
       ) && healthy;
 
-    const pnpm = spawnSync("pnpm", ["--version"], { cwd: root, encoding: "utf8" });
+    const pnpm = spawnSync("pnpm", ["--version"], {
+      cwd: root,
+      shell: process.platform === "win32",
+      encoding: "utf8",
+    });
     const pnpmHealthy = pnpm.status === 0;
     healthy =
       check("pnpm", pnpmHealthy, pnpmHealthy ? pnpm.stdout.trim() : "not found on PATH") && healthy;
@@ -495,6 +553,22 @@ export const runDoctor = (args: readonly string[]): number => {
     }
     if (includesVscodeTasks(options.editor)) {
       healthy = checkVscodeTasks(root, options.editor) && healthy;
+      const path = join(root, ".vscode", "extensions.json");
+      try {
+        const recommendations = existsSync(path) ? readJsonRecord(path).recommendations : undefined;
+        healthy =
+          check(
+            "VS Code extensions",
+            Array.isArray(recommendations) && recommendations.includes(VSCODE_EXTENSION_ID),
+            path,
+          ) && healthy;
+      } catch (error: unknown) {
+        healthy = check(
+          "VS Code extensions",
+          false,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
     if (includesCursor(options.editor)) {
       healthy = checkCursorRule(root) && healthy;
@@ -503,6 +577,7 @@ export const runDoctor = (args: readonly string[]): number => {
     if (pnpmHealthy && binaryHealthy) {
       const version = spawnSync("pnpm", ["exec", "resultar-check", "--version"], {
         cwd: root,
+        shell: process.platform === "win32",
         encoding: "utf8",
       });
       const versionHealthy = version.status === 0 && version.stdout.trim().length > 0;

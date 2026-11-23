@@ -236,6 +236,8 @@ describe('Workstream C: Match JIT compilation, security, and parity', () => {
           Match.whenOr('x', 'y', () => 'xy'),
         )
         .pipe(
+          Match.when(Infinity, () => 'positive-infinity'),
+          Match.when(-Infinity, () => 'negative-infinity'),
           Match.whenAnd(
             Match.number,
             (n: unknown): n is number => typeof n === 'number' && n > 10,
@@ -264,6 +266,8 @@ describe('Workstream C: Match JIT compilation, security, and parity', () => {
         nestedStr: nested('hello'),
         nestedNaN: nested(Number.NaN),
         nestedNegZero: nested(-0),
+        nestedPositiveInfinity: nested(Infinity),
+        nestedNegativeInfinity: nested(-Infinity),
         nestedHasUndef: nested({ a: undefined }),
         nestedMissingUndef: nested({}),
         nestedOr: nested('y'),
@@ -286,6 +290,8 @@ describe('Workstream C: Match JIT compilation, security, and parity', () => {
     expect(jit.nestedPair).toBe('pair:ok')
     expect(jit.nestedNegZero).toBe('zero')
     expect(jit.nestedNaN).toBe('object-is-nan')
+    expect(jit.nestedPositiveInfinity).toBe('positive-infinity')
+    expect(jit.nestedNegativeInfinity).toBe('negative-infinity')
     expect(jit.nestedHasUndef).toBe('has-undef-a')
     expect(jit.nestedMissingUndef).toBe('not-false')
     expect(jit.nestedFalse).toBe('fallback')
@@ -520,7 +526,13 @@ describe('Workstream C: Match JIT compilation, security, and parity', () => {
         Match.orElse(() => 'single-fallback'),
       );
 
+      const undefinedCode = Match.type().pipe(Match.discriminator('code')(undefined, () => 'missing'), Match.orElse(() => 'other'));
+      const sparse = Match.type().pipe(Match.when([,1], () => 'hit'), Match.orElse(() => 'miss'));
       console.log(JSON.stringify({
+        undefinedOnNull: undefinedCode(null),
+        undefinedOnNumber: undefinedCode(1),
+        sparse: sparse([3,1]),
+        sparseMiss: sparse([3,2]),
         smallNan: small({ code: Number.NaN }),
         smallOne: small({ code: 1 }),
         smallMiss: small({ code: 2 }),
@@ -551,6 +563,10 @@ describe('Workstream C: Match JIT compilation, security, and parity', () => {
 
     expect(jit).toEqual(fallback)
     expect(jit).toEqual({
+      undefinedOnNull: 'missing',
+      undefinedOnNumber: 'missing',
+      sparse: 'hit',
+      sparseMiss: 'miss',
       smallNan: 'small-hit:NaN',
       smallOne: 'small-hit:1',
       smallMiss: 'small-fallback',
@@ -648,6 +664,41 @@ describe('Workstream E: ResultTask tiered JIT parity, bailout, abort, and safety
       { _tag: 'Success', value: 23 },
       { _tag: 'Success', value: 23 },
     ])
+  })
+
+  it('charges the same scheduler budget on cold and compiled tap continuations', async () => {
+    const measure = (enabled: boolean) =>
+      withJitModeAsync(enabled, async () => {
+        const pipeline = ResultTask.gen(function* () {
+          let total = 0
+          for (let i = 0; i < 15; i += 1) total += yield* ResultTask.ok(1)
+          return total
+        })
+          .tap(() => ResultTask.ok(3))
+          .andThen((n) => ResultTask.ok(n + 1))
+          .tapError(() => undefined)
+          .tapBoth(
+            () => undefined,
+            () => undefined,
+          )
+        const counts = []
+        for (const yieldEvery of [12, 20, 36]) {
+          let yields = 0
+          const scheduler = {
+            yield: () => {
+              yields += 1
+              return Promise.resolve()
+            },
+          }
+          // eslint-disable-next-line no-await-in-loop -- Reuse the same task from cold to compiled.
+          expect(await pipeline.runPromise({ scheduler, yieldEvery })).toBe(16)
+          counts.push(yields)
+        }
+        return counts
+      })
+    const interpreted = await measure(false)
+    expect(interpreted[0]).toBeGreaterThan(0)
+    expect(await measure(true)).toEqual(interpreted)
   })
 
   it('preserves mid-chain AbortSignal interruption, composite Cause defects, and execute invalidation', async () => {
@@ -834,4 +885,33 @@ describe('Workstream E: ResultTask tiered JIT parity, bailout, abort, and safety
       })
     }
   })
+})
+
+it.each([true, false])('yields on the last remaining step with JIT %s', (enabled) => {
+  withJitMode(enabled, () => {
+    for (const fail of [false, true]) {
+      const task = ResultTask.gen(function* () {
+        const a = yield* ResultTask.ok(1)
+        return a + (yield* ResultTask.ok(1))
+      })
+        .map((n) => n + 1)
+        .andThen(() => ResultTask.ok(21))
+        .andThen((n) => (fail ? ResultTask.err('bad') : ResultTask.ok(n + 1)))
+      for (let i = 0; i < 6; i += 1) expect(task.runSync()).toEqual(fail ? err('bad') : ok(22))
+      expect(() => task.runSync({ yieldEvery: 11 })).toThrow(/asynchronous task/u)
+    }
+  })
+})
+
+it('captures malformed continuations before and after warmup', async () => {
+  const task = ResultTask.ok(1).andThen(() => undefined as never)
+  for (let i = 0; i < 4; i += 1) {
+    for (const exit of [task.runSyncExit(), await task.runExit()]) {
+      expect(exit._tag).toBe('Failure')
+      if (exit._tag === 'Failure') {
+        expect(exit.cause._tag).toBe('Die')
+        if (exit.cause._tag === 'Die') expect(exit.cause.defect).toBeInstanceOf(TypeError)
+      }
+    }
+  }
 })

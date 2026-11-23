@@ -144,7 +144,7 @@ If you already know Result-style error handling, jump to:
 | Match an error value directly               | [Handling Results At Boundaries](#handling-results-at-boundaries)                                         | `matchError`, `matchErrorPartial`                                                                    |
 | Write linear result code                    | [Result Generators](#result-generators)                                                                   | `Result.gen`, `Result.fn`, `ResultTask.gen`, `ResultTask.fn`, `yield* result`                        |
 | Branch without throwing                     | [Conditional Helpers](#conditional-helpers)                                                               | `Result.if`, `Result.when`, `Result.unless`, `ResultTask.if`, `ResultTask.when`, `ResultTask.unless` |
-| Combine many independent results            | [Combining And Iterating](#combining-and-iterating)                                                       | `all`, `combine`, `ResultTask.all`, `ResultTask.validateAll`                                         |
+| Combine many independent results            | [Combining And Iterating](#combining-and-iterating)                                                       | `Result.all`, `ResultTask.all`, `ResultTask.validateAll`                                         |
 | Control async traversal concurrency         | [Async Concurrency Mapping](#async-concurrency-mapping)                                                   | `ResultTask.forEach`, `ResultTask.validateAll`, `{ concurrency }`                                    |
 | Coordinate fibers, semaphores, and yields   | [Structured Task Concurrency, Fibers, And Semaphores](#structured-task-concurrency-fibers-and-semaphores) | `ResultTask.forkChild`, `task.runFork`, `Fiber`, `Semaphore`, `Scheduler`, `yieldEvery`              |
 | Race concurrent async work                  | [Concurrent Racing And Timeouts](#concurrent-racing-and-timeouts)                                         | `ResultTask.race`, `raceFirst`, `timeout`, `Clock.virtual`                                           |
@@ -299,8 +299,7 @@ and tasks still wait for a run boundary.
 `Result` and `ResultAsync` expose direct and curried `map`, `mapErr`, `andThen`, `orElse`,
 `catchTag`, `catchTags`, `inspect`, `inspectError`, `as`, `filterOrElse`, `match`, `matchTags`,
 and `matchTagsPartial`. For example, `Result.map(result, f)` and `pipe(result, Result.map(f))`
-delegate the same fluent semantics. `Result` also exposes `asyncMap` and `asyncAndThen` instance
-methods and direct/curried statics (`Result.asyncMap(result, f)` / `Result.asyncAndThen(result, f)`).
+delegate the same fluent semantics. The standalone `asyncMap` and `asyncAndThen` helpers live in `resultar/async`.
 Task `map` is synchronous; compose async steps with `andThen` and `ResultTask.tryPromise`.
 
 ### Identity and constant
@@ -316,7 +315,7 @@ from the existing task execution-sharing API.
 
 ### Parameterized generator functions (`Result.fn` and `ResultTask.fn`)
 
-Core `Result.fn` wraps a synchronous or eager asynchronous Result generator, and `ResultTask.fn`
+Core `Result.fn` wraps a synchronous Result generator, and `ResultTask.fn`
 wraps a lazy synchronous generator describing Task steps. Both accept up to eight optional
 post-body pipeline operators receiving `(current, ...args)`:
 
@@ -617,10 +616,10 @@ composing a Task starts no work; each explicit run executes it again.
 
 ### In-flight `ResultAsync` constructors
 
-The following active helpers construct an in-flight `ResultAsync` (`PromiseLike<Result<T, E>>`) and preserve one execution across awaits:
+These helpers from the deprecated `resultar/async` entry point construct an in-flight `ResultAsync` (`PromiseLike<Result<T, E>>`) and preserve one execution across awaits:
 
 ```ts
-import { errAsync, okAsync, ResultAsync, unitAsync } from "resultar";
+import { errAsync, okAsync, ResultAsync, unitAsync } from "resultar/async";
 
 const asyncValue = okAsync<number, Error>(1);
 const asyncError = errAsync<number, Error>(new Error("failed"));
@@ -917,7 +916,7 @@ synchronously.
 Use Resultar wrappers at the edge of uncontrolled code: JSON parsing, platform APIs, third-party
 libraries, I/O, and network calls. Convert the thrown or rejected value once, then keep your own
 domain code returning Result values or Tasks. Prefer `tryResult` for synchronous work
-and `ResultTask.tryPromise` for new asynchronous work. In-flight `tryResultAsync` and `fromPromise` are active for `ResultAsync` boundaries; `fromThrowableAsync` remains available for deprecated eager compatibility.
+and `ResultTask.tryPromise` for new asynchronous work. Existing eager workflows can import `tryResultAsync`, `fromPromise`, and `fromThrowableAsync` from the deprecated `resultar/async` compatibility entry point.
 
 ### `ResultTask.tryPromise`
 
@@ -965,17 +964,6 @@ const parsed = tryResult({
 
 If `catch` is omitted, the original thrown value becomes the error channel.
 
-`try`, the default export, and the `tryCatch` alias remain the same helper with deprecation annotations.
-Prefer `tryResult` in new code:
-
-```ts
-import tryDefault, { try as tryAlias, tryCatch, tryResult } from "resultar";
-
-tryDefault === tryResult;
-tryAlias === tryResult;
-tryCatch === tryResult;
-```
-
 ### In-flight `ResultAsync`: `tryResultAsync`
 
 <a id="tryresultasync"></a>
@@ -983,7 +971,7 @@ tryCatch === tryResult;
 For an in-flight `ResultAsync` boundary, `tryResultAsync` accepts a promise, an async factory, or the object form:
 
 ```ts
-import { tryResultAsync } from "resultar";
+import { tryResultAsync } from "resultar/async";
 
 const fromExistingPromise = tryResultAsync(fetch("/users"));
 
@@ -1000,15 +988,6 @@ const fromObject = tryResultAsync({
 
 Use the factory form when creating the promise can throw synchronously. If `catch` is omitted, the
 original rejection or thrown value becomes the error channel.
-
-`tryAsync` and `tryCatchAsync` remain deprecated aliases of `tryResultAsync`. Prefer `tryResultAsync` for in-flight `ResultAsync` boundaries and `ResultTask.tryPromise` for new lazy async workflows:
-
-```ts
-import { tryAsync, tryCatchAsync, tryResultAsync } from "resultar";
-
-tryAsync === tryResultAsync;
-tryCatchAsync === tryResultAsync;
-```
 
 ### `fromThrowable` and `fromThrowableAsync`
 
@@ -1030,7 +1009,7 @@ catching synchronous throws and Promise rejections. For a new lazy adapter, retu
 `ResultTask.tryPromise({ try: () => operation(), catch: toError })` from your function.
 
 ```ts
-import { fromThrowableAsync } from "resultar";
+import { fromThrowableAsync } from "resultar/async";
 
 const readUserResponse = fromThrowableAsync(
   (id: string) => fetch(`/users/${id}`),
@@ -1042,11 +1021,12 @@ const readUserResponse = fromThrowableAsync(
 
 <a id="frompromise-and-fromsafepromise"></a>
 
-These active helpers return an in-flight `ResultAsync`. Use `fromPromise(promise, toError)` to wrap
+These compatibility helpers return an in-flight `ResultAsync`. Use `fromPromise(promise, toError)` to wrap
 an already-created execution that may reject:
 
 ```ts
-import { err, fromPromise, ok, tryResultAsync } from "resultar";
+import { err, ok } from "resultar";
+import { fromPromise, tryResultAsync } from "resultar/async";
 
 const loaded = fromPromise(fetch("/users"), (cause) => new Error("Request failed", { cause }))
   .andThen((response) =>
@@ -1064,7 +1044,7 @@ Use `fromSafePromise(promise)` only when rejection would be unexpected or alread
 construction:
 
 ```ts
-import { fromSafePromise } from "resultar";
+import { fromSafePromise } from "resultar/async";
 
 const loaded = fromSafePromise(Promise.resolve({ id: "usr_123" }));
 ```
@@ -1227,6 +1207,8 @@ metadata:
 
 ### Tagged Enums
 
+The factory reserves `then` for JavaScript Promise interoperability. Choose a different member name.
+
 Use `TaggedEnum<Members>` and `taggedEnum<Members>()` only for lightweight tagged unions that do
 not need to be real `Error` instances.
 
@@ -1342,8 +1324,8 @@ const loadProfileLabel = (email: string) =>
   });
 ```
 
-`Result` `asyncMap` methods and statics (`result.asyncMap(f)` / `Result.asyncMap(result, f)`)
-provide the eager bridge for Promise callbacks; Task `map` remains synchronous.
+Import `asyncMap` from `resultar/async` to apply a Promise callback eagerly to a synchronous
+result, as in `asyncMap(result, f)`. For lazy workflows, use `ResultTask`.
 
 Use `mapErr` when only the error value changes:
 
@@ -1401,13 +1383,13 @@ const createUser = (email: string) =>
   });
 ```
 
-For existing eager composition, `Result.asyncAndThen` (or `result.asyncAndThen`) from `resultar` returns
+For existing eager composition, `asyncAndThen` from `resultar/async` returns
 `ResultAsync`, whose `andThen` accepts a synchronous Result or another `ResultAsync`:
 
 ```ts
-import { Result } from "resultar";
+import { asyncAndThen } from "resultar/async";
 
-const legacyCreated = Result.asyncAndThen(validateEmail(email), ensureUserDoesNotExistAsync)
+const legacyCreated = asyncAndThen(validateEmail(email), ensureUserDoesNotExistAsync)
   .andThen(insertUser)
   .andThen(sendWelcomeEmailAsync);
 ```
@@ -2676,14 +2658,15 @@ const result = await saveUser("person@example.com").runResult();
 
 ### Async Result generators for eager compatibility
 
-`Result.gen` / `Result.fn` from `resultar` also support eager async bodies that yield Results
+`ResultAsync.gen` / `ResultAsync.fn` from `resultar/async` support eager async bodies that yield Results
 and `ResultAsync` values:
 
 ```ts
-import { Result } from "resultar";
+import { ResultTask } from "resultar";
+import { ResultAsync, type StrictResultAsync } from "resultar/async";
 
 const saveUserLegacy = (email: string): StrictResultAsync<User, CreateUserError> =>
-  Result.gen(async function* () {
+  ResultAsync.gen(async function* () {
     const validEmail = yield* validateEmail(email);
     const user = yield* insertUserAsync(validEmail);
 
@@ -2881,11 +2864,11 @@ const decodeInput = (input: unknown): StrictResult<DecodedInput, ValidationError
 };
 ```
 
-Use `combineWithAllErrors` or `validateAll` when several independent fields should all report
+Use `Result.validateAll` when several independent fields should all report
 failures:
 
 ```ts
-const validation = Result.combineWithAllErrors({
+const validation = Result.validateAll({
   email: validateEmail(input.email),
   name: validateName(input.name),
   password: validatePassword(input.password),
@@ -3290,9 +3273,9 @@ Use this as the first stop when choosing an operation:
 | Run one of two result branches                       | `Result.if` / `ResultTask.if`                                        |
 | Run optional work                                    | `when`, `unless`, `whenResult`, `unlessResult`                       |
 | Combine two independent results                      | `zip`                                                                |
-| Combine many independent results                     | `all`, `combine`, `combineWithAllErrors`                             |
-| Combine named independent results                    | `all({ key: result })` or `combine({ key: result })`                 |
-| Collect all validation failures                      | `validateAll` or `combineWithAllErrors`                              |
+| Combine many independent results                     | `Result.all`, `Result.validateAll`                             |
+| Combine named independent results                    | `Result.all({ key: result })`                 |
+| Collect all validation failures                      | `Result.validateAll`                              |
 | Try fallback candidates                              | `firstSuccessOf`                                                     |
 | Bound lazy async traversal                           | `ResultTask.forEach(items, fn, { concurrency })`                     |
 | Bound lazy async validation                          | `ResultTask.validateAll(items, fn, { concurrency })`                 |
@@ -3390,9 +3373,9 @@ const paired = Result.zip(validateEmail(email), validateName(name));
 const paired = await ResultAsync.zip(loadUser(id), loadPermissions(id));
 ```
 
-#### `all` / `combine`
+#### `all`
 
-`Result.all(results)` and `Result.combine(results)` turn many results into one result. They return `Ok` with a tuple/list of
+`Result.all(results)` returns `Ok` with a tuple/list of
 success values when every result succeeds, or the first error when any result fails.
 
 ```ts
@@ -3404,10 +3387,10 @@ const payload = combined.match(
 );
 ```
 
-It preserves array values as values; it does not flatten nested arrays:
+Nested arrays keep their shape.
 
 ```ts
-const combined = Result.combine([ok(["a", "b"]), ok([1, 2])]);
+const combined = Result.all([ok(["a", "b"]), ok([1, 2])]);
 
 // Ok<[string[], number[]]>
 combined;
@@ -3419,7 +3402,7 @@ combined;
 const combined = await ResultAsync.all([loadUser(id), loadPermissions(id)]);
 ```
 
-`all` and `combine` also accept records. Use this when the result names matter more than tuple positions:
+`Result.all` also accepts records. Use this when the result names matter more than tuple positions:
 
 ```ts
 const context = Result.all({
@@ -3442,19 +3425,19 @@ const context = await ResultAsync.all({
 });
 ```
 
-For non-array iterables, `all` and `combine` return a readonly array of success values:
+For non-array iterables, `Result.all` returns a readonly array of success values:
 
 ```ts
 const values = Result.all(new Set([parseNumber("1"), parseNumber("2")]));
 // Result<readonly number[], ParseNumberError>
 ```
 
-#### `combineWithAllErrors`
+#### `validateAll`
 
-`Result.combineWithAllErrors(results)` collects all errors.
+`Result.validateAll(results)` collects all errors.
 
 ```ts
-const validation = Result.combineWithAllErrors([
+const validation = Result.validateAll([
   validateEmail(input.email),
   validateName(input.name),
   validatePassword(input.password),
@@ -3466,13 +3449,13 @@ const response = validation.match(
 );
 ```
 
-Use `combine` when the first failure is enough. Use `combineWithAllErrors` when the caller needs a
+Use `Result.all` when the first failure is enough. Use `Result.validateAll` when the caller needs a
 complete validation report.
 
 Record inputs are useful for form and command validation because the output keeps field names:
 
 ```ts
-const validation = Result.combineWithAllErrors({
+const validation = Result.validateAll({
   email: validateEmail(input.email),
   name: validateName(input.name),
   password: validatePassword(input.password),
@@ -3482,18 +3465,6 @@ const response = validation.match(
   (valid) => createUser(valid),
   (errors) => ({ errors: errors.map((error) => error.message) }),
 );
-```
-
-#### `validateAll`
-
-`Result.validateAll(results)` is the validation-focused name for `combineWithAllErrors`.
-
-```ts
-const validation = Result.validateAll([
-  validateEmail(input.email),
-  validateName(input.name),
-  validatePassword(input.password),
-]);
 ```
 
 Use `Result.validateAll(items, fn)` when the inputs are a collection:
@@ -3671,7 +3642,7 @@ recovery. Choose it when you want those pieces without adopting a full applicati
 
 ## What Stays Out Of Core
 
-Resultar keeps explicit error values and a small lazy task runtime. `Result`, `ResultTask`, in-flight `ResultAsync`, and deprecated eager `ResultAsync` orchestration APIs are exported from `resultar`, independently of task services, scopes, fibers and clocks.
+Resultar keeps explicit error values and a small lazy task runtime. `resultar` exports `Result` and `ResultTask`. The eager compatibility API is available through `resultar/async`.
 
 - No application framework, platform layer, `Stream`, STM, clustering, or RPC runtime.
 - No `Layer` system in core; optional service graph composition belongs to `resultar-di`.
@@ -3687,7 +3658,7 @@ running; it does not create a detached task fiber or transfer scope ownership.
 
 ## Public Entry Point
 
-Import core helpers, in-flight `ResultAsync`, and eager compatibility exports from `resultar`:
+Import core helpers from `resultar` and eager compatibility helpers from `resultar/async`.
 
 ```ts
 import {
@@ -3794,7 +3765,7 @@ Observability is **strictly opt-in** with zero overhead when no tracer is passed
 
 Every library package declares `"sideEffects": false`. In addition to the root `resultar` entry point, you can import smaller focused entry points:
 
-- `resultar/result` — synchronous `Result`, `ok`, `err`, `tryResult`, `fromThrowable`, `redact`
+- `resultar/result` — synchronous `Result`, `ok`, `err`, `tryResult`, `fromThrowable`
 - `resultar/task` — `ResultTask`, `Cause`, `Exit`, `Fiber`, `Semaphore`, `Ref`, `Deferred`, `Queue`, `TaskLocal`, `Tracer`, `Clock`, `Scheduler`, `serviceTag`, `Retry`
 - `resultar/async` — opt-in eager `ResultAsync`, `StrictResultAsync`, `okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`, `ResultAsync.gen` / `fn`, `asyncMap`, `asyncAndThen`
 - `resultar/match` — exhaustive `Match` pattern matcher
@@ -3921,7 +3892,7 @@ Run `vp run docs:generate` after building when the public surface changes.
 - Native fiber `id`, `Fiber.poll(fiber)` and `Fiber.addObserver(fiber, callback)`
 - Concurrency & state primitives: `Ref.make(initial)`, `Deferred.make<A, E>()`, `Queue.bounded<A>(capacity)`, `Queue.unbounded<A>()`
 - Observability: `TaskLocal.make(defaultValue, name?)`, `Tracer.noop`, `Tracer.memory()`, `{ tracer?: TaskTracer }` in run options
-- Deterministic testing clock: `Clock.virtual()` with `advanceBy(ms)`, `advanceToNext()`, `runToCompletion(task, { maxSteps? })`
+- Deterministic testing clock: `Clock.virtual()` provides `advanceBy(ms)`, `advanceToNext()`, and `runToCompletion(task, options?)`. Pass required services and optional `signal`, `tracer`, `scheduler`, or `yieldEvery` as runner options. The default limits are 10,000 virtual clock steps for execution and 100,000 for cleanup after exceeding the execution limit. Override them with `maxSteps` and `maxCleanupSteps`.
 - Run options `yieldEvery` / `scheduler: TaskScheduler`; `Scheduler.live` is the default dispatcher
 - `Retry.policy(options)` for shared ResultAsync / ResultTask retry configuration (including `maxDelayMs`, `maxElapsedMs`, and error-aware `delayMs: (ctx, error) => number`)
 

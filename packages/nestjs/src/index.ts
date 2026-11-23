@@ -40,6 +40,8 @@ import {
 import {
   createFastRequestDispatcher,
   ensureRequestHelpersFast,
+  ensureRequestSignal,
+  requestControllers,
   getSyncPlanBridge,
   type FastRequestDispatcher,
 } from "./fast-request.js";
@@ -284,24 +286,10 @@ function attachRequest(
   rawResponse: ServerResponse,
   handlerTimeout?: number,
 ): RequestState {
-  const controller = new AbortController();
-  const rawSignal = (rawRequest as { readonly signal?: unknown }).signal;
-  if (
-    !Object.hasOwn(request, "signal") &&
-    typeof rawSignal === "object" &&
-    rawSignal instanceof AbortSignal
-  ) {
-    Object.defineProperty(request, "signal", {
-      value: rawSignal,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    });
-  }
-  const externalSignal: AbortSignal | undefined =
-    typeof request.signal === "object" && request.signal instanceof AbortSignal
-      ? request.signal
-      : undefined;
+  const signal = ensureRequestSignal(request, rawRequest, rawResponse);
+  const owned = requestControllers.get(request);
+  const controller = owned ?? new AbortController();
+  const externalSignal = owned === undefined ? signal : undefined;
   const onExternalAbort = () => {
     const reason: unknown = externalSignal?.reason;
     // Fastify 5.12 emits a generic abort on IncomingMessage.close, including a fully
@@ -811,6 +799,11 @@ function createModuleState(
 
   const prepareRequest = (context: ExecutionContext): void => {
     const request = context.switchToHttp().getRequest<NestRequest>();
+    ensureRequestSignal(
+      request,
+      getRawRequest(request),
+      getRawResponse(context.switchToHttp().getResponse<ServerResponse>()),
+    );
     ensureRequestHelpersFast(request, nextRequestId, host?.requestIdHeader);
   };
 

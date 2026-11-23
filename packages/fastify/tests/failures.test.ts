@@ -309,3 +309,79 @@ test("transients are materialized per binding and values are not automatically o
   await app.close();
   expect(disposed).toBe(0);
 });
+
+test.each(["reject-null", "throw-undefined", "mapped-null", "abort-null", "disconnect"] as const)(
+  "keeps the request handler out of a failed service hook (%s)",
+  async (mode) => {
+    // eslint-disable-next-line unicorn/no-null -- Fastify treats null as hook success.
+    const nullReason = null;
+    const app = Fastify();
+    const route = vi.fn(() => "unexpected");
+    if (mode === "abort-null") {
+      app.addHook("onRequest", async (request) => {
+        Object.defineProperty(request, "signal", { value: AbortSignal.abort(nullReason) });
+      });
+    }
+    await app.register(
+      createFastifyPlugin({
+        services: createModule().value("note", "hello"),
+        bindings: ["note"],
+        ...(mode === "abort-null"
+          ? {}
+          : {
+              locals: (request) => {
+                if (mode === "disconnect") {
+                  request.raw.destroy();
+                  return Promise.resolve({});
+                }
+                // eslint-disable-next-line no-throw-literal, typescript/only-throw-error -- JavaScript hooks can throw undefined.
+                if (mode === "throw-undefined") throw undefined;
+                return mode === "mapped-null"
+                  ? Promise.reject(new Error("locals"))
+                  : vi.fn<() => Promise<object>>().mockRejectedValue(nullReason)();
+              },
+            }),
+        ...(mode === "mapped-null" ? { mapError: () => nullReason } : {}),
+      }),
+    );
+    app.get("/", route);
+    try {
+      const reply = await app.inject("/");
+      expect(reply.statusCode).toBe(500);
+      expect(route).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test.each([false, 0, "", Number.NaN])(
+  "stops subsequent preHandlers on a mapped %s error",
+  async (reason) => {
+    const app = Fastify();
+    const nextHook = vi.fn(() => Promise.resolve());
+    const route = vi.fn(() => "unexpected");
+    const onError = vi.fn<(error: unknown) => void>();
+    await app.register(
+      createFastifyPlugin({
+        services: createModule().value("note", "hello"),
+        bindings: ["note"],
+        locals: () => Promise.reject(new Error("locals")),
+        mapError: () => reason,
+      }),
+    );
+    app.setErrorHandler((error, _request, reply) => {
+      onError(error);
+      return reply.code(500).send();
+    });
+    app.get("/", { preHandler: nextHook }, route);
+    try {
+      expect((await app.inject("/")).statusCode).toBe(500);
+      expect(nextHook).not.toHaveBeenCalled();
+      expect(route).not.toHaveBeenCalled();
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ cause: reason }));
+    } finally {
+      await app.close();
+    }
+  },
+);

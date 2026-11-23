@@ -97,7 +97,9 @@ export const parseTableCaseIr = (key: PropertyKey, handlers: object): readonly M
 }
 
 /** Evaluates a parsed pattern IR without allocating closures on eager single-shot calls. */
-export const evaluatePatternIr = (pattern: MatchPatternIr, value: unknown): boolean => {
+// Keep each pattern check here so the eager path can short-circuit without allocating callbacks.
+// fallow-ignore-next-line complexity
+const evaluatePatternIr = (pattern: MatchPatternIr, value: unknown): boolean => {
   switch (pattern.kind) {
     case 'predicate': {
       return pattern.fn(value)
@@ -131,6 +133,8 @@ export const evaluatePatternIr = (pattern: MatchPatternIr, value: unknown): bool
 }
 
 /** Evaluates a single case IR against `input`, returning the matched handler or `undefined`. */
+// Keep case dispatch in one switch shared by eager matching and the CSP-safe fallback.
+// fallow-ignore-next-line complexity
 export const resolveCaseIr = (item: MatchCaseIr, input: unknown): MatchHandler | undefined => {
   switch (item.kind) {
     case 'pattern': {
@@ -285,8 +289,6 @@ class MatchCodeBuilder {
     if (value === undefined) return `${expr} === undefined`
     if (typeof value === 'number') {
       if (Number.isNaN(value)) return isPureVar ? 'false' : `((${expr}), false)`
-      if (value === Infinity) return `${expr} === Infinity`
-      if (value === -Infinity) return `${expr} === -Infinity`
       return `${expr} === ${String(value)}`
     }
     return `${expr} === ${this.bind(value)}`
@@ -298,6 +300,8 @@ class MatchCodeBuilder {
     return `${target}[${this.bind(key)}]`
   }
 
+  // Each recursive branch controls when a property or array element is read.
+  // fallow-ignore-next-line complexity
   public emitPattern(pattern: MatchPatternIr, expr: string, isPureVar = false): string {
     switch (pattern.kind) {
       case 'predicate': {
@@ -322,7 +326,7 @@ class MatchCodeBuilder {
         const checks = pattern.elements.map((el, index) =>
           this.emitPattern(el, `${ref}[${String(index)}]`, false),
         )
-        return `(${prefix} && ${checks.join(' && ')})`
+        return `(${[prefix, ...checks.filter(Boolean)].join(' && ')})`
       }
       case 'object': {
         const ref = isPureVar ? expr : this.temp()
@@ -391,6 +395,9 @@ const emitTagSetCase = (
   const discTemp = builder.temp()
   const propExpr = builder.emitPropertyRead('v', item.key)
   const ret = emitInvokeReturn(ctx, item.handler)
+  const primitive = item.tags.includes(undefined)
+    ? `if (v === null || (typeof v !== "object" && typeof v !== "function")) ${ret}\n`
+    : ''
   if (item.tags.length <= 4) {
     const checks = item.tags
       .map((tag) =>
@@ -399,7 +406,7 @@ const emitTagSetCase = (
           : builder.emitLiteralCheck(discTemp, tag),
       )
       .join(' || ')
-    return `  if ((typeof v === "object" || typeof v === "function") && v !== null) {\n    ${discTemp} = ${propExpr};\n    if (${checks}) ${ret}\n  }`
+    return `${primitive}  if ((typeof v === "object" || typeof v === "function") && v !== null) {\n    ${discTemp} = ${propExpr};\n    if (${checks}) ${ret}\n  }`
   }
   const hasNaN = item.tags.some((tag) => typeof tag === 'number' && Number.isNaN(tag))
   const nonNaNTags = hasNaN
@@ -407,7 +414,7 @@ const emitTagSetCase = (
     : item.tags
   const nanCheck = hasNaN ? `    if (Number.isNaN(${discTemp})) ${ret}\n` : ''
   if (nonNaNTags.length === 0) {
-    return `  if ((typeof v === "object" || typeof v === "function") && v !== null) {\n    ${discTemp} = ${propExpr};\n${nanCheck}  }`
+    return `${primitive}  if ((typeof v === "object" || typeof v === "function") && v !== null) {\n    ${discTemp} = ${propExpr};\n${nanCheck}  }`
   }
   const cases = nonNaNTags
     .map((tag) => {
@@ -416,7 +423,7 @@ const emitTagSetCase = (
       return `      case ${builder.bind(tag)}:`
     })
     .join('\n')
-  return `  if ((typeof v === "object" || typeof v === "function") && v !== null) {\n    ${discTemp} = ${propExpr};\n${nanCheck}    switch (${discTemp}) {\n${cases}\n        ${ret}\n    }\n  }`
+  return `${primitive}  if ((typeof v === "object" || typeof v === "function") && v !== null) {\n    ${discTemp} = ${propExpr};\n${nanCheck}    switch (${discTemp}) {\n${cases}\n        ${ret}\n    }\n  }`
 }
 
 // fallow-ignore-next-line complexity
@@ -493,34 +500,29 @@ export const compileMatcher = (
   options: CompileMatcherOptions,
 ): ((...args: readonly unknown[]) => unknown) => {
   const { kind, select, cases, outcome, fallback, builtins } = options
+  if (cases.length > MAX_JIT_CASES) return createFallbackMatcher(options)
 
-  if (cases.length <= MAX_JIT_CASES) {
-    const builder = new MatchCodeBuilder(builtins)
-    const okParam = outcome === 'result' ? builder.bind(ok) : ''
-    const errParam = outcome === 'result' ? builder.bind(err) : ''
-    const selParam = kind === 'fn' ? builder.bind(select) : ''
-    const fbParam = outcome === 'direct' ? builder.bind(fallback) : ''
-    const ctx: EmitContext = { builder, kind, outcome, okParam }
+  const builder = new MatchCodeBuilder(builtins)
+  const okParam = outcome === 'result' ? builder.bind(ok) : ''
+  const errParam = outcome === 'result' ? builder.bind(err) : ''
+  const selParam = kind === 'fn' ? builder.bind(select) : ''
+  const fbParam = outcome === 'direct' ? builder.bind(fallback) : ''
+  const ctx: EmitContext = { builder, kind, outcome, okParam }
 
-    const lines: string[] = []
-    for (const item of cases) {
-      const stmt = emitCaseStatement(ctx, item)
-      if (stmt !== '') lines.push(stmt)
-    }
-
-    const tempDecl = builder.temps.length > 0 ? `  let ${builder.temps.join(', ')};\n` : ''
-    const header = buildHeader(kind, selParam)
-    const fallbackLine = buildFallbackLine(ctx, errParam, fbParam)
-    const body = `${header}${tempDecl}${lines.join('\n')}\n${fallbackLine}\n}`
-    const compiled = compileJitFunction<(...args: readonly unknown[]) => unknown>(
-      builder.paramNames,
-      body,
-      builder.paramValues,
-    )
-    if (compiled !== undefined) {
-      return compiled
-    }
+  const lines: string[] = []
+  for (const item of cases) {
+    const stmt = emitCaseStatement(ctx, item)
+    if (stmt !== '') lines.push(stmt)
   }
 
-  return createFallbackMatcher({ kind, select, cases, outcome, fallback })
+  const tempDecl = builder.temps.length > 0 ? `  let ${builder.temps.join(', ')};\n` : ''
+  const header = buildHeader(kind, selParam)
+  const fallbackLine = buildFallbackLine(ctx, errParam, fbParam)
+  const body = `${header}${tempDecl}${lines.join('\n')}\n${fallbackLine}\n}`
+  const compiled = compileJitFunction<(...args: readonly unknown[]) => unknown>(
+    builder.paramNames,
+    body,
+    builder.paramValues,
+  )
+  return compiled ?? createFallbackMatcher(options)
 }

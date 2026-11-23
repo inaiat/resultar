@@ -216,8 +216,21 @@ func isResultAsyncLikeType(type_ *checker.Type) bool {
 		}
 		return false
 	}
-	_, ok := resultAsyncTypeNames[typeSymbolName(type_)]
-	return ok
+	if _, ok := resultAsyncTypeNames[typeSymbolName(type_)]; ok {
+		return true
+	}
+	if sym := type_.Symbol(); sym != nil {
+		if _, ok := resultAsyncTypeNames[sym.Name()]; ok {
+			return true
+		}
+	}
+	if type_.Flags()&checker.TypeFlagsObject != 0 && type_.ObjectFlags()&checker.ObjectFlagsReference != 0 {
+		if target := type_.Target(); target != nil && target.Symbol() != nil {
+			_, ok := resultAsyncTypeNames[target.Symbol().Name()]
+			return ok
+		}
+	}
+	return false
 }
 
 // nodeCannotBeResultarType returns true for AST expressions whose grammar

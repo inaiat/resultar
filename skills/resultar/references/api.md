@@ -11,7 +11,7 @@ cause incorrect generated code.
 | Need                            | APIs / contract                                                                                                                                                                                                                                                                                                                             |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Constructors                    | `ok`, `err`, `unit`, `Result.try`, `Result.fromThrowable`, `Result.fromNullishOr`, `Result.liftPredicate`                                                                                                                                                                                                                                   |
-| Compose                         | `map`, `mapErr`, `andThen`, `andThrough`, `as`, `asVoid`, `filterOrElse`, `pipe`                                                                                                                                                                                                                                                            |
+| Compose                         | `map`, `mapErr`, `andThen`, `as`, `asVoid`, `filterOrElse`, `pipe`                                                                                                                                                                                                                                                            |
 | Recover                         | `orElse`, `orElseSucceed`, `catchTag`, `catchTags`, `catchReason`, `catchReasons`, `unwrapReason`                                                                                                                                                                                                                                           |
 | Observe                         | `inspect`, `inspectError`, `inspectBoth` (`tap` / `tapError` exist only on `ResultTask`)                                                                                                                                                                                                                                                    |
 | Handle                          | `match`, `matchTags`, `matchTagsPartial`, `unwrapOr`, `unwrapOrThrow`, `isOk`, `isErr`                                                                                                                                                                                                                                                      |
@@ -53,11 +53,11 @@ or assert it away. `makeScope` creates a manually owned root; close it explicitl
 
 | Runner                      | Outcome                                                        |
 | --------------------------- | -------------------------------------------------------------- |
-| `task.runResult(options)`   | Starts execution; returns native `Promise<Result<T, E          | ScopeError<R>>>`. A simple `Fail`becomes`Err`; other causes reject. |
+| `task.runResult(options)`   | Starts execution; returns native `Promise<Result<T, E \| ScopeError<R>>>`. A simple `Fail` becomes `Err`; other causes reject. |
 | `task.runPromise(options)`  | Resolves success; rejects typed failures and unhandled causes. |
 | `task.runExit(options)`     | Resolves `Exit<T, E>` for success or any failure cause.        |
-| `task.runSync(options)`     | Runs synchronous tasks and returns `Result<T, E                | ScopeError<R>>` (throws if async/defect/interrupt/composite).       |
-| `task.runSyncExit(options)` | Runs synchronous tasks and returns `Exit<T, E                  | ScopeError<R>>` (throws if async).                                  |
+| `task.runSync(options)`     | Runs synchronous tasks and returns `Result<T, E \| ScopeError<R>>` (throws if async/defect/interrupt/composite).       |
+| `task.runSyncExit(options)` | Runs synchronous tasks and returns `Exit<T, E \| ScopeError<R>>` (throws if async).                                  |
 | `task.runFork(options)`     | Starts a root fiber immediately and returns its handle.        |
 
 Static forms accept the Task first. Both static and instance forms exist for

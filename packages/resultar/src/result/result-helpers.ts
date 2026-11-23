@@ -48,7 +48,7 @@ export const getMatchErrorHandler = <T, E, A, B>(
   return fnErr
 }
 
-export class OkResultIterator<T> {
+class OkResultIterator<T> {
   declare public readonly done: true
   public readonly value: T
 

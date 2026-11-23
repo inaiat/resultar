@@ -39,6 +39,26 @@ export function createHonoServices<S extends object, E, R, G extends ServiceGrap
       const selectedKeys = Object.freeze([...keys]);
       const getLocals = options?.locals;
       const withLocals = root.withServices as unknown as (values: object) => typeof root;
+      type Handle = (
+        values: Readonly<Record<string, unknown>>,
+        request: Request,
+      ) => Promise<Response>;
+      const bind = (scope: typeof root, handle: Handle) =>
+        (
+          scope.fetch as unknown as (
+            keys: readonly string[],
+            handler: Handle,
+          ) => (request: Request) => Promise<Response>
+        )(selectedKeys, handle);
+      const handlers = new WeakMap<Request, Handle>();
+      const sharedDispatch =
+        getLocals === undefined
+          ? bind(root, (values, request) => {
+              const handle = handlers.get(request);
+              if (handle === undefined) throw new TypeError("Missing Hono request context");
+              return handle(values, request);
+            })
+          : undefined;
       return async (context, next) => {
         // A native middleware lifecycle violation is reported through Hono's error handler.
         // resultar-check-disable-next-line prefer-tagged-error
@@ -51,26 +71,27 @@ export function createHonoServices<S extends object, E, R, G extends ServiceGrap
         if (getLocals !== undefined) {
           const raw = getLocals(context as unknown as Parameters<typeof getLocals>[0]);
           const localValues =
-            typeof raw === "object" &&
-            raw !== null &&
-            "then" in raw &&
-            typeof (raw as PromiseLike<object>).then === "function"
+            typeof (raw as Partial<PromiseLike<object>> | null)?.then === "function"
               ? await raw
               : raw;
           scope = withLocals(localValues);
         }
-        const dispatch = scope.fetch as unknown as (
-          keys: readonly string[],
-          handle: (
-            values: Readonly<Record<string, unknown>>,
-            request: Request,
-          ) => Promise<Response>,
-        ) => (request: Request) => Promise<Response>;
-        context.res = await dispatch(selectedKeys, async (values) => {
+        const handle: Handle = async (values) => {
           context.set("services", values as never);
           await next();
           return context.res;
-        })(context.req.raw);
+        };
+        const request = context.req.raw;
+        if (sharedDispatch === undefined || handlers.has(request)) {
+          context.res = await bind(scope, handle)(request);
+          return;
+        }
+        handlers.set(request, handle);
+        try {
+          context.res = await sharedDispatch(request);
+        } finally {
+          handlers.delete(request);
+        }
       };
     },
     close: () => {

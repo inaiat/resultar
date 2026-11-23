@@ -515,7 +515,7 @@ func findBuiltResultarDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(resultarDir, "dist", "async.d.ts")); err != nil {
-		t.Skipf("skipping real v5 package verification (dist not built at %s): %v", resultarDir, err)
+		t.Fatalf("build the resultar workspace package before running migration tests: %v", err)
 	}
 	return resultarDir
 }
@@ -687,6 +687,7 @@ func runNodeTS(t *testing.T, dir, scriptRelPath string) string {
 	}
 	cmd := exec.Command(nodeBin, scriptRelPath)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "NO_COLOR=1", "FORCE_COLOR=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("node %s failed (%v):\n%s", scriptRelPath, err, string(out))
@@ -2335,7 +2336,7 @@ console.log(a + b);
 			t.Fatal(err)
 		}
 		if out := runNodeTS(t, dir, "run.mjs"); out != "42" {
-			t.Fatalf("baseline output = %s, want 42", out)
+			t.Fatalf("baseline output = %q, want \"42\"", out)
 		}
 
 		code, _ := runMigrateJSON(t, configPath, "--fix")
@@ -2348,7 +2349,7 @@ console.log(a + b);
 		runRealTscNoEmit(t, dir, resultarDir, appPath)
 
 		if out := runNodeTS(t, dir, "run.mjs"); out != "42" {
-			t.Fatalf("migrated output = %s, want 42", out)
+			t.Fatalf("migrated output = %q, want \"42\"", out)
 		}
 	})
 
@@ -2873,5 +2874,132 @@ console.log(JSON.stringify(await runAllPorts()));
 	afterOut := runNodeTS(t, dir, "run.mjs")
 	if afterOut != beforeOut {
 		t.Fatalf("runtime output differed!\nbefore: %s\nafter:  %s", beforeOut, afterOut)
+	}
+}
+
+func TestMigrateV5ShadowedEagerBindingAndNestedAlias(t *testing.T) {
+	built := findBuiltResultarDir(t)
+	source := `import { ResultAsync, ResultTask, okAsync } from "resultar";
+export const original = ResultAsync;
+export const eager = okAsync(1);
+export function load(ResultAsync: number) {
+  return ResultTask.succeed(ResultAsync).toResultAsync();
+}
+`
+	dir, config, path := writeMigrateProject(t, source, v4RequestTypes)
+	if code, _ := runMigrateJSON(t, config, "--fix"); code != 0 {
+		t.Fatalf("migration exited %d", code)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "ResultarResultAsync.fromTask(ResultTask.ok(ResultAsync))") {
+		t.Fatalf("incorrect shadowed migration: %s", data)
+	}
+	swapToRealV5Resultar(t, dir, built)
+	runRealTscNoEmit(t, dir, built, path)
+	if code, items := runMigrateJSON(t, config); code != 0 {
+		t.Fatal(code)
+	} else {
+		for _, item := range items {
+			if item.Kind == analyzer.MigrationEdit {
+				t.Fatalf("non-idempotent edit: %+v", item)
+			}
+		}
+	}
+}
+
+func TestMigrateDeepChainAndAvoidCallbackNameCapture(t *testing.T) {
+	expr := "1"
+	for i := 0; i < 9; i++ {
+		expr = "await ResultTask.ok(" + expr + ").runResult().unwrapOrThrow()"
+	}
+	source := `import { ResultTask } from "resultar";
+const r=10, _r=20, _res=30, _result=40, __result=50, __result1=60;
+export const matched = ResultTask.ok(1).runResult().match(v => v+r+_r+_res+_result+__result+__result1, () => 0);
+export const deep = async () => ` + expr + ";"
+	_, configPath, appPath := writeMigrateProject(t, source, v4RequestTypes)
+	if code, _ := runMigrateJSON(t, configPath, "--fix"); code != 0 {
+		t.Fatalf("migration failed: %d", code)
+	}
+	out, err := os.ReadFile(appPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(out), ".runPromise()") != 9 || !strings.Contains(string(out), ".then((__result2) => __result2.match(") {
+		t.Fatalf("unexpected migrated file: %s", out)
+	}
+}
+
+func TestMigrateV5PreservesAssertionsOptionalResultsAndExplicitTypes(t *testing.T) {
+	built := findBuiltResultarDir(t)
+	const source = `import {ResultTask, ResultAsync, ok} from "resultar";
+export function asserted(t: ResultTask<number, never>) {
+  return (t.runResult() as ResultAsync<number, never>).unwrapOr(0);
+}
+export function optional(t?: ResultTask<number, never>): ResultAsync<number, never> | undefined {
+  return t?.runResult();
+}
+export const wide = ok(1).asyncMap<string | number>(() => Promise.resolve(2));
+type Success<T> = T extends ResultAsync<infer S, unknown> ? S : never;
+export const allowed: Success<typeof wide> = "still accepted";
+`
+	dir, config, path := writeMigrateProject(t, source, v4RequestTypes)
+	runRealTscNoEmit(t, dir, built, path)
+	if code, _ := runMigrateJSON(t, config, "--fix"); code != 0 {
+		t.Fatal(code)
+	}
+	swapToRealV5Resultar(t, dir, built)
+	runRealTscNoEmit(t, dir, built, path)
+	if code, items := runMigrateJSON(t, config); code != 0 || len(items) != 0 {
+		t.Fatalf("second migration: %d, %+v", code, items)
+	}
+}
+
+func TestMigrationPreservesNamespaceAndReportsRemovedRequestTypes(t *testing.T) {
+	const source = `import { Result } from "resultar";
+import * as R from "resultar";
+import * as Req from "resultar-request";
+export type {RequestJsonSource as Source} from "resultar-request";
+export type Local = Req.RequestJsonSource;
+export const a = Result.gen(async function* () { return 1 });
+export const base = R.ok(1);
+export const eager = R.okAsync(2);
+export const retry = R.ResultTask.retry(R.ResultTask.ok(1), { times: 2 });
+export const curried = R.ResultTask.retry({ times: 2 });
+`
+	_, config, path := writeMigrateProject(t, source, v4RequestTypes+"\nexport type RequestJsonSource = Promise<Response>;")
+	code, preview := runMigrateJSON(t, config)
+	counts := map[string]int{}
+	for _, item := range preview {
+		counts[item.Category]++
+	}
+	if code != 0 || counts["removed-request-json-source"] != 2 || counts["retry-policy"] != 2 {
+		t.Fatalf("preview: %d, %+v", code, preview)
+	}
+	if code, _ = runMigrateJSON(t, config, "--fix"); code != 0 {
+		t.Fatal(code)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), "import * as RAsync from") {
+		t.Fatalf("missing namespace: %v\n%s", err, data)
+	}
+}
+
+func TestMigrateNamespaceKeepsSeparateDefaultBinding(t *testing.T) {
+	const source = `import tryFn, * as R from "resultar";
+export const original = tryFn;
+export const eager = R.okAsync(1);`
+	_, config, path := writeMigrateProject(t, source, v4RequestTypes)
+	if code, _ := runMigrateJSON(t, config, "--fix"); code != 0 {
+		t.Fatal(code)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `import tryFn from "resultar"`) || !strings.Contains(string(data), `import * as RAsync from "resultar/async"`) {
+		t.Fatalf("lost import binding: %s", data)
 	}
 }

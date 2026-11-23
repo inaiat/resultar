@@ -333,6 +333,26 @@ void test("activateWithApi wires diagnostics, status bar, hover, code actions, a
     fileName: "/workspace/src/a.ts",
     getText: () => "ok(1)",
   };
+  let saveAttempts = 0;
+  Object.defineProperty(mock.api.workspace, "textDocuments", {
+    value: [
+      {
+        ...doc,
+        isDirty: true,
+        save: async () => {
+          await Promise.resolve();
+          saveAttempts += 1;
+          return false;
+        },
+      },
+    ],
+  });
+  await Promise.resolve(mock.commands.get("resultarCheck.fixWorkspace")?.());
+  assert.equal(saveAttempts, 1);
+  assert.ok(
+    mock.infoMessages.some((message) => message.includes("save modified TypeScript files")),
+  );
+  assert.ok(!mock.outputLines.some((message) => message.startsWith("Running:")));
   const hover = await mock.getHoverProvider()?.provideHover(doc, new mock.api.Position(0, 0));
   assert.ok(hover !== undefined);
   assert.match(hover.contents.value, /`T`: `number`/u);

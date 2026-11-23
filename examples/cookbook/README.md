@@ -61,11 +61,11 @@ Construct promises and mutable per-run state inside the Task so repeated runs cr
   errors (`catchReason`, `catchReasons`, `unwrapReason`), `orElse`, `orElseSucceed`, `firstSuccessOf`,
   and partial boundary matching (`matchTagsPartial`).
 - [`src/collections-and-control-flow.ts`](src/collections-and-control-flow.ts): `filterOrElse`, `as`,
-  `asVoid`, `unit`, `ResultTask.ok`, `ResultTask.fromResult`, `andThen`, `zip`, `all`, synchronous `combine`,
+  `asVoid`, `unit`, `ResultTask.ok`, `ResultTask.fromResult`, `andThen`, `zip`, `all`, synchronous `Result.all`,
   mapped validation (`validateAll`), loops (`loop`, `iterate`), conditionals
   (`if`, `when`, `unless`), async concurrency, `ResultTask` control flow
-  and timing (`delay`, `timed`), non-deprecated observation (`inspect`, `inspectError`, `inspectBoth`),
-  legacy synchronous `tap`/`tapError`, and disposable cleanup (`toDisposable`, `acquireDisposable`).
+  and timing (`delay`, `timed`), observation (`inspect`, `inspectError`, `inspectBoth`),
+  Task effects with `tap`/`tapError`, and disposable cleanup (`toDisposable`, `acquireDisposable`).
 - [`src/functional-ergonomics.ts`](src/functional-ergonomics.ts): `pipe`, `flow`, `Result.fn`,
   `Result.gen`, `Result.fromNullishOr`, `Result.liftPredicate`, `.withProps<Props>()`,
   `ResultTask.fn`, `ResultTask.acquireDisposable`, service injection (`provideService`,

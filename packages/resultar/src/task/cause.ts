@@ -136,13 +136,24 @@ const parallel = <E1, E2>(left: Cause<E1>, right: Cause<E2>): Cause<E1 | E2> => 
 })
 
 const spans = <E>(cause: Cause<E>): readonly SpanTraceFrame[] => {
-  const rootSpans = getCauseSpans(cause)
-  if (rootSpans.length > 0) return rootSpans
-  for (const leaf of leaves(cause)) {
-    const leafSpans = getCauseSpans(leaf)
-    if (leafSpans.length > 0) return leafSpans
+  if (cause._tag !== 'Parallel' && cause._tag !== 'Sequential') return getCauseSpans(cause)
+  // Visit children before their parent to prefer the first traced branch, innermost first.
+  const path: Cause<E>[] = []
+  const pending: (Cause<E> | null)[] = [cause]
+  while (pending.length > 0) {
+    const item = pending.pop()
+    const current = item === null ? path.pop() : item
+    if (item !== null && (current?._tag === 'Parallel' || current?._tag === 'Sequential')) {
+      path.push(current)
+      pending.push(null, current.right, current.left)
+    } else if (current !== undefined) {
+      const frames = getCauseSpans(current)
+      if (frames.length > 0) {
+        return Object.freeze([...new Set([...frames, ...path.toReversed().flatMap(getCauseSpans)])])
+      }
+    }
   }
-  return rootSpans
+  return getCauseSpans(cause)
 }
 
 const failures = <E>(cause: Cause<E>): readonly E[] => {

@@ -14,10 +14,10 @@ catalog:
   "@types/node": 26.6.6
   "@vitest/coverage-v8": 5.1.1
   "@vitest/ui": 5.1.1
-  fallow: 3.45.0
+  fallow: 3.47.0
   fastify: 5.12.8
   fastify-plugin: 6.0.1
-  hono: 4.13.19
+  hono: 4.13.21
   reflect-metadata: 0.2.2
   rxjs: 7.8.2
   typebox: 1.4.7

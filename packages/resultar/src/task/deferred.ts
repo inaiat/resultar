@@ -5,35 +5,31 @@ import { ResultTask } from './result-task.js'
 import type { Exit } from './result-task.js'
 import { createRuntimeTask, runRuntimeTask } from './task-runtime-bridge.js'
 import { copyCauseSpans } from './tracer.js'
-
-const cloneCause = <E>(cause: Cause<E>): Cause<E> => {
-  switch (cause._tag) {
-    case 'Fail': {
-      return { _tag: 'Fail', error: cause.error }
-    }
-    case 'Die': {
-      return { _tag: 'Die', defect: cause.defect }
-    }
-    case 'Interrupt': {
-      return { _tag: 'Interrupt', reason: cause.reason }
-    }
-    case 'Sequential': {
-      return { _tag: 'Sequential', left: cause.left, right: cause.right }
-    }
-    case 'Parallel': {
-      return { _tag: 'Parallel', left: cause.left, right: cause.right }
-    }
-    default: {
-      return cause
-    }
-  }
-}
+import { transformCause } from './cause-transform.js'
 
 const isolateExitForObserver = <A, E>(exit: Exit<A, E>): Exit<A, E> => {
   if (exit._tag === 'Success') return exit
-  const cloned = cloneCause(exit.cause)
-  copyCauseSpans(exit.cause, cloned)
-  return failure(cloned)
+  // eslint-disable-next-line prefer-object-spread -- Keep the public failure payload by identity.
+  return failure(transformCause(exit.cause, (leaf) => Object.assign({}, leaf)) as Cause<E>)
+}
+
+const interruptedCompletion = (
+  exit: Exit<unknown, unknown>,
+  signal: AbortSignal,
+): Exit<never, never> => {
+  if (exit._tag === 'Success') return interrupted(signal)
+  let hasInterrupt = false
+  const remaining = transformCause(exit.cause, (leaf) => {
+    if (leaf._tag === 'Fail') return undefined
+    if (leaf._tag === 'Interrupt') hasInterrupt = true
+    return leaf
+  }) as Cause<never> | undefined
+  if (hasInterrupt && remaining !== undefined) return failure(remaining)
+  const interrupt: Cause<never> = { _tag: 'Interrupt', reason: signal.reason }
+  const cause: Cause<never> =
+    remaining === undefined ? interrupt : { _tag: 'Sequential', left: interrupt, right: remaining }
+  copyCauseSpans(exit.cause, cause)
+  return failure(cause)
 }
 
 interface DeferredWaiter<A, E> {
@@ -46,7 +42,7 @@ interface DeferredWaiter<A, E> {
  * One-shot asynchronous coordination variable that fibers can await and complete at most once.
  *
  * Multiple fibers may await the same `Deferred`; once completed with `succeed`, `fail`, `die`,
- * `done`, or `complete`, every current and future waiter receives the exact same {@link Exit}.
+ * `done`, or `complete`, each waiter receives the same outcome with an isolated failure cause.
  * Canceling an awaiting fiber unregisters its listener without affecting the `Deferred` or other
  * waiters.
  *
@@ -73,7 +69,7 @@ export interface Deferred<A, E = never> {
   readonly die: (defect: unknown) => ResultTask<boolean>
   /** Completes this deferred with an arbitrary `Exit<A, E>` if still pending. Returns `true` iff completed by this call. */
   readonly done: (exit: Exit<A, E>) => ResultTask<boolean>
-  /** Runs `task` and completes this deferred with its resulting `Exit`. Returns `true` iff completed by this call. */
+  /** Runs `task` and completes this deferred with its resulting `Exit` unless the completing fiber is interrupted. Returns `true` iff completed by this call. */
   readonly complete: <R>(task: ResultTask<A, E, R>) => ResultTask<boolean, never, R>
   /** Lazily checks the current `Exit` without blocking (`undefined` while pending). */
   readonly poll: () => ResultTask<Exit<A, E> | undefined>
@@ -87,7 +83,7 @@ const make = <A, E = never>(): Deferred<A, E> => {
 
   const settle = (exit: Exit<A, E>): boolean => {
     if (settled !== undefined) return false
-    settled = exit
+    settled = isolateExitForObserver(exit)
     for (const waiter of waiters) {
       if (waiter.signal !== NEVER_ABORTED_SIGNAL) {
         waiter.signal.removeEventListener('abort', waiter.onAbort)
@@ -125,12 +121,14 @@ const make = <A, E = never>(): Deferred<A, E> => {
     complete: <R>(task: ResultTask<A, E, R>) =>
       createRuntimeTask<boolean, never, R>(ResultTask, (context) => {
         const outcome = runRuntimeTask(ResultTask, task, context)
-        if (outcome instanceof Promise) {
-          return outcome.then((exit) => success(settle(exit)))
-        }
-        return success(settle(outcome))
+        const finish = (exit: Exit<A, E>): Exit<boolean, never> =>
+          context.signal.aborted
+            ? interruptedCompletion(exit, context.signal)
+            : success(settle(exit))
+        return outcome instanceof Promise ? outcome.then(finish) : finish(outcome)
       }),
-    poll: () => ResultTask.sync(() => settled),
+    poll: () =>
+      ResultTask.sync(() => (settled === undefined ? undefined : isolateExitForObserver(settled))),
     isDone: () => ResultTask.sync(() => settled !== undefined),
   }
 }

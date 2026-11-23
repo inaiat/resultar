@@ -178,9 +178,7 @@ describe('mutation coverage for new ergonomics, retry/repeat, and observability 
         .runSync()
       expect(resultB.unwrapOr(0)).toBe(3)
 
-      expect(() => ResultTask.ok(1).repeat({ times: 1, maxElapsedMs: 100 }).runSync()).toThrow(
-        'ResultTask.runSync cannot execute an asynchronous task',
-      )
+      expect(ResultTask.ok(1).repeat({ times: 1, maxElapsedMs: 100 }).runSync().unwrapOr(0)).toBe(1)
       expect(() => ResultTask.ok(1).repeat({ times: 1, delayMs: 15 }).runSync()).toThrow(
         'ResultTask.runSync cannot execute an asynchronous task',
       )

@@ -296,6 +296,35 @@ test("llms.txt keeps Freshness rule as its final section and covers every worksp
   }
 });
 
+test("v5 TypeScript examples use current core imports and constructors", () => {
+  const files = [
+    "DOCUMENTATION.md",
+    ...readdirSync(join(root, "packages"))
+      .map((name) => `packages/${name}/README.md`)
+      .filter((name) => existsSync(join(root, name))),
+  ];
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8");
+    for (const block of text.matchAll(/^```(?:ts|typescript)\s*\n([\s\S]*?)^```/gm)) {
+      const source = block[1];
+      for (const statement of source.matchAll(
+        /\bimport\s+(?:type\s+)?\{([^{}]*)\}\s+from\s+["']resultar["']/g,
+      )) {
+        assert.doesNotMatch(
+          statement[1],
+          /\b(?:ResultAsync|StrictResultAsync|okAsync|errAsync|safeTry|tryResultAsync|fromPromise|asyncMap|asyncAndThen)\b/,
+          file,
+        );
+      }
+      assert.doesNotMatch(
+        source,
+        /\bResultTask\.(?:succeed|fail|flatMap|mapError|toResultAsync)\s*\(/,
+        file,
+      );
+    }
+  }
+});
+
 test("rule counts cited across docs and skill match packages/check/README.md", () => {
   const checkerReadme = readFileSync(join(root, "packages/check/README.md"), "utf8");
   const expectedRuleCount = [
@@ -309,9 +338,10 @@ test("rule counts cited across docs and skill match packages/check/README.md", (
     "llms.txt",
     "packages/resultar/README.md",
     "skills/resultar/references/anti-patterns.md",
+    "editors/vscode/README.md",
   ];
   const ruleCountPattern =
-    /\b(?:all\s+)?(\d+)\s+(?:native\s+)?(?:static analysis\s+)?(?:TypeScript-Go\s+)?(?:rules|diagnostics|diagnostic IDs)\b/gi;
+    /\b(?:all\s+)?(\d+)\s+(?:`resultar-check`\s+)?(?:native\s+)?(?:static analysis\s+)?(?:TypeScript-Go\s+)?(?:rules|diagnostics|diagnostic IDs)\b/gi;
   for (const rel of docsToCheck) {
     const content = readFileSync(join(root, rel), "utf8");
     for (const match of content.matchAll(ruleCountPattern)) {
@@ -408,4 +438,12 @@ test("coming-from-effect example compiles strictly and executes, and RFC 0010 li
   } finally {
     rmSync(tempDir, { force: true, recursive: true });
   }
+});
+
+test("the v5 guides describe current sync APIs and preserve Result.zip", () => {
+  const guide = readFileSync(join(root, "DOCUMENTATION.md"), "utf8");
+  assert.doesNotMatch(guide, /\bResult\.(?:combine(?:WithAllErrors)?|asyncMap|asyncAndThen)\b/);
+  assert.doesNotMatch(guide, /^- `resultar\/result`[^\n]*`redact`/m);
+  const migration = readFileSync(join(root, "docs/migrations/v5.md"), "utf8");
+  assert.doesNotMatch(migration, /^\|\s*`Result\.zip`/m);
 });

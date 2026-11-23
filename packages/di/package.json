@@ -35,7 +35,7 @@
     }
   },
   "scripts": {
-    "analyze": "fallow",
+    "check:fallow": "fallow",
     "build": "vp pack && node --import vite-plus/register scripts/declaration-imports.ts",
     "check": "vp check",
     "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",

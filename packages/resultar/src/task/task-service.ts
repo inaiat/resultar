@@ -1,4 +1,4 @@
-import { success } from './exit.js'
+import { died, success } from './exit.js'
 import { NEVER_ABORTED_SIGNAL } from './promise-interruption.js'
 import type { Exit, ResultTask } from './result-task.js'
 import type { TaskScope } from './scope.js'
@@ -280,14 +280,11 @@ export const isServiceYield = (value: unknown): value is ResultTaskServiceYield<
     (value as { readonly _tag?: unknown })._tag === 'Service' &&
     isServiceTag((value as { readonly tag?: unknown }).tag))
 
-export type ServiceLookup =
+type ServiceLookup =
   | { readonly _tag: 'Found'; readonly value: unknown }
   | { readonly _tag: 'Missing' }
 
-export const lookupService = (
-  tag: AnyServiceTag,
-  context: ResultTaskRuntimeContext,
-): ServiceLookup => {
+const lookupService = (tag: AnyServiceTag, context: ResultTaskRuntimeContext): ServiceLookup => {
   if (context.services.has(tag.key)) {
     return { _tag: 'Found', value: context.services.get(tag.key) }
   }
@@ -300,12 +297,6 @@ export const lookupService = (
   return { _tag: 'Missing' }
 }
 
-export type ServiceResolution =
-  | { readonly _tag: 'Found'; readonly value: unknown }
-  | { readonly _tag: 'Missing' }
-  | { readonly _tag: 'Failure'; readonly exit: Exit<unknown, unknown> }
-  | { readonly _tag: 'Error'; readonly error: unknown }
-
 export const executeTaskSafely = async (
   task: ResultTask<unknown, unknown, unknown>,
   executeTask: ResultTaskNestedExecutor,
@@ -317,26 +308,21 @@ export const executeTaskSafely = async (
   }
 }
 
-export const resolveService = async (
+export const resolveService = (
   tag: AnyServiceTag,
   context: ResultTaskRuntimeContext,
   executeTask: ResultTaskNestedExecutor,
-): Promise<ServiceResolution> => {
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
   const supplied = lookupService(tag, context)
-  if (supplied._tag === 'Found') return supplied
-  if (context.serviceResolver === undefined) return supplied
-
-  let task: ResultTask<unknown, unknown, unknown> | undefined = undefined
+  if (supplied._tag === 'Found') return success(supplied.value)
   try {
-    task = context.serviceResolver(tag)
+    const task = context.serviceResolver?.(tag)
+    if (task === undefined) return died(new MissingServiceError(tag.identifier))
+    const outcome = executeTask(task)
+    return outcome instanceof Promise ? outcome.catch(died<unknown, never>) : outcome
   } catch (error) {
-    return { _tag: 'Error', error }
+    return died(error)
   }
-  if (task === undefined) return supplied
-  const outcome = await executeTaskSafely(task, executeTask)
-  if ('error' in outcome) return { _tag: 'Error', error: outcome.error }
-  if (outcome._tag === 'Failure') return { _tag: 'Failure', exit: outcome }
-  return { _tag: 'Found', value: outcome.value }
 }
 
 export const withServices = (

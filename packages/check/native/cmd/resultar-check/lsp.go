@@ -411,7 +411,8 @@ func (s *lspServer) diagnostics() ([]output.Diagnostic, error) {
 		return nil, err
 	}
 	ctx := context.Background()
-	findings := collectTypeScriptDiagnostics(ctx, opened.Program, opened.Program.SourceFiles())
+	files := opened.Program.SourceFiles()
+	findings := collectSyntacticDiagnostics(ctx, opened.Program, files)
 	if len(findings) > 0 {
 		s.setDiagnosticCache(findings, projectTime)
 		return findings, nil
@@ -420,7 +421,7 @@ func (s *lspServer) diagnostics() ([]output.Diagnostic, error) {
 	if err != nil {
 		return nil, err
 	}
-	diagnostics := findingDiagnostics(analysis)
+	diagnostics := append(collectSemanticAndGlobalDiagnostics(ctx, opened.Program, files), findingDiagnostics(analysis)...)
 	s.setDiagnosticCache(diagnostics, projectTime)
 	return diagnostics, nil
 }
@@ -615,8 +616,11 @@ func positionsForText(text string, offset, length int) (lspPosition, lspPosition
 	endOffset := max(offset, min(offset+length, len(text)))
 	position := func(end int) lspPosition {
 		line, character := 0, 0
-		for _, r := range text[:end] {
-			if r == '\n' {
+		for offset, r := range text[:end] {
+			if r == '\n' && offset > 0 && text[offset-1] == '\r' {
+				continue
+			}
+			if r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029' {
 				line++
 				character = 0
 			} else {
@@ -630,10 +634,13 @@ func positionsForText(text string, offset, length int) (lspPosition, lspPosition
 func offsetForPosition(text string, position lspPosition) int {
 	line, character := 0, 0
 	for offset, r := range text {
+		if r == '\n' && offset > 0 && text[offset-1] == '\r' {
+			continue
+		}
 		if line == position.Line && character >= position.Character {
 			return offset
 		}
-		if r == '\n' {
+		if r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029' {
 			if line == position.Line {
 				return offset
 			}

@@ -1342,7 +1342,8 @@ func isFunctionLikeNode(node *ast.Node) bool {
 		return false
 	}
 	switch node.Kind {
-	case ast.KindArrowFunction, ast.KindFunctionDeclaration, ast.KindFunctionExpression, ast.KindMethodDeclaration:
+	case ast.KindArrowFunction, ast.KindFunctionDeclaration, ast.KindFunctionExpression, ast.KindMethodDeclaration,
+		ast.KindGetAccessor, ast.KindSetAccessor, ast.KindConstructor:
 		return true
 	default:
 		return false
@@ -1562,7 +1563,7 @@ func visitFunctionBody(function *ast.Node, visitor func(*ast.Node)) {
 	root := function.Body()
 	var inspect func(*ast.Node)
 	inspect = func(node *ast.Node) {
-		if node != root && isFunctionLikeNode(node) {
+		if node != root && (isFunctionLikeNode(node) || node.Kind == ast.KindClassStaticBlockDeclaration) {
 			return
 		}
 		visitor(node)
@@ -6664,6 +6665,31 @@ func (a *Analyzer) isErrWrappingIdentifier(node *ast.Node, name string) bool {
 	return len(args) == 1 && isIdentifierNamed(args[0], name)
 }
 
+// A tap can preserve the original value only if every path returns that same binding.
+func (a *Analyzer) tapPassthroughParameter(callback *ast.Node) *ast.Symbol {
+	if callback.Kind == ast.KindFunctionExpression && callback.AsFunctionExpression().AsteriskToken != nil {
+		return nil
+	}
+	statements := callback.Body().Statements()
+	if len(statements) < 2 || statements[len(statements)-1].Kind != ast.KindReturnStatement {
+		return nil
+	}
+	parameter := callback.Parameters()[0].AsParameterDeclaration()
+	if parameter.Initializer != nil || parameter.DotDotDotToken != nil {
+		return nil
+	}
+	param := a.checker.GetSymbolAtLocation(parameter.Name())
+	if param == nil || a.variableIsReassignedInNode(param, callback.Body()) {
+		return nil
+	}
+	visitFunctionBody(callback, func(node *ast.Node) {
+		if node.Kind == ast.KindReturnStatement && node.AsReturnStatement().Expression == nil {
+			param = nil
+		}
+	})
+	return param
+}
+
 func (a *Analyzer) preferTap(file *ast.SourceFile) []Finding {
 	findings := make([]Finding, 0)
 	visit(file.AsNode(), func(node *ast.Node) {
@@ -6691,8 +6717,8 @@ func (a *Analyzer) preferTap(file *ast.SourceFile) []Finding {
 		if paramName == "" || callback.Body() == nil || callback.Body().Kind != ast.KindBlock {
 			return
 		}
-		statements := callback.Body().Statements()
-		if len(statements) < 2 {
+		param := a.tapPassthroughParameter(callback)
+		if param == nil {
 			return
 		}
 		returned := getReturnedExpressions(callback)
@@ -6701,18 +6727,18 @@ func (a *Analyzer) preferTap(file *ast.SourceFile) []Finding {
 		}
 		for _, expr := range returned {
 			if method == "map" {
-				if !isIdentifierNamed(expr, paramName) {
+				if a.checker.GetSymbolAtLocation(expr) != param {
 					return
 				}
 			} else {
-				if !a.isOkWrappingIdentifier(expr, paramName) {
+				if !a.isOkWrappingIdentifier(expr, paramName) || a.checker.GetSymbolAtLocation(unwrapExpression(expr).AsCallExpression().Arguments.Nodes[0]) != param {
 					return
 				}
 			}
 		}
 		finding := newFinding(file, nameNode, "prefer-tap", a.options.PreferTap,
 			fmt.Sprintf("`%s` performs side effects and returns the original input unchanged. Use `%s` to express side-effect-only observation.", method, replacement), "")
-		if method == "map" && (replacement == "tap" || (!isResultAsyncLikeType(receiverType) && !callbackMayThrowOrReject(a.checker, callback))) {
+		if method == "map" && (replacement == "tap" || (!isResultAsyncLikeType(receiverType) && safeInspectCallback(a.checker, callback))) {
 			if fix, ok := preferTapVoidCallbackFix(file, nameNode, callback, returned, method, replacement); ok {
 				finding.Fixes = []Fix{fix}
 			}
@@ -6749,8 +6775,8 @@ func (a *Analyzer) preferTapError(file *ast.SourceFile) []Finding {
 		if paramName == "" || callback.Body() == nil || callback.Body().Kind != ast.KindBlock {
 			return
 		}
-		statements := callback.Body().Statements()
-		if len(statements) < 2 {
+		param := a.tapPassthroughParameter(callback)
+		if param == nil {
 			return
 		}
 		returned := getReturnedExpressions(callback)
@@ -6759,18 +6785,18 @@ func (a *Analyzer) preferTapError(file *ast.SourceFile) []Finding {
 		}
 		for _, expr := range returned {
 			if method == "mapErr" || method == "mapError" {
-				if !isIdentifierNamed(expr, paramName) {
+				if a.checker.GetSymbolAtLocation(expr) != param {
 					return
 				}
 			} else {
-				if !a.isErrWrappingIdentifier(expr, paramName) {
+				if !a.isErrWrappingIdentifier(expr, paramName) || a.checker.GetSymbolAtLocation(unwrapExpression(expr).AsCallExpression().Arguments.Nodes[0]) != param {
 					return
 				}
 			}
 		}
 		finding := newFinding(file, nameNode, "prefer-tap-error", a.options.PreferTapError,
 			fmt.Sprintf("`%s` performs side effects and forwards the original error unchanged. Use `%s` to express error observation.", method, replacement), "")
-		if (method == "mapErr" || method == "mapError") && (replacement == "tapError" || (!isResultAsyncLikeType(receiverType) && !callbackMayThrowOrReject(a.checker, callback))) {
+		if (method == "mapErr" || method == "mapError") && (replacement == "tapError" || (!isResultAsyncLikeType(receiverType) && safeInspectCallback(a.checker, callback))) {
 			if fix, ok := preferTapVoidCallbackFix(file, nameNode, callback, returned, method, replacement); ok {
 				finding.Fixes = []Fix{fix}
 			}

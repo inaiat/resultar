@@ -1,15 +1,13 @@
-import { PLAYGROUND_SANDBOX_JS } from "./generated/sandbox-bundle.js";
-import {
-  executePlaygroundInContext,
-  type PlaygroundLogEntry,
-  type PlaygroundRunResult,
-  type PlaygroundSpan,
-} from "./playground-core.js";
+import { gunzipSync } from "fflate";
+
+import { PLAYGROUND_SANDBOX_GZIP_BASE64 } from "./generated/sandbox-bundle.js";
+import type { PlaygroundLogEntry, PlaygroundRunResult, PlaygroundSpan } from "./playground-core.js";
 
 export type { PlaygroundLogEntry, PlaygroundRunResult, PlaygroundSpan } from "./playground-core.js";
 
 const SANDBOX_TIMEOUT_MS = 10_000;
 let runCounter = 0;
+let sandboxSrcdoc: string | undefined = undefined;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -81,11 +79,18 @@ const parseRunResult = (raw: unknown, fallbackDurationMs: number): PlaygroundRun
 };
 
 const buildSandboxSrcdoc = (): string => {
-  const safeScript = PLAYGROUND_SANDBOX_JS.replaceAll("</script", String.raw`<\/script`);
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval';"></head><body><script>${safeScript}</script></body></html>`;
+  if (sandboxSrcdoc !== undefined) return sandboxSrcdoc;
+  const compressed = Uint8Array.from(
+    atob(PLAYGROUND_SANDBOX_GZIP_BASE64),
+    (char) => char.codePointAt(0) ?? 0,
+  );
+  const script = new TextDecoder().decode(gunzipSync(compressed));
+  const safeScript = script.replaceAll("</script", String.raw`<\/script`);
+  sandboxSrcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval';"></head><body><script>${safeScript}</script></body></html>`;
+  return sandboxSrcdoc;
 };
 
-const runPlaygroundInSandboxIframe = async (source: string): Promise<PlaygroundRunResult> =>
+export const runPlaygroundCode = async (source: string): Promise<PlaygroundRunResult> =>
   new Promise<PlaygroundRunResult>((resolve) => {
     const startedAt = performance.now();
     runCounter += 1;
@@ -144,11 +149,3 @@ const runPlaygroundInSandboxIframe = async (source: string): Promise<PlaygroundR
     iframe.srcdoc = buildSandboxSrcdoc();
     document.body.append(iframe);
   });
-
-export const runPlaygroundCode = async (source: string): Promise<PlaygroundRunResult> => {
-  if (typeof document !== "undefined") {
-    return runPlaygroundInSandboxIframe(source);
-  }
-  const resultar = await import("../../packages/resultar/dist/index.js");
-  return executePlaygroundInContext(source, resultar);
-};

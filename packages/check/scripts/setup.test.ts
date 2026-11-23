@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { parse } from "jsonc-parser";
+
 const cliPath = new URL("../dist/cli.js", import.meta.url).pathname;
 
 const makeTempProject = (): string => {
@@ -35,6 +37,39 @@ void test("init defaults to zed and supports --force merge", () => {
     assert.equal(forced.status, 0, forced.stderr);
     const updated = JSON.parse(readFileSync(zedPath, "utf8")) as Record<string, unknown>;
     assert.equal(updated.theme, "One Dark");
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+void test("forced editor setup preserves JSONC comments, custom language servers and tasks", () => {
+  const dir = makeTempProject();
+  try {
+    for (const sub of [".vscode", ".zed"]) mkdirSync(join(dir, sub));
+    const zed = join(dir, ".zed/settings.json");
+    const tasks = join(dir, ".vscode/tasks.json");
+    writeFileSync(
+      zed,
+      '{// team settings\n"languages":{"TypeScript":{"language_servers":["custom", "...",],},},}',
+    );
+    writeFileSync(tasks, '{/* keep */ "tasks":[{"label":"custom",},],}');
+    const result = runCli(dir, ["init", "--editor", "all", "--force", "--project", "."]);
+    assert.equal(result.status, 0, result.stderr);
+    const settings = readFileSync(zed, "utf8");
+    assert.match(settings, /team settings/);
+    const parsedSettings = parse(settings) as {
+      languages: { TypeScript: { language_servers: string[] } };
+    };
+    assert.deepEqual(parsedSettings.languages.TypeScript.language_servers, [
+      "custom",
+      "vtsls",
+      "typescript-language-server",
+      "...",
+    ]);
+    const configuredTasks = readFileSync(tasks, "utf8");
+    assert.match(configuredTasks, /keep/);
+    const parsedTasks = parse(configuredTasks) as { tasks: { label: string }[] };
+    assert.equal(parsedTasks.tasks[0]?.label, "custom");
   } finally {
     rmSync(dir, { force: true, recursive: true });
   }
@@ -112,6 +147,20 @@ void test("init rejects unknown --editor values", () => {
     const result = runCli(dir, ["init", "--editor", "emacs"]);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Unknown --editor value: emacs/u);
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+void test("doctor reports malformed extension recommendations and continues checking editors", () => {
+  const dir = makeTempProject();
+  try {
+    assert.equal(runCli(dir, ["init", "--editor", "all"]).status, 0);
+    writeFileSync(join(dir, ".vscode/extensions.json"), "{invalid");
+    const checked = runCli(dir, ["doctor", "--editor", "all"]);
+    assert.equal(checked.status, 1);
+    assert.match(checked.stdout + checked.stderr, /VS Code extensions/);
+    assert.match(checked.stdout + checked.stderr, /Cursor rule/);
   } finally {
     rmSync(dir, { force: true, recursive: true });
   }

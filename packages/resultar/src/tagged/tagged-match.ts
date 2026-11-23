@@ -12,11 +12,11 @@ export const getTaggedHandler = <R>(
   value: unknown,
   handlers: object,
 ): ((error: unknown) => R) | undefined => {
-  if (!isTaggedValue(value)) {
-    return undefined
-  }
-
-  return (handlers as Record<string, unknown>)[value._tag] as ((error: unknown) => R) | undefined
+  if (!isTaggedValue(value)) return undefined
+  const tag = value._tag
+  if (typeof tag !== 'string' || !Object.hasOwn(handlers, tag)) return undefined
+  const handler = (handlers as Record<string, unknown>)[tag]
+  return typeof handler === 'function' ? (handler as (error: unknown) => R) : undefined
 }
 
 export const matchTaggedOr = <E, R, F, Remaining = E>(
@@ -30,10 +30,9 @@ export const matchTaggedOr = <E, R, F, Remaining = E>(
     return tagged(error)
   }
 
-  const errorHandler = (handlers as { readonly Error?: (error: E) => R }).Error
-
-  if (errorHandler !== undefined) {
-    return errorHandler(error)
+  if (Object.hasOwn(handlers, 'Error')) {
+    const errorHandler = (handlers as { readonly Error?: (error: E) => R }).Error
+    if (typeof errorHandler === 'function') return errorHandler(error)
   }
 
   return fallback(error as unknown as Remaining)

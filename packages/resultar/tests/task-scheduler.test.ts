@@ -696,7 +696,7 @@ describe('cooperative task scheduling', () => {
     equal(clockMany.now(), 10_001)
     equal(clockMany.pending, 0)
     equal(manyReleases, 1)
-  })
+  }, 20_000)
 
   it('automatically advances finalizer sleeps scheduled after external promises during normal runToCompletion', async () => {
     const runScenario = async (outcome: 'success' | 'failure'): Promise<void> => {

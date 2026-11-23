@@ -1,5 +1,5 @@
 import { AbortError } from '../core/abort-error.js'
-import { toNativeAbortSignal } from './exit.js'
+import { NEVER_ABORTED_SIGNAL, toNativeAbortSignal } from './exit.js'
 import type { TaskClock } from './task-clock.js'
 
 /**
@@ -47,6 +47,10 @@ const live: TaskScheduler = Object.freeze({
         return
       }
 
+      if (signal === NEVER_ABORTED_SIGNAL) {
+        scheduleMacrotask(resolve)
+        return
+      }
       const onAbort = (): void => {
         cancel()
         signal.removeEventListener('abort', onAbort)
@@ -82,6 +86,7 @@ export interface TaskScheduling {
   readonly yieldEvery: number
   readonly clock: TaskClock
   remaining: number
+  syncRunner?: boolean
 }
 
 const createSchedulingWithOptions = (
@@ -115,6 +120,7 @@ export const forkScheduling = (parent: TaskScheduling): TaskScheduling => ({
   yieldEvery: parent.yieldEvery,
   clock: parent.clock,
   remaining: parent.yieldEvery,
+  syncRunner: parent.syncRunner === true,
 })
 
 /** A failed dispatcher cannot prevent registered finalizers from being executed. */

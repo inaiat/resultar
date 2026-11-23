@@ -248,7 +248,7 @@ error instanceof AccountAlreadyExistsError; // true
 error._tag; // 'AccountAlreadyExistsError'
 error.message; // 'Account ada@example.com already exists'
 error.email; // 'ada@example.com'
-error.fingerprint; // 'AccountAlreadyExistsError:Account $email already exists'
+error.fingerprint; // ["AccountAlreadyExistsError", "Account $email already exists"]
 error.toJSON(); // cycle-safe serializable object
 ```
 
@@ -831,7 +831,7 @@ See the [Complete API Map](https://github.com/inaiat/resultar/blob/main/DOCUMENT
 | Import path         | Contents                                                                                                                                                                                      |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `resultar`          | Full v5 core API (`Result`, `ResultTask`, `Match`, tagged errors, concurrency, observability — zero `ResultAsync` imports)                                                                    |
-| `resultar/result`   | Synchronous `Result`, `ok`, `err`, `unit`, `tryResult`, `fromThrowable`, `redact`                                                                                                             |
+| `resultar/result`   | Synchronous `Result`, `ok`, `err`, `unit`, `tryResult`, `fromThrowable`                                                                                                             |
 | `resultar/task`     | `ResultTask`, `Cause`, `Exit`, `Fiber`, `Semaphore`, `Ref`, `Deferred`, `Queue`, `TaskLocal`, `Tracer`, `Clock`, `Scheduler`, `serviceTag`, `Retry`                                           |
 | `resultar/async`    | Opt-in eager `ResultAsync`, `StrictResultAsync`, `okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`, `ResultAsync.gen` / `fn`, `asyncMap`, `asyncAndThen` |
 | `resultar/match`    | Exhaustive `Match` pattern matcher                                                                                                                                                            |

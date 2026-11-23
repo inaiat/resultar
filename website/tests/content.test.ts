@@ -23,6 +23,12 @@ void test("generated docs cover every nav item and all internal docs links resol
       // eslint-disable-next-line no-await-in-loop -- Validate each generated page sequentially for clear diagnostics.
       const page = await loader();
       assert.ok(page.html.length > 100, `Expected non-empty HTML for ${item.slug}`);
+      for (const anchor of page.html.matchAll(/class="heading-anchor" href="([^"]+)"/gu)) {
+        assert.ok(
+          anchor[1]?.startsWith(`#/docs/${item.slug}#`) === true,
+          `Heading left ${item.slug}: ${anchor[1]}`,
+        );
+      }
       for (const match of page.html.matchAll(/href="#\/docs\/([^"#]+)(?:#[^"]*)?"/gu)) {
         const targetSlug = match[1];
         assert.ok(

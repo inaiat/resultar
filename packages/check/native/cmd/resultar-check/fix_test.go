@@ -237,3 +237,20 @@ func TestEditConflictDetectionAndApplication(t *testing.T) {
 		t.Fatalf("unexpected edit application result: %q", updated)
 	}
 }
+
+func TestFileFilterPrefersProjectFileOnCollision(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	project := filepath.Join(root, "app")
+	if err := os.Mkdir(project, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{root, project} {
+		if err := os.WriteFile(filepath.Join(dir, "index.ts"), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !matchesFile(filepath.Join(project, "index.ts"), "index.ts", project) || matchesFile(filepath.Join(root, "index.ts"), "index.ts", project) {
+		t.Fatal("a project-relative filter must select only the project file")
+	}
+}

@@ -164,10 +164,24 @@ func run(args []string) int {
 			if passSummary.TotalFixes == 0 {
 				break
 			}
+			previous := tsFindings
 			opened, options, tsFindings, exitCode = openProjectForAnalysis(ctx, projectPath, mode, failOnName, command, format, true)
 			if exitCode != 0 {
 				printFixSummary(totalSummary, mustGetwd(), false)
 				return exitCode
+			}
+			counts := map[string]int{}
+			for _, d := range previous {
+				counts[d.File+"\x00"+d.Message]++
+			}
+			for _, d := range tsFindings {
+				key := d.File + "\x00" + d.Message
+				if counts[key] == 0 {
+					printFixSummary(totalSummary, mustGetwd(), false)
+					_ = writeDiagnostics(format, tsFindings)
+					return 1
+				}
+				counts[key]--
 			}
 			findings, err = analyzer.Run(ctx, opened.Program, opened.Directory, options)
 			if err != nil {

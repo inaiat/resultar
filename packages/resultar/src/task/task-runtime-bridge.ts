@@ -1,11 +1,11 @@
 import type { Exit, ResultTask } from './result-task.js'
 import type { ResultTaskRuntimeContext } from './task-service.js'
 
-export type RuntimeTaskFactory = <A, E = never, R = never>(
+type RuntimeTaskFactory = <A, E = never, R = never>(
   execute: (context: ResultTaskRuntimeContext) => Exit<A, E> | Promise<Exit<A, E>>,
 ) => ResultTask<A, E, R>
 
-export type RuntimeTaskRunner = <A, E, R>(
+type RuntimeTaskRunner = <A, E, R>(
   task: ResultTask<A, E, R>,
   context: ResultTaskRuntimeContext,
 ) => Exit<A, E> | Promise<Exit<A, E>>

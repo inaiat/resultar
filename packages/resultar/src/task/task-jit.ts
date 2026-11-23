@@ -4,6 +4,7 @@ import type { Exit } from './result-task.js'
 import type { ResultTaskRuntimeContext } from './task-service.js'
 
 // Leaf / terminal opcodes: 0..6
+export const OP_SUSPEND = -1
 export const OP_SUCCESS = 0
 export const OP_FAIL = 1
 export const OP_SYNC = 2
@@ -11,7 +12,7 @@ export const OP_TRY_PROMISE = 3
 export const OP_GEN = 4
 export const OP_ASYNC = 5
 export const OP_CUSTOM = 6
-// Combinator / continuation opcodes: 7..15 (single check `op >= OP_FLAT_MAP`)
+// Combinator / continuation opcodes: 7..16 (single check `op >= OP_FLAT_MAP`)
 export const OP_FLAT_MAP = 7
 export const OP_MAP = 8
 export const OP_MAP_ERROR = 9
@@ -21,6 +22,7 @@ export const OP_TAP_BOTH = 12
 export const OP_CATCH_ALL = 13
 export const OP_CATCH_TAG = 14
 export const OP_CATCH_TAGS = 15
+export const OP_CATCH_REASON = 16
 
 export interface CatchTagContinuation {
   readonly tag: string
@@ -66,6 +68,11 @@ export interface TaskJitHelpers {
     handlers: object,
   ) => ((error: unknown) => unknown) | undefined
   readonly createCauseError: (cause: Cause<unknown>) => Error
+  readonly runTap: (
+    node: TaskNodeLike,
+    exit: Exit<unknown, unknown>,
+    context: ResultTaskRuntimeContext,
+  ) => Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>
   readonly runSlow: (
     task: TaskNodeLike,
     context: ResultTaskRuntimeContext,
@@ -92,7 +99,10 @@ const isCompilableCombinator = (op: number): boolean =>
   op === OP_MAP_ERROR ||
   op === OP_CATCH_ALL ||
   op === OP_CATCH_TAG ||
-  op === OP_CATCH_TAGS
+  op === OP_CATCH_TAGS ||
+  op === OP_TAP ||
+  op === OP_TAP_ERROR ||
+  op === OP_TAP_BOTH
 
 const isCompilableLeaf = (op: number): boolean => op >= OP_SUCCESS && op <= OP_ASYNC
 
@@ -204,8 +214,8 @@ const emitTaskOrResultStep = (
         n = ${spec.invokeExpr};
         if (isTask(n)) {
           if (track && sig.aborted) return interrupted(sig);
-          if (n.op === 0) { sched.remaining -= 1; ${okAssign}v = n.value;${clearEx} }
-          else if (n.op === 1) { sched.remaining -= 1; ok = false; ex = failed(n.value); }
+          if (n.op === 0 && sched.remaining > 1) { sched.remaining -= 1; ${okAssign}v = n.value;${clearEx} }
+          else if (n.op === 1 && sched.remaining > 1) { sched.remaining -= 1; ok = false; ex = failed(n.value); }
           else {
             ex = n.run(ctx);
             if (isPromise(ex)) return resumeAsync(ex, ${String(nextIndex)}, ctx);
@@ -257,6 +267,16 @@ ${body}
     try { ex = failure(transformCause(ex.cause, ${mapperParam})); }
     catch (e) { ex = died(e); }
   }`
+    }
+    case OP_TAP:
+    case OP_TAP_ERROR:
+    case OP_TAP_BOTH: {
+      return `  if (ok && track && sig.aborted) { ok = false; ex = interrupted(sig); }
+  try { ex = runTap(${b.bind(step)}, ok ? success(v) : ex, ctx);
+    if (isPromise(ex)) return resumeAsync(ex, ${String(index + 1)}, ctx);
+    ok = ex._tag === "Success";
+    if (ok) { v = ex.value; ex = undefined; }
+  } catch (e) { ok = false; ex = died(e); }`
     }
     case OP_CATCH_ALL: {
       const fnParam = b.bind(step.continuation)
@@ -349,6 +369,7 @@ export const compileTaskChain = (
     'transformCause',
     'getTaggedHandler',
     'createCauseError',
+    'runTap',
     'runSlow',
     'resumeAsync',
     'resumeSync',
@@ -368,6 +389,7 @@ export const compileTaskChain = (
     helpers.transformCause,
     helpers.getTaggedHandler,
     helpers.createCauseError,
+    helpers.runTap,
     helpers.runSlow,
     helpers.createAsyncResumer(steps),
     helpers.createSyncResumer(steps),
@@ -390,14 +412,18 @@ export const compileTaskChain = (
     '  if (track && sig.aborted) return interrupted(sig);',
     '  const sched = ctx.scheduling;',
     `  if (sched.remaining <= ${String(requiredBudget)}) return runSlow(rootTask, ctx);`,
-    `  sched.remaining -= ${String(baseCost)};`,
+    `  sched.remaining -= ${String(steps.length + 1)};`,
     emitLeafInit(ctx, leaf),
   ]
 
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index]
     if (step !== undefined) {
-      lines.push(emitStepCode(ctx, step, index))
+      lines.push(
+        `  if (sched.remaining <= 1) return resumeSync(ok ? success(v) : ex, ${String(index)}, ctx);`,
+        '  sched.remaining -= 1;',
+        emitStepCode(ctx, step, index),
+      )
     }
   }
 

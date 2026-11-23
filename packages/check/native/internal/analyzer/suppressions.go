@@ -93,7 +93,8 @@ func parseSuppressions(file *ast.SourceFile) []suppression {
 				entries[key] = [2]int{range_.Pos() + relative, len(rule)}
 				cursor = relative + len(rule)
 			}
-			line := strings.Count(text[:range_.Pos()], "\n") + 1 + directive.offset
+			line, _ := scanner.GetECMALineAndUTF16CharacterOfPosition(file, range_.Pos())
+			line += 1 + directive.offset
 			result = append(result, suppression{line: line, start: start, length: len(directive.name) + len(strings.TrimRight(rest, " \t\r")), rules: rules, entries: entries})
 		}
 	}

@@ -1,3 +1,12 @@
+import { parse } from "@babel/parser";
+
+import * as resultarAsync from "../../packages/resultar/dist/async.js";
+import * as resultarFunction from "../../packages/resultar/dist/function.js";
+import * as resultarMatch from "../../packages/resultar/dist/match.js";
+import * as resultarResult from "../../packages/resultar/dist/result.js";
+import * as resultarRetry from "../../packages/resultar/dist/retry.js";
+import * as resultarTagged from "../../packages/resultar/dist/tagged.js";
+import * as resultarTask from "../../packages/resultar/dist/task.js";
 import type * as ResultarModule from "../../packages/resultar/dist/index.js";
 import type { RecordedSpan, SpanAttributeValue } from "../../packages/resultar/dist/index.js";
 
@@ -186,14 +195,56 @@ export const executePlaygroundInContext = async (
   };
 
   try {
+    const modules = new Map<string, object>([
+      ["resultar", resultar],
+      ["resultar/async", resultarAsync],
+      ["resultar/function", resultarFunction],
+      ["resultar/match", resultarMatch],
+      ["resultar/result", resultarResult],
+      ["resultar/retry", resultarRetry],
+      ["resultar/tagged", resultarTagged],
+      ["resultar/task", resultarTask],
+    ]);
+    const loadModule = (specifier: string): object => {
+      const module = modules.get(specifier);
+      if (module !== undefined) return module;
+      throw new Error(
+        `Playground only supports imports from "resultar" and its public subpaths (found "${specifier}").`,
+      );
+    };
+    // Check bindings before execution, including imports that the snippet never reads.
+    const { program } = parse(source, { sourceType: "module", plugins: ["typescript"] });
+    for (const node of program.body) {
+      if (node.type !== "ImportDeclaration" || node.importKind === "type") continue;
+      const bindings = node.specifiers.filter(
+        (binding) => binding.type !== "ImportSpecifier" || binding.importKind !== "type",
+      );
+      if (bindings.length === 0 && node.specifiers.length > 0) continue;
+
+      const module = loadModule(node.source.value);
+      for (const binding of bindings) {
+        if (binding.type === "ImportNamespaceSpecifier") continue;
+        let name = "default";
+        if (binding.type === "ImportSpecifier") {
+          name =
+            binding.imported.type === "Identifier" ? binding.imported.name : binding.imported.value;
+        }
+        if (!Object.hasOwn(module, name)) {
+          throw new SyntaxError(
+            `Module "${node.source.value}" does not provide an export named "${name}".`,
+          );
+        }
+      }
+    }
     const jsCode = transpilePlaygroundTs(source);
     // eslint-disable-next-line typescript/no-unsafe-type-assertion -- Function constructor evaluates sandboxed playground JS.
     const runner = new Function(
-      "__resultar",
+      "require",
+      "exports",
       "console",
       `"use strict"; return (async () => {\n${jsCode}\n})();`,
-    ) as (mod: typeof ResultarModule, con: typeof sandboxConsole) => Promise<void>;
-    await runner(resultar, sandboxConsole);
+    ) as (load: typeof loadModule, exports: object, con: typeof sandboxConsole) => Promise<void>;
+    await runner(loadModule, {}, sandboxConsole);
 
     return { ok: true, durationMs: Math.max(0, performance.now() - startedAt), logs, spans };
   } catch (error: unknown) {

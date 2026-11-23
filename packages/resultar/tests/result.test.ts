@@ -484,6 +484,19 @@ describe('Result.Ok', async () => {
     }
   })
 
+  it('ignores inherited Error handlers and non-callable JavaScript handler entries', () => {
+    const fallback = () => 'fallback'
+    const plain = err(new Error('plain'))
+    const tagged = err(new ValidationError({ field: 'email' }))
+    const inheritedError = Object.create({ Error: () => 'inherited' }) as never
+    equal(plain.matchTagsPartial(String, inheritedError, fallback), 'fallback')
+    equal(plain.matchTagsPartial(String, { Error: 'invalid' } as never, fallback), 'fallback')
+    equal(
+      tagged.matchTagsPartial(String, { ValidationError: 'invalid' } as never, fallback),
+      'fallback',
+    )
+  })
+
   it('partially matches plain Error through the Error handler before fallback', () => {
     const result = err<number, ValidationError | Error>(new Error('plain failure'))
 
@@ -2029,6 +2042,32 @@ describe('tryResult', async () => {
       isTrue(result.isErr())
       isTrue(result.error instanceof Error)
       equal(result.error.message, 'Cannot divide by zero')
+    })
+
+    it('preserves the thrown error when options omit a catch mapper', () => {
+      const original = new Error('unmapped')
+      deepEqual(
+        tryResult({
+          try: () => {
+            throw original
+          },
+        }),
+        err(original),
+      )
+    })
+
+    it('treats a callable input with a catch property as a function', () => {
+      const original = new Error('original')
+      const input = Object.assign(
+        () => {
+          throw original
+        },
+        { catch: () => 'wrong mapper' },
+      )
+      deepEqual(
+        tryResult(input, () => 'function mapper'),
+        err('function mapper'),
+      )
     })
 
     it('should handle custom error transformation', () => {

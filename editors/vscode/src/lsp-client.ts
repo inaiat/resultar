@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import crossSpawn from "cross-spawn";
 
 import {
   filePathToUri,
@@ -74,7 +75,7 @@ export class ResultarLspClient {
     this.#stopped = false;
     this.#buffer = Buffer.alloc(0);
 
-    const child = spawn(this.#options.command, [...this.#options.args], {
+    const child = crossSpawn.spawn(this.#options.command, [...this.#options.args], {
       cwd: this.#options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -95,13 +96,12 @@ export class ResultarLspClient {
       this.#rejectAllPending(error);
     });
     child.on("exit", (code, signal) => {
-      if (this.#child === child) {
-        this.#child = undefined;
-      }
+      if (this.#child !== child) return;
+      this.#child = undefined;
       this.#rejectAllPending(
         new Error(`resultar-check lsp exited (code=${String(code)}, signal=${String(signal)})`),
       );
-      this.#options.onExit?.(code, signal);
+      if (!this.#stopped) this.#options.onExit?.(code, signal);
     });
 
     const rawResult = await this.sendRequest("initialize", {

@@ -3,6 +3,6 @@
   "version": "2.0.0-beta.0",
   "license": "MIT",
   "exports": "./src/index.ts",
-  "imports": { "resultar": "jsr:@inaiat/resultar@^4.0.0" },
+  "imports": { "resultar": "jsr:@inaiat/resultar@^5.0.0-beta.0" },
   "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }
 }

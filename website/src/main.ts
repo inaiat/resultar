@@ -409,7 +409,7 @@ const renderPlayground = (): string => {
         ? ""
         : `<div class="pg-log pg-log-error">${escapeHtml(result.error)}</div>`;
     outputBody =
-      (logLines || errLine || `<div class="pg-log">Completed with no console output.</div>`) +
+      (logLines || (errLine ? "" : `<div class="pg-log">Completed with no console output.</div>`)) +
       errLine +
       renderWaterfall(result);
   }
@@ -478,34 +478,16 @@ const renderPlayground = (): string => {
   `;
 };
 
-const renderSearchModal = (): string => {
-  if (!state.searchOpen) return "";
+const renderSearchResults = (): string => {
   const results = searchDocs(SEARCH_INDEX, state.searchQuery, 16);
   const clampedIdx = Math.min(state.searchSelected, Math.max(0, results.length - 1));
   state.searchSelected = clampedIdx;
 
-  return `
-    <div class="modal-backdrop" data-action="close-search-backdrop">
-      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Search documentation">
-        <div class="modal-input-row">
-          <span style="color:var(--text-dim)">⌕</span>
-          <input
-            id="search-input"
-            class="modal-input"
-            type="text"
-            value="${escapeHtml(state.searchQuery)}"
-            placeholder="Search guides, API symbols (Deferred, TaskLocal…), or 43 rules…"
-            autocomplete="off"
-          />
-          <span class="kbd">ESC</span>
-        </div>
-        <div class="modal-results">
-          ${
-            results.length === 0
-              ? `<div style="padding:20px;text-align:center;color:var(--text-dim)">No results for "${escapeHtml(state.searchQuery)}"</div>`
-              : results
-                  .map(
-                    ({ entry }, idx) => `
+  return results.length === 0
+    ? `<div style="padding:20px;text-align:center;color:var(--text-dim)">No results for "${escapeHtml(state.searchQuery)}"</div>`
+    : results
+        .map(
+          ({ entry }, idx) => `
                       <a
                         class="search-item ${idx === clampedIdx ? "selected" : ""}"
                         href="${escapeHtml(entry.route)}"
@@ -519,9 +501,29 @@ const renderSearchModal = (): string => {
                         <div class="search-item-excerpt">${escapeHtml(entry.excerpt)}</div>
                       </a>
                     `,
-                  )
-                  .join("")
-          }
+        )
+        .join("");
+};
+
+const renderSearchModal = (): string => {
+  if (!state.searchOpen) return "";
+  return `
+    <div class="modal-backdrop" data-action="close-search-backdrop">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="modal-input-row">
+          <span style="color:var(--text-dim)">⌕</span>
+          <input
+            id="search-input"
+            class="modal-input"
+            type="text"
+            value="${escapeHtml(state.searchQuery)}"
+            placeholder="Search guides, API symbols (Deferred, TaskLocal…), or ${SITE_META.ruleCount} rules…"
+            autocomplete="off"
+          />
+          <span class="kbd">ESC</span>
+        </div>
+        <div class="modal-results">
+          ${renderSearchResults()}
         </div>
       </div>
     </div>
@@ -574,7 +576,7 @@ const scrollToAnchor = (anchor: string | undefined): void => {
     return;
   }
   globalThis.requestAnimationFrame(() => {
-    const target = document.querySelector(`#${anchor}`);
+    const target = document.querySelector(`#${CSS.escape(anchor)}`);
     if (target !== null) {
       target.scrollIntoView({ behavior: "smooth", block: "start" });
     }
@@ -774,11 +776,13 @@ document.addEventListener("input", (event: Event) => {
   if (target instanceof HTMLInputElement && target.id === "search-input") {
     state.searchQuery = target.value;
     state.searchSelected = 0;
-    render();
+    const results = document.querySelector(".modal-results");
+    if (results !== null) results.innerHTML = renderSearchResults();
   }
 });
 
 document.addEventListener("keydown", (event: KeyboardEvent) => {
+  if (event.isComposing) return;
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
     if (state.searchOpen) closeSearch();

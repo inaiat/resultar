@@ -138,26 +138,48 @@ const createClosedScopeError = (): ResultTaskCauseError =>
     defect: new TypeError("Cannot create a child from a closed service scope"),
   });
 
-const ensureRequestSignal = (
+export const requestControllers = new WeakMap<NestRequest, AbortController>();
+
+export const ensureRequestSignal = (
   request: NestRequest,
   rawRequest: IncomingMessage,
-): AbortSignal | undefined => {
+  rawResponse: ServerResponse,
+): AbortSignal => {
+  if (Object.hasOwn(request, "signal") && request.signal instanceof AbortSignal)
+    return request.signal;
   const rawSignal = (rawRequest as { readonly signal?: unknown }).signal;
-  if (
-    !Object.hasOwn(request, "signal") &&
-    typeof rawSignal === "object" &&
-    rawSignal instanceof AbortSignal
-  ) {
-    Object.defineProperty(request, "signal", {
-      value: rawSignal,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    });
+  let signal: AbortSignal | undefined = undefined;
+  if (rawSignal instanceof AbortSignal) {
+    signal = rawSignal;
+  } else if (request.signal instanceof AbortSignal) {
+    return request.signal;
+  } else {
+    const controller = new AbortController();
+    requestControllers.set(request, controller);
+    signal = controller.signal;
+    const onAborted = () => controller.abort(new Error("Request aborted"));
+    const onClose = () => {
+      if (!rawResponse.writableFinished) controller.abort(new Error("Response connection closed"));
+      cleanup();
+    };
+    const cleanup = () => {
+      rawRequest.removeListener("aborted", onAborted);
+      rawResponse.removeListener("close", onClose);
+      rawResponse.removeListener("finish", cleanup);
+    };
+    rawRequest.once("aborted", onAborted);
+    rawResponse.once("close", onClose);
+    rawResponse.once("finish", cleanup);
+    if (rawRequest.destroyed && !rawRequest.complete) onAborted();
+    if (rawResponse.destroyed) onClose();
   }
-  return typeof request.signal === "object" && request.signal instanceof AbortSignal
-    ? request.signal
-    : undefined;
+  Object.defineProperty(request, "signal", {
+    value: signal,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+  return signal;
 };
 
 const isBenignFastifyBodyCloseAbort = (rawRequest: IncomingMessage, reason: unknown): boolean =>
@@ -181,7 +203,9 @@ const getRequestAbortReason = (
   if (isBenignFastifyBodyCloseAbort(rawRequest, reason)) {
     return undefined;
   }
-  return reason ?? new DOMException("This operation was aborted", "AbortError");
+  return reason === undefined
+    ? new DOMException("This operation was aborted", "AbortError")
+    : reason;
 };
 
 const matchesLocalKeys = (
@@ -327,7 +351,7 @@ const createStaticDispatcher = (
       const response = http.getResponse<ServerResponse>();
       const rawRequest = getRawRequest(request);
       const rawResponse = getRawResponse(response);
-      const externalSignal = ensureRequestSignal(request, rawRequest);
+      const externalSignal = ensureRequestSignal(request, rawRequest, rawResponse);
       return executeCompiledPlan(staticPlan, execState, {
         ctx: { request, rawRequest, rawResponse, externalSignal },
         locals: EMPTY_SERVICES,
@@ -377,7 +401,7 @@ const createDynamicDispatcher = (
       const response = http.getResponse<ServerResponse>();
       const rawRequest = getRawRequest(request);
       const rawResponse = getRawResponse(response);
-      const externalSignal = ensureRequestSignal(request, rawRequest);
+      const externalSignal = ensureRequestSignal(request, rawRequest, rawResponse);
       const ctx: ResolvedPlanContext = { request, rawRequest, rawResponse, externalSignal };
 
       externalSignal?.addEventListener("abort", noopAbortListener, { once: true });

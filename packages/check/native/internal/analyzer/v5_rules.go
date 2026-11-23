@@ -126,7 +126,7 @@ func (a *Analyzer) classifyFunctionReturnIntent(fn *ast.Node) awaitSurroundingIn
 		if a.isResultarSyncType(retType) && !isResultTaskLikeType(retType) {
 			return awaitIntentResult
 		}
-		if isResultTaskLikeType(retType) && !a.isResultarSyncType(retType) {
+		if isNarrowedResultTaskType(a.checker, retType) && !a.isResultarSyncType(retType) {
 			return awaitIntentTask
 		}
 		return awaitIntentUnknown
@@ -210,7 +210,7 @@ func (a *Analyzer) collectSymbolUsageIntent(searchRoot *ast.Node, sym *ast.Symbo
 		if parent.Kind == ast.KindVariableDeclaration && parent.Initializer() == child {
 			if parent.Type() != nil {
 				declaredType := a.checker.GetTypeAtLocation(parent.Type())
-				if isResultTaskLikeType(declaredType) && !a.isResultarSyncType(declaredType) {
+				if isNarrowedResultTaskType(a.checker, declaredType) && !a.isResultarSyncType(declaredType) {
 					usedAsTask = true
 				} else if a.isResultarSyncType(declaredType) {
 					usedAsResult = true
@@ -256,7 +256,7 @@ func (a *Analyzer) collectSymbolUsageIntent(searchRoot *ast.Node, sym *ast.Symbo
 			bin := parent.AsBinaryExpression()
 			if bin.OperatorToken != nil && bin.OperatorToken.Kind == ast.KindEqualsToken && bin.Right == child {
 				lhsType := a.checker.GetTypeAtLocation(bin.Left)
-				if isResultTaskLikeType(lhsType) && !a.isResultarSyncType(lhsType) {
+				if isNarrowedResultTaskType(a.checker, lhsType) && !a.isResultarSyncType(lhsType) {
 					usedAsTask = true
 				} else if a.isResultarSyncType(lhsType) {
 					usedAsResult = true
@@ -268,7 +268,7 @@ func (a *Analyzer) collectSymbolUsageIntent(searchRoot *ast.Node, sym *ast.Symbo
 		// Contextual type from call argument / property value.
 		contextual := a.checker.GetContextualType(child, checker.ContextFlagsNone)
 		if contextual != nil && contextual.Flags()&(checker.TypeFlagsAnyOrUnknown|checker.TypeFlagsVoid) == 0 {
-			if isResultTaskLikeType(contextual) && !a.isResultarSyncType(contextual) {
+			if isNarrowedResultTaskType(a.checker, contextual) && !a.isResultarSyncType(contextual) {
 				usedAsTask = true
 			} else if a.isResultarSyncType(contextual) {
 				usedAsResult = true
@@ -303,6 +303,9 @@ func (a *Analyzer) collectSymbolUsageIntent(searchRoot *ast.Node, sym *ast.Symbo
 
 		// Inspect full fluent property/call chain (e.g., `later.inspect(fn).runPromise()`).
 		if parent.Kind == ast.KindPropertyAccessExpression && parent.Expression() == child && parent.Name() != nil {
+			if a.ambiguousSuccessMember(ref, parent.Name().Text()) {
+				return
+			}
 			sawTaskOnly, sawResultOnly, _, endExpr := inspectMemberChain(parent)
 			if sawTaskOnly {
 				usedAsTask = true
@@ -321,6 +324,20 @@ func (a *Analyzer) collectSymbolUsageIntent(searchRoot *ast.Node, sym *ast.Symbo
 	})
 
 	return usedAsTask, usedAsResult
+}
+
+func (a *Analyzer) ambiguousSuccessMember(operand *ast.Node, name string) bool {
+	if name != "value" && name != "error" {
+		return false
+	}
+	args := typeArguments(a.checker, a.checker.GetTypeAtLocation(operand))
+	if len(args) == 0 {
+		return true
+	}
+	t := args[0]
+	return !everyUnionPart(t, func(part *checker.Type) bool {
+		return part.Flags()&(checker.TypeFlagsAnyOrUnknown|checker.TypeFlagsTypeParameter) == 0 && a.checker.GetPropertyOfType(part, name) == nil
+	})
 }
 
 func (a *Analyzer) classifyAwaitSurrounding(file *ast.SourceFile, awaitNode *ast.Node) awaitSurroundingIntent {
@@ -342,6 +359,9 @@ func (a *Analyzer) classifyAwaitSurrounding(file *ast.SourceFile, awaitNode *ast
 		return awaitIntentUnknown
 	case ast.KindPropertyAccessExpression:
 		if parent.Expression() == child && parent.Name() != nil {
+			if a.ambiguousSuccessMember(awaitNode.Expression(), parent.Name().Text()) {
+				return awaitIntentUnknown
+			}
 			sawTaskOnly, sawResultOnly, _, endExpr := inspectMemberChain(parent)
 			if sawTaskOnly && !sawResultOnly {
 				return awaitIntentTask
@@ -378,7 +398,7 @@ func (a *Analyzer) classifyAwaitSurrounding(file *ast.SourceFile, awaitNode *ast
 					}
 					contextual := a.checker.GetContextualType(endChild, checker.ContextFlagsNone)
 					if contextual != nil && contextual.Flags()&(checker.TypeFlagsAnyOrUnknown|checker.TypeFlagsVoid) == 0 {
-						if isResultTaskLikeType(contextual) && !a.isResultarSyncType(contextual) {
+						if isNarrowedResultTaskType(a.checker, contextual) && !a.isResultarSyncType(contextual) {
 							return awaitIntentTask
 						}
 						if a.isResultarSyncType(contextual) && !isResultTaskLikeType(contextual) {
@@ -398,7 +418,7 @@ func (a *Analyzer) classifyAwaitSurrounding(file *ast.SourceFile, awaitNode *ast
 			if a.isResultarSyncType(declaredType) {
 				return awaitIntentResult
 			}
-			if isResultTaskLikeType(declaredType) {
+			if isNarrowedResultTaskType(a.checker, declaredType) {
 				return awaitIntentTask
 			}
 			return awaitIntentUnknown
@@ -414,11 +434,16 @@ func (a *Analyzer) classifyAwaitSurrounding(file *ast.SourceFile, awaitNode *ast
 				if propName == nil || propName.Kind != ast.KindIdentifier {
 					return awaitIntentUnknown
 				}
+				if a.ambiguousSuccessMember(awaitNode.Expression(), propName.Text()) {
+					return awaitIntentUnknown
+				}
 				if _, ok := resultOnlyMemberNames[propName.Text()]; ok {
 					sawResultOnly = true
 				}
 				if _, ok := taskOnlyMemberNames[propName.Text()]; ok {
 					sawTaskOnly = true
+				} else if _, known := resultMemberNames[propName.Text()]; !known {
+					return awaitIntentUnknown
 				}
 			}
 			if sawResultOnly && !sawTaskOnly {
@@ -448,7 +473,7 @@ func (a *Analyzer) classifyAwaitSurrounding(file *ast.SourceFile, awaitNode *ast
 			if a.isResultarSyncType(lhsType) {
 				return awaitIntentResult
 			}
-			if isResultTaskLikeType(lhsType) {
+			if isNarrowedResultTaskType(a.checker, lhsType) {
 				return awaitIntentTask
 			}
 			return awaitIntentUnknown
@@ -460,7 +485,7 @@ func (a *Analyzer) classifyAwaitSurrounding(file *ast.SourceFile, awaitNode *ast
 		if a.isResultarSyncType(contextual) {
 			return awaitIntentResult
 		}
-		if isResultTaskLikeType(contextual) {
+		if isNarrowedResultTaskType(a.checker, contextual) {
 			return awaitIntentTask
 		}
 	}
@@ -553,27 +578,55 @@ func (a *Analyzer) noAwaitResultTask(file *ast.SourceFile) []Finding {
 	return findings
 }
 
-func callbackMayThrowOrReject(c *checker.Checker, callback *ast.Node) bool {
-	if callback == nil {
-		return true
-	}
-	if ast.HasSyntacticModifier(callback, ast.ModifierFlagsAsync) {
-		return true
-	}
-	if callbackReturnsPromiseLike(c, callback) {
-		return true
-	}
-	risky := false
-	visitFunctionBody(callback, func(bodyNode *ast.Node) {
-		if risky {
-			return
+// Result.inspect swallows observer exceptions. Only autofix straightforward writes
+// to initialized local variables; other observer bodies remain manual suggestions.
+func safeInspectCallback(c *checker.Checker, callback *ast.Node) bool {
+	statements := callback.Body().Statements()
+	for _, statement := range statements[:len(statements)-1] {
+		if statement.Kind != ast.KindExpressionStatement {
+			return false
 		}
-		switch bodyNode.Kind {
-		case ast.KindThrowStatement, ast.KindAwaitExpression, ast.KindCallExpression, ast.KindNewExpression, ast.KindTaggedTemplateExpression:
-			risky = true
+		expr := unwrapExpression(statement.Expression())
+		if expr.Kind != ast.KindBinaryExpression {
+			return false
 		}
-	})
-	return risky
+		write := expr.AsBinaryExpression()
+		if write.Left.Kind != ast.KindIdentifier || write.Right.Kind != ast.KindNumericLiteral {
+			return false
+		}
+		switch write.OperatorToken.Kind {
+		case ast.KindEqualsToken:
+		case ast.KindPlusEqualsToken, ast.KindMinusEqualsToken:
+			if t := c.GetTypeAtLocation(write.Left); t == nil || t.Flags()&checker.TypeFlagsNumberLike == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+		sym := c.GetSymbolAtLocation(write.Left)
+		if sym == nil || len(sym.Declarations()) != 1 {
+			return false
+		}
+		decl := sym.Declarations()[0]
+		if decl.Kind != ast.KindVariableDeclaration || decl.Parent == nil || decl.Parent.Flags&ast.NodeFlagsLet == 0 ||
+			decl.AsVariableDeclaration().Initializer == nil || decl.End() >= callback.Pos() {
+			return false
+		}
+		// A previous let in the same statement list has been initialized when
+		// the callback runs. Crossing a function boundary loses that guarantee.
+		group := decl.Parent.Parent
+		if group == nil || group.Kind != ast.KindVariableStatement {
+			return false
+		}
+		scope := callback.Parent
+		for scope != nil && scope != group.Parent && !isFunctionLikeNode(scope) {
+			scope = scope.Parent
+		}
+		if scope != group.Parent {
+			return false
+		}
+	}
+	return true
 }
 
 func preferTapVoidCallbackFix(

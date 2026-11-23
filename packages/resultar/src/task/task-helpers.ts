@@ -1,5 +1,6 @@
 import {
   isRetryElapsedExceeded,
+  isPromiseLike,
   observeRetry,
   retryContext,
   retryPolicyDelay,
@@ -9,9 +10,9 @@ import type { RetryContext, RetryPolicy } from '../core/retry.js'
 import { Cause } from './cause.js'
 import { transformCause, withoutInterruptions } from './cause-transform.js'
 import { isCleanupCause } from './cleanup-cause.js'
-import { combineExits, died, failure, success } from './exit.js'
+import { combineExits, died, failure, interrupted, success } from './exit.js'
 import type { SupervisedFiber } from './fiber-runtime.js'
-import { detachedPromise, NEVER_ABORTED_SIGNAL } from './promise-interruption.js'
+import { detachedPromise } from './promise-interruption.js'
 import type { Exit, ResultTask } from './result-task.js'
 import type { TaskClock } from './task-clock.js'
 import type { ResultTaskRuntimeContext } from './task-service.js'
@@ -99,89 +100,9 @@ export const checkedConcurrency = (options?: ResultTaskConcurrencyOptions): numb
   return concurrency
 }
 
-interface CanonicalRetryRuntime {
-  readonly policy: RetryPolicy<unknown>
-  readonly clock: TaskClock
-  readonly signal: AbortSignal
-  readonly startedAt: number
-}
-
 type RetryPlan = Exit<number | undefined, never>
 
 const ZERO_RETRY_PLAN: RetryPlan = success(0)
-
-const canonicalRetryDecision = async (
-  policy: RetryPolicy<unknown>,
-  error: unknown,
-  runtime: { readonly context: RetryContext; readonly signal: AbortSignal },
-): Promise<Exit<boolean, never>> => {
-  const predicate = policy.while
-  if (predicate === undefined) return success(true)
-  return detachedPromise(
-    runtime.signal,
-    () => Promise.resolve(predicate(error, runtime.context)),
-    throwDefect,
-  )
-}
-
-const canonicalRetryDelayAsync = async (
-  error: unknown,
-  context: RetryContext,
-  runtime: CanonicalRetryRuntime,
-): Promise<RetryPlan> => {
-  const { policy, clock, signal, startedAt } = runtime
-  const decision = await canonicalRetryDecision(policy, error, { context, signal })
-  if (decision._tag === 'Failure') return decision
-  if (!decision.value) return success(undefined)
-  if (
-    isRetryElapsedExceeded(policy.maxElapsedMs, { startedAt, now: clock.now(), nextDelayMs: 0 })
-  ) {
-    return success(undefined)
-  }
-  const observation = await detachedPromise(
-    signal,
-    () => observeRetry(policy, error, context),
-    throwDefect,
-  )
-  if (observation._tag === 'Failure') return observation
-  const delay = retryPolicyDelay(policy, context, { random: () => clock.random(), error })
-  if (
-    isRetryElapsedExceeded(policy.maxElapsedMs, { startedAt, now: clock.now(), nextDelayMs: delay })
-  ) {
-    return success(undefined)
-  }
-  return success(delay)
-}
-
-export const canonicalRetryDelay = (
-  retryError: unknown,
-  attempt: number,
-  runtime: CanonicalRetryRuntime,
-): RetryPlan | Promise<RetryPlan> => {
-  const { policy, signal } = runtime
-  /* Stryker disable all: uninterruptible zero-delay fast-path is equivalent to canonicalRetryDelayAsync. */
-  if (
-    signal === NEVER_ABORTED_SIGNAL &&
-    policy.while === undefined &&
-    policy.maxElapsedMs === undefined &&
-    (policy.delayMs === undefined || policy.delayMs === 0)
-  ) {
-    if (policy.onRetry === undefined) return ZERO_RETRY_PLAN
-    const context = retryContext(attempt, policy.times)
-    try {
-      const observation = policy.onRetry(retryError, context)
-      if (observation === undefined) return ZERO_RETRY_PLAN
-      return observation.then(
-        () => ZERO_RETRY_PLAN,
-        () => ZERO_RETRY_PLAN,
-      )
-    } catch {
-      return ZERO_RETRY_PLAN
-    }
-  }
-  /* Stryker restore all */
-  return canonicalRetryDelayAsync(retryError, retryContext(attempt, policy.times), runtime)
-}
 
 export const validateTaskRetry = (policy: RetryPolicy<unknown>): void => {
   validateRetryPolicy(policy)
@@ -215,7 +136,26 @@ export const validateTaskRepeat = <A>(options: ResultTaskRepeatInput<A>): void =
   validateRetryPolicy(options)
 }
 
-export const repeatDelayPlan = async <A>(
+// Continue synchronously until a policy hook actually returns a promise.
+const afterScheduleHook = <T extends boolean | void>(
+  hook: () => T | Promise<T>,
+  signal: AbortSignal,
+  next: (value: T) => RetryPlan | Promise<RetryPlan>,
+): RetryPlan | Promise<RetryPlan> => {
+  if (signal.aborted) return interrupted(signal)
+  const value = hook()
+  if (!isPromiseLike(value)) return signal.aborted ? interrupted(signal) : next(value)
+  if (signal.aborted) {
+    void Promise.resolve(value).catch(() => undefined)
+    return interrupted(signal)
+  }
+  return detachedPromise(signal, () => value, throwDefect).then((exit) => {
+    if (exit._tag === 'Failure') return exit
+    return signal.aborted ? interrupted(signal) : next(exit.value)
+  })
+}
+
+export const scheduleDelayPlan = <A>(
   value: A,
   attempt: number,
   runtime: {
@@ -224,61 +164,52 @@ export const repeatDelayPlan = async <A>(
     readonly signal: AbortSignal
     readonly startedAt: number
   },
-): Promise<RetryPlan> => {
+): RetryPlan | Promise<RetryPlan> => {
   const { options, clock, signal, startedAt } = runtime
+  const until = 'until' in options ? options.until : undefined
+  const observer = 'onRepeat' in options ? options.onRepeat : (options as RetryPolicy<A>).onRetry
+  if (
+    options.while === undefined &&
+    until === undefined &&
+    observer === undefined &&
+    options.maxElapsedMs === undefined &&
+    (options.delayMs ?? 0) === 0
+  )
+    return ZERO_RETRY_PLAN
   const context = retryContext(attempt, options.times)
-  const whilePredicate = options.while
-  if (whilePredicate !== undefined) {
-    const keepGoing = await detachedPromise(
-      signal,
-      () => Promise.resolve(whilePredicate(value, context)),
-      throwDefect,
-    )
-    if (keepGoing._tag === 'Failure') return keepGoing
-    if (!keepGoing.value) return success(undefined)
-  }
-  const untilPredicate = 'until' in options ? options.until : undefined
-  if (untilPredicate !== undefined) {
-    const done = await detachedPromise(
-      signal,
-      () => Promise.resolve(untilPredicate(value, context)),
-      throwDefect,
-    )
-    if (done._tag === 'Failure') return done
-    if (done.value) return success(undefined)
-  }
-  if (
-    isRetryElapsedExceeded(options.maxElapsedMs, { startedAt, now: clock.now(), nextDelayMs: 0 })
-  ) {
-    return success(undefined)
-  }
-  const observer =
-    'onRepeat' in options
-      ? options.onRepeat
-      : (options as { readonly onRetry?: RetryPolicy<A>['onRetry'] }).onRetry
-  // Stryker disable next-line ConditionalExpression: skip detachedPromise allocation when no repeat observer is configured.
-  if (observer !== undefined) {
-    const observed = await detachedPromise(
-      signal,
-      () => observeRetry({ onRetry: observer }, value, context),
-      throwDefect,
-    )
-    if (observed._tag === 'Failure') return observed
-  }
-  const delay = retryPolicyDelay(options as RetryPolicy<A>, context, {
-    random: () => clock.random(),
-    error: value,
-  })
-  if (
-    isRetryElapsedExceeded(options.maxElapsedMs, {
-      startedAt,
-      now: clock.now(),
-      nextDelayMs: delay,
+  const exceedsBudget = (nextDelayMs: number): boolean =>
+    isRetryElapsedExceeded(options.maxElapsedMs, { startedAt, now: clock.now(), nextDelayMs })
+  const planDelay = (): RetryPlan => {
+    const delay = retryPolicyDelay(options as RetryPolicy<A>, context, {
+      random: () => clock.random(),
+      error: value,
     })
-  ) {
-    return success(undefined)
+    return success(exceedsBudget(delay) ? undefined : delay)
   }
-  return success(delay)
+  const observe = (): RetryPlan | Promise<RetryPlan> => {
+    if (exceedsBudget(0)) return success(undefined)
+    return afterScheduleHook(
+      () => observeRetry({ onRetry: observer }, value, context),
+      signal,
+      planDelay,
+    )
+  }
+  const checkUntil = (): RetryPlan | Promise<RetryPlan> =>
+    until === undefined
+      ? observe()
+      : afterScheduleHook(
+          () => until(value, context),
+          signal,
+          (stop) => (stop ? success(undefined) : observe()),
+        )
+  const predicate = options.while
+  return predicate === undefined
+    ? checkUntil()
+    : afterScheduleHook(
+        () => predicate(value, context),
+        signal,
+        (keepGoing) => (keepGoing ? checkUntil() : success(undefined)),
+      )
 }
 
 const collectionFailure = (

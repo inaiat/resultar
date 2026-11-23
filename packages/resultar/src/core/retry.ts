@@ -138,10 +138,10 @@ export const retryPolicyDelay = <E>(
       ? policy.delayMs(context, runtime.error as E)
       : (policy.delayMs ?? 0),
   )
-  let delay = checkedRetryDelay(base === 0 ? 0 : base * (policy.backoff ?? 1) ** context.attempt)
-  if (policy.maxDelayMs !== undefined && delay > policy.maxDelayMs) {
-    delay = policy.maxDelayMs
-  }
+  const cap = policy.maxDelayMs ?? Infinity
+  const delay = checkedRetryDelay(
+    Math.min(cap, base === 0 ? 0 : base * (policy.backoff ?? 1) ** context.attempt),
+  )
   const jittered = policy.jittered ?? 0
   if (jittered === 0 || delay === 0) return delay
   const value = runtime.random()
@@ -150,10 +150,9 @@ export const retryPolicyDelay = <E>(
   }
   const minimum = Math.max(0, delay - delay * jittered)
   const maximum = delay + delay * jittered
-  const computed = checkedRetryDelay(minimum + (maximum - minimum) * value)
-  return policy.maxDelayMs !== undefined && computed > policy.maxDelayMs
-    ? policy.maxDelayMs
-    : computed
+  return checkedRetryDelay(
+    Math.min(cap, value === 0 ? minimum : minimum + (maximum - minimum) * value),
+  )
 }
 
 /** Returns `true` when elapsed retry time plus `nextDelayMs` exceeds `maxElapsedMs`. */
@@ -166,14 +165,27 @@ export const isRetryElapsedExceeded = (
   return elapsed >= maxElapsedMs || elapsed + timing.nextDelayMs > maxElapsedMs
 }
 
+export const isPromiseLike = <T>(value: T | PromiseLike<T>): value is PromiseLike<T> =>
+  value instanceof Promise ||
+  (value !== undefined && value !== null && typeof (value as PromiseLike<T>).then === 'function')
+
+const ignoreObserverRejection = async (pending: PromiseLike<void>): Promise<void> => {
+  try {
+    await pending
+  } catch {
+    // An asynchronous observer is also best effort.
+  }
+}
+
 /** Internal best-effort hook shared by eager and lazy retry loops. */
-export const observeRetry = async <E>(
-  policy: Pick<RetryPolicyOptions<E>, 'onRetry'>,
+export const observeRetry = <E>(
+  policy: { readonly onRetry?: RetryPolicyOptions<E>['onRetry'] },
   error: E,
   context: RetryContext,
-): Promise<void> => {
+): void | Promise<void> => {
   try {
-    await policy.onRetry?.(error, context)
+    const observed = policy.onRetry?.(error, context)
+    if (isPromiseLike(observed)) return ignoreObserverRejection(observed)
   } catch {
     // Observation cannot change the retry outcome.
   }

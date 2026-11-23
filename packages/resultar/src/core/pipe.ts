@@ -6,10 +6,7 @@ export type FnPipe<Input, Args extends readonly unknown[], Output> = (
   ...args: Args
 ) => Output
 
-export const applyPipeStep = (
-  value: unknown,
-  transform: PipeFn<never, unknown> | undefined,
-): unknown => {
+const applyPipeStep = (value: unknown, transform: PipeFn<never, unknown> | undefined): unknown => {
   if (transform === undefined) throw new TypeError('pipe requires transformation functions')
   return transform(value as never)
 }

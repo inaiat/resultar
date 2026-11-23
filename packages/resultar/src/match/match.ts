@@ -754,22 +754,18 @@ function valueTags(inputOrHandlers: object, handlers?: object): unknown {
     }
   }
   if (
-    inputOrHandlers !== null &&
-    (typeof inputOrHandlers === 'object' || typeof inputOrHandlers === 'function')
-  ) {
-    const rawTag = (inputOrHandlers as { readonly _tag?: unknown })._tag
-    const lookupKey = typeof rawTag === 'number' ? String(rawTag) : (rawTag as PropertyKey)
-    if (
-      (typeof lookupKey === 'string' || typeof lookupKey === 'symbol') &&
-      Object.hasOwn(handlers, lookupKey)
-    ) {
-      const handler = (handlers as Record<PropertyKey, unknown>)[lookupKey]
-      if (handler !== undefined) {
-        return (handler as Handler)(inputOrHandlers as never)
-      }
-    }
-  }
-  return unmatched()
+    inputOrHandlers === null ||
+    (typeof inputOrHandlers !== 'object' && typeof inputOrHandlers !== 'function')
+  )
+    return unmatched()
+
+  const rawTag = (inputOrHandlers as { readonly _tag?: unknown })._tag
+  const lookupKey = typeof rawTag === 'number' ? String(rawTag) : rawTag
+  if (typeof lookupKey !== 'string' && typeof lookupKey !== 'symbol') return unmatched()
+  if (!Object.hasOwn(handlers, lookupKey)) return unmatched()
+
+  const handler = (handlers as Record<PropertyKey, unknown>)[lookupKey]
+  return handler === undefined ? unmatched() : (handler as Handler)(inputOrHandlers as never)
 }
 const withReturnType =
   <Target>() =>

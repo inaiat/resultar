@@ -25,6 +25,23 @@ describe('ResultAsync inspect callback failures', () => {
     equal(result._unsafeUnwrap(), 1)
   })
 
+  it('waits for the asynchronous inspect callback before settling', async () => {
+    const callback = Promise.withResolvers<void>()
+    let settled = false
+    const inspected = okAsync(1)
+      .inspect(() => callback.promise)
+      .then((result) => {
+        settled = true
+        return result
+      })
+    await new Promise((resolve) => {
+      setImmediate(resolve)
+    })
+    equal(settled, false)
+    callback.resolve()
+    equal((await inspected)._unsafeUnwrap(), 1)
+  })
+
   it('does not await ResultTask values returned from inspect callbacks', async () => {
     let thenCalled = false
     const task = Object.assign(ResultTask.ok(1), {

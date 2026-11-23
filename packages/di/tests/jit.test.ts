@@ -22,6 +22,28 @@ afterEach(() => {
 });
 
 describe("resultar-di static subgraph JIT tiers and dual-mode parity", () => {
+  test.each([true, false])("preserves fetch failure causes with JIT %s", async (enabled) => {
+    await withJitMode(enabled, async () => {
+      const defect = new TypeError("factory");
+      const scope = createModule()
+        .value("value", 1)
+        .scoped("broken", [], () => {
+          throw defect;
+        })
+        .scope();
+      const request = new Request("https://example.test");
+      const execute = scope.fetch(["value"], () => Promise.reject(defect));
+      await expect(execute(request)).rejects.toMatchObject({
+        cause: { _tag: "Fail", error: defect },
+      });
+      await expect(scope.fetch(["broken"], () => new Response())(request)).rejects.toMatchObject({
+        cause: { _tag: "Die", defect },
+      });
+      await scope.close().runPromise();
+      await expect(execute(request)).rejects.toMatchObject({ cause: { _tag: "Die" } });
+    });
+  });
+
   const runTierSuite = (jitEnabled: boolean) =>
     withJitMode(jitEnabled, async () => {
       let singletonCreations = 0;
@@ -622,12 +644,14 @@ describe("resultar-di static subgraph JIT tiers and dual-mode parity", () => {
         const handleLockedFast = root.fetch(["tag"], makeLockedResponse);
         const handleLockedTier2 = root.fetch(["tx"], makeLockedResponse);
 
-        await expect(
-          handleLockedFast(new Request("https://example.test/locked-fast")),
-        ).rejects.toThrow("Request scope failed");
-        await expect(
-          handleLockedTier2(new Request("https://example.test/locked-tier2")),
-        ).rejects.toThrow("Request scope failed");
+        await Promise.all(
+          [handleLockedFast, handleLockedTier2].map((handle) =>
+            expect(handle(new Request("https://example.test/locked"))).rejects.toMatchObject({
+              message: "Request scope failed",
+              cause: { _tag: "Fail", error: expect.any(TypeError) as unknown },
+            }),
+          ),
+        );
 
         expect(txReleases).toBe(1);
 

@@ -64,9 +64,9 @@ if (import.meta.main) {
 }
 ```
 
-## Existing eager service contracts
+## Request-scoped services
 
-The compatibility services in `services.ts` match the Fastify and Hono examples:
+The NestJS example registers the cache and repository as singletons. Each request receives its own users and health services.
 
 ```ts
 export const createServices = () =>

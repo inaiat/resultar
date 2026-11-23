@@ -35,7 +35,7 @@
     }
   },
   "scripts": {
-    "analyze": "fallow",
+    "check:fallow": "fallow",
     "build": "vp pack",
     "check": "vp check",
     "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",

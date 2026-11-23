@@ -342,7 +342,7 @@ export const zipTaskOrderIds = () =>
   ResultTask.zip(ResultTask.ok("order_1"), ResultTask.ok("receipt_1"), { concurrent: true });
 
 /**
- * Preferred non-deprecated side-effect inspection helpers (`inspect`, `inspectError`, `inspectBoth`).
+ * Observe success and failure with (`inspect`, `inspectError`, `inspectBoth`).
  * These observe successes and failures without altering the Result or Task outcome.
  * This async demo runs the Tasks and returns observations at a test/CLI boundary.
  */

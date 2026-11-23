@@ -4,7 +4,7 @@ Official thin VS Code / Cursor / OpenVSX extension bridging the native TypeScrip
 
 ## Features
 
-- **Live semantic diagnostics**: All 42 `resultar-check` TypeScript-Go rules update live on unsaved buffers, saves, and cross-file dependency edits.
+- **Live semantic diagnostics**: All 43 `resultar-check` TypeScript-Go rules update live on unsaved buffers, saves, and cross-file dependency edits.
 - **`T / E / R` channel hover**: Hover over `Result`, `ResultTask`, `yield*` expressions, `Match` builders, and DI `Service` tags to inspect exact success (`T`), error (`E`), and requirement (`R`) channels.
 - **Inline quickfixes & refactors**: Applies safe semantic corrections (`kind: "correction"`, marked preferred) while keeping `intentional-discard` actions (`void expr`) explicitly opt-in with explanations.
 - **One-click safe autofix**: Run `Resultar Check: Apply Safe Fixes (Workspace)` or `(Current File)` directly from the Command Palette or editor context menu (runs `resultar-check --fix`, never auto-applying `intentional-discard`).

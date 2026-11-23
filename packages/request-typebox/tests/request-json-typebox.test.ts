@@ -1,7 +1,9 @@
 import { strict as assert } from "node:assert";
 import { AbortError, Cause, Match, type ResultTask } from "resultar";
 import { Type, type Static } from "typebox";
-import { describe, expectTypeOf, it } from "vite-plus/test";
+import { Validator } from "typebox/compile";
+import { Settings } from "typebox/system";
+import { describe, expectTypeOf, it, vi } from "vite-plus/test";
 
 import {
   requestJson,
@@ -203,6 +205,39 @@ describe("requestJsonTypeBox", () => {
       return true;
     });
     assert.equal(attempts, 0);
+  });
+
+  it("first inspects the schema when the response is decoded", async () => {
+    let reads = 0;
+    const schema = new Proxy(Type.Object({ id: Type.Number() }), {
+      get(target, key, receiver) {
+        reads += 1;
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+    const task = requestJsonTypeBox({
+      schema,
+      request: async () => createFetchResponse({ id: 1 }),
+    });
+    assert.equal(reads, 0);
+    assert.deepEqual(await task.runPromise(), { id: 1 });
+    assert.ok(reads > 0);
+  });
+
+  it("checks distinct schemas directly when TypeBox acceleration is unavailable", async () => {
+    const previous = Settings.Get().useAcceleration;
+    const compiledCheck = vi.spyOn(Validator.prototype, "Check");
+    Settings.Set({ useAcceleration: false });
+    try {
+      const requests = [Type.String(), Type.Literal("ok")].map((schema) =>
+        requestJsonTypeBox({ schema, request: async () => Response.json("ok") }).runPromise(),
+      );
+      assert.deepEqual(await Promise.all(requests), ["ok", "ok"]);
+      assert.equal(compiledCheck.mock.calls.length, 0);
+    } finally {
+      compiledCheck.mockRestore();
+      Settings.Set({ useAcceleration: previous });
+    }
   });
 
   it("matches identically across cached JIT and RESULTAR_JIT=0 fallback modes", async () => {

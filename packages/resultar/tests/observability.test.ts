@@ -223,6 +223,44 @@ describe('TaskLocal and opt-in span tracing', () => {
     }
   })
 
+  it('retains spans attached to intermediate composite causes on the traced branch', () => {
+    const inner = ResultTask.err(Cause.sequential(Cause.fail('a'), Cause.fail('b')))
+      .unsandbox()
+      .withSpan('inner')
+      .runSyncExit()
+    assertOk(inner._tag === 'Failure')
+    for (const tree of [
+      Cause.parallel(inner.cause, Cause.fail('c')),
+      Cause.parallel(Cause.fail('c'), inner.cause),
+    ]) {
+      const outer = ResultTask.err(tree).unsandbox().withSpan('outer').runSyncExit()
+      assertOk(outer._tag === 'Failure')
+      deepEqual(
+        Cause.spans(outer.cause).map((frame) => frame.name),
+        ['inner', 'outer'],
+      )
+    }
+  })
+
+  it('keeps failure spans through unmatched nested reason handlers and error mapping', () => {
+    type Problem = { _tag: 'Outer'; reason: { _tag: 'Missing' } | { _tag: 'Other' } }
+    const failure: Problem = { _tag: 'Outer', reason: { _tag: 'Missing' } }
+    const task = ResultTask.err<Problem>(failure)
+      .withSpan('inner')
+      .mapErr((error) => error)
+      .catchReason('Outer', 'Other', () => ok(1))
+      .catchReasons('Outer', {})
+      .tapCause(() => undefined)
+      .withSpan('outer')
+    const exit = task.runSyncExit()
+    assertOk(exit._tag === 'Failure')
+    deepEqual(
+      Cause.spans(exit.cause).map((frame) => frame.name),
+      ['inner', 'outer'],
+    )
+    deepEqual(task.catchCause(() => ok(3)).runSync(), ok(3))
+  })
+
   it('isolates broken tracer hooks and supports Tracer.noop cleanly', () => {
     const brokenTracer = {
       startSpan: () => {
@@ -233,4 +271,44 @@ describe('TaskLocal and opt-in span tracing', () => {
     deepEqual(task.runSync({ tracer: brokenTracer }), ok('safe'))
     deepEqual(task.runSync({ tracer: Tracer.noop }), ok('safe'))
   })
+})
+
+it('records the interrupted exit when a leaf aborts before the span ends', async () => {
+  for (const asyncLeaf of [false, true]) {
+    const controller = new AbortController()
+    const memory = Tracer.memory()
+    const read = () => {
+      controller.abort('stop')
+      return 1
+    }
+    const task = asyncLeaf
+      ? ResultTask.fromPromise(() => Promise.resolve(read()))
+      : ResultTask.sync(read)
+    const exit = await task
+      .withSpan('read')
+      .runExit({ signal: controller.signal, tracer: memory.tracer })
+    assertOk(exit._tag === 'Failure')
+    deepEqual(exit.cause, Cause.interrupt('stop'))
+    deepEqual(memory.spans[0]?.exit, exit)
+    deepEqual(
+      Cause.spans(exit.cause).map((span) => span.name),
+      ['read'],
+    )
+  }
+})
+
+it('preserves traced errors when unwrapping a reason, including composite failures', () => {
+  const problem = { _tag: 'Outer', reason: { _tag: 'Only' } } as const
+  const failure = ResultTask.err(problem)
+  const exit = failure
+    .ensuring(() => failure)
+    .withSpan('load')
+    .unwrapReason('Outer')
+    .runSyncExit()
+  assertOk(exit._tag === 'Failure')
+  deepEqual(Cause.failures(exit.cause), [problem.reason, problem.reason])
+  deepEqual(
+    Cause.spans(exit.cause).map((span) => span.name),
+    ['load'],
+  )
 })

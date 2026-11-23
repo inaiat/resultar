@@ -868,7 +868,7 @@ class ResultNamespace {
       return function (this: unknown, a?: unknown): Result<ReturnType<Fn>, E> {
         try {
           /* Stryker disable all: 0/1-arg fast-path avoids rest array allocation and is equivalent to Reflect.apply. */
-          if (this === undefined && arguments.length <= 1) {
+          if (this === undefined && arguments.length === 1) {
             return ok((fn as (arg?: unknown) => ReturnType<Fn>)(a))
           }
           /* Stryker restore all */
@@ -882,7 +882,7 @@ class ResultNamespace {
     return function (this: unknown, a?: unknown): Result<ReturnType<Fn>, E> {
       try {
         /* Stryker disable all: 0/1-arg fast-path avoids rest array allocation and is equivalent to Reflect.apply. */
-        if (this === undefined && arguments.length <= 1) {
+        if (this === undefined && arguments.length === 1) {
           return ok((fn as (arg?: unknown) => ReturnType<Fn>)(a))
         }
         /* Stryker restore all */
@@ -1648,21 +1648,17 @@ class Err<T, E> {
     if (hasTag(this.error, errorTag)) {
       const reason = getReason(this.error)
 
-      if (typeof reason === 'object' && reason !== null && '_tag' in reason) {
-        const handler = (handlers as Record<string, unknown>)[
-          (reason as { readonly _tag: string })._tag
-        ]
+      const handler = getTaggedHandler(reason, handlers)
 
-        if (handler !== undefined) {
-          return (handler as (reason: unknown, error: unknown) => Result<unknown, unknown>)(
-            reason,
-            this.error,
-          ) as Result<
-            T | InferOkTypes<CatchReasonHandlerResult<Handlers>>,
-            | ExcludeReasonTag<E, ErrorTag, CoveredHandlerKeys<Handlers> & string>
-            | InferErrTypes<CatchReasonHandlerResult<Handlers>>
-          >
-        }
+      if (handler !== undefined) {
+        return (handler as (reason: unknown, error: unknown) => Result<unknown, unknown>)(
+          reason,
+          this.error,
+        ) as Result<
+          T | InferOkTypes<CatchReasonHandlerResult<Handlers>>,
+          | ExcludeReasonTag<E, ErrorTag, CoveredHandlerKeys<Handlers> & string>
+          | InferErrTypes<CatchReasonHandlerResult<Handlers>>
+        >
       }
     }
 
@@ -1786,15 +1782,12 @@ const runSyncResultGenerator = (
     | (() => Generator<Result<never, unknown>, unknown>)
     | ResultGenOptions<Result<never, unknown>, unknown, unknown>,
 ): Result<unknown, unknown> => {
-  const body = typeof input === 'function' ? input : input.try
-  const catchFn = typeof input === 'function' ? undefined : input.catch
-
   try {
-    const step = body().next()
+    const step = (typeof input === 'function' ? input() : input.try()).next()
     return step.done === true ? ok(step.value) : step.value
   } catch (error) {
-    if (catchFn) {
-      return err(catchFn(error))
+    if (typeof input !== 'function' && input.catch !== undefined) {
+      return err(input.catch(error))
     }
 
     throw error
@@ -2003,17 +1996,12 @@ export function tryResult<T, E = unknown>(
   input: (() => Exclude<T, Promise<unknown>>) | TryResultOptions<T, E>,
   errorFn?: (e: unknown) => E,
 ): Result<T, E> {
-  const fn = typeof input === 'function' ? input : input.try
-  const catchFn = typeof input === 'function' ? errorFn : input.catch
-
   try {
-    return ok<T, E>(fn() as T)
+    return ok<T, E>((typeof input === 'function' ? input() : input.try()) as T)
   } catch (error) {
-    if (catchFn) {
-      return err<T, E>(catchFn(error))
-    }
-
-    return err<T, E>(error as E)
+    if (typeof input !== 'function' && input.catch !== undefined)
+      return err<T, E>(input.catch(error))
+    return err<T, E>(errorFn === undefined ? (error as E) : errorFn(error))
   }
 }
 

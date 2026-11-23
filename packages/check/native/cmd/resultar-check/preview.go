@@ -18,7 +18,12 @@ func matchesFile(path, filter, directory string) bool {
 		return true
 	}
 	if !filepath.IsAbs(filter) {
-		filter = filepath.Join(directory, filter)
+		projectFile := filepath.Join(directory, filter)
+		if _, err := os.Stat(projectFile); err == nil {
+			filter = projectFile
+		} else if absolute, err := filepath.Abs(filter); err == nil {
+			filter = absolute
+		}
 	}
 	return filepath.Clean(path) == filepath.Clean(filter)
 }
