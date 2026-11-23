@@ -420,6 +420,41 @@ describe('ResultTask.acquireDisposable fallback', () => {
   })
 })
 
+describe('ResultTask.acquireRelease under cancellation', () => {
+  it.each(['provideServices', 'withSpan'])(
+    'releases a late acquisition wrapped in %s',
+    async (wrapper) => {
+      const controller = new AbortController()
+      const started = Promise.withResolvers<void>()
+      const produced = Promise.withResolvers<{ id: number }>()
+      const resource = { id: 1 }
+      const released: (typeof resource)[] = []
+      const acquire = ResultTask.tryPromise(() => {
+        started.resolve()
+        return produced.promise
+      })
+      const workflow = ResultTask.acquireRelease({
+        acquire: wrapper === 'withSpan' ? acquire.withSpan('acquire') : acquire.provideServices({}),
+        release: (value) => ResultTask.sync(() => void released.push(value)),
+      }).scoped()
+
+      const running = workflow.runExit({
+        signal: controller.signal,
+        tracer: Tracer.memory().tracer,
+      })
+      await started.promise
+      controller.abort('cancel acquisition')
+      produced.resolve(resource)
+
+      deepEqual(await running, {
+        _tag: 'Failure',
+        cause: { _tag: 'Interrupt', reason: 'cancel acquisition' },
+      })
+      deepEqual(released, [resource])
+    },
+  )
+})
+
 describe('External cancellation of ResultTask.race and raceAll', () => {
   it('collapses pure external interruption into a single Interrupt and rejects runResult/runPromise with AbortError', async () => {
     for (const makeTask of [

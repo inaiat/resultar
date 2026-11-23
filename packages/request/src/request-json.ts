@@ -37,9 +37,9 @@ const timeoutErrorNames = new Set([
 
 type NormalizedJsonResponseData = {
   readonly headers: RequestHeaders;
-  readonly json: () => Promise<unknown>;
+  readonly json: (signal: AbortSignal) => Promise<unknown>;
   readonly statusCode: number;
-  readonly text: () => Promise<string>;
+  readonly text: (signal: AbortSignal) => Promise<string>;
 };
 
 type ErrorWithName = Error & { readonly name: string };
@@ -167,24 +167,6 @@ const isUndiciJsonResponseRecord = (response: Record<PropertyKey, unknown>) => {
   );
 };
 
-const normalizeResponse = (response: RequestJsonResponseData): NormalizedJsonResponseData => {
-  if (isUndiciJsonResponseData(response)) {
-    return {
-      headers: response.headers,
-      json: () => response.body.json(),
-      statusCode: response.statusCode,
-      text: () => response.body.text(),
-    };
-  }
-
-  return {
-    headers: response.headers,
-    json: () => response.json(),
-    statusCode: response.status,
-    text: () => response.text(),
-  };
-};
-
 const invalidJsonErrors = new WeakSet<RequestError>();
 
 const isRequestAbortError = (error: RequestError): boolean =>
@@ -237,79 +219,109 @@ const createHttpResponseRequestError = (
 const getAbortReason = (signal: AbortSignal): unknown =>
   signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
 
-const cancelResponseBody = (response: unknown, reason: unknown): void => {
-  if (!isRecord(response)) {
-    return;
-  }
-
-  const body = response.body;
-  if (!isRecord(body)) {
-    return;
-  }
-
+const cancelResponseBody = (response: RequestJsonResponseData, reason: unknown): unknown => {
+  const body: unknown = "body" in response ? response.body : undefined;
+  if (!isRecord(body)) return undefined;
   if (typeof body.cancel === "function" && body.locked !== true) {
-    const cancelFn = body.cancel;
-    const cancelResult = fromThrowable((): unknown => Reflect.apply(cancelFn, body, [reason]))();
-    if (cancelResult.isOk()) {
-      disarmPromiseLike(cancelResult.value).unwrapOr(false);
-    }
-    return;
+    return Reflect.apply(body.cancel, body, [reason]);
+  }
+  if (typeof body.destroy === "function") {
+    return Reflect.apply(body.destroy, body, [reason instanceof Error ? reason : undefined]);
+  }
+  return undefined;
+};
+
+const readWithSignal = async <T>(
+  read: () => Promise<T>,
+  cancel: (reason: unknown) => unknown,
+  signal: AbortSignal,
+): Promise<T> => {
+  const { promise, resolve, reject } = Promise.withResolvers<T>();
+  const onAbort = () => {
+    const reason = getAbortReason(signal);
+    reject(reason);
+    const canceled = fromThrowable(() => cancel(reason))();
+    if (canceled.isOk()) disarmPromiseLike(canceled.value).unwrapOr(false);
+  };
+  if (signal.aborted) {
+    onAbort();
+    return promise;
   }
 
-  if (typeof body.destroy === "function") {
-    const destroyFn = body.destroy;
-    fromThrowable((): unknown =>
-      Reflect.apply(destroyFn, body, [reason instanceof Error ? reason : undefined]),
-    )();
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    try {
+      read().then(resolve, reject);
+    } catch (error) {
+      reject(error);
+    }
+    return await promise;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
   }
 };
 
-const readResponseWithSignal = <T>(
-  response: RequestJsonResponseData,
-  read: () => Promise<T>,
+const readFetchBody = async (
+  body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
-): Promise<T> => {
-  if (signal.aborted) {
-    const reason = getAbortReason(signal);
-    cancelResponseBody(response, reason);
-    const deferred = Promise.withResolvers<T>();
-    deferred.reject(reason);
-    return deferred.promise;
+): Promise<string> => {
+  const reader = body.getReader();
+  try {
+    return await readWithSignal(
+      async () => {
+        const decoder = new TextDecoder();
+        let text = "";
+        for (;;) {
+          // eslint-disable-next-line no-await-in-loop -- Read and decode body chunks in stream order.
+          const { done, value } = await reader.read();
+          if (done) return text + decoder.decode();
+          text += decoder.decode(value, { stream: true });
+        }
+      },
+      (reason) => reader.cancel(reason),
+      signal,
+    );
+  } finally {
+    reader.releaseLock();
+  }
+};
+
+const normalizeResponse = (response: RequestJsonResponseData): NormalizedJsonResponseData => {
+  const cancel = (reason: unknown) => cancelResponseBody(response, reason);
+  if (isUndiciJsonResponseData(response)) {
+    return {
+      headers: response.headers,
+      json: (signal) => readWithSignal(() => response.body.json(), cancel, signal),
+      statusCode: response.statusCode,
+      text: (signal) => readWithSignal(() => response.body.text(), cancel, signal),
+    };
   }
 
-  const readPromise = read();
-  // Disarm late rejections when abort wins the race after body cancellation.
-  disarmPromiseLike(readPromise).unwrapOr(false);
-
-  const deferred = Promise.withResolvers<T>();
-  let settled = false;
-
-  const onAbort = () => {
-    if (settled) return;
-    settled = true;
-    const reason = getAbortReason(signal);
-    cancelResponseBody(response, reason);
-    deferred.reject(reason);
+  const getFetchBody = (method: "json" | "text") => {
+    const body =
+      response instanceof Response &&
+      response[method] === Response.prototype[method] &&
+      !response.bodyUsed
+        ? response.body
+        : undefined;
+    return body?.locked === false ? body : undefined;
   };
-
-  signal.addEventListener("abort", onAbort, { once: true });
-
-  readPromise.then(
-    (value) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", onAbort);
-      deferred.resolve(value);
+  return {
+    headers: response.headers,
+    json: (signal) => {
+      const body = getFetchBody("json");
+      return body === undefined
+        ? readWithSignal(() => response.json(), cancel, signal)
+        : readFetchBody(body, signal).then((text): unknown => JSON.parse(text));
     },
-    (error: unknown) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", onAbort);
-      deferred.reject(error);
+    statusCode: response.status,
+    text: (signal) => {
+      const body = getFetchBody("text");
+      return body === undefined
+        ? readWithSignal(() => response.text(), cancel, signal)
+        : readFetchBody(body, signal);
     },
-  );
-
-  return deferred.promise;
+  };
 };
 
 const handleHttpErrors = <T extends RequestJsonResponseData>(
@@ -318,10 +330,9 @@ const handleHttpErrors = <T extends RequestJsonResponseData>(
   const normalized = normalizeResponse(response);
 
   if (normalized.statusCode >= 400 && normalized.statusCode < 600) {
-    return ResultTask.tryPromise({
-      catch: baseRequestErrorHandler,
-      try: (signal) => readResponseWithSignal(response, normalized.text, signal),
-    }).andThen((body) => err(createHttpResponseRequestError(body, normalized)));
+    return ResultTask.tryPromise({ catch: baseRequestErrorHandler, try: normalized.text }).andThen(
+      (body) => err(createHttpResponseRequestError(body, normalized)),
+    );
   }
 
   return ResultTask.ok(response);
@@ -475,7 +486,7 @@ const executeRequestJson = <T, R extends RequestJsonResponseData = RequestJsonRe
     .andThen((response) =>
       ResultTask.tryPromise({
         catch: jsonParseErrorHandler,
-        try: (signal) => readResponseWithSignal(response, normalizeResponse(response).json, signal),
+        try: (signal) => normalizeResponse(response).json(signal),
       }),
     )
     .andThen((value) => decodeJsonResponseValue(decode, value, validationError));

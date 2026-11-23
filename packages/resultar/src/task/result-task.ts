@@ -4067,7 +4067,7 @@ export class ResultTask<out A, out E = never, out R = never> {
     spanStack: SpanStackNode,
     context: ResultTaskRuntimeContext,
   ): Exit<unknown, unknown> {
-    const exit = interruptSuccess(outcome, context.signal)
+    const exit = context.acquiring === true ? outcome : interruptSuccess(outcome, context.signal)
     if (exit._tag === 'Failure') {
       attachCauseSpans(exit.cause, spanStack)
     }

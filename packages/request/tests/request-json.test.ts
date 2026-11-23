@@ -1128,9 +1128,7 @@ describe("requestJson", () => {
             },
             json: async () => ({}),
             text: () => {
-              queueMicrotask(() => {
-                textController.abort(new Error("aborted while reading error text"));
-              });
+              textController.abort(new Error("aborted while reading error text"));
               return textDeferred.promise;
             },
           },
@@ -1149,23 +1147,6 @@ describe("requestJson", () => {
         true,
       );
 
-      // 3. Real Fetch Response with locked stalled ReadableStream never hangs on timeout
-      const lockedStreamResponse = new Response(
-        new ReadableStream<Uint8Array>({
-          start() {
-            /* Intentionally never enqueues or closes. */
-          },
-        }),
-        { status: 200 },
-      );
-      const lockedTimeout = await ResultTask.timeout(
-        requestJson({ request: async () => lockedStreamResponse, validator: isUserSample }),
-        25,
-        () => new MappedRequestJsonError("timeout", "Locked stream timed out"),
-      ).runResult();
-      assert.ok(lockedTimeout.isErr());
-      assert.equal(lockedTimeout.error.message, "Locked stream timed out");
-
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 25);
       });
@@ -1173,5 +1154,58 @@ describe("requestJson", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+
+  it.each([200, 500])(
+    "cancels and unlocks a stalled native Fetch body with status %i",
+    async (status) => {
+      const reading = Promise.withResolvers<void>();
+      const clock = Clock.virtual();
+      let canceled = false;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull() {
+            reading.resolve();
+          },
+          cancel() {
+            canceled = true;
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const response = new Response(body, { status });
+      const timed = ResultTask.timeout(
+        requestJson({ request: async () => response, validator: isUserSample }),
+        25,
+        () => new MappedRequestJsonError("timeout", "Fetch body timed out"),
+      ).runResult({ clock });
+
+      await reading.promise;
+      assert.equal(body.locked, true);
+      await clock.advanceBy(25);
+      const outcome = await timed;
+      assert.ok(outcome.isErr());
+      assert.equal(outcome.error.message, "Fetch body timed out");
+      assert.equal(canceled, true);
+      assert.equal(body.locked, false);
+    },
+  );
+
+  it("decodes split UTF-8 characters and a leading BOM in native Fetch JSON", async () => {
+    const value = { ...userSample, name: "José" };
+    const bytes = new TextEncoder().encode(`\uFEFF${JSON.stringify(value)}`);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+        controller.close();
+      },
+    });
+    const result = await requestJson({
+      request: async () => new Response(body),
+      validator: isUserSample,
+    }).runResult();
+
+    assert.ok(result.isOk());
+    assert.deepEqual(result.value, value);
   });
 });
