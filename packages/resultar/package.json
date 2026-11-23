@@ -1,6 +1,6 @@
 {
   "name": "resultar",
-  "version": "5.0.0-beta.1",
+  "version": "5.0.0-beta.2",
   "description": "Typed error handling, lazy ResultTask workflows, structured concurrency, and opt-in observability for TypeScript.",
   "keywords": [
     "error-handling",

@@ -1,6 +1,6 @@
 {
   "name": "resultar-check-darwin-x64",
-  "version": "6.0.0-beta.1",
+  "version": "6.0.0-beta.2",
   "description": "Native resultar-check binary for macOS x64",
   "license": "MIT",
   "repository": {
