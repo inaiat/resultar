@@ -21,8 +21,14 @@ const withJitMode = async <T>(enabled: boolean, run: () => Promise<T>): Promise<
   }
 };
 
+const initialJitEnv = process.env.RESULTAR_JIT;
+
 afterEach(() => {
-  delete process.env.RESULTAR_JIT;
+  if (initialJitEnv === undefined) {
+    delete process.env.RESULTAR_JIT;
+  } else {
+    process.env.RESULTAR_JIT = initialJitEnv;
+  }
 });
 
 describe("resultar-fastify Tier 0 / Tier 1 compiled request hooks and dual-mode parity", () => {
@@ -514,4 +520,52 @@ describe("resultar-fastify Tier 0 / Tier 1 compiled request hooks and dual-mode 
       await app.close();
     }
   });
+
+  test.each([true, false])(
+    "does not initialize request services after Fastify handlerTimeout responds 503 during async locals (jit=%s)",
+    async (jitEnabled) => {
+      await withJitMode(jitEnabled, async () => {
+        let initialized = 0;
+        const releaseLocals = Promise.withResolvers<void>();
+        const Tenant = ResultTask.service<string, "tenant">("tenant");
+        const services = createModule().scoped(
+          service("greeting", { tenant: Tenant }, ({ tenant }) => {
+            initialized += 1;
+            return `hi:${tenant}`;
+          }),
+        );
+
+        const app = createFastifyApp(
+          {
+            services,
+            bindings: ["greeting"],
+            locals: async () => {
+              await releaseLocals.promise;
+              return { tenant: "late" };
+            },
+          },
+          (instance) => {
+            instance.get("/slow", { handlerTimeout: 20 }, (request) => ({
+              greeting: request.getDecorator<InferRequestServices<typeof app>>("services").greeting,
+            }));
+          },
+        );
+
+        try {
+          const response = await app.inject("/slow");
+          expect(response.statusCode).toBe(503);
+          expect(initialized).toBe(0);
+
+          releaseLocals.resolve();
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 25);
+          });
+          expect(initialized).toBe(0);
+        } finally {
+          releaseLocals.resolve();
+          await app.close();
+        }
+      });
+    },
+  );
 });

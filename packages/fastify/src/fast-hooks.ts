@@ -72,27 +72,40 @@ const getSyncPlanBridge = (scope: object): SyncPlanBridge | undefined =>
 const requestScopeDisabled = (request: FastifyRequest): boolean =>
   request.routeOptions.config?.resultar?.requestScope === false;
 
-const getRequestAbortReason = (request: FastifyRequest, reply: FastifyReply): unknown => {
+const getSignalAbortReason = (request: FastifyRequest): unknown => {
+  const signal = request.signal;
+  if (!signal.aborted) {
+    return undefined;
+  }
+  const reason: unknown = signal.reason;
+  // Fastify 5.12 emits a generic abort on IncomingMessage.close, including a fully
+  // received body. The response close/error listeners own disconnects after upload.
+  if (request.raw.complete && reason instanceof DOMException && reason.name === "AbortError") {
+    return undefined;
+  }
+  return reason === undefined
+    ? new DOMException("This operation was aborted", "AbortError")
+    : reason;
+};
+
+const getRequestAbortReason = (
+  request: FastifyRequest,
+  reply: FastifyReply,
+  checkNativeSignal = false,
+): unknown => {
   if (reply.raw.destroyed && !reply.raw.writableFinished) {
     return new Error("Response connection closed");
   }
   // Fastify 5 lazily creates an AbortController and registers raw.on('close', onAbort) on
   // the first read of request.signal, which allocates a DOMException stack trace on every
-  // completed POST body. Only read request.signal when an own override was installed;
+  // completed POST body. Only read request.signal when Fastify already created it (e.g.
+  // handlerTimeout > 0), Tier 2 already attached it, or an own override was installed;
   // otherwise Fastify's built-in signal only aborts on raw close, which is reflected by
   // raw.destroyed / raw.closed when !raw.complete.
-  if (Object.hasOwn(request, "signal")) {
-    const signal = request.signal;
-    if (signal.aborted) {
-      const reason: unknown = signal.reason;
-      // Fastify 5.12 emits a generic abort on IncomingMessage.close, including a fully
-      // received body. The response close/error listeners own disconnects after upload.
-      if (request.raw.complete && reason instanceof DOMException && reason.name === "AbortError") {
-        return undefined;
-      }
-      return reason === undefined
-        ? new DOMException("This operation was aborted", "AbortError")
-        : reason;
+  if (checkNativeSignal || Object.hasOwn(request, "signal")) {
+    const signalReason = getSignalAbortReason(request);
+    if (signalReason !== undefined) {
+      return signalReason;
     }
   }
   if ((request.raw.destroyed || request.raw.closed) && !request.raw.complete) {
@@ -143,7 +156,7 @@ const attachRequest = (request: FastifyRequest, reply: FastifyReply): RequestSta
   request.signal.addEventListener("abort", abort, { once: true });
   reply.raw.once("close", disconnect);
   reply.raw.once("error", transportError);
-  const reason = getRequestAbortReason(request, reply);
+  const reason = getRequestAbortReason(request, reply, true);
   if (reason !== undefined) controller.abort(reason);
   return {
     controller,
@@ -173,6 +186,7 @@ interface HookInvocation {
   readonly request: FastifyRequest;
   readonly reply: FastifyReply;
   readonly done: HookHandlerDoneFunction;
+  readonly checkNativeSignal: boolean;
 }
 
 const startTier2Session = (
@@ -365,11 +379,12 @@ const registerStaticFastHooks = (
   };
 
   addCallbackRequestHook(app, config.requestHook, (request, reply, done) => {
-    if (requestScopeDisabled(request)) {
+    const routeOptions = request.routeOptions;
+    if (routeOptions.config?.resultar?.requestScope === false) {
       done();
       return;
     }
-    const abortReason = getRequestAbortReason(request, reply);
+    const abortReason = getRequestAbortReason(request, reply, routeOptions.handlerTimeout > 0);
     if (abortReason !== undefined) {
       failHook(done, abortReason, config.mapError);
       return;
@@ -437,11 +452,13 @@ const registerDynamicFastHooks = (
   };
 
   addCallbackRequestHook(app, config.requestHook, (request, reply, done) => {
-    if (requestScopeDisabled(request)) {
+    const routeOptions = request.routeOptions;
+    if (routeOptions.config?.resultar?.requestScope === false) {
       done();
       return;
     }
-    const reason = getRequestAbortReason(request, reply);
+    const hasHandlerTimeout = routeOptions.handlerTimeout > 0;
+    const reason = getRequestAbortReason(request, reply, hasHandlerTimeout);
     if (reason !== undefined) {
       failHook(done, reason, config.mapError);
       return;
@@ -454,10 +471,19 @@ const registerDynamicFastHooks = (
       return;
     }
     if (isPromiseLike(localsOrPromise)) {
-      const invocation: HookInvocation = { request, reply, done };
+      const invocation: HookInvocation = {
+        request,
+        reply,
+        done,
+        checkNativeSignal: hasHandlerTimeout,
+      };
       localsOrPromise.then(
         (resolved) => {
-          const abortReason = getRequestAbortReason(invocation.request, invocation.reply);
+          const abortReason = getRequestAbortReason(
+            invocation.request,
+            invocation.reply,
+            invocation.checkNativeSignal,
+          );
           if (abortReason !== undefined) {
             failHook(invocation.done, abortReason, config.mapError);
             return;

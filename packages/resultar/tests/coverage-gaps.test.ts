@@ -61,8 +61,11 @@ interface DynamicMatcherApi {
   readonly orElse: (fallback: (value: unknown) => unknown) => (input: unknown) => unknown
 }
 
+const initialJitEnv = process.env['RESULTAR_JIT']
+
 afterEach(() => {
-  delete process.env['RESULTAR_JIT']
+  if (initialJitEnv === undefined) delete process.env['RESULTAR_JIT']
+  else process.env['RESULTAR_JIT'] = initialJitEnv
 })
 
 describe('core/jit and task runtime bridge coverage', () => {
@@ -455,49 +458,51 @@ describe('task-jit, fiber-runtime, and task-helpers coverage', () => {
   })
 
   it('covers task-jit default emitStepCode branch for an unexpected combinator opcode', () => {
-    const leaf: TaskNodeLike = {
-      op: OP_SUCCESS,
-      value: 1,
-      continuation: undefined,
-      run: () => ({ _tag: 'Success', value: 1 }),
-    }
-    const step1: TaskNodeLike = {
-      op: OP_MAP,
-      value: leaf,
-      continuation: (n: number) => n + 1,
-      run: () => ({ _tag: 'Success', value: 2 }),
-    }
-    let reads = 0
-    const mutatingStep = {
-      get op() {
-        reads += 1
-        return reads <= 3 ? OP_MAP : 999
-      },
-      value: step1,
-      continuation: (n: number) => n,
-      run: () => ({ _tag: 'Success', value: 2 }),
-    } as unknown as TaskNodeLike
+    withJit(true, () => {
+      const leaf: TaskNodeLike = {
+        op: OP_SUCCESS,
+        value: 1,
+        continuation: undefined,
+        run: () => ({ _tag: 'Success', value: 1 }),
+      }
+      const step1: TaskNodeLike = {
+        op: OP_MAP,
+        value: leaf,
+        continuation: (n: number) => n + 1,
+        run: () => ({ _tag: 'Success', value: 2 }),
+      }
+      let reads = 0
+      const mutatingStep = {
+        get op() {
+          reads += 1
+          return reads <= 3 ? OP_MAP : 999
+        },
+        value: step1,
+        continuation: (n: number) => n,
+        run: () => ({ _tag: 'Success', value: 2 }),
+      } as unknown as TaskNodeLike
 
-    const compiled = compileTaskChain(mutatingStep, {
-      NEVER_ABORTED_SIGNAL: new AbortController().signal,
-      success: (value) => ({ _tag: 'Success', value }),
-      failed: (error) => ({ _tag: 'Failure', cause: Cause.fail(error) }),
-      died: (defect) => ({ _tag: 'Failure', cause: Cause.die(defect) }),
-      interrupted: (signal) => ({ _tag: 'Failure', cause: Cause.interrupt(signal.reason) }),
-      failure: (cause) => ({ _tag: 'Failure', cause }),
-      isResultTask: (_v): _v is TaskNodeLike => false,
-      isPromiseExit: (_v): _v is Promise<never> => false,
-      executeTryPromise: () => ({ _tag: 'Success', value: undefined }),
-      runGen: () => ({ _tag: 'Success', value: undefined }),
-      transformCause: (c) => c,
-      getTaggedHandler: () => undefined,
-      createCauseError: (c) => new ResultTaskCauseError(c),
-      runTap: (_n, exit) => exit,
-      runSlow: () => ({ _tag: 'Success', value: undefined }),
-      createAsyncResumer: () => async () => ({ _tag: 'Success', value: undefined }),
-      createSyncResumer: () => () => ({ _tag: 'Success', value: undefined }),
-    } satisfies TaskJitHelpers)
-    assertOk(typeof compiled === 'function')
+      const compiled = compileTaskChain(mutatingStep, {
+        NEVER_ABORTED_SIGNAL: new AbortController().signal,
+        success: (value) => ({ _tag: 'Success', value }),
+        failed: (error) => ({ _tag: 'Failure', cause: Cause.fail(error) }),
+        died: (defect) => ({ _tag: 'Failure', cause: Cause.die(defect) }),
+        interrupted: (signal) => ({ _tag: 'Failure', cause: Cause.interrupt(signal.reason) }),
+        failure: (cause) => ({ _tag: 'Failure', cause }),
+        isResultTask: (_v): _v is TaskNodeLike => false,
+        isPromiseExit: (_v): _v is Promise<never> => false,
+        executeTryPromise: () => ({ _tag: 'Success', value: undefined }),
+        runGen: () => ({ _tag: 'Success', value: undefined }),
+        transformCause: (c) => c,
+        getTaggedHandler: () => undefined,
+        createCauseError: (c) => new ResultTaskCauseError(c),
+        runTap: (_n, exit) => exit,
+        runSlow: () => ({ _tag: 'Success', value: undefined }),
+        createAsyncResumer: () => async () => ({ _tag: 'Success', value: undefined }),
+        createSyncResumer: () => () => ({ _tag: 'Success', value: undefined }),
+      } satisfies TaskJitHelpers)
+      assertOk(typeof compiled === 'function')
+    })
   })
 
   it('covers SupervisedFiber.close when an observed child is still running at scope close', async () => {

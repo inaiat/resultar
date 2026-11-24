@@ -53,8 +53,14 @@ const withJitModeAsync = async <T>(enabled: boolean, run: () => Promise<T>): Pro
   }
 }
 
+const initialJitEnv = process.env['RESULTAR_JIT']
+
 afterEach(() => {
-  delete process.env['RESULTAR_JIT']
+  if (initialJitEnv === undefined) {
+    delete process.env['RESULTAR_JIT']
+  } else {
+    process.env['RESULTAR_JIT'] = initialJitEnv
+  }
 })
 
 describe('JIT runtime controls and Workstream A micro-optimizations', () => {
@@ -69,21 +75,23 @@ describe('JIT runtime controls and Workstream A micro-optimizations', () => {
     expect(formatPropertyAccess('input', 'default')).toBe('input["default"]')
     expect(serializeStringLiteral('\u2028\u2029')).toBe(String.raw`"\u2028\u2029"`)
 
-    vi.resetModules()
-    const isolated = await import('../src/core/jit.js')
-    const blocked = vi.fn(() => {
-      throw new EvalError('dynamic code generation blocked')
+    await withJitModeAsync(true, async () => {
+      vi.resetModules()
+      const isolated = await import('../src/core/jit.js')
+      const blocked = vi.fn(() => {
+        throw new EvalError('dynamic code generation blocked')
+      })
+      vi.stubGlobal('Function', blocked)
+      let allowed = true
+      try {
+        allowed = isolated.canUseJit()
+      } finally {
+        vi.unstubAllGlobals()
+      }
+      expect(allowed).toBe(false)
+      expect(isolated.canUseJit()).toBe(false)
+      expect(blocked).toHaveBeenCalledOnce()
     })
-    vi.stubGlobal('Function', blocked)
-    let allowed = true
-    try {
-      allowed = isolated.canUseJit()
-    } finally {
-      vi.unstubAllGlobals()
-    }
-    expect(allowed).toBe(false)
-    expect(isolated.canUseJit()).toBe(false)
-    expect(blocked).toHaveBeenCalledOnce()
   })
 
   it('preserves curried argument order in the dual dispatcher at both arity limits', () => {
