@@ -1,5 +1,20 @@
 # resultar-hono
 
+## 2.0.0-beta.3
+
+### Patch Changes
+
+- 364039c: Replace dynamic `new Function` code generation in `resultar-di` sync plans with a CSP-safe pure-JavaScript resolver, harden binding/resolver record construction against inherited `Object.prototype` setters, and fix HTTP adapter regressions:
+  
+  - `resultar-hono`: keep fast-path middleware scopes open through response stream consumption or cancellation and cancel source streams on request abort.
+  - `resultar-nestjs`: keep Fastify 5 `request.signal` lazy (including on Node 26+ `IncomingMessage.prototype.signal`) while honoring own `request.signal` getters installed by hooks on routes without `handlerTimeout`.
+  - `resultar-fastify`: decrement the dynamic Tier 2 active counter on client disconnect and abort paths so subsequent unscoped responses skip `WeakMap` lookups.
+- 9845923: Register active request scopes before synchronous plan resolution in `resultar-hono`, `resultar-fastify`, and `resultar-nestjs` so shutdown initiated inside a synchronous factory waits for in-flight handlers and response streams before releasing singletons, and require `settleResponse` on the `resultar-di` fast-path bridge in `resultar-hono` so partial upgrades fall back cleanly to `scope.fetch`.
+- Updated dependencies [364039c]
+- Updated dependencies [46c28fa]
+  - resultar-di@2.0.0-beta.3
+  - resultar@5.0.0-beta.3
+
 ## 2.0.0-beta.2
 
 ### Patch Changes
