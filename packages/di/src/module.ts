@@ -461,7 +461,6 @@ class RuntimeScope {
   private readonly syncPlans = new Map<string, CompiledSyncPlan | undefined>();
   private lastPlan:
     | {
-        readonly envFlag: string;
         readonly keys: readonly string[];
         readonly localCount: number;
         readonly singleLocalKey: string | undefined;
@@ -521,13 +520,9 @@ class RuntimeScope {
     for (const localKey of localKeys) {
       if (this.definitions.has(localKey)) return undefined;
     }
-    const envFlag =
-      (globalThis as { readonly process?: { readonly env?: { readonly RESULTAR_JIT?: string } } })
-        .process?.env?.RESULTAR_JIT ?? "";
     const last = this.lastPlan;
     if (
       last !== undefined &&
-      last.envFlag === envFlag &&
       last.keys === keys &&
       last.localCount === localKeys.length &&
       last.requestedBy === requestedBy &&
@@ -535,7 +530,7 @@ class RuntimeScope {
     ) {
       return last.plan;
     }
-    const cacheKey = JSON.stringify([envFlag, keys, localKeys, requestedBy ?? ""]);
+    const cacheKey = JSON.stringify([keys, localKeys, requestedBy ?? ""]);
     let plan: CompiledSyncPlan | undefined = undefined;
     if (this.syncPlans.has(cacheKey)) {
       plan = this.syncPlans.get(cacheKey);
@@ -547,7 +542,6 @@ class RuntimeScope {
     }
     if (Object.isFrozen(keys) && localKeys.length <= 1) {
       this.lastPlan = {
-        envFlag,
         keys,
         localCount: localKeys.length,
         singleLocalKey: localKeys[0],
@@ -603,7 +597,7 @@ class RuntimeScope {
     const map: Record<string, () => RuntimeTask> = {};
     const setResolver = (key: string): void => {
       const resolver = () => this.resolve(key, requestedBy, path);
-      if (key === "__proto__") {
+      if (key in map) {
         Object.defineProperty(map, key, {
           value: resolver,
           enumerable: true,
@@ -1243,6 +1237,8 @@ const makeScope = <Services extends object, E, R, G extends Graph>(
         isClosed: () => runtime.isClosedOrDisposing(),
         beginChild: () => runtime.beginChild(),
         endChild: () => runtime.endChild(),
+        settleResponse: (signal: AbortSignal, response: Response) =>
+          settleFastResponse(runtime, signal, response),
         getPlan: (keys: readonly string[], planLocalKeys: readonly string[]) =>
           runtime.getSyncPlan(keys, planLocalKeys),
         rootCache: runtime.root.cache,

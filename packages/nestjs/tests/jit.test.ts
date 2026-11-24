@@ -9,6 +9,7 @@ import {
   Get,
   HttpCode,
   Post,
+  Req,
   Res,
   type ArgumentsHost,
   type ExceptionFilter,
@@ -33,8 +34,14 @@ const withJitMode = async <T>(enabled: boolean, run: () => Promise<T>): Promise<
   }
 };
 
+const initialJitEnv = process.env.RESULTAR_JIT;
+
 afterEach(() => {
-  delete process.env.RESULTAR_JIT;
+  if (initialJitEnv === undefined) {
+    delete process.env.RESULTAR_JIT;
+  } else {
+    process.env.RESULTAR_JIT = initialJitEnv;
+  }
 });
 
 describe("resultar-nestjs Tier 0 / Tier 1 compiled request dispatcher and dual-mode parity", () => {
@@ -618,4 +625,117 @@ describe("resultar-nestjs Tier 0 / Tier 1 compiled request dispatcher and dual-m
       });
     },
   );
+
+  test("keeps Fastify request.signal lazy on Tier 0 routes while respecting own signal getters on routes without handlerTimeout", async () => {
+    for (const jitEnabled of [true, false]) {
+      // eslint-disable-next-line no-await-in-loop
+      await withJitMode(jitEnabled, async () => {
+        let signalMaterializedPlain = true;
+        let signalMaterializedAfterRead = false;
+        const hasFastifySignalSymbol = (request: object): boolean =>
+          Object.getOwnPropertySymbols(request).some(
+            (symbol) => symbol.description === "fastify.request.signal",
+          );
+
+        @Controller()
+        class LazySignalController {
+          @Get("/plain")
+          plain(@Req() request: NestRequest, @Services() reqServices: { readonly tag: string }) {
+            signalMaterializedPlain = hasFastifySignalSymbol(request);
+            return reqServices.tag;
+          }
+
+          @Get("/signal")
+          withSignal(
+            @Req() request: NestRequest,
+            @Services() reqServices: { readonly tag: string },
+          ) {
+            const isSignal = request.signal instanceof AbortSignal;
+            signalMaterializedAfterRead = hasFastifySignalSymbol(request);
+            return { tag: reqServices.tag, isSignal };
+          }
+        }
+
+        const lazyApp = createNestApp({
+          services: createModule().value("tag", "ok"),
+          bindings: ["tag"],
+          controllers: [LazySignalController],
+        });
+
+        const plainRes = await lazyApp.inject("/plain");
+        expect(plainRes.statusCode).toBe(200);
+        expect(plainRes.body).toBe("ok");
+        expect(signalMaterializedPlain).toBe(false);
+
+        const signalRes = await lazyApp.inject("/signal");
+        expect(signalRes.statusCode).toBe(200);
+        expect(signalRes.json()).toEqual({ tag: "ok", isSignal: true });
+        expect(signalMaterializedAfterRead).toBe(true);
+        await lazyApp.close();
+
+        // A hook installing an own getter for request.signal with an already-aborted signal
+        // must abort BEFORE initializing services or invoking the controller even without handlerTimeout.
+        let serviceInitialized = 0;
+        let controllerCalled = 0;
+        const abortReason = new Error("hook-getter-aborted");
+        const capturedErrors: unknown[] = [];
+
+        @Catch()
+        class AbortCaptureFilter implements ExceptionFilter {
+          catch(exception: unknown, host: ArgumentsHost) {
+            capturedErrors.push(exception);
+            const reply = host
+              .switchToHttp()
+              .getResponse<{ code: (status: number) => { send: (body: unknown) => void } }>();
+            reply.code(500).send({ aborted: true });
+          }
+        }
+
+        @Controller()
+        class AbortedGetterController {
+          @Get("/aborted")
+          aborted(@Services() reqServices: { readonly item: number }) {
+            controllerCalled += 1;
+            return { item: reqServices.item };
+          }
+        }
+
+        const getterApp = createNestApp(
+          {
+            services: createModule().scoped("item", [], () => {
+              serviceInitialized += 1;
+              return serviceInitialized;
+            }),
+            bindings: ["item"],
+            controllers: [AbortedGetterController],
+          },
+          (instance) => {
+            instance.useGlobalFilters(new AbortCaptureFilter());
+            const fastify = instance.getHttpAdapter().getInstance() as {
+              addHook: (
+                name: string,
+                fn: (req: object, reply: unknown, done: () => void) => void,
+              ) => void;
+            };
+            fastify.addHook("onRequest", (req, _reply, done) => {
+              const abortedSignal = AbortSignal.abort(abortReason);
+              Object.defineProperty(req, "signal", {
+                configurable: true,
+                enumerable: true,
+                get: () => abortedSignal,
+              });
+              done();
+            });
+          },
+        );
+
+        const abortedRes = await getterApp.inject("/aborted");
+        expect(abortedRes.statusCode).toBe(500);
+        expect(serviceInitialized).toBe(0);
+        expect(controllerCalled).toBe(0);
+        expect(capturedErrors[0]).toBe(abortReason);
+        await getterApp.close();
+      });
+    }
+  });
 });

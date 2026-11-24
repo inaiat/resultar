@@ -3,7 +3,7 @@ import { PassThrough } from "node:stream";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { ResultTask, ResultTaskCauseError } from "resultar";
 import { createModule, resource, service } from "resultar-di";
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 
 import { createFastifyApp, createFastifyPlugin, type InferRequestServices } from "../src/index.js";
 
@@ -568,4 +568,80 @@ describe("resultar-fastify Tier 0 / Tier 1 compiled request hooks and dual-mode 
       });
     },
   );
+
+  test("decrements dynamic Tier 2 active counter after client disconnect so unscoped responses skip WeakMap lookups", async () => {
+    let txReleased = 0;
+    const handlerEntered = Promise.withResolvers<void>();
+    const tx = resource("tx", {
+      acquire: ResultTask.ok({ id: "tx-1" }),
+      release: () =>
+        ResultTask.sync(() => {
+          txReleased += 1;
+        }),
+    });
+    const services = createModule().scoped(tx);
+    const openStream = new PassThrough();
+
+    const app = createFastifyApp(
+      { services, bindings: ["tx"], locals: (request: FastifyRequest) => ({ reqId: request.id }) },
+      (instance) => {
+        instance.get("/stream", (_request, reply) => {
+          handlerEntered.resolve();
+          reply.hijack();
+          reply.raw.writeHead(200, { "content-type": "text/plain" });
+          reply.raw.write("chunk-1\n");
+          openStream.pipe(reply.raw);
+        });
+        instance.get("/health", { config: { resultar: { requestScope: false } } }, () => ({
+          ok: true,
+        }));
+      },
+    );
+
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    const address = app.server.address();
+    if (typeof address !== "object" || address === null) {
+      throw new Error("Expected TCP address");
+    }
+    const url = `http://127.0.0.1:${String(address.port)}`;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const client = httpRequest(`${url}/stream`, { headers: { connection: "close" } }, (res) => {
+          res.once("data", () => {
+            res.destroy();
+            client.destroy();
+            resolve();
+          });
+        });
+        client.once("error", (error) => {
+          if (txReleased === 0) reject(error);
+        });
+        client.end();
+      });
+
+      await handlerEntered.promise;
+      await expect.poll(() => txReleased).toBe(1);
+
+      const weakMapGetSpy = vi.spyOn(WeakMap.prototype, "get");
+      try {
+        const health = await app.inject("/health");
+        expect(health.statusCode).toBe(200);
+        // If activeTier2Count leaked > 0, Fastify's dynamic onResponse hook would call requests.get(request).
+        const requestLookups = weakMapGetSpy.mock.calls.filter(
+          ([arg]) =>
+            typeof arg === "object" &&
+            arg !== null &&
+            "routeOptions" in arg &&
+            (arg as { readonly url?: string }).url === "/health",
+        );
+        expect(requestLookups).toHaveLength(0);
+      } finally {
+        weakMapGetSpy.mockRestore();
+      }
+    } finally {
+      openStream.destroy();
+      await app.close();
+    }
+  });
 });

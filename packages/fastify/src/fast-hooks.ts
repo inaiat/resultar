@@ -179,7 +179,8 @@ interface FastExecutionContext {
 
 interface Tier2RequestContext {
   readonly config: RequestHookConfig;
-  readonly requests: WeakMap<FastifyRequest, RequestState>;
+  readonly track: (request: FastifyRequest, state: RequestState) => void;
+  readonly release: (request: FastifyRequest) => void;
 }
 
 interface HookInvocation {
@@ -228,14 +229,38 @@ const runTier2WithLocals = async (
   request: FastifyRequest,
   replyAndLocals: { readonly reply: FastifyReply; readonly locals: RuntimeServices },
 ): Promise<void> => {
-  const { config, requests } = ctx;
+  const { config, track, release } = ctx;
   const { reply, locals } = replyAndLocals;
   const state = attachRequest(request, reply);
-  requests.set(request, state);
+  track(request, state);
+  const finishAndRelease = (): void => {
+    finishRequest(state)
+      .finally(() => {
+        release(request);
+      })
+      .catch(() => {
+        /* Disconnect cleanup must not surface an unhandled rejection. */
+      });
+  };
+  const onRawClose = (): void => {
+    if (!reply.raw.writableFinished) {
+      finishAndRelease();
+    }
+  };
+  reply.raw.once("close", onRawClose);
   const outcome = await startAndExposeTier2(config, state, { request, locals });
   if (outcome.isErr()) {
-    await finishRequest(state);
+    reply.raw.removeListener("close", onRawClose);
+    try {
+      await finishRequest(state);
+    } finally {
+      release(request);
+    }
     err(config.mapError(outcome.error)).unwrapOrThrow();
+  }
+  if (reply.raw.closed && !reply.raw.writableFinished) {
+    reply.raw.removeListener("close", onRawClose);
+    finishAndRelease();
   }
 };
 
@@ -415,9 +440,27 @@ const registerDynamicFastHooks = (
   const fastActiveKey = Symbol("resultar.fastify.active");
   const onRawReplyClose = createRawReplyCloseHandler(bridge, fastActiveKey);
   const requests = new WeakMap<FastifyRequest, RequestState>();
-  const tier2Ctx: Tier2RequestContext = { config, requests };
   let activeTier2Count = 0;
   app.decorateRequest(fastActiveKey);
+
+  const trackTier2Request = (request: FastifyRequest, state: RequestState): void => {
+    if (!requests.has(request)) {
+      activeTier2Count += 1;
+    }
+    requests.set(request, state);
+  };
+
+  const releaseTier2Tracking = (request: FastifyRequest): void => {
+    if (requests.delete(request)) {
+      activeTier2Count -= 1;
+    }
+  };
+
+  const tier2Ctx: Tier2RequestContext = {
+    config,
+    track: trackTier2Request,
+    release: releaseTier2Tracking,
+  };
 
   const localCache: { keys?: readonly string[]; execCtx?: FastExecutionContext } = {};
 
@@ -447,7 +490,6 @@ const registerDynamicFastHooks = (
       executeFastPlan(execCtx, locals, request, reply, done);
       return;
     }
-    activeTier2Count += 1;
     settleIntoDone(runTier2WithLocals(tier2Ctx, request, { reply, locals }), done);
   };
 
@@ -510,10 +552,8 @@ const registerDynamicFastHooks = (
     }
     settleIntoDone(
       finishRequest(state)
-        .then(() => {
-          if (requests.delete(request)) {
-            activeTier2Count -= 1;
-          }
+        .finally(() => {
+          releaseTier2Tracking(request);
         })
         .catch((error: unknown) => err(config.mapError(error)).unwrapOrThrow()),
       done,
@@ -522,7 +562,25 @@ const registerDynamicFastHooks = (
 
   app.addHook("onRequestAbort", (request, done) => {
     finishFastRequestAbort(request, bridge, fastActiveKey, onRawReplyClose);
-    done();
+    if (activeTier2Count === 0) {
+      done();
+      return;
+    }
+    const state = requests.get(request);
+    if (state === undefined) {
+      done();
+      return;
+    }
+    settleIntoDone(
+      finishRequest(state)
+        .finally(() => {
+          releaseTier2Tracking(request);
+        })
+        .catch(() => {
+          /* Abort cleanup must not surface an unhandled rejection. */
+        }),
+      done,
+    );
   });
 };
 

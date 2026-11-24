@@ -1,5 +1,5 @@
 /* eslint-disable unicorn/no-await-expression-member, unicorn/no-null */
-import { Hono, type Context } from "hono";
+import { Hono, type Context, type Env } from "hono";
 import { hc, type InferResponseType } from "hono/client";
 import { expect, expectTypeOf, test } from "vite-plus/test";
 import { ResultTask, type Result } from "resultar";
@@ -325,6 +325,173 @@ test("different service owners cannot overwrite the same Hono variable", async (
   await first.close();
   await second.close();
 });
+
+test.each(["1", "0"] as const)(
+  "Tier 0 and Tier 1 fast middleware maintain JIT=%s parity, abort checks, and close drain",
+  async (jitMode) => {
+    const previousJit = process.env.RESULTAR_JIT;
+    process.env.RESULTAR_JIT = jitMode;
+    try {
+      const Tenant = ResultTask.service<string, "tenant">("tenant");
+      let scopedCount = 0;
+      let localsCalls = 0;
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      let poolReleased = 0;
+      const Pool = resource("pool", {
+        acquire: ResultTask.ok("pool"),
+        release: () =>
+          ResultTask.sync(() => {
+            poolReleased += 1;
+          }),
+      });
+      const services = createModule()
+        .singleton(Pool)
+        .value("prefix", "v5")
+        .scoped("ctx", ["prefix"], ({ prefix }) => {
+          scopedCount += 1;
+          return `${prefix}:${scopedCount}`;
+        })
+        .scoped(service("greeting", { tenant: Tenant }, ({ tenant }) => `hi:${tenant}`));
+
+      const di = createHonoServices(services);
+      const app = new Hono<Env>();
+      app.onError((error) => new Response(error.message, { status: 500 }));
+      app.get("/pool", di.middleware(["pool"]), (c) => c.text(c.var.services.pool));
+      app.get("/static", di.middleware(["prefix"]), async (c) => {
+        started.resolve();
+        await release.promise;
+        return c.text(c.var.services.prefix);
+      });
+      app.get(
+        "/dynamic",
+        di.middleware(["ctx", "greeting"], {
+          locals: (context: Context<Env>) => {
+            localsCalls += 1;
+            return { tenant: context.req.header("x-tenant") ?? "default" };
+          },
+        }),
+        (c) => c.text(`${c.var.services.ctx}:${c.var.services.greeting}`),
+      );
+
+      // Acquire singleton resource on Tier 2 route first.
+      expect(await (await app.request("/pool")).text()).toBe("pool");
+
+      // Tier 1 with locals resolves cleanly and skips locals on pre-aborted requests.
+      const firstDynamic = await app.request("/dynamic", { headers: { "x-tenant": "acme" } });
+      expect(await firstDynamic.text()).toBe("v5:1:hi:acme");
+      const secondDynamic = await app.request("/dynamic", { headers: { "x-tenant": "beta" } });
+      expect(await secondDynamic.text()).toBe("v5:2:hi:beta");
+      expect(localsCalls).toBe(2);
+
+      const abortedController = new AbortController();
+      abortedController.abort(new Error("client-gone"));
+      const abortedRes = await app.request("/dynamic", { signal: abortedController.signal });
+      expect(abortedRes.status).toBe(500);
+      expect(localsCalls).toBe(2);
+
+      // Concurrent close() waits for in-flight Tier 0 middleware before releasing singleton resources.
+      const inFlight = app.request("/static");
+      await started.promise;
+      let closed = false;
+      const closing = di.close().then(() => {
+        closed = true;
+      });
+      await Promise.resolve();
+      expect(closed).toBe(false);
+      expect(poolReleased).toBe(0);
+
+      release.resolve();
+      expect(await (await inFlight).text()).toBe("v5");
+      await closing;
+      expect(closed).toBe(true);
+      expect(poolReleased).toBe(1);
+    } finally {
+      if (previousJit === undefined) delete process.env.RESULTAR_JIT;
+      else process.env.RESULTAR_JIT = previousJit;
+    }
+  },
+);
+
+test.each(["static", "dynamic"] as const)(
+  "Tier 0/1 %s middleware keeps scope open until stream consumption/abort and cancels producer on abort",
+  async (mode) => {
+    const Tenant = ResultTask.service<string, "tenant">("tenant");
+    let poolReleased = 0;
+    let sourceCanceled = 0;
+    const cancelObserved = Promise.withResolvers<void>();
+    const Pool = resource("pool", {
+      acquire: ResultTask.ok("pool"),
+      release: () =>
+        ResultTask.sync(() => {
+          poolReleased += 1;
+        }),
+    });
+    const services = createModule()
+      .singleton(Pool)
+      .value("tag", "stream")
+      .scoped(service("greeting", { tenant: Tenant }, ({ tenant }) => `hi:${tenant}`));
+
+    const di = createHonoServices(services);
+    const app = new Hono<Env>();
+    app.get("/pool", di.middleware(["pool"]), (c) => c.text(c.var.services.pool));
+    const createStreamResponse = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("chunk"));
+          },
+          cancel() {
+            sourceCanceled += 1;
+            cancelObserved.resolve();
+          },
+        }),
+      );
+    if (mode === "static") {
+      app.get("/stream", di.middleware(["tag"]), createStreamResponse);
+    } else {
+      app.get(
+        "/stream",
+        di.middleware(["greeting"], {
+          locals: (context: Context<Env>) => ({ tenant: context.req.header("x-tenant") ?? "acme" }),
+        }),
+        createStreamResponse,
+      );
+    }
+
+    // Acquire singleton resource first so we can observe premature close().
+    expect(await (await app.request("/pool")).text()).toBe("pool");
+
+    const abortController = new AbortController();
+    const response = await app.request("/stream", { signal: abortController.signal });
+    const reader = response.body?.getReader();
+    if (reader === undefined) throw new Error("Expected response body");
+    const firstChunk = await reader.read();
+    expect(firstChunk.done).toBe(false);
+
+    // di.close() must wait while the streaming response is still open.
+    let closed = false;
+    const closing = di.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 15);
+    });
+    expect(closed).toBe(false);
+    expect(poolReleased).toBe(0);
+
+    // Aborting the request must reject the pending read, cancel the source stream, and allow close() to finish.
+    const pendingRead = reader.read();
+    abortController.abort(new Error("client-disconnected"));
+    await cancelObserved.promise;
+    await expect(pendingRead).rejects.toThrow("Request scope failed");
+    await closing;
+    expect(sourceCanceled).toBe(1);
+    expect(closed).toBe(true);
+    expect(poolReleased).toBe(1);
+  },
+);
 
 const checkTypes = () => {
   const External = ResultTask.service<string, "external">("external");
