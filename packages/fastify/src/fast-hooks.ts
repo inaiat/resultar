@@ -368,16 +368,19 @@ const executeFastPlan = (
     failHook(done, createClosedScopeError(), mapError);
     return;
   }
+  bridge.beginChild();
   let services: RuntimeServices = EMPTY_SERVICES;
   try {
     services = plan.resolve(bridge.rootCache, locals);
   } catch (error) {
+    bridge.endChild();
     failHook(done, new ResultTaskCauseError({ _tag: "Die", defect: error }), mapError);
     return;
   }
   const rawReply = reply.raw;
-  if (!rawReply.closed) {
-    bridge.beginChild();
+  if (rawReply.closed) {
+    bridge.endChild();
+  } else {
     (rawReply as unknown as Record<symbol, boolean | undefined>)[fastActiveKey] = true;
     (request as unknown as Record<symbol, ServerResponse | undefined>)[fastActiveKey] = rawReply;
     rawReply.on("close", onRawReplyClose);

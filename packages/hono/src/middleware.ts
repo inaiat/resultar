@@ -41,7 +41,7 @@ interface SyncPlanBridge {
   readonly isClosed: () => boolean;
   readonly beginChild: () => void;
   readonly endChild: () => void;
-  readonly settleResponse?: (signal: AbortSignal, response: Response) => Promise<Response>;
+  readonly settleResponse: (signal: AbortSignal, response: Response) => Promise<Response>;
   readonly getPlan: (
     keys: readonly string[],
     localKeys: readonly string[],
@@ -49,8 +49,14 @@ interface SyncPlanBridge {
   readonly rootCache: Map<string, unknown>;
 }
 
-const getSyncPlanBridge = (scope: object): SyncPlanBridge | undefined =>
-  (scope as Record<symbol, SyncPlanBridge | undefined>)[SYNC_PLAN_BRIDGE];
+const getSyncPlanBridge = (scope: object): SyncPlanBridge | undefined => {
+  const candidate = (scope as Record<symbol, Partial<SyncPlanBridge> | undefined>)[
+    SYNC_PLAN_BRIDGE
+  ];
+  return typeof candidate?.settleResponse === "function"
+    ? (candidate as SyncPlanBridge)
+    : undefined;
+};
 
 const isPromiseLike = (value: unknown): value is PromiseLike<object | undefined> =>
   typeof value === "object" &&
@@ -114,13 +120,14 @@ const runFastMiddleware = async (
   if (bridge.isClosed()) throw createClosedScopeError();
   const signal = context.req.raw.signal;
   if (signal.aborted) throw createInterruptScopeError(signal);
+  bridge.beginChild();
   let services: RuntimeServices = EMPTY_SERVICES;
   try {
     services = plan.resolve(bridge.rootCache, locals);
   } catch (defect) {
+    bridge.endChild();
     throw createDefectScopeError(defect);
   }
-  bridge.beginChild();
   let response: Response | undefined = undefined;
   try {
     context.set("services", services as never);
@@ -130,12 +137,7 @@ const runFastMiddleware = async (
     bridge.endChild();
     throw error;
   }
-  const settleResponse = bridge.settleResponse;
-  if (settleResponse === undefined) {
-    bridge.endChild();
-    return;
-  }
-  const wrapped = await settleResponse(signal, response);
+  const wrapped = await bridge.settleResponse(signal, response);
   context.res = wrapped;
   watchReplacedResponse(context, wrapped);
 };

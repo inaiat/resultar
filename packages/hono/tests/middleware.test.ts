@@ -493,6 +493,194 @@ test.each(["static", "dynamic"] as const)(
   },
 );
 
+test.each(["static", "dynamic"] as const)(
+  "registers the child scope before plan resolution so di.close() from a sync factory waits for %s response streams",
+  async (mode) => {
+    const Tenant = ResultTask.service<string, "tenant">("tenant");
+    let poolReleased = 0;
+    let sourceCanceled = 0;
+    const cancelObserved = Promise.withResolvers<void>();
+    const closeState: { trigger?: () => void; promise?: Promise<void> } = {};
+    const Pool = resource("pool", {
+      acquire: ResultTask.ok("pool"),
+      release: () =>
+        ResultTask.sync(() => {
+          poolReleased += 1;
+        }),
+    });
+    const services = createModule()
+      .singleton(Pool)
+      .scoped("trigger", [], () => {
+        closeState.trigger?.();
+        return "triggered";
+      })
+      .scoped(
+        service("greeting", { tenant: Tenant }, ({ tenant }) => {
+          closeState.trigger?.();
+          return `hi:${tenant}`;
+        }),
+      );
+
+    const di = createHonoServices(services);
+    const app = new Hono<Env>();
+    app.get("/pool", di.middleware(["pool"]), (c) => c.text(c.var.services.pool));
+    const createStreamResponse = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("chunk"));
+          },
+          cancel() {
+            sourceCanceled += 1;
+            cancelObserved.resolve();
+          },
+        }),
+      );
+    if (mode === "static") {
+      app.get("/stream", di.middleware(["trigger"]), createStreamResponse);
+    } else {
+      app.get(
+        "/stream",
+        di.middleware(["greeting"], {
+          locals: (context: Context<Env>) => ({ tenant: context.req.header("x-tenant") ?? "acme" }),
+        }),
+        createStreamResponse,
+      );
+    }
+
+    expect(await (await app.request("/pool")).text()).toBe("pool");
+
+    let closed = false;
+    closeState.trigger = () => {
+      closeState.promise = di.close().then(() => {
+        closed = true;
+      });
+    };
+
+    const abortController = new AbortController();
+    const response = await app.request("/stream", { signal: abortController.signal });
+    const reader = response.body?.getReader();
+    if (reader === undefined) throw new Error("Expected response body");
+    const firstChunk = await reader.read();
+    expect(firstChunk.done).toBe(false);
+
+    expect(closeState.promise).toBeDefined();
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 15);
+    });
+    expect(closed).toBe(false);
+    expect(poolReleased).toBe(0);
+
+    const pendingRead = reader.read();
+    abortController.abort(new Error("client-disconnected"));
+    await cancelObserved.promise;
+    await expect(pendingRead).rejects.toThrow("Request scope failed");
+    await closeState.promise;
+    expect(sourceCanceled).toBe(1);
+    expect(closed).toBe(true);
+    expect(poolReleased).toBe(1);
+  },
+);
+
+test.each(["static", "dynamic"] as const)(
+  "falls back to scope.fetch streaming lifecycle when the DI bridge lacks settleResponse in %s mode",
+  async (mode) => {
+    const syncPlanBridge = Symbol.for("resultar-di/sync-plan-bridge");
+    const Tenant = ResultTask.service<string, "tenant">("tenant");
+    let poolReleased = 0;
+    let sourceCanceled = 0;
+    const cancelObserved = Promise.withResolvers<void>();
+    const Pool = resource("pool", {
+      acquire: ResultTask.ok("pool"),
+      release: () =>
+        ResultTask.sync(() => {
+          poolReleased += 1;
+        }),
+    });
+    const baseServices = createModule()
+      .singleton(Pool)
+      .value("tag", "stream")
+      .scoped(service("greeting", { tenant: Tenant }, ({ tenant }) => `hi:${tenant}`));
+
+    // Simulate a partial upgrade where resultar-di exposes SYNC_PLAN_BRIDGE without settleResponse.
+    const legacyServices = Object.assign(Object.create(baseServices) as typeof baseServices, {
+      scope: () => {
+        const rawScope = baseServices.scope();
+        const rawBridge = (
+          rawScope as unknown as Record<symbol, Record<string, unknown> | undefined>
+        )[syncPlanBridge];
+        if (rawBridge === undefined) throw new Error("Expected sync plan bridge");
+        const legacyScope = Object.create(rawScope) as typeof rawScope;
+        Object.defineProperty(legacyScope, syncPlanBridge, {
+          value: {
+            isClosed: rawBridge.isClosed,
+            beginChild: rawBridge.beginChild,
+            endChild: rawBridge.endChild,
+            getPlan: rawBridge.getPlan,
+            rootCache: rawBridge.rootCache,
+          },
+        });
+        return legacyScope;
+      },
+    });
+
+    const di = createHonoServices(legacyServices);
+    const app = new Hono<Env>();
+    app.get("/pool", di.middleware(["pool"]), (c) => c.text(c.var.services.pool));
+    const createStreamResponse = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("chunk"));
+          },
+          cancel() {
+            sourceCanceled += 1;
+            cancelObserved.resolve();
+          },
+        }),
+      );
+    if (mode === "static") {
+      app.get("/stream", di.middleware(["tag"]), createStreamResponse);
+    } else {
+      app.get(
+        "/stream",
+        di.middleware(["greeting"], {
+          locals: (context: Context<Env>) => ({ tenant: context.req.header("x-tenant") ?? "acme" }),
+        }),
+        createStreamResponse,
+      );
+    }
+
+    expect(await (await app.request("/pool")).text()).toBe("pool");
+
+    const abortController = new AbortController();
+    const response = await app.request("/stream", { signal: abortController.signal });
+    const reader = response.body?.getReader();
+    if (reader === undefined) throw new Error("Expected response body");
+    const firstChunk = await reader.read();
+    expect(firstChunk.done).toBe(false);
+
+    let closed = false;
+    const closing = di.close().then(() => {
+      closed = true;
+    });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 15);
+    });
+    expect(closed).toBe(false);
+    expect(poolReleased).toBe(0);
+
+    const pendingRead = reader.read();
+    abortController.abort(new Error("client-disconnected"));
+    await cancelObserved.promise;
+    await expect(pendingRead).rejects.toThrow("Request scope failed");
+    await closing;
+    expect(sourceCanceled).toBe(1);
+    expect(closed).toBe(true);
+    expect(poolReleased).toBe(1);
+  },
+);
+
 const checkTypes = () => {
   const External = ResultTask.service<string, "external">("external");
   const Dependent = service("dependent", { external: External }, ({ external }) => external);

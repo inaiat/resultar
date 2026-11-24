@@ -738,4 +738,65 @@ describe("resultar-nestjs Tier 0 / Tier 1 compiled request dispatcher and dual-m
       });
     }
   });
+
+  test("registers the child scope before plan resolution so app.close() from a sync factory waits for the controller", async () => {
+    let poolReleased = 0;
+    const closeState: { trigger?: () => void; promise?: Promise<void> } = {};
+    const handlerEntered = Promise.withResolvers<void>();
+    const releaseHandler = Promise.withResolvers<void>();
+    const Pool = resource("pool", {
+      acquire: ResultTask.ok("pool"),
+      release: () =>
+        ResultTask.sync(() => {
+          poolReleased += 1;
+        }),
+    });
+    const services = createModule()
+      .singleton(Pool)
+      .scoped("trigger", [], () => {
+        closeState.trigger?.();
+        return "triggered";
+      });
+
+    @Controller()
+    class ShutdownController {
+      @Get("/work")
+      async work(@Services() reqServices: { readonly trigger: string }) {
+        handlerEntered.resolve();
+        await releaseHandler.promise;
+        return { trigger: reqServices.trigger };
+      }
+    }
+
+    const app = createNestApp({
+      services,
+      appBindings: ["pool"],
+      bindings: ["trigger"],
+      controllers: [ShutdownController],
+    });
+
+    let closed = false;
+    closeState.trigger = () => {
+      closeState.promise = app.close().then(() => {
+        closed = true;
+      });
+    };
+
+    const pendingResponse = app.inject("/work");
+    await handlerEntered.promise;
+    expect(closeState.promise).toBeDefined();
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 15);
+    });
+    expect(closed).toBe(false);
+    expect(poolReleased).toBe(0);
+
+    releaseHandler.resolve();
+    const response = await pendingResponse;
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ trigger: "triggered" });
+    await closeState.promise;
+    expect(closed).toBe(true);
+    expect(poolReleased).toBe(1);
+  });
 });

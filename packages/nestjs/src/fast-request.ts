@@ -382,15 +382,15 @@ const createFastTracker = (
   );
   return (request: NestRequest, rawResponse: ServerResponse): void => {
     if (usesFastifyHooks) {
-      if (!rawResponse.closed) {
-        bridge.beginChild();
+      if (rawResponse.closed) {
+        bridge.endChild();
+      } else {
         (rawResponse as unknown as Record<symbol, boolean | undefined>)[fastActiveKey] = true;
         (request as unknown as Record<symbol, ServerResponse | undefined>)[fastActiveKey] =
           rawResponse;
         rawResponse.on("close", onRawResponseClose);
       }
     } else {
-      bridge.beginChild();
       attachFallbackDrain(rawResponse, bridge);
     }
   };
@@ -417,10 +417,12 @@ const executeCompiledPlan = (
   if (bridge.isClosed()) {
     return rejectMapped(mapError(createClosedScopeError()));
   }
+  bridge.beginChild();
   let services: RuntimeServices = EMPTY_SERVICES;
   try {
     services = plan.resolve(bridge.rootCache, locals);
   } catch (error) {
+    bridge.endChild();
     return rejectMapped(mapError(new ResultTaskCauseError({ _tag: "Die", defect: error })));
   }
   trackActive(ctx.request, ctx.rawResponse);
