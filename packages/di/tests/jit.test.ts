@@ -1,7 +1,9 @@
 import { ResultTask } from "resultar";
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 
 import { createModule, service } from "../src/index.js";
+
+const initialJitEnv = process.env.RESULTAR_JIT;
 
 const withJitMode = async <T>(enabled: boolean, run: () => Promise<T>): Promise<T> => {
   const previous = process.env.RESULTAR_JIT;
@@ -18,7 +20,11 @@ const withJitMode = async <T>(enabled: boolean, run: () => Promise<T>): Promise<
 };
 
 afterEach(() => {
-  delete process.env.RESULTAR_JIT;
+  if (initialJitEnv === undefined) {
+    delete process.env.RESULTAR_JIT;
+  } else {
+    process.env.RESULTAR_JIT = initialJitEnv;
+  }
 });
 
 describe("resultar-di static subgraph JIT tiers and dual-mode parity", () => {
@@ -791,6 +797,109 @@ describe("resultar-di static subgraph JIT tiers and dual-mode parity", () => {
           });
         }
       }
+    }
+  });
+
+  test("resolves Tier 0 and Tier 1 sync plans using pure JS closures without calling Function", async () => {
+    const functionSpy = vi.spyOn(globalThis, "Function").mockImplementation(() => {
+      throw new Error("Dynamic code generation must not be invoked by resultar-di");
+    });
+    try {
+      const root = createModule()
+        .value("cfg", { env: "prod" })
+        .singleton("db", ["cfg"], ({ cfg }) => ({ env: cfg.env }))
+        .scoped("a", ["db"], ({ db }) => `${db.env}:a`)
+        .scoped("b", ["db", "a"], ({ db, a }) => `${db.env}:${a}:b`)
+        .scoped("c", ["a", "b"], ({ a, b }) => `${a}|${b}`)
+        .scoped("d", ["a", "b", "c"], ({ a, b, c }) => `${a}+${b}+${c}`)
+        .scoped("e", ["a", "b", "c", "d"], ({ a, b, c, d }) => `${a}/${b}/${c}/${d}`)
+        .transient("nonce", [], () => 7)
+        .scope();
+
+      const tier0 = root.fetch(["db"], ({ db }) => new Response(db.env));
+      const tier0Response = await tier0(new Request("https://example.test/t0"));
+      expect(await tier0Response.text()).toBe("prod");
+
+      const tier1 = root
+        .withServices({ trace: "t-1" })
+        .fetch(["a", "b", "c", "d", "e", "nonce", "trace"], (services) => Response.json(services));
+      const tier1Response = await tier1(new Request("https://example.test/t1"));
+      const payload = (await tier1Response.json()) as Record<string, unknown>;
+      expect(payload.a).toBe("prod:a");
+      expect(payload.nonce).toBe(7);
+      expect(payload.trace).toBe("t-1");
+
+      await ResultTask.runPromise(root.close());
+      expect(functionSpy).not.toHaveBeenCalled();
+    } finally {
+      functionSpy.mockRestore();
+    }
+  });
+
+  test("defines own service bindings even when Object.prototype has an inherited setter for the same key", async () => {
+    const setterKey = "__resultarDiInheritedSetterTestKey__";
+    let setterCalls = 0;
+    // eslint-disable-next-line no-extend-native -- Regression test verifying inherited Object.prototype setters are bypassed.
+    Object.defineProperty(Object.prototype, setterKey, {
+      configurable: true,
+      enumerable: false,
+      // eslint-disable-next-line accessor-pairs -- Intentionally defines a setter-only inherited accessor.
+      set() {
+        setterCalls += 1;
+      },
+    });
+    try {
+      const root = createModule()
+        .value(setterKey, "registered-value")
+        .value("k2", 2)
+        .value("k3", 3)
+        .value("k4", 4)
+        .scoped("derived", [setterKey], (deps) => ({
+          hasOwn: Object.hasOwn(deps, setterKey),
+          val: deps[setterKey],
+        }))
+        .scope();
+
+      // 1-key Tier 0 via scope.use()
+      const single = await ResultTask.runPromise(
+        root.use([setterKey], (services) =>
+          ResultTask.ok({ hasOwn: Object.hasOwn(services, setterKey), val: services[setterKey] }),
+        ),
+      );
+      expect(single).toEqual({ hasOwn: true, val: "registered-value" });
+
+      const inspect = (services: { readonly derived: unknown } & Record<string, unknown>) =>
+        Response.json({
+          hasOwn: Object.hasOwn(services, setterKey),
+          val: services[setterKey],
+          derived: services.derived,
+        });
+
+      // 2-key, 3-key, and 5-key Tier 1 via scope.fetch()
+      const handlers = [
+        root.fetch([setterKey, "derived"], inspect),
+        root.fetch([setterKey, "k2", "derived"], inspect),
+        root.fetch([setterKey, "k2", "k3", "k4", "derived"], inspect),
+      ];
+      const responses = await Promise.all(
+        handlers.map((handler) => handler(new Request("https://example.test/setter"))),
+      );
+      const bodies = (await Promise.all(responses.map((response) => response.json()))) as Record<
+        string,
+        unknown
+      >[];
+      for (const body of bodies) {
+        expect(body).toEqual({
+          hasOwn: true,
+          val: "registered-value",
+          derived: { hasOwn: true, val: "registered-value" },
+        });
+      }
+
+      expect(setterCalls).toBe(0);
+      await ResultTask.runPromise(root.close());
+    } finally {
+      Reflect.deleteProperty(Object.prototype, setterKey);
     }
   });
 });

@@ -129,6 +129,26 @@ describe('mutation coverage for new ergonomics, retry/repeat, and observability 
   })
 
   describe('ResultTask.raceAll and raceFirstAll iterables and messages', () => {
+    it('waits for the first success when an array entry fails earlier', async () => {
+      const failed = ResultTask.err('first')
+      const succeeded = ResultTask.ok('second')
+      expect(await ResultTask.raceAll([failed, succeeded]).runExit()).toEqual({
+        _tag: 'Success',
+        value: 'second',
+      })
+    })
+
+    it.each(['raceAll', 'raceFirstAll'] as const)(
+      'reports the error from an empty %s iterable',
+      async (method) => {
+        const exit = await ResultTask[method](new Set<ResultTask<never>>()).runExit()
+        expect(exit).toEqual({
+          _tag: 'Failure',
+          cause: Cause.die(new RangeError(`ResultTask.${method} requires at least one task`)),
+        })
+      },
+    )
+
     it('accepts non-array iterables and preserves first-success vs first-settlement semantics', async () => {
       const clock = Clock.virtual()
 

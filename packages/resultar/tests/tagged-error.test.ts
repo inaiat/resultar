@@ -58,6 +58,41 @@ it('constructs tagged variants whose names also exist on Object.prototype', () =
   }
 })
 
+it('copies enumerable enum fields as own data without invoking inherited setters', () => {
+  const key = 'resultarEnumSetterProbe'
+  const symbol = Symbol(key)
+  const hidden = Symbol('hidden')
+  const setter = (): never => {
+    throw new Error('inherited setter ran')
+  }
+  const descriptor = { configurable: true, set: setter }
+  const items = taggedEnum<{ Item: { [key]: number; [symbol]: number } }>()
+  /* eslint-disable no-extend-native -- Reproduce an inherited setter and restore the prototype. */
+  Object.defineProperty(Object.prototype, key, descriptor)
+  Object.defineProperty(Object.prototype, symbol, descriptor)
+  /* eslint-enable no-extend-native */
+  try {
+    const fields = { [key]: 1, [symbol]: 2 }
+    const reserved = {
+      [key]: 1,
+      [symbol]: 2,
+      get _tag(): never {
+        throw new Error('reserved getter ran')
+      },
+    }
+    for (const props of [fields, reserved]) {
+      Object.defineProperty(props, hidden, { value: 'hidden' })
+      const item = items.Item(props)
+      deepEqual(item, { _tag: 'Item', [key]: 1, [symbol]: 2 })
+      deepEqual(Reflect.ownKeys(item), ['_tag', key, symbol])
+      equal(Object.isFrozen(item), true)
+    }
+  } finally {
+    Reflect.deleteProperty(Object.prototype, key)
+    Reflect.deleteProperty(Object.prototype, symbol)
+  }
+})
+
 describe('tagged errors', async () => {
   it('concatenates adjacent numeric placeholders', () => {
     const Adjacent = createTaggedError({ name: 'Adjacent', message: '$a$b failed' })
@@ -586,6 +621,26 @@ it('keeps enum factories awaitable as plain values and copies reserved object ke
   })
 })
 
+it('uses an overridden toJSON when serializing a tagged cause', () => {
+  class CustomCause extends createTaggedError({ name: 'CustomCause', message: 'failure' }) {
+    public override toJSON = () => ({ publicMessage: `custom ${this.message}` })
+  }
+  const cause = new CustomCause()
+  const outer = new StaticMessageError({ cause })
+  deepEqual(Reflect.get(outer.toJSON(), 'cause'), { publicMessage: 'custom failure' })
+})
+
+it('reports the tag or malformed value when no tagged enum handler matches', () => {
+  const variants = taggedEnum<{ Item: { label: string } }>()
+  const handlers = { Item: () => 'item' }
+  throws(() => variants.$match({ _tag: 'Unknown' } as never, handlers), {
+    message: 'No tagged enum handler for Unknown',
+  })
+  throws(() => variants.$match(null as never, handlers), {
+    message: 'No tagged enum handler for null',
+  })
+})
+
 it('invokes synchronous try and generator options with their receiver', () => {
   function recover(this: { marker: number }) {
     return this.marker
@@ -623,4 +678,25 @@ it('invokes synchronous try and generator options with their receiver', () => {
     },
   }
   deepEqual(Result.gen(broken), Result.err(7))
+})
+
+it('handles default $message template fallbacks and taggedEnum props alongside an ignored _tag', () => {
+  const DefaultMessageError = createTaggedError({ name: 'DefaultMessageError' })
+  const noArgs = new (DefaultMessageError as unknown as new () => Error)()
+  equal(noArgs.message, '$message')
+  const missingMessage = new (DefaultMessageError as unknown as new (v: object) => Error)({})
+  equal(missingMessage.message, '$message')
+  const withMessage = new DefaultMessageError({ message: 'explicit' })
+  equal(withMessage.message, 'explicit')
+
+  const extraSym = Symbol('extra')
+  const Variants = taggedEnum<{ Item: { readonly label: string; readonly [extraSym]?: number } }>()
+  const built = (
+    Variants.Item as unknown as (
+      props: Record<PropertyKey, unknown>,
+    ) => Record<PropertyKey, unknown>
+  )({ _tag: 'Ignored', label: 'kept', [extraSym]: 99 })
+  equal(built['_tag'], 'Item')
+  equal(built['label'], 'kept')
+  equal(built[extraSym], 99)
 })

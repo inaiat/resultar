@@ -14,7 +14,7 @@ catalog:
   "@types/node": 26.6.6
   "@vitest/coverage-v8": 5.1.1
   "@vitest/ui": 5.1.1
-  fallow: 3.47.0
+  fallow: 3.48.0
   fastify: 5.12.8
   fastify-plugin: 6.0.1
   hono: 4.13.21
@@ -22,10 +22,10 @@ catalog:
   rxjs: 7.8.2
   typebox: 1.4.7
   vitest: 5.1.1
-  vite-plus: 1.7.0
+  vite-plus: 1.8.0
   typescript: 7.0.2
   zod: 4.6.7
-  vite: npm:@voidzero-dev/vite-plus-core@8.3.8000
+  vite: npm:@voidzero-dev/vite-plus-core@8.3.8001
 
 allowBuilds:
   esbuild: true
@@ -33,15 +33,13 @@ allowBuilds:
 # Align the Vitest runner with coverage, UI, and Vite+'s browser integrations.
 # https://viteplus.dev/guide/migrate#manual-installation-migration
 overrides:
-  vite@*: "catalog:"
-  vitest@*: "catalog:"
-  "vite-plus>@vitest/browser": 5.1.1
-  "vite-plus>@vitest/browser-preview": 5.1.1
+  vite@*: 'catalog:'
+  vitest@*: 'catalog:'
 
 # The Vite+ alias uses its own version instead of the bundled Vite version.
 peerDependencyRules:
   allowedVersions:
-    vitest: "*"
+    vitest: '*'
   allowAny:
     - vitest
 
@@ -56,6 +54,7 @@ trustPolicy: no-downgrade
 trustPolicyExclude:
   - semver@6.3.1
   - tsrs@7.1.0-beta.tsrs2
+  - tsrs@7.1.0-beta.tsrs4
 blockExoticSubdeps: true
 minimumReleaseAge: 10080 # 1 week
 minimumReleaseAgeExclude:
@@ -111,6 +110,3 @@ minimumReleaseAgeExclude:
   - light-my-request@6.8.1
   - tsrs
   - "@tsrs/*"
-patchedDependencies:
-  # Check coverage against the Vitest runner selected by the override above.
-  vite-plus@1.7.0: patches/vite-plus@1.7.0.patch

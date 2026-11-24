@@ -41,6 +41,7 @@ import {
   createFastRequestDispatcher,
   ensureRequestHelpersFast,
   ensureRequestSignal,
+  prepareRequestSignal,
   requestControllers,
   getSyncPlanBridge,
   type FastRequestDispatcher,
@@ -764,6 +765,8 @@ function createModuleState(
     settled.mapErr(mapError).unwrapOrThrow();
   };
 
+  const requestIdHeaderLower = host?.requestIdHeader?.toLowerCase();
+
   const initializeRequestTier2 = async (
     context: ExecutionContext,
     precomputedLocals?: RuntimeServices,
@@ -776,7 +779,7 @@ function createModuleState(
     const response = http.getResponse<ServerResponse>();
     const rawRequest = getRawRequest(request);
     const rawResponse = getRawResponse(response);
-    ensureRequestHelpersFast(request, nextRequestId, host?.requestIdHeader);
+    ensureRequestHelpersFast(request, nextRequestId, requestIdHeaderLower);
     if (request.services !== undefined) return;
 
     const state = attachRequest(request, rawRequest, response, rawResponse, options.handlerTimeout);
@@ -877,13 +880,14 @@ function createModuleState(
   };
 
   const prepareRequest = (context: ExecutionContext): void => {
-    const request = context.switchToHttp().getRequest<NestRequest>();
-    ensureRequestSignal(
+    const http = context.switchToHttp();
+    const request = http.getRequest<NestRequest>();
+    prepareRequestSignal(
       request,
       getRawRequest(request),
-      getRawResponse(context.switchToHttp().getResponse<ServerResponse>()),
+      getRawResponse(http.getResponse<ServerResponse>()),
     );
-    ensureRequestHelpersFast(request, nextRequestId, host?.requestIdHeader);
+    ensureRequestHelpersFast(request, nextRequestId, requestIdHeaderLower);
   };
 
   return {

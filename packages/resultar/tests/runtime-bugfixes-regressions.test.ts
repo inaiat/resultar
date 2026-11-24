@@ -1,6 +1,7 @@
 import { deepEqual, equal, ok as assertOk, rejects, throws } from 'node:assert'
+import { setImmediate } from 'node:timers/promises'
 
-import { describe, it } from 'vite-plus/test'
+import { describe, expect, it, vi } from 'vite-plus/test'
 
 import {
   AbortError,
@@ -19,6 +20,7 @@ import {
   TaskLocal,
   Tracer,
 } from '../src/index.js'
+import type { Exit } from '../src/index.js'
 import { okAsync, ResultAsync, type ResultAsyncRaceTask } from '../src/entries/async.js'
 import { startFiber } from '../src/task/fiber-runtime.js'
 import { NEVER_ABORTED_SIGNAL } from '../src/task/promise-interruption.js'
@@ -504,6 +506,370 @@ describe('ResultTask.tapCause sync return', () => {
 })
 
 describe('ResultTask.memoize cancellation and span isolation', () => {
+  it('aborts the shared run when its initial caller cancels during startup', async () => {
+    const controller = new AbortController()
+    const underlyingAbort = vi.fn()
+    const pending = Promise.withResolvers<number>()
+    const memo = ResultTask.memoize(
+      ResultTask.tryPromise((signal) => {
+        signal.addEventListener('abort', underlyingAbort, { once: true })
+        controller.abort('stop')
+        return pending.promise
+      }),
+    )
+    const running = memo.runExit({ signal: controller.signal })
+    expect(underlyingAbort).toHaveBeenCalledOnce()
+    pending.resolve(42)
+    expect(await running).toEqual({ _tag: 'Failure', cause: Cause.interrupt('stop') })
+  })
+
+  it('installs a one-shot cancellation listener and removes it when a waiter finishes', async () => {
+    const controller = new AbortController()
+    const added = vi.spyOn(controller.signal, 'addEventListener')
+    const removed = vi.spyOn(controller.signal, 'removeEventListener')
+    const underlyingAbort = vi.fn()
+    const pending = Promise.withResolvers<number>()
+    const memo = ResultTask.memoize(
+      ResultTask.tryPromise((signal) => {
+        signal.addEventListener('abort', underlyingAbort, { once: true })
+        return pending.promise
+      }),
+    )
+    const running = memo.runPromise({ signal: controller.signal })
+    expect(added).toHaveBeenCalledExactlyOnceWith('abort', expect.any(Function), { once: true })
+    pending.resolve(42)
+    expect(await running).toBe(42)
+    expect(removed).toHaveBeenCalledExactlyOnceWith('abort', added.mock.calls[0]?.[1])
+    controller.abort('already finished')
+    expect(underlyingAbort).not.toHaveBeenCalled()
+  })
+
+  it('preserves an asynchronous cleanup failure when the last waiter cancels', async () => {
+    const controller = new AbortController()
+    const pending = Promise.withResolvers<number>()
+    const resource = ResultTask.acquireRelease({
+      acquire: ResultTask.ok(1),
+      release: () =>
+        ResultTask.tryPromise({
+          try: () => Promise.reject(new Error('release failed')),
+          catch: () => 'release failed',
+        }),
+    })
+    const memo = ResultTask.memoize(
+      resource.andThen(() => ResultTask.tryPromise(() => pending.promise)),
+    )
+    const running = memo.runExit({ signal: controller.signal })
+    controller.abort('stop')
+    pending.resolve(42)
+    expect(await running).toEqual({
+      _tag: 'Failure',
+      cause: Cause.sequential(Cause.interrupt('stop'), Cause.fail('release failed')),
+    })
+  })
+
+  it('shares cleanup with new waiters and retries a failed asynchronous memoized run', async () => {
+    const cleanupStarted = vi.fn()
+    const finishCleanup = Promise.withResolvers<void>()
+    let starts = 0
+    const resource = ResultTask.acquireRelease({
+      acquire: ResultTask.sync(() => {
+        starts += 1
+      }),
+      release: () =>
+        ResultTask.tryPromise(() => {
+          cleanupStarted()
+          return finishCleanup.promise
+        }),
+    })
+    const memo = ResultTask.memoize(
+      resource.andThen(() =>
+        starts === 1
+          ? ResultTask.tryPromise({
+              try: () => Promise.reject(new Error('first attempt failed')),
+              catch: () => 'first attempt failed',
+            })
+          : ResultTask.ok(42),
+      ),
+    )
+
+    const first = memo.runResult()
+    await setImmediate()
+    expect(cleanupStarted).toHaveBeenCalledOnce()
+    const joined = memo.runResult()
+    expect(starts).toBe(1)
+    finishCleanup.resolve()
+    expect(await Promise.all([first, joined])).toEqual([
+      err('first attempt failed'),
+      err('first attempt failed'),
+    ])
+
+    const retry = memo.runResult()
+    expect(starts).toBe(2)
+    expect(await retry).toEqual(ok(42))
+  })
+
+  it('keeps a replacement run in flight when the cancelled run settles', async () => {
+    const controller = new AbortController()
+    const first = Promise.withResolvers<number>()
+    const replacement = Promise.withResolvers<number>()
+    let starts = 0
+    const memo = ResultTask.memoize(
+      ResultTask.tryPromise(() => {
+        starts += 1
+        return starts === 1 ? first.promise : replacement.promise
+      }),
+    )
+    const cancelled = memo.runExit({ signal: controller.signal })
+    controller.abort('stop')
+    const next = memo.runExit()
+    expect(starts).toBe(2)
+    first.resolve(1)
+    expect(await cancelled).toEqual({ _tag: 'Failure', cause: Cause.interrupt('stop') })
+
+    const joined = memo.runExit()
+    expect(starts).toBe(2)
+    replacement.resolve(42)
+    expect(await Promise.all([next, joined])).toEqual([
+      { _tag: 'Success', value: 42 },
+      { _tag: 'Success', value: 42 },
+    ])
+    expect(await memo.runPromise()).toBe(42)
+    expect(starts).toBe(2)
+  })
+
+  it.each([false, true])(
+    'shares an asynchronous startup with a reentrant caller (cancel: %s)',
+    async (cancel) => {
+      const controller = new AbortController()
+      const pending = Promise.withResolvers<number>()
+      const reentrant = Promise.withResolvers<Exit<number, unknown>>()
+      let starts = 0
+      const memo: ResultTask<number, unknown> = ResultTask.memoize(
+        ResultTask.tryPromise(() => {
+          starts += 1
+          if (starts === 1) {
+            reentrant.resolve(memo.runExit({ signal: controller.signal }))
+            if (cancel) controller.abort('stop reentrant caller')
+          }
+          return pending.promise
+        }),
+      )
+      const running = memo.runExit()
+      const joined = memo.runExit()
+      expect(starts).toBe(1)
+
+      pending.resolve(42)
+      const success = { _tag: 'Success', value: 42 }
+      expect(await reentrant.promise).toEqual(
+        cancel ? { _tag: 'Failure', cause: Cause.interrupt('stop reentrant caller') } : success,
+      )
+      expect(await Promise.all([running, joined])).toEqual([success, success])
+    },
+  )
+
+  it('shares a synchronous startup without making the first caller asynchronous', async () => {
+    const reentrant = Promise.withResolvers<Exit<number, never>>()
+    let starts = 0
+    const memo: ResultTask<number> = ResultTask.memoize(
+      ResultTask.sync(() => {
+        starts += 1
+        if (starts === 1) reentrant.resolve(memo.runExit())
+        return 42
+      }),
+    )
+
+    expect(memo.runSync()).toEqual(ok(42))
+    expect(await reentrant.promise).toEqual({ _tag: 'Success', value: 42 })
+    expect(starts).toBe(1)
+  })
+
+  it.each([false, true])(
+    'keeps a reentrant resource in the first caller scope (async: %s)',
+    async (asyncAcquire) => {
+      const observer = Promise.withResolvers<Exit<number, unknown>>()
+      const keepUsing = Promise.withResolvers<number>()
+      const release = vi.fn<(value: number) => void>()
+      let starts = 0
+      const acquire = (): number => {
+        starts += 1
+        if (starts === 1) observer.resolve(memo.runExit())
+        return 42
+      }
+      const memo = ResultTask.memoize(
+        ResultTask.acquireRelease({
+          acquire: asyncAcquire
+            ? ResultTask.tryPromise(async () => acquire())
+            : ResultTask.sync(acquire),
+          release: (value) => ResultTask.sync(() => release(value)),
+        }),
+      )
+      const running = memo
+        .andThen(() => ResultTask.tryPromise(() => keepUsing.promise))
+        .runPromise()
+      expect(await observer.promise).toEqual({ _tag: 'Success', value: 42 })
+      expect(starts).toBe(1)
+      expect(release).not.toHaveBeenCalled()
+      keepUsing.resolve(42)
+      expect(await running).toBe(42)
+      expect(release).toHaveBeenCalledExactlyOnceWith(42)
+    },
+  )
+
+  it.each([false, true])(
+    'moves resource ownership when the first caller cancels (during startup: %s)',
+    async (duringStartup) => {
+      const controller = new AbortController()
+      const pending = Promise.withResolvers<number>()
+      const observer = Promise.withResolvers<Exit<number, unknown>>()
+      const release = vi.fn<(value: number) => void>()
+      let starts = 0
+      const memo = ResultTask.memoize(
+        ResultTask.acquireRelease({
+          acquire: ResultTask.tryPromise(() => {
+            starts += 1
+            if (starts === 1) {
+              observer.resolve(memo.runExit())
+              if (duringStartup) controller.abort('stop first')
+            }
+            return pending.promise
+          }),
+          release: (value) => ResultTask.sync(() => release(value)),
+        }),
+      )
+
+      const first = memo.runExit({ signal: controller.signal })
+      if (!duringStartup) controller.abort('stop first')
+      expect(starts).toBe(1)
+      expect(await first).toEqual({ _tag: 'Failure', cause: Cause.interrupt('stop first') })
+      pending.resolve(42)
+      expect(await observer.promise).toEqual({ _tag: 'Success', value: 42 })
+      expect(release).toHaveBeenCalledExactlyOnceWith(42)
+    },
+  )
+
+  it('preserves the first caller scope when a reentrant observer cancels', async () => {
+    const controller = new AbortController()
+    const resource = Promise.withResolvers<number>()
+    const keepUsing = Promise.withResolvers<number>()
+    const observing = Promise.withResolvers<Exit<number, unknown>>()
+    const cancelling = Promise.withResolvers<Exit<number, unknown>>()
+    const release = vi.fn<(value: number) => void>()
+    let starts = 0
+    const memo = ResultTask.memoize(
+      ResultTask.acquireRelease({
+        acquire: ResultTask.tryPromise(() => {
+          starts += 1
+          if (starts === 1) {
+            cancelling.resolve(memo.runExit({ signal: controller.signal }))
+            observing.resolve(memo.runExit())
+          }
+          return resource.promise
+        }),
+        release: (value) => ResultTask.sync(() => release(value)),
+      }),
+    )
+    const first = memo.andThen(() => ResultTask.tryPromise(() => keepUsing.promise)).runPromise()
+    controller.abort('stop observer')
+    expect(starts).toBe(1)
+    expect(await cancelling.promise).toEqual({
+      _tag: 'Failure',
+      cause: Cause.interrupt('stop observer'),
+    })
+
+    resource.resolve(42)
+    expect(await observing.promise).toEqual({ _tag: 'Success', value: 42 })
+    expect(release).not.toHaveBeenCalled()
+    keepUsing.resolve(42)
+    expect(await first).toBe(42)
+    expect(release).toHaveBeenCalledExactlyOnceWith(42)
+  })
+
+  it.each([false, true])(
+    'retries a synchronous memoized failure while its cleanup is pending (reentrant cancellation: %s)',
+    async (reenter) => {
+      const controller = new AbortController()
+      const finishCleanup = Promise.withResolvers<void>()
+      const cancelled = Promise.withResolvers<Exit<number, unknown>>()
+      let starts = 0
+      const acquire = (): number => {
+        starts += 1
+        if (starts === 1 && reenter) {
+          cancelled.resolve(memo.runExit({ signal: controller.signal }))
+          controller.abort('stop observer')
+        }
+        return starts
+      }
+      const memo = ResultTask.memoize(
+        ResultTask.acquireRelease({
+          acquire: ResultTask.sync(acquire),
+          release: (attempt) =>
+            attempt === 1
+              ? ResultTask.tryPromise(() => finishCleanup.promise)
+              : ResultTask.ok(undefined),
+        }).andThen((attempt) =>
+          attempt === 1 ? ResultTask.err('first failed') : ResultTask.ok(42),
+        ),
+      )
+
+      const first = memo.runResult()
+      const retry = memo.runResult()
+      expect(starts).toBe(2)
+      finishCleanup.resolve()
+      expect(await first).toEqual(err('first failed'))
+      expect(await retry).toEqual(ok(42))
+      if (reenter)
+        expect(await cancelled.promise).toEqual({
+          _tag: 'Failure',
+          cause: Cause.interrupt('stop observer'),
+        })
+    },
+  )
+
+  it.each(['sync', 'async'] as const)(
+    'keeps a resource owned by the caller after a successful %s memoized run',
+    async (mode) => {
+      const events: string[] = []
+      const acquire = mode === 'sync' ? ResultTask.ok(42) : ResultTask.tryPromise(async () => 42)
+      const memo = ResultTask.memoize(
+        ResultTask.acquireRelease({
+          acquire,
+          release: (value) =>
+            ResultTask.sync(() => {
+              events.push(`release:${value}`)
+            }),
+        }),
+      )
+      const use = memo.map((value) => {
+        events.push(`use:${value}`)
+        return value
+      })
+      expect(await use.runPromise()).toBe(42)
+      expect(events).toEqual(['use:42', 'release:42'])
+    },
+  )
+
+  it.each(['sync', 'async'] as const)(
+    'appends cleanup failure after a %s memoized failure',
+    async (mode) => {
+      const resource = ResultTask.acquireRelease({
+        acquire: ResultTask.ok(42),
+        release: () => ResultTask.err('release failed'),
+      })
+      const fail =
+        mode === 'sync'
+          ? ResultTask.err('use failed')
+          : ResultTask.tryPromise({
+              try: () => Promise.reject(new Error('use failed')),
+              catch: () => 'use failed',
+            })
+      const memo = ResultTask.memoize(resource.andThen(() => fail))
+      expect(await memo.runExit()).toEqual({
+        _tag: 'Failure',
+        cause: Cause.sequential(Cause.fail('use failed'), Cause.fail('release failed')),
+      })
+    },
+  )
+
   it('interrupts an aborting waiter immediately without killing other active waiters, and aborts underlying when all waiters abort', async () => {
     const clock = Clock.virtual()
     let starts = 0

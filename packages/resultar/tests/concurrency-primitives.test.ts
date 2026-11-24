@@ -548,3 +548,174 @@ it('keeps interruption, finalizer defects and spans when the completing fiber ab
     deepEqual(gate.isDone().runSync(), ok(false))
   }
 })
+
+const abortAfterFirstRead = (reason: string): AbortSignal => {
+  let reads = 0
+  return {
+    get aborted() {
+      reads += 1
+      return reads > 1
+    },
+    reason,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  } as unknown as AbortSignal
+}
+
+const makeAbortingTask = <A, E>(
+  controller: AbortController,
+  reason: string,
+  exit:
+    | { readonly _tag: 'Success'; readonly value: A }
+    | { readonly _tag: 'Failure'; readonly cause: Cause<E> },
+): ResultTask<A, E> => {
+  const task = ResultTask.ok<A, E>(undefined as A)
+  ;(task as unknown as { execute: () => typeof exit }).execute = () => {
+    controller.abort(reason)
+    return exit
+  }
+  return task
+}
+
+const makeStickySignal = (): { readonly signal: AbortSignal; readonly fire: () => void } => {
+  const listeners: (() => void)[] = []
+  let aborted = false
+  const signal = {
+    get aborted() {
+      return aborted
+    },
+    reason: 'sticky',
+    addEventListener: (_type: string, cb: () => void) => {
+      listeners.push(cb)
+    },
+    removeEventListener: () => undefined,
+  } as unknown as AbortSignal
+  return {
+    signal,
+    fire: () => {
+      aborted = true
+      for (const cb of listeners) cb()
+    },
+  }
+}
+
+it('covers Ref.set and Deferred die, done, poll, and pre-aborted await', async () => {
+  const cell = Ref.make('initial')
+  deepEqual(
+    cell
+      .set('replaced')
+      .andThen(() => cell.get())
+      .runSync(),
+    ok('replaced'),
+  )
+
+  const diedGate = Deferred.make<number, string>()
+  const awaitingDefaultSignal = diedGate.await().runExit()
+  deepEqual(diedGate.die('fatal').runSync(), ok(true))
+  const diedExit = await awaitingDefaultSignal
+  equal(diedExit._tag, 'Failure')
+  deepEqual(diedGate.poll().runSync(), ok(diedExit))
+
+  const doneGate = Deferred.make<number, string>()
+  deepEqual(doneGate.done({ _tag: 'Success', value: 7 }).runSync(), ok(true))
+  deepEqual(doneGate.await().runSync(), ok(7))
+  deepEqual(doneGate.poll().runSync(), ok({ _tag: 'Success', value: 7 }))
+
+  const pendingGate = Deferred.make<number>()
+  const preAbortedExit = await pendingGate.await().runExit({ signal: abortAfterFirstRead('pre') })
+  equal(preAbortedExit._tag, 'Failure')
+})
+
+it('covers Deferred.complete interruptedCompletion for Success, Fail-only, and Die-only exits', async () => {
+  const successAbort = new AbortController()
+  const successGate = Deferred.make<number>()
+  const successAbortExit = await successGate
+    .complete(makeAbortingTask(successAbort, 'stop-ok', { _tag: 'Success', value: 1 }))
+    .runExit({ signal: successAbort.signal })
+  deepEqual(successAbortExit, { _tag: 'Failure', cause: Cause.interrupt('stop-ok') })
+
+  const failAbort = new AbortController()
+  const failGate = Deferred.make<number, string>()
+  const failAbortExit = await failGate
+    .complete(
+      makeAbortingTask(failAbort, 'stop-fail', { _tag: 'Failure', cause: Cause.fail('domain') }),
+    )
+    .runExit({ signal: failAbort.signal })
+  deepEqual(failAbortExit, { _tag: 'Failure', cause: Cause.interrupt('stop-fail') })
+
+  const dieAbort = new AbortController()
+  const dieGate = Deferred.make<number, string>()
+  const dieDefect = new Error('uninterruptible-defect')
+  const dieAbortExit = await dieGate
+    .complete(
+      makeAbortingTask(dieAbort, 'stop-die', { _tag: 'Failure', cause: Cause.die(dieDefect) }),
+    )
+    .runExit({ signal: dieAbort.signal })
+  deepEqual(dieAbortExit, {
+    _tag: 'Failure',
+    cause: Cause.sequential(Cause.interrupt('stop-die'), Cause.die(dieDefect)),
+  })
+})
+
+it('covers Queue unbounded compaction, empty drain, and default-signal suspension', async () => {
+  const unbounded = Queue.unbounded<number>()
+  deepEqual(unbounded.takeAll().runSync(), ok([]))
+  deepEqual(unbounded.takeUpTo(0).runSync(), ok([]))
+  for (let i = 0; i < 100; i += 1) {
+    unbounded.offer(i).runSync()
+  }
+  const takenFirst: number[] = []
+  for (let i = 0; i < 65; i += 1) {
+    takenFirst.push(unbounded.take().runSync().unwrapOrThrow())
+  }
+  equal(takenFirst[0], 0)
+  equal(takenFirst[64], 64)
+  const remaining = unbounded.takeAll().runSync().unwrapOrThrow()
+  equal(remaining.length, 35)
+  equal(remaining[0], 65)
+  equal(remaining[34], 99)
+
+  const qNoSig = Queue.bounded<string>(1)
+  qNoSig.offer('full').runSync()
+  const waitingOffer = qNoSig.offer('second').runResult()
+  deepEqual(qNoSig.take().runSync(), ok('full'))
+  deepEqual(await waitingOffer, ok(true))
+  deepEqual(qNoSig.take().runSync(), ok('second'))
+  const waitingTake = qNoSig.take().runResult()
+  deepEqual(qNoSig.offer('direct').runSync(), ok(true))
+  deepEqual(await waitingTake, ok('direct'))
+})
+
+it('covers Queue mid-transition aborts, mid-offerAll shutdown, idempotent shutdown, and settled abort guards', async () => {
+  const qAbort = Queue.bounded<number>(1)
+  equal(
+    (await qAbort.offer(1).runExit({ signal: abortAfterFirstRead('no-offer') }))._tag,
+    'Failure',
+  )
+  equal((await qAbort.take().runExit({ signal: abortAfterFirstRead('no-take') }))._tag, 'Failure')
+
+  const qMid = Queue.unbounded<number>()
+  function* closingIterable(): Generator<number> {
+    yield 1
+    qMid.shutdown().runSync()
+    yield 2
+  }
+  deepEqual(await qMid.offerAll(closingIterable()).runResult(), ok(false))
+  deepEqual(qMid.shutdown().runSync(), ok(undefined))
+  deepEqual(qMid.shutdown().runSync(), ok(undefined))
+
+  const qSticky = Queue.bounded<number>(1)
+  qSticky.offer(1).runSync()
+  const putterSig = makeStickySignal()
+  const pendingPut = qSticky.offer(2).runResult({ signal: putterSig.signal })
+  deepEqual(qSticky.take().runSync(), ok(1))
+  deepEqual(await pendingPut, ok(true))
+  putterSig.fire()
+  deepEqual(qSticky.take().runSync(), ok(2))
+
+  const takerSig = makeStickySignal()
+  const pendingTake = qSticky.take().runResult({ signal: takerSig.signal })
+  deepEqual(qSticky.offer(3).runSync(), ok(true))
+  deepEqual(await pendingTake, ok(3))
+  takerSig.fire()
+})

@@ -773,4 +773,104 @@ describe('cooperative task scheduling', () => {
     equal(zeroClock.now(), 0)
     equal(zeroClock.pending, 0)
   })
+
+  it('guards scheduleMacrotask callbacks after cancellation and validates VirtualClock options', async () => {
+    const { scheduleMacrotask } = await import('../src/task/task-scheduler.js')
+    const host = globalThis as unknown as {
+      setImmediate?: ((cb: () => void) => unknown) | undefined
+      clearImmediate?: ((h: unknown) => void) | undefined
+    }
+    const origSetImmediate = host.setImmediate
+    const origClearImmediate = host.clearImmediate
+    try {
+      let captured: (() => void) | undefined = undefined
+      host.setImmediate = (cb) => {
+        captured = cb
+        return 1
+      }
+      host.clearImmediate = () => undefined
+      let ran = false
+      const cancel = scheduleMacrotask(() => {
+        ran = true
+      })
+      cancel()
+      ;(captured as (() => void) | undefined)?.()
+      equal(ran, false)
+    } finally {
+      host.setImmediate = origSetImmediate
+      host.clearImmediate = origClearImmediate
+    }
+
+    const clock = Clock.virtual(0)
+    await rejects(
+      () => clock.runToCompletion(ResultTask.ok(1), { maxCleanupSteps: -1 }),
+      /maxCleanupSteps/u,
+    )
+    await rejects(() => clock.runToCompletion(ResultTask.ok(1), { maxSteps: -1 }), /maxSteps/u)
+
+    const extController = new AbortController()
+    const extPending = clock.runToCompletion(ResultTask.sleep(100), {
+      signal: extController.signal,
+    })
+    extController.abort('external-stop')
+    equal((await extPending)._tag, 'Failure')
+  })
+
+  it('covers VirtualClock runExit rejections, cleanup step limits, and advanceBy stagnant step limit', async () => {
+    const clock = Clock.virtual(0)
+    await rejects(
+      () =>
+        clock.runToCompletion({ runExit: () => Promise.reject(new Error('run-exit-rejected')) }),
+      /run-exit-rejected/u,
+    )
+    const abortRejectClock = Clock.virtual(0)
+    await rejects(
+      () =>
+        abortRejectClock.runToCompletion(
+          {
+            runExit: ({ clock: taskClock, signal }) =>
+              taskClock.sleep(10, signal) as unknown as Promise<Exit<void, never>>,
+          },
+          { maxSteps: 0 },
+        ),
+      /exceeded 0 virtual clock steps/u,
+    )
+
+    const cleanupClock = Clock.virtual(0)
+    const infiniteWithSlowCleanup = ResultTask.sleep(10)
+      .andThen(() => ResultTask.sleep(10))
+      .ensuring(() => ResultTask.sleep(5).andThen(() => ResultTask.sleep(5)))
+    await rejects(
+      () =>
+        cleanupClock.runToCompletion(infiniteWithSlowCleanup, { maxSteps: 1, maxCleanupSteps: 1 }),
+      /exceeded 1 virtual clock steps/u,
+    )
+
+    const { NEVER_ABORTED_SIGNAL } = await import('../src/task/exit.js')
+    const host = globalThis as unknown as {
+      setImmediate?: ((cb: () => void) => unknown) | undefined
+      clearImmediate?: ((h: unknown) => void) | undefined
+    }
+    const origSetImmediate = host.setImmediate
+    const origClearImmediate = host.clearImmediate
+    const stagnantClock = Clock.virtual(0)
+    let keepLooping = true
+    const loopSleep = (): void => {
+      if (!keepLooping) return
+      void stagnantClock.sleep(0, NEVER_ABORTED_SIGNAL).then(loopSleep)
+    }
+    loopSleep()
+    try {
+      host.setImmediate = (cb) => {
+        queueMicrotask(cb)
+        return 1
+      }
+      host.clearImmediate = () => undefined
+      await rejects(() => stagnantClock.advanceBy(10), /exceeded zero-duration step limit/u)
+    } finally {
+      keepLooping = false
+      host.setImmediate = origSetImmediate
+      host.clearImmediate = origClearImmediate
+    }
+  })
 })

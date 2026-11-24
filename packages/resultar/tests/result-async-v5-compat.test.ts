@@ -406,4 +406,137 @@ describe('resultar/async v5 deprecated compatibility surface', () => {
       /uncaught-safe-try/u,
     )
   })
+
+  it('covers ResultAsync traversal rejection, array combineWithAllErrors, and race startup/rejection paths', async () => {
+    // Non-Error rejection in traverseResultAsync (toResultAsyncRejectionError)
+    await rejects(
+      Promise.resolve(
+        ResultAsync.forEach([1], () => {
+          // eslint-disable-next-line no-throw-literal, @typescript-eslint/only-throw-error
+          throw 'raw-string-boom'
+        }),
+      ),
+      /raw-string-boom/u,
+    )
+
+    // In-flight item settling after traverseResultAsync already settled (if (settled) return in finally)
+    const deferred = Promise.withResolvers<Result<number, never>>()
+    const concurrentTraverse = ResultAsync.forEach(
+      [1, 2],
+      (item) => {
+        if (item === 1) return new ResultAsync(deferred.promise)
+        throw new Error('item-2-boom')
+      },
+      { concurrency: 2 },
+    )
+    await rejects(Promise.resolve(concurrentTraverse), /item-2-boom/u)
+    deferred.resolve(ok(1))
+    await Promise.resolve()
+
+    // ResultAsync.combineWithAllErrors array fast path
+    const combinedArr = await ResultAsync.combineWithAllErrors([
+      okAsync<number, string>(1),
+      errAsync<number, string>('e1'),
+      errAsync<number, string>('e2'),
+    ])
+    deepStrictEqual(combinedArr._unsafeUnwrapErr(), ['e1', 'e2'])
+
+    // observeRaceResultAsyncTasks startup throw aborts already-started tasks and swallows their rejections
+    let firstAborted = false
+    const raceStartupFail = ResultAsync.raceAll([
+      (signal) =>
+        new ResultAsync(
+          new Promise<Result<number, never>>((_resolve, reject) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                firstAborted = true
+                reject(new Error('first-aborted'))
+              },
+              { once: true },
+            )
+          }),
+        ),
+      () => {
+        throw new Error('second-start-boom')
+      },
+    ])
+    await rejects(Promise.resolve(raceStartupFail), /second-start-boom/u)
+    equal(firstAborted, true)
+
+    // ResultAsync.raceWith right startup throw aborts left and swallows left rejection
+    let leftAbortedOnStartThrow = false
+    const raceWithStartThrow = ResultAsync.raceWith(
+      (signal) =>
+        new ResultAsync(
+          new Promise<Result<number, never>>((_resolve, reject) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                leftAbortedOnStartThrow = true
+                reject(new Error('left-aborted'))
+              },
+              { once: true },
+            )
+          }),
+        ),
+      () => {
+        throw new Error('right-start-boom')
+      },
+      { onLeftDone: (r) => r, onRightDone: (r) => r },
+    )
+    await rejects(Promise.resolve(raceWithStartThrow), /right-start-boom/u)
+    equal(leftAbortedOnStartThrow, true)
+
+    // ResultAsync.raceWith right rejects first (aborts left, marks settled so onLeftDone never fires)
+    let leftAbortedOnRightReject = false
+    let onLeftDoneCalls = 0
+    const rightRejectsFirst = ResultAsync.raceWith(
+      (signal) =>
+        new ResultAsync(
+          new Promise<Result<number, never>>((resolve) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                leftAbortedOnRightReject = true
+                resolve(ok(1))
+              },
+              { once: true },
+            )
+          }),
+        ),
+      () => new ResultAsync<number, never>(Promise.reject(new Error('right-reject-first'))),
+      {
+        onLeftDone: (r) => {
+          onLeftDoneCalls += 1
+          return r
+        },
+        onRightDone: (r) => r,
+      },
+    )
+    await rejects(Promise.resolve(rightRejectsFirst), /right-reject-first/u)
+    await new Promise((resolve) => {
+      setImmediate(resolve)
+    })
+    equal(leftAbortedOnRightReject, true)
+    equal(onLeftDoneCalls, 0)
+
+    // ResultAsync.raceWith left settles first, then right rejects later (settled guard keeps left signal unaborted)
+    const lateRight = Promise.withResolvers<Result<number, never>>()
+    let leftSignalOnWin: { readonly aborted: boolean } | undefined = undefined
+    const leftWinsBeforeRightReject = await ResultAsync.raceWith(
+      (signal) => {
+        leftSignalOnWin = signal
+        return okAsync(42)
+      },
+      () => new ResultAsync(lateRight.promise),
+      { onLeftDone: (r) => r, onRightDone: (r) => r },
+    )
+    equal(leftWinsBeforeRightReject._unsafeUnwrap(), 42)
+    lateRight.reject(new Error('late-right-reject'))
+    await new Promise((resolve) => {
+      setImmediate(resolve)
+    })
+    equal((leftSignalOnWin as { readonly aborted: boolean } | undefined)?.aborted, false)
+  })
 })

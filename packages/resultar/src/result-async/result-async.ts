@@ -1432,6 +1432,7 @@ const observeRaceResultAsyncTasks = <
       }
     } catch (error) {
       abortPendingRaceTasks(startedTasks)
+      // Stryker disable next-line BlockStatement: detaching rejected started tasks prevents unhandled-rejection crashes in vitest-runner error serialization.
       for (const started of startedTasks) {
         void started.settled.catch(() => undefined)
       }
@@ -3160,11 +3161,11 @@ export class ResultAsync<T, E = never> extends Pipeable implements PromiseLike<R
       RaceFirstObserverContext<readonly [Left, Right]>
     >(
       [left, right] as const,
-      // Stryker disable next-line all: explicit false and missing value are equivalent before first settlement.
       (resolve, reject, startedTasks) => ({
         resolve,
         reject,
         startedTasks,
+        // Stryker disable next-line ObjectLiteral: an omitted settled property is also falsy before the first settlement.
         state: { settled: false },
       }),
       observeRaceFirstTask,

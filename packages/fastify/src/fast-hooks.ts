@@ -1,3 +1,4 @@
+import type { ServerResponse } from "node:http";
 import type {
   FastifyInstance,
   FastifyReply,
@@ -68,15 +69,13 @@ const isPromiseLike = (value: unknown): value is PromiseLike<object | undefined>
 const getSyncPlanBridge = (scope: object): SyncPlanBridge | undefined =>
   (scope as Record<symbol, SyncPlanBridge | undefined>)[SYNC_PLAN_BRIDGE];
 
-const getRequestAbortReason = (request: FastifyRequest, reply: FastifyReply): unknown => {
-  if (reply.raw.destroyed && !reply.raw.writableFinished) {
-    return new Error("Response connection closed");
-  }
+const requestScopeDisabled = (request: FastifyRequest): boolean =>
+  request.routeOptions.config?.resultar?.requestScope === false;
+
+const getSignalAbortReason = (request: FastifyRequest): unknown => {
   const signal = request.signal;
   if (!signal.aborted) {
-    return request.raw.destroyed && !request.raw.complete
-      ? new DOMException("This operation was aborted", "AbortError")
-      : undefined;
+    return undefined;
   }
   const reason: unknown = signal.reason;
   // Fastify 5.12 emits a generic abort on IncomingMessage.close, including a fully
@@ -87,6 +86,32 @@ const getRequestAbortReason = (request: FastifyRequest, reply: FastifyReply): un
   return reason === undefined
     ? new DOMException("This operation was aborted", "AbortError")
     : reason;
+};
+
+const getRequestAbortReason = (
+  request: FastifyRequest,
+  reply: FastifyReply,
+  checkNativeSignal = false,
+): unknown => {
+  if (reply.raw.destroyed && !reply.raw.writableFinished) {
+    return new Error("Response connection closed");
+  }
+  // Fastify 5 lazily creates an AbortController and registers raw.on('close', onAbort) on
+  // the first read of request.signal, which allocates a DOMException stack trace on every
+  // completed POST body. Only read request.signal when Fastify already created it (e.g.
+  // handlerTimeout > 0), Tier 2 already attached it, or an own override was installed;
+  // otherwise Fastify's built-in signal only aborts on raw close, which is reflected by
+  // raw.destroyed / raw.closed when !raw.complete.
+  if (checkNativeSignal || Object.hasOwn(request, "signal")) {
+    const signalReason = getSignalAbortReason(request);
+    if (signalReason !== undefined) {
+      return signalReason;
+    }
+  }
+  if ((request.raw.destroyed || request.raw.closed) && !request.raw.complete) {
+    return new DOMException("This operation was aborted", "AbortError");
+  }
+  return undefined;
 };
 
 const createClosedScopeError = (): ResultTaskCauseError =>
@@ -131,7 +156,7 @@ const attachRequest = (request: FastifyRequest, reply: FastifyReply): RequestSta
   request.signal.addEventListener("abort", abort, { once: true });
   reply.raw.once("close", disconnect);
   reply.raw.once("error", transportError);
-  const reason = getRequestAbortReason(request, reply);
+  const reason = getRequestAbortReason(request, reply, true);
   if (reason !== undefined) controller.abort(reason);
   return {
     controller,
@@ -148,18 +173,21 @@ interface FastExecutionContext {
   readonly plan: CompiledSyncPlan;
   readonly bridge: SyncPlanBridge;
   readonly fastActiveKey: symbol;
+  readonly onRawReplyClose: (this: ServerResponse) => void;
   readonly mapError: (error: unknown) => unknown;
 }
 
 interface Tier2RequestContext {
   readonly config: RequestHookConfig;
-  readonly requests: WeakMap<FastifyRequest, RequestState>;
+  readonly track: (request: FastifyRequest, state: RequestState) => void;
+  readonly release: (request: FastifyRequest) => void;
 }
 
 interface HookInvocation {
   readonly request: FastifyRequest;
   readonly reply: FastifyReply;
   readonly done: HookHandlerDoneFunction;
+  readonly checkNativeSignal: boolean;
 }
 
 const startTier2Session = (
@@ -201,14 +229,38 @@ const runTier2WithLocals = async (
   request: FastifyRequest,
   replyAndLocals: { readonly reply: FastifyReply; readonly locals: RuntimeServices },
 ): Promise<void> => {
-  const { config, requests } = ctx;
+  const { config, track, release } = ctx;
   const { reply, locals } = replyAndLocals;
   const state = attachRequest(request, reply);
-  requests.set(request, state);
+  track(request, state);
+  const finishAndRelease = (): void => {
+    finishRequest(state)
+      .finally(() => {
+        release(request);
+      })
+      .catch(() => {
+        /* Disconnect cleanup must not surface an unhandled rejection. */
+      });
+  };
+  const onRawClose = (): void => {
+    if (!reply.raw.writableFinished) {
+      finishAndRelease();
+    }
+  };
+  reply.raw.once("close", onRawClose);
   const outcome = await startAndExposeTier2(config, state, { request, locals });
   if (outcome.isErr()) {
-    await finishRequest(state);
+    reply.raw.removeListener("close", onRawClose);
+    try {
+      await finishRequest(state);
+    } finally {
+      release(request);
+    }
     err(config.mapError(outcome.error)).unwrapOrThrow();
+  }
+  if (reply.raw.closed && !reply.raw.writableFinished) {
+    reply.raw.removeListener("close", onRawClose);
+    finishAndRelease();
   }
 };
 
@@ -227,13 +279,43 @@ const startAndExposeTier2 = async (
   }, preserveNativeError);
 };
 
-type FastRequestFinalizer = () => void;
+const createRawReplyCloseHandler = (
+  bridge: SyncPlanBridge,
+  fastActiveKey: symbol,
+): ((this: ServerResponse) => void) =>
+  function onRawReplyClose(this: ServerResponse): void {
+    const flagged = this as unknown as Record<symbol, boolean | undefined>;
+    if (flagged[fastActiveKey] === true) {
+      flagged[fastActiveKey] = false;
+      bridge.endChild();
+    }
+  };
 
-const finishFastRequest = (request: FastifyRequest, fastActiveKey: symbol): void => {
-  const flagged = request as unknown as Record<symbol, FastRequestFinalizer | undefined>;
-  const finalize = flagged[fastActiveKey];
-  if (finalize !== undefined) {
-    finalize();
+const finishFastReply = (
+  rawReply: ServerResponse,
+  bridge: SyncPlanBridge,
+  fastActiveKey: symbol,
+  onRawReplyClose: (this: ServerResponse) => void,
+): void => {
+  const flagged = rawReply as unknown as Record<symbol, boolean | undefined>;
+  if (flagged[fastActiveKey] === true) {
+    flagged[fastActiveKey] = false;
+    rawReply.removeListener("close", onRawReplyClose);
+    bridge.endChild();
+  }
+};
+
+const finishFastRequestAbort = (
+  request: FastifyRequest,
+  bridge: SyncPlanBridge,
+  fastActiveKey: symbol,
+  onRawReplyClose: (this: ServerResponse) => void,
+): void => {
+  const flaggedRequest = request as unknown as Record<symbol, ServerResponse | undefined>;
+  const rawReply = flaggedRequest[fastActiveKey];
+  if (rawReply !== undefined) {
+    flaggedRequest[fastActiveKey] = undefined;
+    finishFastReply(rawReply, bridge, fastActiveKey, onRawReplyClose);
   }
 };
 
@@ -277,34 +359,31 @@ const settleIntoDone = (promise: PromiseLike<unknown>, done: HookHandlerDoneFunc
 const executeFastPlan = (
   ctx: FastExecutionContext,
   locals: RuntimeServices,
-  invocation: HookInvocation,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  done: HookHandlerDoneFunction,
 ): void => {
-  const { plan, bridge, fastActiveKey, mapError } = ctx;
-  const { request, reply, done } = invocation;
+  const { plan, bridge, fastActiveKey, onRawReplyClose, mapError } = ctx;
   if (bridge.isClosed()) {
     failHook(done, createClosedScopeError(), mapError);
     return;
   }
+  bridge.beginChild();
   let services: RuntimeServices = EMPTY_SERVICES;
   try {
     services = plan.resolve(bridge.rootCache, locals);
   } catch (error) {
+    bridge.endChild();
     failHook(done, new ResultTaskCauseError({ _tag: "Die", defect: error }), mapError);
     return;
   }
-  bridge.beginChild();
-  const flagged = request as unknown as Record<symbol, FastRequestFinalizer | undefined>;
   const rawReply = reply.raw;
-  const finalize: FastRequestFinalizer = () => {
-    if (flagged[fastActiveKey] !== finalize) return;
-    flagged[fastActiveKey] = undefined;
-    rawReply.removeListener("close", finalize);
-    bridge.endChild();
-  };
-  flagged[fastActiveKey] = finalize;
-  rawReply.once("close", finalize);
   if (rawReply.closed) {
-    finalize();
+    bridge.endChild();
+  } else {
+    (rawReply as unknown as Record<symbol, boolean | undefined>)[fastActiveKey] = true;
+    (request as unknown as Record<symbol, ServerResponse | undefined>)[fastActiveKey] = rawReply;
+    rawReply.on("close", onRawReplyClose);
   }
   (request as unknown as { services: unknown }).services = services;
   done();
@@ -317,30 +396,37 @@ const registerStaticFastHooks = (
 ): void => {
   const { bridge, staticPlan } = fast;
   const fastActiveKey = Symbol("resultar.fastify.active");
+  const onRawReplyClose = createRawReplyCloseHandler(bridge, fastActiveKey);
   app.decorateRequest(fastActiveKey);
   const execCtx: FastExecutionContext = {
     plan: staticPlan,
     bridge,
     fastActiveKey,
+    onRawReplyClose,
     mapError: config.mapError,
   };
 
   addCallbackRequestHook(app, config.requestHook, (request, reply, done) => {
-    const abortReason = getRequestAbortReason(request, reply);
+    const routeOptions = request.routeOptions;
+    if (routeOptions.config?.resultar?.requestScope === false) {
+      done();
+      return;
+    }
+    const abortReason = getRequestAbortReason(request, reply, routeOptions.handlerTimeout > 0);
     if (abortReason !== undefined) {
       failHook(done, abortReason, config.mapError);
       return;
     }
-    executeFastPlan(execCtx, EMPTY_SERVICES, { request, reply, done });
+    executeFastPlan(execCtx, EMPTY_SERVICES, request, reply, done);
   });
 
-  app.addHook("onResponse", (request, _reply, done) => {
-    finishFastRequest(request, fastActiveKey);
+  app.addHook("onResponse", (_request, reply, done) => {
+    finishFastReply(reply.raw, bridge, fastActiveKey, onRawReplyClose);
     done();
   });
 
   app.addHook("onRequestAbort", (request, done) => {
-    finishFastRequest(request, fastActiveKey);
+    finishFastRequestAbort(request, bridge, fastActiveKey, onRawReplyClose);
     done();
   });
 };
@@ -355,46 +441,69 @@ const registerDynamicFastHooks = (
 ): void => {
   const { bridge, getLocals } = dynamic;
   const fastActiveKey = Symbol("resultar.fastify.active");
+  const onRawReplyClose = createRawReplyCloseHandler(bridge, fastActiveKey);
   const requests = new WeakMap<FastifyRequest, RequestState>();
-  const tier2Ctx: Tier2RequestContext = { config, requests };
+  let activeTier2Count = 0;
   app.decorateRequest(fastActiveKey);
 
-  const localCache: { keys?: readonly string[]; plan?: CompiledSyncPlan } = {};
+  const trackTier2Request = (request: FastifyRequest, state: RequestState): void => {
+    if (!requests.has(request)) {
+      activeTier2Count += 1;
+    }
+    requests.set(request, state);
+  };
 
-  const resolvePlanForLocals = (locals: RuntimeServices): CompiledSyncPlan | undefined => {
+  const releaseTier2Tracking = (request: FastifyRequest): void => {
+    if (requests.delete(request)) {
+      activeTier2Count -= 1;
+    }
+  };
+
+  const tier2Ctx: Tier2RequestContext = {
+    config,
+    track: trackTier2Request,
+    release: releaseTier2Tracking,
+  };
+
+  const localCache: { keys?: readonly string[]; execCtx?: FastExecutionContext } = {};
+
+  const resolveExecCtxForLocals = (locals: RuntimeServices): FastExecutionContext | undefined => {
     if (matchesLocalKeys(locals, localCache.keys)) {
-      return localCache.plan;
+      return localCache.execCtx;
     }
     const keys = Object.keys(locals);
     const plan = bridge.getPlan(config.bindings, keys);
     localCache.keys = keys;
-    localCache.plan = plan;
-    return plan;
+    localCache.execCtx =
+      plan === undefined
+        ? undefined
+        : { plan, bridge, fastActiveKey, onRawReplyClose, mapError: config.mapError };
+    return localCache.execCtx;
   };
 
-  const applyResolvedLocals = (rawLocals: object | undefined, invocation: HookInvocation): void => {
-    const { request, reply, done } = invocation;
-    const abortReason = getRequestAbortReason(request, reply);
-    if (abortReason !== undefined) {
-      failHook(done, abortReason, config.mapError);
-      return;
-    }
+  const runWithResolvedLocals = (
+    rawLocals: object | undefined,
+    request: FastifyRequest,
+    reply: FastifyReply,
+    done: HookHandlerDoneFunction,
+  ): void => {
     const locals = (rawLocals ?? EMPTY_SERVICES) as RuntimeServices;
-    const plan = resolvePlanForLocals(locals);
-    if (plan !== undefined) {
-      executeFastPlan(
-        { plan, bridge, fastActiveKey, mapError: config.mapError },
-        locals,
-        invocation,
-      );
+    const execCtx = resolveExecCtxForLocals(locals);
+    if (execCtx !== undefined) {
+      executeFastPlan(execCtx, locals, request, reply, done);
       return;
     }
     settleIntoDone(runTier2WithLocals(tier2Ctx, request, { reply, locals }), done);
   };
 
   addCallbackRequestHook(app, config.requestHook, (request, reply, done) => {
-    // Fastify starts listening for disconnects on the first read of request.signal.
-    const reason = getRequestAbortReason(request, reply);
+    const routeOptions = request.routeOptions;
+    if (routeOptions.config?.resultar?.requestScope === false) {
+      done();
+      return;
+    }
+    const hasHandlerTimeout = routeOptions.handlerTimeout > 0;
+    const reason = getRequestAbortReason(request, reply, hasHandlerTimeout);
     if (reason !== undefined) {
       failHook(done, reason, config.mapError);
       return;
@@ -406,19 +515,39 @@ const registerDynamicFastHooks = (
       failHook(done, error, config.mapError);
       return;
     }
-    const invocation: HookInvocation = { request, reply, done };
     if (isPromiseLike(localsOrPromise)) {
+      const invocation: HookInvocation = {
+        request,
+        reply,
+        done,
+        checkNativeSignal: hasHandlerTimeout,
+      };
       localsOrPromise.then(
-        (resolved) => applyResolvedLocals(resolved, invocation),
-        (error: unknown) => failHook(done, error, config.mapError),
+        (resolved) => {
+          const abortReason = getRequestAbortReason(
+            invocation.request,
+            invocation.reply,
+            invocation.checkNativeSignal,
+          );
+          if (abortReason !== undefined) {
+            failHook(invocation.done, abortReason, config.mapError);
+            return;
+          }
+          runWithResolvedLocals(resolved, invocation.request, invocation.reply, invocation.done);
+        },
+        (error: unknown) => failHook(invocation.done, error, config.mapError),
       );
       return;
     }
-    applyResolvedLocals(localsOrPromise, invocation);
+    runWithResolvedLocals(localsOrPromise, request, reply, done);
   });
 
-  app.addHook("onResponse", (request, _reply, done) => {
-    finishFastRequest(request, fastActiveKey);
+  app.addHook("onResponse", (request, reply, done) => {
+    finishFastReply(reply.raw, bridge, fastActiveKey, onRawReplyClose);
+    if (activeTier2Count === 0) {
+      done();
+      return;
+    }
     const state = requests.get(request);
     if (state === undefined) {
       done();
@@ -426,8 +555,8 @@ const registerDynamicFastHooks = (
     }
     settleIntoDone(
       finishRequest(state)
-        .then(() => {
-          requests.delete(request);
+        .finally(() => {
+          releaseTier2Tracking(request);
         })
         .catch((error: unknown) => err(config.mapError(error)).unwrapOrThrow()),
       done,
@@ -435,8 +564,26 @@ const registerDynamicFastHooks = (
   });
 
   app.addHook("onRequestAbort", (request, done) => {
-    finishFastRequest(request, fastActiveKey);
-    done();
+    finishFastRequestAbort(request, bridge, fastActiveKey, onRawReplyClose);
+    if (activeTier2Count === 0) {
+      done();
+      return;
+    }
+    const state = requests.get(request);
+    if (state === undefined) {
+      done();
+      return;
+    }
+    settleIntoDone(
+      finishRequest(state)
+        .finally(() => {
+          releaseTier2Tracking(request);
+        })
+        .catch(() => {
+          /* Abort cleanup must not surface an unhandled rejection. */
+        }),
+      done,
+    );
   });
 };
 
@@ -444,6 +591,7 @@ const registerTier2Hooks = (app: FastifyInstance, config: RequestHookConfig): vo
   const requests = new WeakMap<FastifyRequest, RequestState>();
 
   app.addHook(config.requestHook, async (request, reply) => {
+    if (requestScopeDisabled(request)) return;
     const state = attachRequest(request, reply);
     requests.set(request, state);
     const resolveAndExpose = async (): Promise<Result<void, unknown>> => {

@@ -1,6 +1,8 @@
+import { runInNewContext } from 'node:vm'
+
 import { describe, expect, it, vi } from 'vite-plus/test'
 
-import { Cause, Clock, err, ok, ResultTask, Retry } from '../src/index.js'
+import { Cause, Clock, err, ok, ResultTask, ResultTaskCauseError, Retry } from '../src/index.js'
 import type { Exit, Result } from '../src/index.js'
 import { isCleanupCause } from '../src/task/cleanup-cause.js'
 import { runRuntimeTask } from '../src/task/task-runtime-bridge.js'
@@ -16,7 +18,427 @@ const InternalCustomTask = ResultTask as unknown as new <A, E>(instruction: {
   readonly execute: (context: ResultTaskRuntimeContext) => Exit<A, E> | Promise<Exit<A, E>>
 }) => ResultTask<A, E>
 
+describe('ResultTask generator and promise execution', () => {
+  it.each(['sync', 'async'] as const)(
+    'interrupts a generator before resuming from a successful %s task',
+    async (mode) => {
+      const controller = new AbortController()
+      const resumed = vi.fn()
+      const closed = vi.fn()
+      const pending = Promise.withResolvers<Exit<number, never>>()
+      const child = new InternalCustomTask<number, never>({
+        _tag: 'Custom',
+        execute: () => {
+          if (mode === 'async') return pending.promise
+          controller.abort('stop')
+          return { _tag: 'Success', value: 42 }
+        },
+      })
+      const running = ResultTask.gen(function* () {
+        try {
+          const value = yield* child
+          resumed(value)
+          return value
+        } finally {
+          closed()
+        }
+      }).runExit({ signal: controller.signal })
+      if (mode === 'async') {
+        pending.resolve({ _tag: 'Success', value: 42 })
+        controller.abort('stop')
+      }
+      expect(await running).toEqual({ _tag: 'Failure', cause: Cause.interrupt('stop') })
+      expect(resumed).not.toHaveBeenCalled()
+      expect(closed).toHaveBeenCalledOnce()
+    },
+  )
+
+  it('checks cancellation between a generator service yield and a synchronous task yield', async () => {
+    const controller = new AbortController()
+    const Service = ResultTask.service<number>()('Value')
+    const resumed = vi.fn()
+    const stop = new InternalCustomTask<number, never>({
+      _tag: 'Custom',
+      execute: () => {
+        controller.abort('stop')
+        return { _tag: 'Success', value: 42 }
+      },
+    })
+    const task = ResultTask.gen(function* () {
+      const provided = yield* Service
+      resumed(provided)
+      const value = yield* stop
+      resumed(value)
+    })
+    expect(await task.runExit({ signal: controller.signal, services: { Value: 21 } })).toEqual({
+      _tag: 'Failure',
+      cause: Cause.interrupt('stop'),
+    })
+    expect(resumed.mock.calls).toEqual([[21]])
+  })
+
+  it('passes resolved services into the generator and runs the next yield', async () => {
+    const Service = ResultTask.service<number>()('Value')
+    const value = Promise.withResolvers<number>()
+    const task = ResultTask.gen(function* () {
+      const provided = yield* Service
+      const doubled = yield* ResultTask.ok(provided * 2)
+      return doubled + 1
+    }).provideServiceResolver({ Value: () => ResultTask.tryPromise(() => value.promise) })
+    const running = task.runExit()
+    value.resolve(21)
+    expect(await running).toEqual({ _tag: 'Success', value: 43 })
+  })
+
+  it('closes a generator when its asynchronous service resolver fails', async () => {
+    const Service = ResultTask.service<number>()('Value')
+    const failure = new Error('service failed')
+    const finalized = vi.fn()
+    const task = ResultTask.gen(function* () {
+      try {
+        return yield* Service
+      } finally {
+        finalized()
+      }
+    }).provideServiceResolver({ Value: () => ResultTask.tryPromise(() => Promise.reject(failure)) })
+    expect(await task.runExit()).toEqual({ _tag: 'Failure', cause: Cause.fail(failure) })
+    expect(finalized).toHaveBeenCalledOnce()
+  })
+
+  it('preserves a service resolver defect from a different Promise realm', async () => {
+    const Service = ResultTask.service<number>()('Value')
+    const defect = new Error('service rejected')
+    const pending = runInNewContext('Promise.withResolvers()') as PromiseWithResolvers<
+      Exit<number, never>
+    >
+    const resolver = new InternalCustomTask<number, never>({
+      _tag: 'Custom',
+      execute: () => pending.promise,
+    })
+    const finalized = vi.fn()
+    const task = ResultTask.gen(function* () {
+      try {
+        return yield* Service
+      } finally {
+        finalized()
+      }
+    }).provideServiceResolver({ Value: () => resolver })
+    const running = task.runExit()
+    pending.reject(defect)
+    expect(await running).toEqual({ _tag: 'Failure', cause: Cause.die(defect) })
+    expect(finalized).toHaveBeenCalledOnce()
+  })
+
+  it('interrupts a generator before delivering an asynchronously resolved service', async () => {
+    const controller = new AbortController()
+    const Service = ResultTask.service<number>()('Value')
+    const pending = Promise.withResolvers<Exit<number, never>>()
+    const resolver = new InternalCustomTask<number, never>({
+      _tag: 'Custom',
+      execute: () => pending.promise,
+    })
+    const resumed = vi.fn()
+    const task = ResultTask.gen(function* () {
+      resumed(yield* Service)
+    }).provideServiceResolver({ Value: () => resolver })
+    const running = task.runExit({ signal: controller.signal })
+    pending.resolve({ _tag: 'Success', value: 42 })
+    controller.abort('stop')
+    expect(await running).toEqual({ _tag: 'Failure', cause: Cause.interrupt('stop') })
+    expect(resumed).not.toHaveBeenCalled()
+  })
+
+  it('preserves defects thrown by a generator after receiving an async service', async () => {
+    const Service = ResultTask.service<number>()('Value')
+    const defect = new Error('generator failed')
+    const received = vi.fn()
+    const task = ResultTask.gen(function* () {
+      received(yield* Service)
+      throw defect
+    }).provideServiceResolver({ Value: () => ResultTask.tryPromise(async () => 42) })
+    expect(await task.runExit()).toEqual({ _tag: 'Failure', cause: Cause.die(defect) })
+    expect(received).toHaveBeenCalledExactlyOnceWith(42)
+  })
+
+  it.each(['first', 'after-task'] as const)(
+    'delivers a service in a generator finalizer when it is yielded %s',
+    async (position) => {
+      const Service = ResultTask.service<number>()('Value')
+      const received = vi.fn()
+      const task = ResultTask.gen(function* () {
+        try {
+          return yield* ResultTask.err('body failed')
+        } finally {
+          if (position === 'after-task') yield* ResultTask.tryPromise(async () => undefined)
+          received(yield* Service)
+        }
+      }).provideServiceResolver({ Value: () => ResultTask.tryPromise(async () => 42) })
+      expect(await task.runExit()).toEqual({ _tag: 'Failure', cause: Cause.fail('body failed') })
+      expect(received).toHaveBeenCalledExactlyOnceWith(42)
+    },
+  )
+
+  it('marks a thrown task defect as cleanup after a generator finalizer suspends', async () => {
+    const defect = new Error('cleanup failed')
+    const broken = new InternalCustomTask<never, never>({
+      _tag: 'Custom',
+      execute: () => {
+        throw defect
+      },
+    })
+    const task = ResultTask.gen(function* () {
+      try {
+        return yield* ResultTask.err('body failed')
+      } finally {
+        yield* ResultTask.tryPromise(async () => undefined)
+        yield* broken
+      }
+    })
+    const exit = await task.runExit()
+    expect(exit).toEqual({ _tag: 'Failure', cause: Cause.die(defect) })
+    expect(exit._tag === 'Failure' && isCleanupCause(exit.cause)).toBe(true)
+  })
+
+  it('preserves a yielded typed failure after a generator finalizer suspends', async () => {
+    const task = ResultTask.gen(function* () {
+      try {
+        return yield* ResultTask.err('body failed')
+      } finally {
+        yield* ResultTask.tryPromise(async () => undefined)
+        yield* err('cleanup failed')
+      }
+    })
+    expect(await task.runExit()).toEqual({ _tag: 'Failure', cause: Cause.fail('cleanup failed') })
+  })
+
+  it('closes a generator when a synchronous task throws after a service yield', async () => {
+    const Service = ResultTask.service<number>()('Value')
+    const defect = new Error('executor failed')
+    const finalized = vi.fn()
+    const broken = new InternalCustomTask<never, never>({
+      _tag: 'Custom',
+      execute: () => {
+        throw defect
+      },
+    })
+    const task = ResultTask.gen(function* () {
+      try {
+        yield* Service
+        yield* broken
+      } finally {
+        finalized()
+      }
+    }).provideService(Service, 42)
+    expect(await task.runExit()).toEqual({ _tag: 'Failure', cause: Cause.die(defect) })
+    expect(finalized).toHaveBeenCalledOnce()
+  })
+
+  it('releases a resource when a waiting tryPromise succeeds after cancellation', async () => {
+    const controller = new AbortController()
+    const resource = Promise.withResolvers<number>()
+    const release = vi.fn<(value: number) => void>()
+    const acquire = ResultTask.acquireRelease({
+      acquire: ResultTask.tryPromise(() => resource.promise),
+      release: (value) => ResultTask.sync(() => release(value)),
+    })
+    const observed: Exit<unknown, unknown>[] = []
+    const parent = new InternalCustomTask({
+      _tag: 'Custom',
+      execute: async (context) => {
+        const exit = await runRuntimeTask(ResultTask, acquire, context)
+        observed.push(exit)
+        return exit
+      },
+    })
+    const running = parent.runExit({ signal: controller.signal })
+    controller.abort('stop')
+    resource.resolve(42)
+    expect(await running).toEqual({ _tag: 'Failure', cause: Cause.interrupt('stop') })
+    expect(observed).toEqual([{ _tag: 'Failure', cause: Cause.interrupt('stop') }])
+    expect(release).toHaveBeenCalledExactlyOnceWith(42)
+  })
+
+  it('interrupts a successful tryPromise before returning it to a runtime task', async () => {
+    const controller = new AbortController()
+    const resource = Promise.withResolvers<number>()
+    const child = ResultTask.tryPromise(() => resource.promise)
+    const observed: Exit<unknown, unknown>[] = []
+    const parent = new InternalCustomTask({
+      _tag: 'Custom',
+      execute: async (context) => {
+        observed.push(await runRuntimeTask(ResultTask, child, context))
+        return { _tag: 'Success', value: undefined }
+      },
+    })
+    const running = parent.runExit({ signal: controller.signal })
+    controller.abort('stop')
+    resource.resolve(42)
+    await running
+    expect(observed).toEqual([{ _tag: 'Failure', cause: Cause.interrupt('stop') }])
+  })
+
+  it('registers both releases when a nested acquisition succeeds after cancellation', async () => {
+    const controller = new AbortController()
+    const resource = Promise.withResolvers<number>()
+    const released: string[] = []
+    const task = ResultTask.acquireRelease({
+      acquire: ResultTask.acquireRelease({
+        acquire: ResultTask.tryPromise(() => resource.promise),
+        release: (value) =>
+          ResultTask.sync(() => {
+            released.push(`inner:${value}`)
+          }),
+      }),
+      release: (value) =>
+        ResultTask.sync(() => {
+          released.push(`outer:${value}`)
+        }),
+    })
+    const running = task.runExit({ signal: controller.signal })
+    controller.abort('stop')
+    resource.resolve(42)
+    expect(await running).toEqual({ _tag: 'Failure', cause: Cause.interrupt('stop') })
+    expect(released).toEqual(['outer:42', 'inner:42'])
+  })
+
+  it.each(['sync', 'async'] as const)(
+    'maps a %s tryPromise failure while its signal is still active',
+    async (mode) => {
+      const controller = new AbortController()
+      const failure = new Error('source failed')
+      const convert = vi.fn(() => 'mapped')
+      const task = ResultTask.tryPromise({
+        try: () => {
+          if (mode === 'sync') throw failure
+          return Promise.reject(failure)
+        },
+        catch: convert,
+      })
+      expect(await task.runExit({ signal: controller.signal })).toEqual({
+        _tag: 'Failure',
+        cause: Cause.fail('mapped'),
+      })
+      expect(convert).toHaveBeenCalledExactlyOnceWith(failure)
+    },
+  )
+
+  it('keeps an already fulfilled Promise for synchronous runPromise with options', async () => {
+    const events: string[] = []
+    const result = ResultTask.sync(() => 42)
+      .runPromise({ signal: new AbortController().signal })
+      .then((value) => {
+        events.push('result')
+        return value
+      })
+    await Promise.resolve().then(() => {
+      events.push('peer')
+    })
+    expect(await result).toBe(42)
+    expect(events).toEqual(['result', 'peer'])
+  })
+})
+
 describe('ResultTask mutation regressions', () => {
+  it('isolates the initiating observer of a reentrant synchronous memoization failure', async () => {
+    const failure = { _tag: 'Failure', cause: Cause.fail('source failed') } as const
+    const joined = Promise.withResolvers<Exit<never, string>>()
+    let entered = false
+    const source = new InternalCustomTask<never, string>({
+      _tag: 'Custom',
+      execute: () => {
+        if (!entered) {
+          entered = true
+          joined.resolve(memo.runExit())
+        }
+        return failure
+      },
+    })
+    const memo = ResultTask.memoize(source)
+    const first = memo.runSyncExit()
+    const second = await joined.promise
+    expect(first).toEqual(failure)
+    expect(first).not.toBe(failure)
+    expect(second).toEqual(failure)
+    expect(second).not.toBe(first)
+  })
+
+  it('interrupts the initiating observer of a reentrant synchronous memoization success', async () => {
+    const controller = new AbortController()
+    const joined = Promise.withResolvers<Exit<number, never>>()
+    let entered = false
+    const memo: ResultTask<number> = ResultTask.memoize(
+      ResultTask.sync(() => {
+        if (!entered) {
+          entered = true
+          joined.resolve(memo.runExit())
+          controller.abort('stop first')
+        }
+        return 42
+      }),
+    )
+    const observed: Exit<unknown, unknown>[] = []
+    const parent = new InternalCustomTask({
+      _tag: 'Custom',
+      execute: async (context) => {
+        const exit = await runRuntimeTask(ResultTask, memo, context)
+        observed.push(exit)
+        return exit
+      },
+    })
+    await parent.runExit({ signal: controller.signal })
+    expect(observed).toEqual([{ _tag: 'Failure', cause: Cause.interrupt('stop first') }])
+    expect(await joined.promise).toEqual({ _tag: 'Success', value: 42 })
+  })
+
+  it('runs nested cleanup when a scope finalizer rejects while resuming its generator', async () => {
+    const defect = new Error('invalid exit from a runtime adapter')
+    const released = vi.fn()
+    const invalid: Exit<void, never> = {
+      get _tag(): never {
+        throw defect
+      },
+      value: undefined,
+    }
+    const finalizer = new InternalCustomTask<void, never>({
+      _tag: 'Custom',
+      execute: (context) => {
+        context.scope.add(() => {
+          released()
+          return { _tag: 'Success', value: undefined }
+        })
+        return Promise.resolve(invalid)
+      },
+    })
+    const owner = ResultTask.makeScope()
+    owner.addFinalizer(() => finalizer)
+    expect(await owner.close().runExit()).toEqual({ _tag: 'Failure', cause: Cause.die(defect) })
+    expect(released).toHaveBeenCalledOnce()
+  })
+
+  it('interrupts a memoized observer even when another abort listener stops delivery', async () => {
+    const controller = new AbortController()
+    controller.signal.addEventListener('abort', (event) => event.stopImmediatePropagation(), {
+      once: true,
+    })
+    const pending = Promise.withResolvers<number>()
+    const memo = ResultTask.memoize(ResultTask.tryPromise(() => pending.promise))
+    const observed: Exit<unknown, unknown>[] = []
+    const parent = new InternalCustomTask({
+      _tag: 'Custom',
+      execute: async (context) => {
+        const exit = await runRuntimeTask(ResultTask, memo, context)
+        observed.push(exit)
+        return exit
+      },
+    })
+    const running = parent.runExit({ signal: controller.signal })
+    controller.abort('stop')
+    pending.resolve(42)
+    const interrupted = { _tag: 'Failure', cause: Cause.interrupt('stop') }
+    expect(await running).toEqual(interrupted)
+    expect(observed).toEqual([interrupted])
+  })
+
   it('recovers rejected internal executions in cause handlers, finalizers and workers', async () => {
     const defect = new Error('executor rejected')
     const rejectingTask = (): ResultTask<never> =>
@@ -287,6 +709,27 @@ describe('ResultTask mutation regressions', () => {
     expect(events).toEqual(['closed'])
   })
 
+  it('closes firstSuccessOf when a synchronous candidate succeeds after cancelling the search', async () => {
+    const controller = new AbortController()
+    const advanced = vi.fn()
+    const closed = vi.fn()
+    const candidates = (function* () {
+      try {
+        yield () => {
+          controller.abort('cancelled')
+          return ok(42)
+        }
+        advanced()
+      } finally {
+        closed()
+      }
+    })()
+    const exit = await ResultTask.firstSuccessOf(candidates).runExit({ signal: controller.signal })
+    expect(exit).toEqual({ _tag: 'Failure', cause: Cause.interrupt('cancelled') })
+    expect(advanced).not.toHaveBeenCalled()
+    expect(closed).toHaveBeenCalledOnce()
+  })
+
   it('returns an already fulfilled Promise for a synchronous success', async () => {
     const events: string[] = []
     const result = ResultTask.sync(() => 42)
@@ -377,6 +820,22 @@ describe('ResultTask mutation regressions', () => {
     expect(await ResultTask.runExit(task)).toEqual({
       _tag: 'Failure',
       cause: { _tag: 'Fail', error: ['invalid:1', 'invalid:3'] },
+    })
+  })
+
+  it('reports composite validation failures as defects', async () => {
+    const failed = ResultTask.acquireRelease({
+      acquire: ResultTask.ok(1),
+      release: () => ResultTask.err('cleanup failed'),
+    }).andThen(() => ResultTask.err('validation failed'))
+    const exit = await ResultTask.validateAll([failed], (task) => task).runExit()
+    expect(exit).toEqual({
+      _tag: 'Failure',
+      cause: Cause.die(
+        new ResultTaskCauseError(
+          Cause.sequential(Cause.fail('validation failed'), Cause.fail('cleanup failed')),
+        ),
+      ),
     })
   })
 

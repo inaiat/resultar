@@ -81,17 +81,29 @@ function setRequestDecorator(
   this[name] = value;
 }
 
+const GET_DECORATOR_DESCRIPTOR: PropertyDescriptor = Object.freeze({
+  value: getRequestDecorator,
+  writable: true,
+  configurable: true,
+});
+
+const SET_DECORATOR_DESCRIPTOR: PropertyDescriptor = Object.freeze({
+  value: setRequestDecorator,
+  writable: true,
+  configurable: true,
+});
+
 export const ensureRequestHelpersFast = (
   request: NestRequest,
   nextRequestId: () => string,
-  requestIdHeader?: string,
+  requestIdHeaderLower?: string,
 ): void => {
   const requestRecord = request as unknown as Record<PropertyKey, unknown>;
   if (requestRecord[REQUEST_HELPERS_KEY] === true) return;
   requestRecord[REQUEST_HELPERS_KEY] = true;
 
   const headerValue =
-    requestIdHeader === undefined ? undefined : request.headers[requestIdHeader.toLowerCase()];
+    requestIdHeaderLower === undefined ? undefined : request.headers[requestIdHeaderLower];
   if (typeof headerValue === "string" && headerValue.length > 0) {
     request.id = headerValue;
   } else if (Array.isArray(headerValue) && typeof headerValue[0] === "string") {
@@ -103,18 +115,10 @@ export const ensureRequestHelpersFast = (
     requestRecord.log = fallbackRequestLogger;
   }
   if (!Object.hasOwn(requestRecord, "getDecorator")) {
-    Object.defineProperty(requestRecord, "getDecorator", {
-      value: getRequestDecorator,
-      writable: true,
-      configurable: true,
-    });
+    Object.defineProperty(requestRecord, "getDecorator", GET_DECORATOR_DESCRIPTOR);
   }
   if (!Object.hasOwn(requestRecord, "setDecorator")) {
-    Object.defineProperty(requestRecord, "setDecorator", {
-      value: setRequestDecorator,
-      writable: true,
-      configurable: true,
-    });
+    Object.defineProperty(requestRecord, "setDecorator", SET_DECORATOR_DESCRIPTOR);
   }
 };
 
@@ -139,40 +143,9 @@ const createClosedScopeError = (): ResultTaskCauseError =>
   });
 
 export const requestControllers = new WeakMap<NestRequest, AbortController>();
+const lazySignalGetters = new WeakSet<() => unknown>();
 
-export const ensureRequestSignal = (
-  request: NestRequest,
-  rawRequest: IncomingMessage,
-  rawResponse: ServerResponse,
-): AbortSignal => {
-  if (Object.hasOwn(request, "signal") && request.signal instanceof AbortSignal)
-    return request.signal;
-  const rawSignal = (rawRequest as { readonly signal?: unknown }).signal;
-  let signal: AbortSignal | undefined = undefined;
-  if (rawSignal instanceof AbortSignal) {
-    signal = rawSignal;
-  } else if (request.signal instanceof AbortSignal) {
-    return request.signal;
-  } else {
-    const controller = new AbortController();
-    requestControllers.set(request, controller);
-    signal = controller.signal;
-    const onAborted = () => controller.abort(new Error("Request aborted"));
-    const onClose = () => {
-      if (!rawResponse.writableFinished) controller.abort(new Error("Response connection closed"));
-      cleanup();
-    };
-    const cleanup = () => {
-      rawRequest.removeListener("aborted", onAborted);
-      rawResponse.removeListener("close", onClose);
-      rawResponse.removeListener("finish", cleanup);
-    };
-    rawRequest.once("aborted", onAborted);
-    rawResponse.once("close", onClose);
-    rawResponse.once("finish", cleanup);
-    if (rawRequest.destroyed && !rawRequest.complete) onAborted();
-    if (rawResponse.destroyed) onClose();
-  }
+const defineRequestSignal = (request: NestRequest, signal: AbortSignal): AbortSignal => {
   Object.defineProperty(request, "signal", {
     value: signal,
     configurable: true,
@@ -180,6 +153,104 @@ export const ensureRequestSignal = (
     writable: true,
   });
   return signal;
+};
+
+const createFallbackSignal = (
+  request: NestRequest,
+  rawRequest: IncomingMessage,
+  rawResponse: ServerResponse,
+): AbortSignal => {
+  const controller = new AbortController();
+  requestControllers.set(request, controller);
+  const onAborted = () => controller.abort(new Error("Request aborted"));
+  const onClose = () => {
+    if (!rawResponse.writableFinished) controller.abort(new Error("Response connection closed"));
+    cleanup();
+  };
+  const cleanup = () => {
+    rawRequest.removeListener("aborted", onAborted);
+    rawResponse.removeListener("close", onClose);
+    rawResponse.removeListener("finish", cleanup);
+  };
+  rawRequest.once("aborted", onAborted);
+  rawResponse.once("close", onClose);
+  rawResponse.once("finish", cleanup);
+  if (rawRequest.destroyed && !rawRequest.complete) onAborted();
+  if (rawResponse.destroyed) onClose();
+  return defineRequestSignal(request, controller.signal);
+};
+
+/**
+ * Ensures `request.signal` is available without eagerly invoking Fastify 5's lazy
+ * prototype getter (which allocates an AbortController and raw close listener per request).
+ */
+export const prepareRequestSignal = (
+  request: NestRequest,
+  rawRequest: IncomingMessage,
+  rawResponse: ServerResponse,
+): void => {
+  if (Object.hasOwn(request, "signal")) return;
+  // Only propagate an own signal explicitly attached to rawRequest (e.g. inject({ signal }));
+  // avoid triggering Node 26+'s lazy IncomingMessage.prototype.signal getter on every request.
+  if (Object.hasOwn(rawRequest, "signal")) {
+    const rawSignal = (rawRequest as { readonly signal?: unknown }).signal;
+    if (rawSignal instanceof AbortSignal) {
+      defineRequestSignal(request, rawSignal);
+      return;
+    }
+  }
+  if ("signal" in request) return;
+  const getter = (): AbortSignal => createFallbackSignal(request, rawRequest, rawResponse);
+  lazySignalGetters.add(getter);
+  Object.defineProperty(request, "signal", { configurable: true, enumerable: true, get: getter });
+};
+
+export const ensureRequestSignal = (
+  request: NestRequest,
+  rawRequest: IncomingMessage,
+  rawResponse: ServerResponse,
+): AbortSignal => {
+  const ownDescriptor = Object.getOwnPropertyDescriptor(request, "signal");
+  if (
+    ownDescriptor !== undefined &&
+    "value" in ownDescriptor &&
+    ownDescriptor.value instanceof AbortSignal
+  ) {
+    return ownDescriptor.value;
+  }
+  if (Object.hasOwn(rawRequest, "signal")) {
+    const rawSignal = (rawRequest as { readonly signal?: unknown }).signal;
+    if (rawSignal instanceof AbortSignal) {
+      return defineRequestSignal(request, rawSignal);
+    }
+  }
+  if (request.signal instanceof AbortSignal) {
+    return request.signal;
+  }
+  return createFallbackSignal(request, rawRequest, rawResponse);
+};
+
+const getFastStaticSignal = (
+  request: NestRequest,
+  rawRequest: IncomingMessage,
+  rawResponse: ServerResponse,
+): AbortSignal | undefined => {
+  prepareRequestSignal(request, rawRequest, rawResponse);
+  if (Object.hasOwn(request, "signal")) {
+    const ownDescriptor = Object.getOwnPropertyDescriptor(request, "signal");
+    if (ownDescriptor !== undefined) {
+      const ownGetter = Reflect.get(ownDescriptor, "get") as (() => unknown) | undefined;
+      if (ownGetter === undefined || !lazySignalGetters.has(ownGetter)) {
+        return request.signal instanceof AbortSignal ? request.signal : undefined;
+      }
+    }
+  }
+  const routeTimeout = (request as { readonly routeOptions?: { readonly handlerTimeout?: number } })
+    .routeOptions?.handlerTimeout;
+  if (routeTimeout !== undefined && routeTimeout > 0) {
+    return request.signal instanceof AbortSignal ? request.signal : undefined;
+  }
+  return undefined;
 };
 
 const isBenignFastifyBodyCloseAbort = (rawRequest: IncomingMessage, reason: unknown): boolean =>
@@ -223,9 +294,24 @@ const matchesLocalKeys = (
   return count === expected.length;
 };
 
-type FastRequestFinalizer = () => void;
+const createRawResponseCloseHandler = (
+  bridge: SyncPlanBridge,
+  fastActiveKey: symbol,
+): ((this: ServerResponse) => void) =>
+  function onRawResponseClose(this: ServerResponse): void {
+    const flagged = this as unknown as Record<symbol, boolean | undefined>;
+    if (flagged[fastActiveKey] === true) {
+      flagged[fastActiveKey] = false;
+      bridge.endChild();
+    }
+  };
 
-const installFastifyDrainHooks = (fastifyInstance: unknown, fastActiveKey: symbol): boolean => {
+const installFastifyDrainHooks = (
+  fastifyInstance: unknown,
+  bridge: SyncPlanBridge,
+  fastActiveKey: symbol,
+  onRawResponseClose: (this: ServerResponse) => void,
+): boolean => {
   if (typeof fastifyInstance !== "object" || fastifyInstance === null) return false;
   const candidate = fastifyInstance as FastifyLikeInstance;
   if (typeof candidate.addHook !== "function") return false;
@@ -236,10 +322,16 @@ const installFastifyDrainHooks = (fastifyInstance: unknown, fastActiveKey: symbo
     candidate.decorateRequest(fastActiveKey);
   }
   const finish = (request: unknown): void => {
-    const record = request as Record<symbol, FastRequestFinalizer | undefined>;
-    const finalize = record[fastActiveKey];
-    if (finalize !== undefined) {
-      finalize();
+    const flaggedRequest = request as Record<symbol, ServerResponse | undefined>;
+    const rawResponse = flaggedRequest[fastActiveKey];
+    if (rawResponse !== undefined) {
+      flaggedRequest[fastActiveKey] = undefined;
+      const flaggedResponse = rawResponse as unknown as Record<symbol, boolean | undefined>;
+      if (flaggedResponse[fastActiveKey] === true) {
+        flaggedResponse[fastActiveKey] = false;
+        rawResponse.removeListener("close", onRawResponseClose);
+        bridge.endChild();
+      }
     }
   };
   candidate.addHook("onResponse", (request, _reply, done) => {
@@ -281,21 +373,22 @@ const createFastTracker = (
   fastifyInstance: unknown,
 ): ((request: NestRequest, rawResponse: ServerResponse) => void) => {
   const fastActiveKey = Symbol("resultar.nestjs.active");
-  const usesFastifyHooks = installFastifyDrainHooks(fastifyInstance, fastActiveKey);
+  const onRawResponseClose = createRawResponseCloseHandler(bridge, fastActiveKey);
+  const usesFastifyHooks = installFastifyDrainHooks(
+    fastifyInstance,
+    bridge,
+    fastActiveKey,
+    onRawResponseClose,
+  );
   return (request: NestRequest, rawResponse: ServerResponse): void => {
-    bridge.beginChild();
     if (usesFastifyHooks) {
-      const record = request as unknown as Record<symbol, FastRequestFinalizer | undefined>;
-      const finalize: FastRequestFinalizer = () => {
-        if (record[fastActiveKey] !== finalize) return;
-        record[fastActiveKey] = undefined;
-        rawResponse.removeListener("close", finalize);
-        bridge.endChild();
-      };
-      record[fastActiveKey] = finalize;
-      rawResponse.once("close", finalize);
       if (rawResponse.closed) {
-        finalize();
+        bridge.endChild();
+      } else {
+        (rawResponse as unknown as Record<symbol, boolean | undefined>)[fastActiveKey] = true;
+        (request as unknown as Record<symbol, ServerResponse | undefined>)[fastActiveKey] =
+          rawResponse;
+        rawResponse.on("close", onRawResponseClose);
       }
     } else {
       attachFallbackDrain(rawResponse, bridge);
@@ -324,10 +417,12 @@ const executeCompiledPlan = (
   if (bridge.isClosed()) {
     return rejectMapped(mapError(createClosedScopeError()));
   }
+  bridge.beginChild();
   let services: RuntimeServices = EMPTY_SERVICES;
   try {
     services = plan.resolve(bridge.rootCache, locals);
   } catch (error) {
+    bridge.endChild();
     return rejectMapped(mapError(new ResultTaskCauseError({ _tag: "Die", defect: error })));
   }
   trackActive(ctx.request, ctx.rawResponse);
@@ -341,17 +436,18 @@ const createStaticDispatcher = (
 ): FastRequestDispatcher => {
   const trackActive = createFastTracker(config.bridge, config.fastifyInstance);
   const execState = { bridge: config.bridge, mapError: config.mapError, trackActive };
+  const requestIdHeaderLower = config.requestIdHeader?.toLowerCase();
 
   return {
     tryFastInitialize: (context) => {
       const http = context.switchToHttp();
       const request = http.getRequest<NestRequest>();
-      ensureRequestHelpersFast(request, config.nextRequestId, config.requestIdHeader);
+      ensureRequestHelpersFast(request, config.nextRequestId, requestIdHeaderLower);
       if (request.services !== undefined) return undefined;
       const response = http.getResponse<ServerResponse>();
       const rawRequest = getRawRequest(request);
       const rawResponse = getRawResponse(response);
-      const externalSignal = ensureRequestSignal(request, rawRequest, rawResponse);
+      const externalSignal = getFastStaticSignal(request, rawRequest, rawResponse);
       return executeCompiledPlan(staticPlan, execState, {
         ctx: { request, rawRequest, rawResponse, externalSignal },
         locals: EMPTY_SERVICES,
@@ -366,6 +462,7 @@ const createDynamicDispatcher = (
 ): FastRequestDispatcher => {
   const trackActive = createFastTracker(config.bridge, config.fastifyInstance);
   const execState = { bridge: config.bridge, mapError: config.mapError, trackActive };
+  const requestIdHeaderLower = config.requestIdHeader?.toLowerCase();
   const localCache: { keys?: readonly string[]; plan?: CompiledSyncPlan } = {};
 
   const resolvePlan = (locals: RuntimeServices): CompiledSyncPlan | undefined => {
@@ -396,7 +493,7 @@ const createDynamicDispatcher = (
     tryFastInitialize: (context, fallback) => {
       const http = context.switchToHttp();
       const request = http.getRequest<NestRequest>();
-      ensureRequestHelpersFast(request, config.nextRequestId, config.requestIdHeader);
+      ensureRequestHelpersFast(request, config.nextRequestId, requestIdHeaderLower);
       if (request.services !== undefined) return undefined;
       const response = http.getResponse<ServerResponse>();
       const rawRequest = getRawRequest(request);

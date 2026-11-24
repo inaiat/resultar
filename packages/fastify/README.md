@@ -54,6 +54,15 @@ not initialize for those routes: an acquisition failure in any selected service 
 handler from running. Missing or incompatible requirements are checked for the effective
 selection. No route-body analysis or automatic property-based resolution is performed.
 
+Set `config.resultar.requestScope` to `false` on a route that can run without request
+services. The Resultar plugin skips its locals callback, request service acquisition, and
+custom request exposure for that route. The `request.services` decorator is undefined there, and
+application services remain available through `app.services`.
+
+```ts
+app.get("/health", { config: { resultar: { requestScope: false } } }, () => ({ status: "ok" }));
+```
+
 ## Routes in separate files
 
 The [runnable example](../../examples/fastify/README.md) keeps service definitions and

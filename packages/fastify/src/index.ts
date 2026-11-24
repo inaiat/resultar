@@ -31,11 +31,20 @@ export type {
   ServiceTaskRequirements,
 } from "resultar-di";
 
+declare module "fastify" {
+  interface FastifyContextConfig {
+    readonly resultar?: {
+      /** Set to false on routes that do not need request services. */
+      readonly requestScope?: boolean;
+    };
+  }
+}
+
 export interface FastifyServicesPlugin<
   App extends object,
   Request extends object,
 > extends FastifyPluginAsync {
-  /** Inference only; no runtime metadata or global Fastify augmentation is installed. */
+  /** Inference only; does not augment Fastify's service types or install runtime metadata. */
   readonly serviceTypes?: { readonly app: App; readonly request: Request };
 }
 
@@ -43,7 +52,7 @@ export interface FastifyServicesApplication<
   App extends object,
   Request extends object,
 > extends FastifyInstance {
-  /** Inference only; no runtime metadata or global Fastify augmentation is installed. */
+  /** Inference only; does not augment Fastify's service types or install runtime metadata. */
   readonly serviceTypes?: { readonly app: App; readonly request: Request };
 }
 
@@ -111,7 +120,7 @@ type LocalsFactory = (request: FastifyRequest) => object | Promise<object>;
 export interface FastifyServicesOptions {
   readonly name?: string;
   readonly services: ModuleSource;
-  /** Defaults to all registered services; [] selects none. Resolved before each handler. */
+  /** Defaults to all registered services; [] selects none. Resolved for routes with a request scope. */
   readonly bindings?: readonly string[];
   readonly appBindings?: readonly string[];
   /** A one-time application task, run in onReady after plugin loading. */

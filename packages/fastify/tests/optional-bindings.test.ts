@@ -9,6 +9,7 @@ import {
   resource,
   service,
   Service,
+  type FastifyServicesOptions,
   type InferAppServices,
   type InferRequestServices,
 } from "../src/index.js";
@@ -134,6 +135,9 @@ test("empty and explicit selections leave unrelated services uninitialized; empt
   const services = createModule().value("answer", 42).scoped(Hidden);
   const selected = createFastifyApp({ services, bindings: ["answer"] }, (app) => {
     app.get("/", (request) => request.getDecorator("services"));
+    app.get("/health", { config: { resultar: { requestScope: false } } }, (request) => ({
+      hasRequestServices: request.getDecorator("services") !== undefined,
+    }));
   });
   const empty = createFastifyApp({ services, bindings: [] }, (app) => {
     app.get("/", (request) => request.getDecorator("services"));
@@ -142,6 +146,7 @@ test("empty and explicit selections leave unrelated services uninitialized; empt
     app.get("/", (request) => request.getDecorator("services"));
   });
   expect((await selected.inject("/")).json()).toEqual({ answer: 42 });
+  expect((await selected.inject("/health")).json()).toEqual({ hasRequestServices: false });
   expect((await empty.inject("/")).json()).toEqual({});
   expect((await none.inject("/")).json()).toEqual({});
   expect(created).toBe(0);
@@ -149,6 +154,70 @@ test("empty and explicit selections leave unrelated services uninitialized; empt
   await empty.close();
   await none.close();
 });
+
+test.each(["dynamic", "custom exposure"] as const)(
+  "can skip the %s request scope on individual routes",
+  async (mode) => {
+    const events: string[] = [];
+    const services = createModule()
+      .value("ready", true)
+      .scoped(
+        resource("local", {
+          acquire: ResultTask.sync(() => {
+            events.push("acquire");
+            return "open";
+          }),
+          release: () =>
+            ResultTask.sync(() => {
+              events.push("release");
+            }),
+        }),
+      );
+    const options = {
+      services,
+      appBindings: ["ready"] as const,
+      bindings: ["local"] as const,
+      locals: () => {
+        events.push("locals");
+        return Promise.resolve({});
+      },
+      requestHook: mode === "custom exposure" ? "onRequest" : "preHandler",
+      exposeRequest:
+        mode === "custom exposure"
+          ? (access) => {
+              events.push("expose");
+              return { local: access.get("local").unwrapOrThrow() };
+            }
+          : undefined,
+    } satisfies FastifyServicesOptions;
+    const app = createFastifyApp(options, (router) => {
+      router.get("/health", { config: { resultar: { requestScope: false } } }, (request) => ({
+        hasRequestServices: request.getDecorator("services") !== undefined,
+        ready: router.getDecorator<{ ready: boolean }>("services").ready,
+      }));
+      router.get("/scoped", (request) => request.getDecorator("services"));
+    });
+
+    try {
+      const health = await app.inject("/health");
+      expect(health.statusCode).toBe(200);
+      expect(health.json()).toEqual({ hasRequestServices: false, ready: true });
+      expect((await app.inject({ method: "HEAD", url: "/health" })).statusCode).toBe(200);
+      expect(events).toEqual([]);
+
+      const scoped = await app.inject("/scoped");
+      expect(scoped.statusCode).toBe(200);
+      expect(scoped.json()).toEqual({ local: "open" });
+      expect(events).toEqual(
+        mode === "dynamic"
+          ? ["locals", "acquire", "release"]
+          : ["locals", "acquire", "expose", "release"],
+      );
+    } finally {
+      await app.close();
+    }
+  },
+);
 
 const checkTypes = () => {
   const services = createModule().value("answer", 42).value("hidden", "private");
