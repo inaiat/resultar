@@ -1,9 +1,15 @@
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { afterEach, describe, expect, it } from 'vite-plus/test'
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
 
-import { canUseJit } from '../src/core/jit.js'
+import { dual } from '../src/core/dual.js'
+import {
+  canUseJit,
+  compileJitFunction,
+  formatPropertyAccess,
+  serializeStringLiteral,
+} from '../src/core/jit.js'
 import {
   Cause,
   createTaggedError,
@@ -52,6 +58,55 @@ afterEach(() => {
 })
 
 describe('JIT runtime controls and Workstream A micro-optimizations', () => {
+  it('falls back when code generation is unavailable or a compilation fails', async () => {
+    expect(withJitMode(false, () => compileJitFunction([], 'return () => 1', []))).toBeUndefined()
+    expect(withJitMode(true, () => compileJitFunction([], 'return ++', []))).toBeUndefined()
+    expect(
+      withJitMode(true, () =>
+        compileJitFunction<() => number>(['value'], 'return () => value', [42])?.(),
+      ),
+    ).toBe(42)
+    expect(formatPropertyAccess('input', 'default')).toBe('input["default"]')
+    expect(serializeStringLiteral('\u2028\u2029')).toBe(String.raw`"\u2028\u2029"`)
+
+    vi.resetModules()
+    const isolated = await import('../src/core/jit.js')
+    const blocked = vi.fn(() => {
+      throw new EvalError('dynamic code generation blocked')
+    })
+    vi.stubGlobal('Function', blocked)
+    let allowed = true
+    try {
+      allowed = isolated.canUseJit()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(allowed).toBe(false)
+    expect(isolated.canUseJit()).toBe(false)
+    expect(blocked).toHaveBeenCalledOnce()
+  })
+
+  it('preserves curried argument order in the dual dispatcher at both arity limits', () => {
+    const dispatch = dual(
+      (args) => args[0] === 'self',
+      (...args: readonly string[]) => args.join(':'),
+    )
+    const noArguments = dispatch()
+    const manyArguments = dispatch('a', 'b', 'c', 'd')
+    expect(typeof noArguments === 'function' && noArguments('self')).toBe('self')
+    expect(typeof manyArguments === 'function' && manyArguments('self')).toBe('self:a:b:c:d')
+    expect(dispatch('self', 'a', 'b', 'c', 'd')).toBe('self:a:b:c:d')
+  })
+
+  it('composes two, three and four transformations while forwarding the initial arguments', () => {
+    const start = (left: number, right: number) => left - right
+    const increment = (value: number) => value + 1
+    const double = (value: number) => value * 2
+    expect(flow(start, increment, double)(8, 3)).toBe(12)
+    expect(flow(start, increment, double, increment)(8, 3)).toBe(13)
+    expect(flow(start, increment, double, increment, double)(8, 3)).toBe(26)
+  })
+
   it('respects RESULTAR_JIT=0 and RESULTAR_JIT=false dynamically', () => {
     expect(withJitMode(true, () => canUseJit())).toBe(true)
     expect(withJitMode(false, () => canUseJit())).toBe(false)
@@ -190,6 +245,46 @@ describe('Workstream B: createTaggedError JIT template compilation & parity', ()
     expect(jitResult.plainMessage).toBe('static message without placeholders')
     expect(jitResult.fingerprint[0]).toBe('HostileError')
     expect(jitResult.fingerprint).toHaveLength(2)
+  })
+
+  it('reads inherited template fields and only reads fields that exist', () => {
+    withJitMode(false, () => {
+      const Message = createTaggedError({ name: 'Message', message: '$missing $found' })
+      const prototype = Object.create(null, { found: { value: 'inherited' } }) as { found: string }
+      const props = new Proxy(
+        { missing: 'removed', found: '' },
+        {
+          getOwnPropertyDescriptor: () => undefined,
+          getPrototypeOf: () => prototype,
+          get: (_target, key) => {
+            if (key === 'found') return prototype.found
+            return key === 'missing' ? 'unexpected read' : undefined
+          },
+        },
+      )
+      expect(new Message(props).message).toBe('$missing inherited')
+    })
+  })
+
+  it('ignores template fields added to Object.prototype during a prototype lookup', () => {
+    withJitMode(false, () => {
+      const Message = createTaggedError({ name: 'Message', message: '$lateTemplateField' })
+      const props = new Proxy({} as { lateTemplateField: string }, {
+        getPrototypeOf() {
+          // eslint-disable-next-line no-extend-native -- Simulate a prototype change during lookup.
+          Object.defineProperty(Object.prototype, 'lateTemplateField', {
+            configurable: true,
+            value: 'inherited too late',
+          })
+          return Object.prototype
+        },
+      })
+      try {
+        expect(new Message(props).message).toBe('$lateTemplateField')
+      } finally {
+        Reflect.deleteProperty(Object.prototype, 'lateTemplateField')
+      }
+    })
   })
 
   it('caches taggedEnum constructors while constructing distinct values', () => {
@@ -914,4 +1009,145 @@ it('captures malformed continuations before and after warmup', async () => {
       }
     }
   }
+})
+
+it('preserves fused tryPromise map and mapErr semantics across success, fail, defect, and concurrent pool reuse', async () => {
+  const mappedOk = await ResultTask.tryPromise({
+    try: () => Promise.resolve(21),
+    catch: (cause) => `inner:${String(cause)}`,
+  })
+    .map((n) => n * 2)
+    .mapErr((e) => `outer:${e}`)
+    .runResult()
+  expect(mappedOk).toEqual(ok(42))
+
+  const mappedErr = await ResultTask.tryPromise({
+    try: () => Promise.reject(new Error('boom')),
+    catch: (cause) => `inner:${cause instanceof Error ? cause.message : String(cause)}`,
+  })
+    .as(undefined)
+    .mapErr((e) => `outer:${e}`)
+    .runResult()
+  expect(mappedErr).toEqual(err('outer:inner:boom'))
+
+  const innerCatchDefect = await ResultTask.tryPromise({
+    try: () => Promise.reject(new Error('boom')),
+    catch: () => {
+      throw new Error('catch-defect')
+    },
+  })
+    .mapErr(() => 'should-not-run')
+    .runExit()
+  expect(innerCatchDefect).toEqual({
+    _tag: 'Failure',
+    cause: { _tag: 'Die', defect: new Error('catch-defect') },
+  })
+
+  const mapOkDefect = await ResultTask.tryPromise({
+    try: () => Promise.resolve(1),
+    catch: (cause) => cause,
+  })
+    .map(() => {
+      throw new Error('map-defect')
+    })
+    .mapErr(() => 'should-not-run')
+    .runExit()
+  expect(mapOkDefect).toEqual({
+    _tag: 'Failure',
+    cause: { _tag: 'Die', defect: new Error('map-defect') },
+  })
+
+  // Concurrent runs exercise the bounded idle context and continuation pools without state leakage.
+  const results = await Promise.all(
+    Array.from({ length: 80 }, (_, index) =>
+      ResultTask.gen(function* () {
+        const value = yield* ResultTask.tryPromise({
+          try: () => Promise.resolve(index),
+          catch: (cause) => cause,
+        }).mapErr((cause) => cause)
+        return value * 2
+      })
+        .map((n) => n + 1)
+        .runPromise(),
+    ),
+  )
+  expect(results).toEqual(Array.from({ length: 80 }, (_, index) => index * 2 + 1))
+})
+
+it('preserves fused catchAll (orElse) and mapped catchAll semantics over tryPromise and gen', async () => {
+  const optionsWithThis = {
+    prefix: 'ctx',
+    try() {
+      return Promise.reject(new Error(`${this.prefix}:fail`))
+    },
+    catch(cause: unknown) {
+      return `${this.prefix}:${cause instanceof Error ? cause.message : String(cause)}`
+    },
+  }
+  const recoveredFused = await ResultTask.tryPromise(optionsWithThis)
+    .as('ok')
+    .orElse((e) => ResultTask.ok(`recovered:${e}`))
+    .map((v) => `${v}!`)
+    .runResult()
+  expect(recoveredFused).toEqual(ok('recovered:ctx:ctx:fail!'))
+
+  const fusedSuccess = await ResultTask.tryPromise({
+    try: () => Promise.resolve(10),
+    catch: () => 'unused',
+  })
+    .map((n) => n + 5)
+    .orElse(() => ResultTask.ok(0))
+    .map((n) => n * 2)
+    .runResult()
+  expect(fusedSuccess).toEqual(ok(30))
+
+  const genRecoveredAsync = await ResultTask.gen(function* () {
+    const first = yield* ResultTask.tryPromise({ try: () => Promise.resolve(2), catch: () => 'e1' })
+    return yield* ResultTask.err(`boom:${first}`)
+  })
+    .orElse((e) =>
+      ResultTask.tryPromise({ try: () => Promise.resolve(`fixed:${e}`), catch: () => 'e2' }),
+    )
+    .map((v) => v.toUpperCase())
+    .runResult()
+  expect(genRecoveredAsync).toEqual(ok('FIXED:BOOM:2'))
+
+  const defectNotCaught = await ResultTask.tryPromise({
+    try: () => Promise.resolve(1),
+    catch: () => 'err',
+  })
+    .map(() => {
+      throw new Error('inner-defect')
+    })
+    .orElse(() => ResultTask.ok('should-not-recover'))
+    .as('unused')
+    .runExit()
+  expect(defectNotCaught).toEqual({
+    _tag: 'Failure',
+    cause: { _tag: 'Die', defect: new Error('inner-defect') },
+  })
+
+  const genMappedOk = await ResultTask.gen(function* () {
+    const n = yield* ResultTask.tryPromise({ try: () => Promise.resolve(21), catch: () => 'e' })
+    return n
+  })
+    .map((n) => n * 2)
+    .runResult()
+  expect(genMappedOk).toEqual(ok(42))
+
+  const genMatchedOk = await ResultTask.gen(function* () {
+    const n = yield* ResultTask.tryPromise({ try: () => Promise.resolve(7), catch: () => 'e' })
+    return n
+  })
+    .match({ ok: (n) => `ok:${n}`, err: (e) => `err:${e}` })
+    .runPromise()
+  expect(genMatchedOk).toBe('ok:7')
+
+  const genMatchedErr = await ResultTask.gen(function* () {
+    yield* ResultTask.tryPromise({ try: () => Promise.resolve(1), catch: () => 'e' })
+    return yield* ResultTask.err('missing')
+  })
+    .match({ ok: (n) => `ok:${String(n)}`, err: (e) => `err:${e}` })
+    .runPromise()
+  expect(genMatchedErr).toBe('err:missing')
 })

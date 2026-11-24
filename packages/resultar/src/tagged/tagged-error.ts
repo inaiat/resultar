@@ -827,25 +827,35 @@ const createTaggedErrorClass = <
   }
 
   Object.defineProperty(GeneratedTaggedError.prototype, TAGGED_ERROR_DEFAULT_TO_JSON, {
-    value: Object.getOwnPropertyDescriptor(GeneratedTaggedError.prototype, 'toJSON')?.value,
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Store the method identity for nested cause serialization.
+    value: GeneratedTaggedError.prototype.toJSON,
   })
 
   return GeneratedTaggedError as unknown as TaggedErrorClass<Tag, MessageTemplate, Base>
 }
 
-const copyEnumProps = (target: Record<PropertyKey, unknown>, props: object): void => {
+const makeTaggedEnumIgnoringInputTag = (tag: string, props: object): object => {
+  const value: Record<PropertyKey, unknown> = { _tag: tag }
+  const fields = props as Record<PropertyKey, unknown>
+  // Define existing keys directly to bypass inherited setters. The frozen result has the same
+  // descriptors for other keys, so those can use ordinary assignment.
   for (const key in props) {
-    if (Object.hasOwn(props, key) && key !== '_tag') {
-      const field = (props as Record<string, unknown>)[key]
-      if (key === '__proto__') assignReadonly(target, key, field)
-      else target[key] = field
+    if (key !== '_tag' && Object.hasOwn(props, key)) {
+      const field = fields[key]
+      // Stryker disable next-line ConditionalExpression: defining every key yields the same frozen fields, with extra descriptor work.
+      if (key in value) assignReadonly(value, key, field)
+      else value[key] = field
     }
   }
-  for (const sym of Object.getOwnPropertySymbols(props)) {
-    if (Object.prototype.propertyIsEnumerable.call(props, sym)) {
-      target[sym] = (props as Record<symbol, unknown>)[sym]
+  for (const key of Object.getOwnPropertySymbols(props)) {
+    if (Object.prototype.propertyIsEnumerable.call(props, key)) {
+      const field = fields[key]
+      // Stryker disable next-line ConditionalExpression: defining every symbol yields the same frozen fields, with extra descriptor work.
+      if (key in value) assignReadonly(value, key, field)
+      else value[key] = field
     }
   }
+  return Object.freeze(value)
 }
 
 /**
@@ -915,11 +925,10 @@ export const taggedEnum = <
       let ctor = constructors.get(property)
       if (ctor === undefined) {
         ctor = (props?: object): object => {
-          const value: Record<PropertyKey, unknown> = { _tag: property }
-          if (props !== undefined && props !== null) {
-            copyEnumProps(value, props)
-          }
-          return Object.freeze(value)
+          if (props === undefined || props === null) return Object.freeze({ _tag: property })
+          // eslint-disable-next-line oxc/no-rest-spread-properties -- Spread defines own data properties without invoking inherited setters.
+          if (!Object.hasOwn(props, '_tag')) return Object.freeze({ _tag: property, ...props })
+          return makeTaggedEnumIgnoringInputTag(property, props)
         }
         constructors.set(property, ctor)
       }

@@ -312,3 +312,80 @@ it('preserves traced errors when unwrapping a reason, including composite failur
     ['load'],
   )
 })
+
+it('covers TaskLocal curried/data-first forms, validation errors, and Tracer.memory helpers', () => {
+  const Local = TaskLocal.make<string>('default')
+
+  // Curried locally and data-first locallyWith
+  deepEqual(Local.locally('curried')(Local.get()).runSync(), ok('curried'))
+  deepEqual(
+    Local.locallyWith((current) => `${current}-next`, Local.get()).runSync(),
+    ok('default-next'),
+  )
+
+  // Runtime validation when a non-ResultTask is passed
+  let threw = 0
+  for (const call of [
+    () => (Local.locally('x') as unknown as (t: unknown) => unknown)('bad'),
+    () => (Local.locally as unknown as (v: string, t: unknown) => unknown)('x', 'bad'),
+    () => (Local.locallyWith((v) => v) as unknown as (t: unknown) => unknown)('bad'),
+    () =>
+      (Local.locallyWith as unknown as (fn: (v: string) => string, t: unknown) => unknown)(
+        (v) => v,
+        'bad',
+      ),
+  ]) {
+    try {
+      call()
+    } catch (error) {
+      if (error instanceof TypeError) threw += 1
+    }
+  }
+  equal(threw, 4)
+
+  // Tracer.memory setAttribute, end without endTime, undefined attributes, and clear
+  const memory = Tracer.memory()
+  const span = memory.startSpan('manual', {
+    startTime: 10,
+    attributes: { kept: 'yes', dropped: undefined },
+  })
+  span.setAttribute?.('dynamic', 123)
+  span.end({ _tag: 'Success', value: 'ok' })
+  equal(memory.spans.length, 1)
+  deepEqual(memory.spans[0]?.attributes, { kept: 'yes', dynamic: 123 })
+  equal(memory.spans[0]?.endTime, undefined)
+  equal(memory.spans[0]?.durationMs, undefined)
+  memory.clear()
+  equal(memory.spans.length, 0)
+})
+
+it('handles TaskLocal.set and TaskLocal.update safely when context.locals is undefined', async () => {
+  const { NEVER_ABORTED_SIGNAL } = await import('../src/task/exit.js')
+  const { TaskScope } = await import('../src/task/scope.js')
+  const { runRuntimeTask } = await import('../src/task/task-runtime-bridge.js')
+  const { createScheduling } = await import('../src/task/task-scheduler.js')
+  const Local = TaskLocal.make<string>('fallback')
+  const minimalContext = {
+    clock: Clock.live,
+    scheduling: createScheduling(Clock.live),
+    scope: new TaskScope(),
+    services: new Map(),
+    namedServices: new Map<string, unknown>(),
+    serviceResolver: undefined,
+    cleanup: undefined,
+    signal: NEVER_ABORTED_SIGNAL,
+    locals: undefined,
+  }
+  deepEqual(runRuntimeTask(ResultTask, Local.set('ignored'), minimalContext), {
+    _tag: 'Success',
+    value: undefined,
+  })
+  deepEqual(
+    runRuntimeTask(
+      ResultTask,
+      Local.update((v) => `${v}!`),
+      minimalContext,
+    ),
+    { _tag: 'Success', value: undefined },
+  )
+})

@@ -477,9 +477,11 @@ const applyFinallyFailure = <Return, E>(
   currentExit: Exit<Return, E>,
   cleanupExit: Exit<Return, E>,
 ): Exit<Return, E> => {
+  // Stryker disable next-line ConditionalExpression: generator unwinding passes a failing cleanup exit.
   if (cleanupExit._tag === 'Failure') {
     markCleanupCause(cleanupExit.cause)
   }
+  // Stryker disable next-line ConditionalExpression: the generator is already unwinding from a failing exit.
   if (currentExit._tag === 'Failure' && Cause.hasInterrupts(currentExit.cause)) {
     return combineExits(currentExit, cleanupExit, 'Sequential') as Exit<Return, E>
   }
@@ -571,26 +573,20 @@ const closeGeneratorAsync = async <Yield, Return, Next, E>(
 }
 
 const sharedSuccessExit: { _tag: 'Success'; value: unknown } = { _tag: 'Success', value: undefined }
-// eslint-disable-next-line init-declarations
-let idleContinuationStack: ResultTask<unknown, unknown, unknown>[] | undefined
+const MAX_IDLE_CONTINUATION_STACKS = 64
+const idleContinuationStacks: ResultTask<unknown, unknown, unknown>[][] = []
 
-const acquireContinuationStack = (): ResultTask<unknown, unknown, unknown>[] => {
-  /* Stryker disable all: single-element stack pool is an allocation optimization equivalent to []. */
-  const stack = idleContinuationStack
-  if (stack !== undefined) {
-    idleContinuationStack = undefined
-    return stack
-  }
-  /* Stryker restore all */
-  return []
-}
+const acquireContinuationStack = (): ResultTask<unknown, unknown, unknown>[] =>
+  /* Stryker disable all: bounded stack pool is an allocation optimization equivalent to []. */
+  idleContinuationStacks.pop() ?? []
+/* Stryker restore all */
 
-/* Stryker disable all: single-element stack pool is an allocation optimization. */
+/* Stryker disable all: bounded stack pool is an allocation optimization. */
 const releaseContinuationStack = (stack: ResultTask<unknown, unknown, unknown>[]): void => {
   const previousLength = stack.length
   stack.length = 0
-  if (previousLength <= 256) {
-    idleContinuationStack = stack
+  if (previousLength <= 256 && idleContinuationStacks.length < MAX_IDLE_CONTINUATION_STACKS) {
+    idleContinuationStacks.push(stack)
   }
 }
 /* Stryker restore all */
@@ -937,11 +933,317 @@ export class ResultTask<out A, out E = never, out R = never> {
     return context.acquiring === true ? fast : interruptSuccess(fast, context.signal)
   }
 
+  static #applyMapToSuccess(
+    value: unknown,
+    mapOk: (value: unknown) => unknown,
+    signal: AbortSignal,
+  ): Exit<unknown, unknown> {
+    if (signal !== NEVER_ABORTED_SIGNAL && signal.aborted) {
+      return interrupted(signal)
+    }
+    try {
+      const mapped = mapOk(value)
+      return signal !== NEVER_ABORTED_SIGNAL && signal.aborted
+        ? interrupted(signal)
+        : success(mapped)
+    } catch (error) {
+      return died(error)
+    }
+  }
+
+  // Keep immediate recovery in this path so it can return without reentering the task loop.
+  // fallow-ignore-next-line complexity
+  static #finishCatchAll(
+    exit: Exit<unknown, unknown>,
+    catchTask: ResultTask<unknown, unknown, unknown>,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
+    if (exit._tag === 'Success') {
+      return context.signal !== NEVER_ABORTED_SIGNAL && context.signal.aborted
+        ? interrupted(context.signal)
+        : exit
+    }
+    const step = ResultTask.#applyCatchFailureContinuation(catchTask, exit)
+    if (step.current === undefined) {
+      const recovered = step.currentExit ?? exit
+      return recovered._tag === 'Success' &&
+        context.signal !== NEVER_ABORTED_SIGNAL &&
+        context.signal.aborted
+        ? interrupted(context.signal)
+        : recovered
+    }
+    if (step.current.op === OP_SUCCESS && context.scheduling.remaining > 1) {
+      context.scheduling.remaining -= 1
+      return context.signal !== NEVER_ABORTED_SIGNAL && context.signal.aborted
+        ? interrupted(context.signal)
+        : success(step.current.value)
+    }
+    return ResultTask.runTaskLoop(step.current, context)
+  }
+
+  static #finishMappedCatchAll(
+    exit: Exit<unknown, unknown>,
+    outerMapTask: ResultTask<unknown, unknown, unknown>,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
+    const mapOk = outerMapTask.continuation as (value: unknown) => unknown
+    if (exit._tag === 'Success') {
+      return ResultTask.#applyMapToSuccess(exit.value, mapOk, context.signal)
+    }
+    const catchTask = outerMapTask.value as ResultTask<unknown, unknown, unknown>
+    const step = ResultTask.#applyCatchFailureContinuation(catchTask, exit)
+    if (step.current === undefined) {
+      const recovered = step.currentExit ?? exit
+      return recovered._tag === 'Success'
+        ? ResultTask.#applyMapToSuccess(recovered.value, mapOk, context.signal)
+        : recovered
+    }
+    if (step.current.op === OP_SUCCESS && context.scheduling.remaining > 1) {
+      context.scheduling.remaining -= 1
+      return ResultTask.#applyMapToSuccess(step.current.value, mapOk, context.signal)
+    }
+    const stack = acquireContinuationStack()
+    stack.push(outerMapTask)
+    return ResultTask.runTaskLoop(step.current, context, undefined, stack)
+  }
+
+  // Resolve the fused shape and its scheduler cost together before allocating the recovery callback.
+  // fallow-ignore-next-line complexity
+  static #tryFastFusedCatchAllTryPromise(
+    catchTask: ResultTask<unknown, unknown, unknown>,
+    outerMapTask: ResultTask<unknown, unknown, unknown> | undefined,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> | undefined {
+    const source = catchTask.value as ResultTask<unknown, unknown, unknown>
+    let leaf: ResultTask<unknown, unknown, unknown> | undefined = undefined
+    let mapOk: ((value: unknown) => unknown) | undefined = undefined
+    let mapErr: ((error: unknown) => unknown) | undefined = undefined
+    let cost = outerMapTask === undefined ? 3 : 5
+
+    if (source.op === OP_TRY_PROMISE) {
+      leaf = source
+    } else if (source.op === OP_MAP || source.op === OP_MAP_ERROR) {
+      const inner = source.value as ResultTask<unknown, unknown, unknown>
+      if (inner.op === OP_TRY_PROMISE) {
+        leaf = inner
+        cost += 2
+        if (source.op === OP_MAP) {
+          mapOk = source.continuation as (value: unknown) => unknown
+        } else {
+          mapErr = source.continuation as (error: unknown) => unknown
+        }
+      }
+    }
+    if (leaf === undefined || context.scheduling.remaining <= cost + 1) {
+      return undefined
+    }
+    context.scheduling.remaining -= cost
+    const outerMapOk =
+      outerMapTask === undefined
+        ? undefined
+        : (outerMapTask.continuation as (value: unknown) => unknown)
+    const recover = (
+      failedExit: Exit<unknown, unknown> & { readonly _tag: 'Failure' },
+    ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> =>
+      outerMapTask === undefined
+        ? ResultTask.#finishCatchAll(failedExit, catchTask, context)
+        : ResultTask.#finishMappedCatchAll(failedExit, outerMapTask, context)
+    return executeFusedTryPromise(
+      {
+        trySource: leaf.value as TryPromiseSource,
+        catchFn: leaf.continuation as ((error: unknown) => unknown) | undefined,
+        mapOk,
+        mapErr,
+        outerMapOk,
+        recover,
+      },
+      context,
+    )
+  }
+
+  static #finishMatchCatchAll(
+    exit: Exit<unknown, unknown>,
+    catchTask: ResultTask<unknown, unknown, unknown>,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
+    if (exit._tag === 'Success') {
+      const innerMapTask = catchTask.value as ResultTask<unknown, unknown, unknown>
+      return ResultTask.#applyMapToSuccess(
+        exit.value,
+        innerMapTask.continuation as (value: unknown) => unknown,
+        context.signal,
+      )
+    }
+    return ResultTask.#finishCatchAll(exit, catchTask, context)
+  }
+
+  static #tryFastMatchCatchAll(
+    catchTask: ResultTask<unknown, unknown, unknown>,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> | undefined {
+    const source = catchTask.value as ResultTask<unknown, unknown, unknown>
+    if (source.op !== OP_MAP) return undefined
+    const leaf = source.value as ResultTask<unknown, unknown, unknown>
+    if ((leaf.op !== OP_GEN && leaf.op !== OP_ASYNC) || context.scheduling.remaining <= 6) {
+      return undefined
+    }
+    context.scheduling.remaining -= 4
+    const executed = leaf.run(context)
+    return isPromiseExit(executed)
+      ? executed.then((exit) => ResultTask.#finishMatchCatchAll(exit, catchTask, context), died)
+      : ResultTask.#finishMatchCatchAll(executed, catchTask, context)
+  }
+
+  // Dispatch supported recovery shapes here to avoid interpreter continuations on the fast path.
+  // fallow-ignore-next-line complexity
+  static #tryFastCatchAllCombinator(
+    task: ResultTask<unknown, unknown, unknown>,
+    rootOp: number,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> | undefined {
+    let catchTask: ResultTask<unknown, unknown, unknown> | undefined = undefined
+    let outerMapTask: ResultTask<unknown, unknown, unknown> | undefined = undefined
+    if (rootOp === OP_CATCH_ALL) {
+      catchTask = task
+    } else if (rootOp === OP_MAP) {
+      const inner = task.value as ResultTask<unknown, unknown, unknown>
+      if (inner.op === OP_CATCH_ALL) {
+        catchTask = inner
+        outerMapTask = task
+      }
+    }
+    if (catchTask === undefined) return undefined
+
+    const fused = ResultTask.#tryFastFusedCatchAllTryPromise(catchTask, outerMapTask, context)
+    if (fused !== undefined) {
+      return fused
+    }
+    if (outerMapTask === undefined) {
+      const matched = ResultTask.#tryFastMatchCatchAll(catchTask, context)
+      if (matched !== undefined) {
+        return matched
+      }
+    }
+
+    const source = catchTask.value as ResultTask<unknown, unknown, unknown>
+    const sourceOp = source.op
+    if (
+      sourceOp !== OP_GEN &&
+      sourceOp !== OP_ASYNC &&
+      sourceOp !== OP_SYNC &&
+      sourceOp !== OP_SUCCESS &&
+      sourceOp !== OP_FAIL
+    ) {
+      return undefined
+    }
+    const cost = outerMapTask === undefined ? 2 : 4
+    if (context.scheduling.remaining <= cost + 3) {
+      return undefined
+    }
+    context.scheduling.remaining -= cost
+    const executed = source.run(context)
+    if (isPromiseExit(executed)) {
+      return outerMapTask === undefined
+        ? executed.then((exit) => ResultTask.#finishCatchAll(exit, catchTask, context), died)
+        : executed.then(
+            (exit) => ResultTask.#finishMappedCatchAll(exit, outerMapTask, context),
+            died,
+          )
+    }
+    return outerMapTask === undefined
+      ? ResultTask.#finishCatchAll(executed, catchTask, context)
+      : ResultTask.#finishMappedCatchAll(executed, outerMapTask, context)
+  }
+
+  static #tryFastMapAsyncCombinator(
+    task: ResultTask<unknown, unknown, unknown>,
+    rootOp: number,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> | undefined {
+    if (rootOp !== OP_MAP) return undefined
+    const inner = task.value as ResultTask<unknown, unknown, unknown>
+    if ((inner.op !== OP_GEN && inner.op !== OP_ASYNC) || context.scheduling.remaining <= 4) {
+      return undefined
+    }
+    context.scheduling.remaining -= 2
+    const mapOk = task.continuation as (value: unknown) => unknown
+    const executed = inner.run(context)
+    if (isPromiseExit(executed)) {
+      return executed.then(
+        (exit) =>
+          exit._tag === 'Success'
+            ? ResultTask.#applyMapToSuccess(exit.value, mapOk, context.signal)
+            : exit,
+        died,
+      )
+    }
+    return executed._tag === 'Success'
+      ? ResultTask.#applyMapToSuccess(executed.value, mapOk, context.signal)
+      : executed
+  }
+
+  // Fuse supported promise and mapping shapes in one dispatch to avoid extra promise boundaries.
+  // fallow-ignore-next-line complexity
+  static #tryFastTryPromiseCombinator(
+    task: ResultTask<unknown, unknown, unknown>,
+    rootOp: number,
+    context: ResultTaskRuntimeContext,
+  ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> | undefined {
+    if (rootOp !== OP_MAP_ERROR && rootOp !== OP_MAP) return undefined
+    const inner = task.value as ResultTask<unknown, unknown, unknown>
+    if (inner.op === OP_TRY_PROMISE) {
+      if (context.scheduling.remaining <= 4) return undefined
+      context.scheduling.remaining -= 3
+      return executeFusedTryPromise(
+        {
+          trySource: inner.value as TryPromiseSource,
+          catchFn: inner.continuation as ((error: unknown) => unknown) | undefined,
+          mapOk: rootOp === OP_MAP ? (task.continuation as (value: unknown) => unknown) : undefined,
+          mapErr:
+            rootOp === OP_MAP_ERROR
+              ? (task.continuation as (error: unknown) => unknown)
+              : undefined,
+        },
+        context,
+      )
+    }
+    if (rootOp === OP_MAP_ERROR && inner.op === OP_MAP) {
+      const leaf = inner.value as ResultTask<unknown, unknown, unknown>
+      if (leaf.op === OP_TRY_PROMISE && context.scheduling.remaining > 6) {
+        context.scheduling.remaining -= 5
+        return executeFusedTryPromise(
+          {
+            trySource: leaf.value as TryPromiseSource,
+            catchFn: leaf.continuation as ((error: unknown) => unknown) | undefined,
+            mapOk: inner.continuation as (value: unknown) => unknown,
+            mapErr: task.continuation as (error: unknown) => unknown,
+          },
+          context,
+        )
+      }
+    }
+    return undefined
+  }
+
+  // Keep fast-path dispatch and JIT warmup together at the interpreter entry point.
+  // fallow-ignore-next-line complexity
   static #runCombinator(
     task: ResultTask<unknown, unknown, unknown>,
     rootOp: number,
     context: ResultTaskRuntimeContext,
   ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
+    const fusedTryPromise = ResultTask.#tryFastTryPromiseCombinator(task, rootOp, context)
+    if (fusedTryPromise !== undefined) {
+      return fusedTryPromise
+    }
+    const fastCatchAll = ResultTask.#tryFastCatchAllCombinator(task, rootOp, context)
+    if (fastCatchAll !== undefined) {
+      return fastCatchAll
+    }
+    const fastMapAsync = ResultTask.#tryFastMapAsyncCombinator(task, rootOp, context)
+    if (fastMapAsync !== undefined) {
+      return fastMapAsync
+    }
     const fast =
       rootOp === OP_CATCH_TAG
         ? ResultTask.#tryFastCatchTag(task, context)
@@ -1028,19 +1330,17 @@ export class ResultTask<out A, out E = never, out R = never> {
   ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
     context.scheduling.remaining -= 1
     try {
-      // eslint-disable-next-line init-declarations
-      let executed: Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>
       if (rootOp === OP_GEN) {
-        executed = ResultTask.#runGen(invokeGenerator(task.continuation, task.value), context)
-      } else if (rootOp === OP_TRY_PROMISE) {
-        executed = executeTryPromise(
-          task.value as (signal: AbortSignal) => PromiseLike<unknown>,
+        return ResultTask.#runGen(invokeGenerator(task.continuation, task.value), context)
+      }
+      if (rootOp === OP_TRY_PROMISE) {
+        return executeTryPromise(
+          task.value as TryPromiseSource,
           task.continuation as ((error: unknown) => unknown) | undefined,
           context,
         )
-      } else {
-        executed = (task.value as ResultTaskExecutor)(context)
       }
+      const executed = (task.value as ResultTaskExecutor)(context)
       return isPromiseExit(executed) ? executed.catch(died) : executed
     } catch (error) {
       return died(error)
@@ -1414,7 +1714,7 @@ export class ResultTask<out A, out E = never, out R = never> {
               executed = ResultTask.#runGen(invokeGenerator(taskContinuation, taskValue), context)
             } else if (op === OP_TRY_PROMISE) {
               executed = executeTryPromise(
-                taskValue as (signal: AbortSignal) => PromiseLike<unknown>,
+                taskValue as TryPromiseSource,
                 taskContinuation as ((error: unknown) => unknown) | undefined,
                 context,
               )
@@ -1427,9 +1727,10 @@ export class ResultTask<out A, out E = never, out R = never> {
               /* Stryker disable all: zero-continuation fast-path is equivalent to #runTaskLoopFromAsync. */
               if (continuations.length === 0) {
                 releaseContinuationStack(continuations)
-                return trackSignal && context.acquiring !== true
-                  ? executed.then((exit) => interruptSuccess(exit, context.signal), died)
-                  : executed.catch(died)
+                if (trackSignal && context.acquiring !== true) {
+                  return executed.then((exit) => interruptSuccess(exit, context.signal), died)
+                }
+                return op === OP_GEN || op === OP_TRY_PROMISE ? executed : executed.catch(died)
               }
               /* Stryker restore all */
               return ResultTask.#runTaskLoopFromAsync(executed, continuations, context)
@@ -1610,11 +1911,7 @@ export class ResultTask<out A, out E = never, out R = never> {
     }
     const interruption = options.interruption
     if (interruption === undefined || interruption === 'wait') {
-      return new ResultTask<A, unknown>(
-        OP_TRY_PROMISE,
-        options.try.bind(options),
-        options.catch.bind(options),
-      )
+      return new ResultTask<A, unknown>(OP_TRY_PROMISE, options, undefined)
     }
     return ResultTask.#tryPromiseDetached(options)
   }
@@ -1778,8 +2075,10 @@ export class ResultTask<out A, out E = never, out R = never> {
     R | WithoutScope<ReleaseR> | ResultTaskScope<ReleaseError | ScopeError<ReleaseR>>
   > {
     return new ResultTask((context) => {
+      // Stryker disable next-line ConditionalExpression: the interpreter already rejects pre-aborted acquisitions.
       if (context.signal.aborted) return interrupted(context.signal)
       const acquireContext =
+        // Stryker disable next-line ConditionalExpression: allocating an acquisition context for the shared signal leaves the outcome unchanged.
         context.signal === NEVER_ABORTED_SIGNAL ? context : withAcquiring(context)
       const acquired = options.acquire.run(acquireContext)
       return isPromiseExit(acquired)
@@ -2159,6 +2458,7 @@ export class ResultTask<out A, out E = never, out R = never> {
       if (isPromiseExit(outcome)) {
         return closeGeneratorAsync(
           iterator,
+          // Stryker disable next-line StringLiteral: only the service discriminator changes how the exit is unwrapped.
           { pending: outcome, kind: 'task', exit: state.exit },
           runtime,
         )
@@ -2223,36 +2523,75 @@ export class ResultTask<out A, out E = never, out R = never> {
     }
   }
 
+  // Resume standard task yields inline to avoid intermediate boxes and callbacks in the loop.
+  // fallow-ignore-next-line complexity
   static #runGen<Yield extends ResultTaskYieldable, Return, Next>(
     iterator: Generator<Yield, Return, Next>,
     context: ResultTaskRuntimeContext,
   ): Exit<Return, GeneratorError<Yield>> | Promise<Exit<Return, GeneratorError<Yield>>> {
+    // Stryker disable next-line ConditionalExpression: forcing signal tracking only adds checks for the never-aborted signal.
+    const trackSignal = context.signal !== NEVER_ABORTED_SIGNAL
+    let step: IteratorResult<Yield, Return>
     try {
-      let step = iterator.next()
+      step = iterator.next()
+    } catch (error) {
+      return died<Return, GeneratorError<Yield>>(error)
+    }
 
-      while (step.done === false) {
-        /* Stryker disable all: fast-path for standard Success instruction is equivalent to #runGenSlow. */
+    while (step.done === false) {
+      /* Stryker disable all: fast-path for standard ResultTaskIterator yields is equivalent to #runGenSlow. */
+      const yielded = step.value
+      if (yielded instanceof ResultTaskIterator) {
+        const innerTask = yielded.task
         if (
-          step.value instanceof ResultTaskIterator &&
-          step.value.task.op === OP_SUCCESS &&
-          (context.signal === NEVER_ABORTED_SIGNAL || !context.signal.aborted) &&
+          innerTask.op === OP_SUCCESS &&
+          (!trackSignal || !context.signal.aborted) &&
           context.scheduling.remaining > 1
         ) {
           context.scheduling.remaining -= 1
-          sharedSuccessExit.value = step.value.task.value
-          step = iterator.next(sharedSuccessExit as Next)
+          sharedSuccessExit.value = innerTask.value
+          try {
+            step = iterator.next(sharedSuccessExit as Next)
+          } catch (error) {
+            sharedSuccessExit.value = undefined
+            return died<Return, GeneratorError<Yield>>(error)
+          }
           sharedSuccessExit.value = undefined
         } else {
-          /* Stryker restore all */
-          return ResultTask.#runGenSlow(iterator, step, context)
+          let executed: Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>
+          try {
+            executed = innerTask.run(context)
+          } catch (error) {
+            return ResultTask.#closeGenerator(
+              iterator,
+              died<Return, GeneratorError<Yield>>(error),
+              context,
+            )
+          }
+          if (isPromiseExit(executed)) {
+            return ResultTask.#resumeGenFromTaskAsync(iterator, executed, context)
+          }
+          const outcome = trackSignal ? interruptSuccess(executed, context.signal) : executed
+          if (outcome._tag === 'Failure') {
+            return ResultTask.#closeGenerator(
+              iterator,
+              outcome as Exit<Return, GeneratorError<Yield>>,
+              context,
+            )
+          }
+          try {
+            step = iterator.next(outcome as Next)
+          } catch (error) {
+            return died<Return, GeneratorError<Yield>>(error)
+          }
         }
+      } else {
+        /* Stryker restore all */
+        return ResultTask.#runGenSlow(iterator, step, context)
       }
-
-      return success<Return, GeneratorError<Yield>>(step.value as Return)
-    } catch (error) {
-      sharedSuccessExit.value = undefined
-      return died<Return, GeneratorError<Yield>>(error)
     }
+
+    return success<Return, GeneratorError<Yield>>(step.value as Return)
   }
 
   // fallow-ignore-next-line complexity
@@ -2261,17 +2600,24 @@ export class ResultTask<out A, out E = never, out R = never> {
     initialStep: IteratorResult<Yield, Return>,
     context: ResultTaskRuntimeContext,
   ): Exit<Return, GeneratorError<Yield>> | Promise<Exit<Return, GeneratorError<Yield>>> {
+    // Stryker disable next-line ConditionalExpression: interruptSuccess already recognizes the never-aborted signal.
+    const trackSignal = context.signal !== NEVER_ABORTED_SIGNAL
     let step = initialStep
 
     while (step.done === false) {
       const yielded = step.value
-      const service = isServiceYield(yielded)
-      if (service || isResultTaskYield(yielded)) {
+      const fastTask = yielded instanceof ResultTaskIterator
+      const service = !fastTask && isServiceYield(yielded)
+      if (fastTask || service || isResultTaskYield(yielded)) {
         let executed: Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>
         try {
           executed = service
-            ? resolveService(yielded.tag, context, (task) => task.run(context))
-            : yielded.task.run(context)
+            ? resolveService(
+                (yielded as ResultTaskServiceYield<ServiceTag<string, unknown>>).tag,
+                context,
+                (task) => task.run(context),
+              )
+            : (yielded as ResultTaskYield<unknown, unknown, unknown>).task.run(context)
         } catch (error) {
           return ResultTask.#closeGenerator(
             iterator,
@@ -2282,10 +2628,12 @@ export class ResultTask<out A, out E = never, out R = never> {
 
         // Stryker disable next-line ConditionalExpression: awaiting a synchronous Exit in #resumeGenFromTaskAsync produces the same outcome.
         if (isPromiseExit(executed)) {
-          return ResultTask.#resumeGenFromTaskAsync(iterator, executed, { context, service })
+          return service
+            ? ResultTask.#resumeGenFromServiceAsync(iterator, executed, context)
+            : ResultTask.#resumeGenFromTaskAsync(iterator, executed, context)
         }
 
-        const outcome = interruptSuccess(executed, context.signal)
+        const outcome = trackSignal ? interruptSuccess(executed, context.signal) : executed
         if (outcome._tag === 'Failure') {
           return ResultTask.#closeGenerator(
             iterator,
@@ -2294,7 +2642,11 @@ export class ResultTask<out A, out E = never, out R = never> {
           )
         }
 
-        step = iterator.next((service ? outcome.value : outcome) as Next)
+        try {
+          step = iterator.next((service ? outcome.value : outcome) as Next)
+        } catch (error) {
+          return died<Return, GeneratorError<Yield>>(error)
+        }
       } else if (isErrResult(step.value)) {
         return ResultTask.#closeGenerator(
           iterator,
@@ -2325,36 +2677,76 @@ export class ResultTask<out A, out E = never, out R = never> {
     )
   }
 
-  static async #resumeGenFromTaskAsync<Yield extends ResultTaskYieldable, Return, Next>(
+  static #resumeGenFromTaskAsync<Yield extends ResultTaskYieldable, Return, Next>(
     iterator: Generator<Yield, Return, Next>,
     pendingExit: Promise<Exit<unknown, unknown>>,
-    runtime: { readonly context: ResultTaskRuntimeContext; readonly service: boolean },
+    context: ResultTaskRuntimeContext,
   ): Promise<Exit<Return, GeneratorError<Yield>>> {
-    const { context, service } = runtime
-    let outcome: Exit<unknown, unknown>
-    try {
-      outcome = interruptSuccess(await pendingExit, context.signal)
-    } catch (error) {
-      return ResultTask.#closeGenerator(
-        iterator,
-        died<Return, GeneratorError<Yield>>(error),
-        context,
-      )
-    }
-    if (outcome._tag === 'Failure') {
-      return ResultTask.#closeGenerator(
-        iterator,
-        outcome as Exit<Return, GeneratorError<Yield>>,
-        context,
-      )
-    }
-    let step: IteratorResult<Yield, Return>
-    try {
-      step = iterator.next((service ? outcome.value : outcome) as Next)
-    } catch (error) {
-      return died<Return, GeneratorError<Yield>>(error)
-    }
-    return ResultTask.#runGenSlow(iterator, step, context)
+    return pendingExit.then(
+      (resolved) => {
+        const outcome =
+          // Stryker disable next-line ConditionalExpression: interruptSuccess returns the same exit for the never-aborted signal.
+          context.signal === NEVER_ABORTED_SIGNAL
+            ? resolved
+            : interruptSuccess(resolved, context.signal)
+        if (outcome._tag === 'Failure') {
+          return ResultTask.#closeGenerator(
+            iterator,
+            outcome as Exit<Return, GeneratorError<Yield>>,
+            context,
+          )
+        }
+        let step: IteratorResult<Yield, Return>
+        try {
+          step = iterator.next(outcome as Next)
+        } catch (error) {
+          return died<Return, GeneratorError<Yield>>(error)
+        }
+        // Stryker disable next-line ConditionalExpression,BlockStatement: the slow loop returns the same success for a completed step.
+        if (step.done === true) {
+          return success<Return, GeneratorError<Yield>>(step.value as Return)
+        }
+        return ResultTask.#runGenSlow(iterator, step, context)
+      },
+      (error: unknown) =>
+        ResultTask.#closeGenerator(iterator, died<Return, GeneratorError<Yield>>(error), context),
+    )
+  }
+
+  static #resumeGenFromServiceAsync<Yield extends ResultTaskYieldable, Return, Next>(
+    iterator: Generator<Yield, Return, Next>,
+    pendingExit: Promise<Exit<unknown, unknown>>,
+    context: ResultTaskRuntimeContext,
+  ): Promise<Exit<Return, GeneratorError<Yield>>> {
+    return pendingExit.then(
+      (resolved) => {
+        const outcome =
+          // Stryker disable next-line ConditionalExpression: interruptSuccess returns the same exit for the never-aborted signal.
+          context.signal === NEVER_ABORTED_SIGNAL
+            ? resolved
+            : interruptSuccess(resolved, context.signal)
+        if (outcome._tag === 'Failure') {
+          return ResultTask.#closeGenerator(
+            iterator,
+            outcome as Exit<Return, GeneratorError<Yield>>,
+            context,
+          )
+        }
+        let step: IteratorResult<Yield, Return>
+        try {
+          step = iterator.next(outcome.value as Next)
+        } catch (error) {
+          return died<Return, GeneratorError<Yield>>(error)
+        }
+        // Stryker disable next-line ConditionalExpression,BlockStatement: the slow loop returns the same success for a completed step.
+        if (step.done === true) {
+          return success<Return, GeneratorError<Yield>>(step.value as Return)
+        }
+        return ResultTask.#runGenSlow(iterator, step, context)
+      },
+      (error: unknown) =>
+        ResultTask.#closeGenerator(iterator, died<Return, GeneratorError<Yield>>(error), context),
+    )
   }
 
   /* eslint-enable max-statements, max-depth, init-declarations */
@@ -3504,6 +3896,7 @@ export class ResultTask<out A, out E = never, out R = never> {
       failures = combineExits(failures, settled.exit, 'Parallel')
     }
     if (winnerIndex === -1) {
+      // Stryker disable next-line ConditionalExpression: a nonempty race without a winner has accumulated a failure.
       if (failures._tag === 'Failure' && isExternalInterruptOnly(failures.cause, context.signal)) {
         return interrupted(context.signal)
       }
@@ -4381,6 +4774,7 @@ export class ResultTask<out A, out E = never, out R = never> {
 
   /** Shares one in-flight execution and successful value. Failed executions can be retried. */
   public static memoize<A, E, R>(task: ResultTask<A, E, R>): ResultTask<A, E, R> {
+    // Stryker disable next-line ObjectLiteral: absent fields and explicitly undefined fields read the same before cache initialization.
     const state: MemoizeState = { cached: undefined, inFlight: undefined }
     return new ResultTask((context) => runMemoized(task, state, context))
   }
@@ -4399,11 +4793,11 @@ export class ResultTask<out A, out E = never, out R = never> {
           const finalizerTask = ResultTask.gen(function* () {
             yield* release(exit)
           })
-          if (closeContext === undefined) {
-            return ResultTask.runExit(finalizerTask)
-          }
           const finalizerScope = new TaskScope()
-          const cleanupContext = withCleanupScope(closeContext, finalizerScope)
+          const cleanupContext = withCleanupScope(
+            closeContext as unknown as ResultTaskRuntimeContext,
+            finalizerScope,
+          )
           const finish = (
             released: Exit<unknown, unknown>,
           ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
@@ -6077,19 +6471,14 @@ export class ResultTask<out A, out E = never, out R = never> {
     })
   }
 
-  static #idleRunContext: ResultTaskRuntimeContext | undefined
+  static readonly #MAX_IDLE_RUN_CONTEXTS = 64
+  static readonly #idleRunContexts: ResultTaskRuntimeContext[] = []
 
-  private static runExitSyncOrAsync<A, E, R>(
-    task: ResultTask<A, E, R>,
-    options?: ResultTaskRunOptions<R>,
-  ): Exit<A, E | ScopeError<R>> | Promise<Exit<A, E | ScopeError<R>>> {
-    /* Stryker disable all: options === undefined fast-path is equivalent to runExitWithOptions(task, options). */
-    if (options !== undefined) {
-      return ResultTask.runExitWithOptions(task, options)
-    }
-    let context = ResultTask.#idleRunContext
+  /* Stryker disable all: bounded context pool is an allocation optimization equivalent to allocating per run. */
+  static #acquireRunContext(): ResultTaskRuntimeContext {
+    const context = ResultTask.#idleRunContexts.pop()
     if (context === undefined) {
-      context = {
+      return {
         namedServices: EMPTY_NAMED_SERVICES,
         services: EMPTY_SERVICES,
         serviceResolver: undefined,
@@ -6102,18 +6491,35 @@ export class ResultTask<out A, out E = never, out R = never> {
         tracer: undefined,
         spanStack: undefined,
       }
-    } else {
-      ResultTask.#idleRunContext = undefined
-      context.scheduling.remaining = 2048
-      if (context.locals !== undefined) context.locals.map = undefined
     }
+    context.scheduling.remaining = 2048
+    if (context.locals !== undefined) context.locals.map = undefined
+    return context
+  }
+
+  static #releaseRunContext(context: ResultTaskRuntimeContext): void {
+    if (context.locals !== undefined) context.locals.map = undefined
+    if (ResultTask.#idleRunContexts.length < ResultTask.#MAX_IDLE_RUN_CONTEXTS) {
+      ResultTask.#idleRunContexts.push(context)
+    }
+  }
+  /* Stryker restore all */
+
+  private static runExitSyncOrAsync<A, E, R>(
+    task: ResultTask<A, E, R>,
+    options?: ResultTaskRunOptions<R>,
+  ): Exit<A, E | ScopeError<R>> | Promise<Exit<A, E | ScopeError<R>>> {
+    /* Stryker disable all: options === undefined fast-path is equivalent to runExitWithOptions(task, options). */
+    if (options !== undefined) {
+      return ResultTask.runExitWithOptions(task, options)
+    }
+    const context = ResultTask.#acquireRunContext()
     const scope = context.scope
     const exit = task.run(context)
     if (isPromiseExit(exit)) {
       return exit.then((resolvedExit) => {
         if (scope.isClean()) {
-          if (context.locals !== undefined) context.locals.map = undefined
-          ResultTask.#idleRunContext = context
+          ResultTask.#releaseRunContext(context)
           return resolvedExit as Exit<A, E | ScopeError<R>>
         }
         return scope.closeSyncOrAsync(resolvedExit) as
@@ -6122,8 +6528,7 @@ export class ResultTask<out A, out E = never, out R = never> {
       })
     }
     if (scope.isClean()) {
-      if (context.locals !== undefined) context.locals.map = undefined
-      ResultTask.#idleRunContext = context
+      ResultTask.#releaseRunContext(context)
       return exit as Exit<A, E | ScopeError<R>>
     }
     return scope.closeSyncOrAsync(exit) as
@@ -6194,7 +6599,7 @@ export class ResultTask<out A, out E = never, out R = never> {
     }
   }
 
-  private static exitToResult<A, E>(exit: Exit<A, E>): Result<A, E> {
+  private static exitToResult<A, E>(this: void, exit: Exit<A, E>): Result<A, E> {
     if (exit._tag === 'Success') {
       return ok(exit.value)
     }
@@ -6210,7 +6615,7 @@ export class ResultTask<out A, out E = never, out R = never> {
     throw new ResultTaskCauseError(exit.cause)
   }
 
-  private static exitToValue<A, E>(exit: Exit<A, E>): A {
+  private static exitToValue<A, E>(this: void, exit: Exit<A, E>): A {
     // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: exitToResult(exit).unwrapOrThrow() returns exit.value when exit._tag === 'Success'.
     if (exit._tag === 'Success') return exit.value
     return ResultTask.exitToResult<A, E>(exit).unwrapOrThrow()
@@ -6228,11 +6633,86 @@ export class ResultTask<out A, out E = never, out R = never> {
     }
     if (activeTask.op === OP_TRY_PROMISE) {
       return runTryPromiseResult<A, E>(
-        activeTask.value as (signal: AbortSignal) => PromiseLike<A>,
+        activeTask.value as TryPromiseSource,
         activeTask.continuation as ((error: unknown) => E) | undefined,
       )
     }
     return undefined
+  }
+  /* Stryker restore all */
+
+  /* Stryker disable all: options === undefined fast-path is behaviorally equivalent to runExitSyncOrAsync + exitToResult. */
+  static #finishResultSync<A, E>(
+    outcome: Exit<unknown, unknown>,
+    context: ResultTaskRuntimeContext,
+    outerMap: ((value: unknown) => unknown) | undefined,
+  ): Promise<Result<A, E>> {
+    const scope = context.scope
+    const mappedOutcome =
+      outerMap !== undefined && outcome._tag === 'Success'
+        ? ResultTask.#applyMapToSuccess(outcome.value, outerMap, NEVER_ABORTED_SIGNAL)
+        : outcome
+    const finalExit = scope.isClean() ? mappedOutcome : scope.closeSyncOrAsync(mappedOutcome)
+    if (scope.isClean()) {
+      ResultTask.#releaseRunContext(context)
+    }
+    if (isPromiseExit(finalExit)) {
+      return finalExit.then(
+        ResultTask.exitToResult as (exit: Exit<unknown, unknown>) => Result<A, E>,
+      )
+    }
+    if (finalExit._tag === 'Failure' && finalExit.cause._tag === 'Die') {
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Preserve the original defect just as the asynchronous exit does.
+      return Promise.reject(finalExit.cause.defect)
+    }
+    return Promise.resolve(ResultTask.exitToResult(finalExit as Exit<A, E>))
+  }
+
+  static #runResultNoOptions<A, E>(
+    task: ResultTask<unknown, unknown, unknown>,
+  ): Promise<Result<A, E>> {
+    const fastResult = ResultTask.#runResultFastPath<A, E>(task)
+    if (fastResult !== undefined) {
+      return fastResult
+    }
+    try {
+      const context = ResultTask.#acquireRunContext()
+      const scope = context.scope
+      let activeTask = task
+      let outerMap: ((value: unknown) => unknown) | undefined = undefined
+      if (task.op === OP_MAP) {
+        const inner = task.value as ResultTask<unknown, unknown, unknown>
+        if (inner.op === OP_GEN || inner.op === OP_TRY_PROMISE || inner.op === OP_ASYNC) {
+          activeTask = inner
+          outerMap = task.continuation as (value: unknown) => unknown
+        }
+      }
+      const outcome = activeTask.run(context)
+      if (isPromiseExit(outcome)) {
+        return outcome.then((resolvedExit) => {
+          if (scope.isClean()) {
+            ResultTask.#releaseRunContext(context)
+            if (outerMap !== undefined && resolvedExit._tag === 'Success') {
+              return ok(outerMap(resolvedExit.value) as A)
+            }
+            return ResultTask.exitToResult(resolvedExit as Exit<A, E>)
+          }
+          const nextExit =
+            outerMap !== undefined && resolvedExit._tag === 'Success'
+              ? ResultTask.#applyMapToSuccess(resolvedExit.value, outerMap, NEVER_ABORTED_SIGNAL)
+              : resolvedExit
+          const closed = scope.closeSyncOrAsync(nextExit)
+          return isPromiseExit(closed)
+            ? closed.then(ResultTask.exitToResult as (exit: Exit<unknown, unknown>) => Result<A, E>)
+            : ResultTask.exitToResult(closed as Exit<A, E>)
+        })
+      }
+      return ResultTask.#finishResultSync<A, E>(outcome, context, outerMap)
+    } catch (error) {
+      return Promise.reject(
+        error instanceof Error ? error : new Error(String(error), { cause: error }),
+      )
+    }
   }
   /* Stryker restore all */
 
@@ -6242,16 +6722,13 @@ export class ResultTask<out A, out E = never, out R = never> {
   ): Promise<Result<A, E | ScopeError<R>>> {
     /* Stryker disable all: options === undefined fast-path is behaviorally equivalent to runExitSyncOrAsync + exitToResult. */
     if (options === undefined) {
-      const fastResult = ResultTask.#runResultFastPath<A, E | ScopeError<R>>(task)
-      if (fastResult !== undefined) {
-        return fastResult
-      }
+      return ResultTask.#runResultNoOptions<A, E | ScopeError<R>>(task)
     }
     /* Stryker restore all */
     try {
       const outcome = ResultTask.runExitSyncOrAsync(task, options)
       if (isPromiseExit(outcome)) {
-        return outcome.then((exit) => ResultTask.exitToResult(exit))
+        return outcome.then(ResultTask.exitToResult)
       }
       if (outcome._tag === 'Failure' && outcome.cause._tag === 'Die') {
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Preserve the original defect just as the asynchronous exit does.
@@ -6272,23 +6749,57 @@ export class ResultTask<out A, out E = never, out R = never> {
     return ResultTask.runResultPromiseInternal(task, options)
   }
 
+  // Keep direct sync success and pooled context handling in the runner to avoid extra promise work.
+  // fallow-ignore-next-line complexity
   private static runPromiseInternal<A, E, R>(
     task: ResultTask<A, E, R>,
     options?: ResultTaskRunOptions<R>,
   ): Promise<A> {
     try {
-      /* Stryker disable ConditionalExpression,BlockStatement: the immediate success shortcut avoids creating a runtime. */
-      if (options === undefined && task.op === OP_SUCCESS) {
-        return Promise.resolve(task.value as A)
+      /* Stryker disable all: options === undefined fast-path is behaviorally equivalent to runExitSyncOrAsync + exitToValue. */
+      if (options === undefined) {
+        if (task.op === OP_SUCCESS) {
+          return Promise.resolve(task.value as A)
+        }
+        const context = ResultTask.#acquireRunContext()
+        const scope = context.scope
+        const outcome = task.run(context)
+        if (isPromiseExit(outcome)) {
+          return outcome.then((resolvedExit) => {
+            if (scope.isClean()) {
+              ResultTask.#releaseRunContext(context)
+              return ResultTask.exitToValue(resolvedExit as Exit<A, E | ScopeError<R>>)
+            }
+            const closed = scope.closeSyncOrAsync(resolvedExit)
+            return isPromiseExit(closed)
+              ? closed.then(ResultTask.exitToValue as (exit: Exit<unknown, unknown>) => A)
+              : ResultTask.exitToValue(closed as Exit<A, E | ScopeError<R>>)
+          })
+        }
+        const finalExit = scope.isClean() ? outcome : scope.closeSyncOrAsync(outcome)
+        if (scope.isClean()) {
+          ResultTask.#releaseRunContext(context)
+        }
+        if (isPromiseExit(finalExit)) {
+          return finalExit.then(ResultTask.exitToValue as (exit: Exit<unknown, unknown>) => A)
+        }
+        if (finalExit._tag === 'Failure') {
+          return Promise.resolve(finalExit).then(
+            ResultTask.exitToValue as (exit: Exit<unknown, unknown>) => A,
+          )
+        }
+        return Promise.resolve(finalExit.value as A)
       }
-      /* Stryker restore ConditionalExpression,BlockStatement */
+      /* Stryker restore all */
       const outcome = ResultTask.runExitSyncOrAsync(task, options)
       if (isPromiseExit(outcome)) {
-        return outcome.then((exit) => ResultTask.exitToValue(exit))
+        return outcome.then(ResultTask.exitToValue)
       }
       if (outcome._tag === 'Failure') {
         // Preserve the failure payload across the Promise boundary, including non-Error values.
-        return Promise.resolve(outcome).then((exit) => ResultTask.exitToValue(exit))
+        return Promise.resolve(outcome).then(
+          ResultTask.exitToValue as (exit: Exit<A, E | ScopeError<R>>) => A,
+        )
       }
       return Promise.resolve(outcome.value)
     } catch (error) {
@@ -6681,16 +7192,17 @@ interface MemoizeWaiter {
   readonly signal: AbortSignal
   readonly scope: TaskScope
   readonly resolve: (exit: Exit<unknown, unknown>) => void
-  readonly onAbort: () => void
+  onAbort: (() => void) | undefined
 }
 
 interface MemoizeRun {
+  readonly state: MemoizeState
   readonly signal: FiberSignal
   readonly scope: TaskScope
-  readonly waiters: Set<MemoizeWaiter>
-  readonly done: Promise<Exit<unknown, unknown>>
-  readonly resolveDone: (exit: Exit<unknown, unknown>) => void
-  settled: boolean
+  completion: PromiseWithResolvers<Exit<unknown, unknown>> | undefined
+  waiters: Set<MemoizeWaiter> | undefined
+  firstCallerScope: TaskScope | undefined
+  canAbort: boolean
 }
 
 interface MemoizeState {
@@ -6698,119 +7210,130 @@ interface MemoizeState {
   inFlight: MemoizeRun | undefined
 }
 
+const transferMemoizedScope = (run: MemoizeRun, resolved: Exit<unknown, unknown>): void => {
+  // Stryker disable next-line OptionalChaining: successful runs reach this path with a scope owner or an attached waiter.
+  const scope = run.firstCallerScope ?? run.waiters?.values().next().value?.scope
+  // Stryker disable next-line ConditionalExpression: a successful run reaches scope transfer with an owner.
+  if (scope === undefined) void run.scope.close(resolved)
+  else scope.adopt(run.scope)
+}
+
 const finishMemoizeRun = (
-  state: MemoizeState,
   run: MemoizeRun,
   resolved: Exit<unknown, unknown>,
-): void => {
-  run.settled = true
-  run.signal.dispose()
+): Exit<unknown, unknown> => {
+  // Stryker disable next-line BooleanLiteral: defensive against reentry while removing settled waiters.
+  run.canAbort = false
+  const state = run.state
   if (state.inFlight === run) {
     state.inFlight = undefined
   }
+  const waiters = run.waiters
   if (resolved._tag === 'Success') {
-    if (!run.scope.isClean()) {
-      const firstWaiter = run.waiters.values().next().value
-      if (firstWaiter === undefined) void run.scope.close(resolved)
-      else firstWaiter.scope.adopt(run.scope)
-    }
+    // Stryker disable next-line ConditionalExpression: transferring a clean scope contributes no finalizers or children.
+    if (!run.scope.isClean()) transferMemoizedScope(run, resolved)
     state.cached = resolved
   }
-  for (const waiter of run.waiters) {
-    if (waiter.signal !== NEVER_ABORTED_SIGNAL) {
-      waiter.signal.removeEventListener('abort', waiter.onAbort)
+  if (waiters !== undefined) {
+    for (const waiter of waiters) {
+      // Stryker disable next-line ConditionalExpression: the shared signal ignores listener removal when onAbort is absent.
+      if (waiter.onAbort !== undefined) {
+        waiter.signal.removeEventListener('abort', waiter.onAbort)
+      }
+      waiter.resolve(
+        resolved._tag === 'Success'
+          ? interruptSuccess(resolved, waiter.signal)
+          : isolateExitForObserver(resolved),
+      )
     }
-    waiter.resolve(
-      resolved._tag === 'Success'
-        ? interruptSuccess(resolved, waiter.signal)
-        : isolateExitForObserver(resolved),
-    )
+    // Stryker disable next-line CallExpression: drops references to resolved waiters as soon as the run settles.
+    waiters.clear()
   }
-  run.waiters.clear()
-  run.resolveDone(resolved)
+  run.completion?.resolve(resolved)
+  return resolved
 }
 
 const settleMemoizeOutcome = (
-  state: MemoizeState,
   run: MemoizeRun,
   exit: Exit<unknown, unknown>,
-): void => {
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
   const resolved = interruptSuccess(exit, run.signal.asAbortSignal())
   if (resolved._tag === 'Failure' && !run.scope.isClean()) {
     const closed = run.scope.closeSyncOrAsync(resolved)
-    if (isPromiseExit(closed)) {
-      void closed.then((closedExit) => {
-        finishMemoizeRun(state, run, closedExit)
-      })
-      return
-    }
-    finishMemoizeRun(state, run, closed)
-    return
+    return isPromiseExit(closed)
+      ? closed.then((closedExit) => finishMemoizeRun(run, closedExit))
+      : finishMemoizeRun(run, closed)
   }
-  finishMemoizeRun(state, run, resolved)
+  return finishMemoizeRun(run, resolved)
 }
 
 const abortLastMemoizeWaiter = (
-  state: MemoizeState,
   active: MemoizeRun,
   signal: AbortSignal,
 ): Promise<Exit<unknown, unknown>> => {
+  const state = active.state
+  // Stryker disable next-line ConditionalExpression: native abort listeners reach this point while the active run still owns the slot.
   if (state.inFlight === active) state.inFlight = undefined
+  active.completion ??= Promise.withResolvers<Exit<unknown, unknown>>()
   active.signal.abort(signal.reason)
-  return active.done.then((finalExit) =>
+  return active.completion.promise.then((finalExit) =>
+    // Stryker disable next-line ConditionalExpression: settlement turns a success into an interrupt before delivering it to the last cancelled waiter.
     finalExit._tag === 'Failure' ? isolateExitForObserver(finalExit) : interrupted(signal),
   )
 }
 
 const attachMemoizeWaiter = (
-  state: MemoizeState,
   active: MemoizeRun,
   context: ResultTaskRuntimeContext,
 ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+  const existing = active.waiters
   if (context.signal.aborted) {
-    if (active.waiters.size === 0 && !active.settled) {
-      return abortLastMemoizeWaiter(state, active, context.signal)
+    if ((existing?.size ?? 0) === 0 && active.canAbort) {
+      return abortLastMemoizeWaiter(active, context.signal)
     }
     return interrupted(context.signal)
   }
+  const waiters = existing ?? (active.waiters = new Set())
   return new Promise<Exit<unknown, unknown>>((resolve) => {
     const waiter: MemoizeWaiter = {
       signal: context.signal,
       scope: context.scope,
       resolve,
-      onAbort: () => {
-        active.waiters.delete(waiter)
-        if (active.waiters.size === 0 && !active.settled) {
-          void abortLastMemoizeWaiter(state, active, context.signal).then(resolve)
+      onAbort: undefined,
+    }
+    // Stryker disable next-line ConditionalExpression: the shared signal ignores listener registration.
+    if (context.signal !== NEVER_ABORTED_SIGNAL) {
+      const onAbort = (): void => {
+        waiters.delete(waiter)
+        if (active.firstCallerScope === waiter.scope) active.firstCallerScope = undefined
+        if (waiters.size === 0 && active.canAbort) {
+          void abortLastMemoizeWaiter(active, context.signal).then(resolve)
           return
         }
         resolve(interrupted(context.signal))
-      },
+      }
+      waiter.onAbort = onAbort
+      context.signal.addEventListener('abort', onAbort, { once: true })
     }
-    if (context.signal !== NEVER_ABORTED_SIGNAL) {
-      context.signal.addEventListener('abort', waiter.onAbort, { once: true })
-    }
-    active.waiters.add(waiter)
+    waiters.add(waiter)
   })
 }
 
 const finishSyncMemoized = (
-  state: MemoizeState,
-  shared: {
-    readonly scope: TaskScope
-    readonly signal: FiberSignal
-    readonly context: ResultTaskRuntimeContext
-  },
+  run: MemoizeRun,
+  context: ResultTaskRuntimeContext,
   outcome: Exit<unknown, unknown>,
 ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
-  shared.signal.dispose()
+  const scope = run.scope
   if (outcome._tag === 'Success') {
-    if (!shared.scope.isClean()) shared.context.scope.adopt(shared.scope)
-    state.cached = outcome
-    return interruptSuccess(outcome, shared.context.signal)
+    // Stryker disable next-line ConditionalExpression: adopting a clean scope contributes no finalizers or children.
+    if (!scope.isClean()) context.scope.adopt(scope)
+    run.state.cached = outcome
+    return interruptSuccess(outcome, context.signal)
   }
-  if (!shared.scope.isClean()) {
-    const closed = shared.scope.closeSyncOrAsync(outcome)
+  // Stryker disable next-line ConditionalExpression: closing a clean scope returns the same failure exit.
+  if (!scope.isClean()) {
+    const closed = scope.closeSyncOrAsync(outcome)
     return isPromiseExit(closed)
       ? closed.then(isolateExitForObserver)
       : isolateExitForObserver(closed)
@@ -6837,74 +7360,212 @@ const runMemoized = <A, E, R>(
   if (state.cached !== undefined) {
     return context.signal.aborted ? interrupted(context.signal) : state.cached
   }
+  // Stryker disable next-line ConditionalExpression: the interpreter already rejects pre-aborted runs before memoized execution.
   if (context.signal.aborted) {
     return interrupted(context.signal)
   }
   if (state.inFlight === undefined) {
     const sharedSignal = new FiberSignal()
     const sharedScope = new TaskScope()
-    const doneResolvers = Promise.withResolvers<Exit<unknown, unknown>>()
     const run: MemoizeRun = {
+      state,
       signal: sharedSignal,
       scope: sharedScope,
-      waiters: new Set(),
-      done: doneResolvers.promise,
-      resolveDone: doneResolvers.resolve,
-      settled: false,
+      completion: undefined,
+      waiters: undefined,
+      firstCallerScope: undefined,
+      canAbort: false,
     }
     const sharedContext = withSpanStack(
       withScope(context, sharedScope, sharedSignal.asAbortSignal()),
       undefined,
     )
+    // A synchronous callback can start another observer before returning its Promise.
+    state.inFlight = run
     const outcome = executeMemoizeTask(task, sharedContext)
+    run.canAbort = true
+    const hasReentrantWaiters = run.waiters !== undefined && run.waiters.size > 0
+    if (hasReentrantWaiters && !context.signal.aborted) run.firstCallerScope = context.scope
     if (!isPromiseExit(outcome)) {
-      return finishSyncMemoized(
-        state,
-        { scope: sharedScope, signal: sharedSignal, context },
-        outcome,
+      if (!hasReentrantWaiters) {
+        state.inFlight = undefined
+        return finishSyncMemoized(run, context, outcome)
+      }
+      return continueWith(settleMemoizeOutcome(run, outcome), (exit) =>
+        exit._tag === 'Success'
+          ? interruptSuccess(exit, context.signal)
+          : isolateExitForObserver(exit),
       )
     }
-    state.inFlight = run
     void outcome.then(
       (exit) => {
-        settleMemoizeOutcome(state, run, exit)
+        void settleMemoizeOutcome(run, exit)
       },
       (error: unknown) => {
-        settleMemoizeOutcome(state, run, died(error))
+        void settleMemoizeOutcome(run, died(error))
       },
     )
+    return attachMemoizeWaiter(run, context)
   }
-  return attachMemoizeWaiter(state, state.inFlight, context)
+  return attachMemoizeWaiter(state.inFlight, context)
 }
 
-const executeTryPromise = (
-  tryFn: (signal: AbortSignal) => PromiseLike<unknown>,
+type TryPromiseSource =
+  | ((signal: AbortSignal) => PromiseLike<unknown>)
+  | ResultTaskTryPromiseOptions<unknown, unknown>
+
+const invokeTryPromise = (source: TryPromiseSource, signal: AbortSignal): PromiseLike<unknown> =>
+  typeof source === 'function' ? source(signal) : source.try(signal)
+
+const catchTryPromise = (
+  source: TryPromiseSource,
   catchFn: ((error: unknown) => unknown) | undefined,
+  error: unknown,
+): unknown => {
+  if (typeof source !== 'function') return source.catch(error)
+  return catchFn === undefined ? error : catchFn(error)
+}
+
+interface FusedTryPromiseSpec {
+  readonly trySource: TryPromiseSource
+  readonly catchFn: ((error: unknown) => unknown) | undefined
+  readonly mapOk?: ((value: unknown) => unknown) | undefined
+  readonly mapErr?: ((error: unknown) => unknown) | undefined
+  readonly outerMapOk?: ((value: unknown) => unknown) | undefined
+  readonly recover?:
+    | ((
+        exit: Exit<unknown, unknown> & { readonly _tag: 'Failure' },
+      ) => Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>)
+    | undefined
+}
+
+/* Stryker disable all: fused tryPromise combinator fast-path is behaviorally equivalent to ResultTask.runTaskLoop. */
+const mapTryPromiseFailure = (
+  error: unknown,
+  spec: Pick<FusedTryPromiseSpec, 'trySource' | 'catchFn' | 'mapErr'>,
+): Exit<unknown, unknown> & { readonly _tag: 'Failure' } => {
+  // eslint-disable-next-line init-declarations
+  let failValue: unknown
+  try {
+    failValue = catchTryPromise(spec.trySource, spec.catchFn, error)
+  } catch (catchError) {
+    return died(catchError) as Exit<unknown, unknown> & { readonly _tag: 'Failure' }
+  }
+  if (spec.mapErr === undefined) {
+    return failed(failValue) as Exit<unknown, unknown> & { readonly _tag: 'Failure' }
+  }
+  try {
+    return failed(spec.mapErr(failValue)) as Exit<unknown, unknown> & { readonly _tag: 'Failure' }
+  } catch (mapError) {
+    return died(mapError) as Exit<unknown, unknown> & { readonly _tag: 'Failure' }
+  }
+}
+
+const createFusedTryPromiseResolve = (
+  spec: Pick<FusedTryPromiseSpec, 'mapOk' | 'outerMapOk' | 'recover'>,
+  context: ResultTaskRuntimeContext,
+): ((value: unknown) => Exit<unknown, unknown>) => {
+  const { mapOk, outerMapOk, recover } = spec
+  const signal = context.signal
+  const trackSignal = signal !== NEVER_ABORTED_SIGNAL
+  if (mapOk === undefined && outerMapOk === undefined) {
+    if (!trackSignal) return success
+    if (recover !== undefined) {
+      return (value: unknown): Exit<unknown, unknown> =>
+        signal.aborted ? interrupted(signal) : success(value)
+    }
+    return (value: unknown): Exit<unknown, unknown> =>
+      signal.aborted && context.acquiring !== true ? interrupted(signal) : success(value)
+  }
+  const singleMap = mapOk ?? outerMapOk
+  if (mapOk === undefined || outerMapOk === undefined) {
+    const mapFn = singleMap as (value: unknown) => unknown
+    return (value: unknown): Exit<unknown, unknown> => {
+      if (trackSignal && signal.aborted) {
+        return interrupted(signal)
+      }
+      try {
+        const mapped = mapFn(value)
+        return trackSignal && signal.aborted ? interrupted(signal) : success(mapped)
+      } catch (error) {
+        return died(error)
+      }
+    }
+  }
+  return (value: unknown): Exit<unknown, unknown> => {
+    if (trackSignal && signal.aborted) {
+      return interrupted(signal)
+    }
+    try {
+      const first = mapOk(value)
+      if (trackSignal && signal.aborted) {
+        return interrupted(signal)
+      }
+      const second = outerMapOk(first)
+      return trackSignal && signal.aborted ? interrupted(signal) : success(second)
+    } catch (error) {
+      return died(error)
+    }
+  }
+}
+
+const executeFusedTryPromise = (
+  spec: FusedTryPromiseSpec,
   context: ResultTaskRuntimeContext,
 ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
   const signal = context.signal
+  const trackSignal = signal !== NEVER_ABORTED_SIGNAL
   const nativeSignal = toNativeAbortSignal(signal)
+  const onReject = (error: unknown): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+    if (trackSignal && signal.aborted) {
+      return interrupted(signal)
+    }
+    const failureExit = mapTryPromiseFailure(error, spec)
+    return spec.recover === undefined ? failureExit : spec.recover(failureExit)
+  }
+  const onResolve = createFusedTryPromiseResolve(spec, context)
   try {
-    return Promise.resolve(tryFn(nativeSignal)).then(
-      (value) =>
-        signal.aborted && context.acquiring !== true ? interrupted(signal) : success(value),
+    return Promise.resolve(invokeTryPromise(spec.trySource, nativeSignal)).then(onResolve, onReject)
+  } catch (error) {
+    return onReject(error)
+  }
+}
+/* Stryker restore all */
+
+const executeTryPromise = (
+  trySource: unknown,
+  catchFn: ((error: unknown) => unknown) | undefined,
+  context: ResultTaskRuntimeContext,
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+  const source = trySource as TryPromiseSource
+  const signal = context.signal
+  // Stryker disable next-line ConditionalExpression: forcing signal tracking only wraps success for the never-aborted signal.
+  const trackSignal = signal !== NEVER_ABORTED_SIGNAL
+  const nativeSignal = toNativeAbortSignal(signal)
+  const onResolve = trackSignal
+    ? (value: unknown): Exit<unknown, unknown> =>
+        signal.aborted && context.acquiring !== true ? interrupted(signal) : success(value)
+    : success
+  try {
+    return Promise.resolve(invokeTryPromise(source, nativeSignal)).then(
+      onResolve,
       (error: unknown): Exit<unknown, unknown> => {
-        if (signal.aborted) {
+        if (trackSignal && signal.aborted) {
           return interrupted(signal)
         }
         try {
-          return failed(catchFn === undefined ? error : catchFn(error))
+          return failed(catchTryPromise(source, catchFn, error))
         } catch (catchError) {
           return died(catchError)
         }
       },
     )
   } catch (error) {
-    if (signal.aborted) {
+    if (trackSignal && signal.aborted) {
       return interrupted(signal)
     }
     try {
-      return failed(catchFn === undefined ? error : catchFn(error))
+      return failed(catchTryPromise(source, catchFn, error))
     } catch (catchError) {
       return died(catchError)
     }
@@ -6913,13 +7574,13 @@ const executeTryPromise = (
 
 /* Stryker disable all: options === undefined fast-path is behaviorally equivalent to runExitSyncOrAsync + exitToResult. */
 const runTryPromiseResult = async <A, E>(
-  tryFn: (signal: AbortSignal) => PromiseLike<A>,
+  trySource: TryPromiseSource,
   catchFn: ((error: unknown) => E) | undefined,
 ): Promise<Result<A, E>> => {
   try {
-    return ok(await tryFn(NEVER_ABORTED_SIGNAL))
+    return ok((await invokeTryPromise(trySource, NEVER_ABORTED_SIGNAL)) as A)
   } catch (error) {
-    return err(catchFn === undefined ? (error as E) : catchFn(error))
+    return err(catchTryPromise(trySource, catchFn, error) as E)
   }
 }
 /* Stryker restore all */

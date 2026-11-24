@@ -161,7 +161,7 @@ export default defineConfig({
   },
   test: {
     coverage: {
-      exclude: ['node_modules/', 'dist/', 'tests/', 'src/index.ts'],
+      exclude: ['node_modules/', 'dist/', 'tests/', 'src/index.ts', 'src/entries/**'],
       reporter: ['text', 'json', 'html', 'lcov'],
     },
     globals: true,

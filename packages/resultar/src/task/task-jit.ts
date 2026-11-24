@@ -55,7 +55,7 @@ export interface TaskJitHelpers {
     value: Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>,
   ) => value is Promise<Exit<unknown, unknown>>
   readonly executeTryPromise: (
-    tryFn: (signal: AbortSignal) => PromiseLike<unknown>,
+    trySource: unknown,
     catchFn: ((error: unknown) => unknown) | undefined,
     context: ResultTaskRuntimeContext,
   ) => Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>

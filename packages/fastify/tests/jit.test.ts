@@ -463,4 +463,55 @@ describe("resultar-fastify Tier 0 / Tier 1 compiled request hooks and dual-mode 
       });
     },
   );
+
+  test("does not eagerly materialize request.signal on Tier 0/1 POST or GET requests", async () => {
+    const Tenant = ResultTask.service<string, "tenant">("tenant");
+    const services = createModule()
+      .value("tag", "fast")
+      .scoped(service("greeting", { tenant: Tenant }, ({ tenant }) => `hi:${tenant}`));
+
+    let closeListenerNamesInHandler: string[] = [];
+    let closeListenerNamesAfterSignalRead: string[] = [];
+
+    const app = createFastifyApp(
+      {
+        services,
+        bindings: ["greeting"],
+        locals: (request: FastifyRequest) => ({
+          tenant: String(request.headers["x-tenant"] ?? "alpha"),
+        }),
+      },
+      (instance) => {
+        instance.post("/items", (request) => {
+          closeListenerNamesInHandler = request.raw
+            .listeners("close")
+            .map((listener) => (listener as { readonly name?: string }).name ?? "");
+          expect(request.signal.aborted).toBe(false);
+          closeListenerNamesAfterSignalRead = request.raw
+            .listeners("close")
+            .map((listener) => (listener as { readonly name?: string }).name ?? "");
+          const { greeting } = request.getDecorator<InferRequestServices<typeof app>>("services");
+          return { greeting, body: request.body };
+        });
+      },
+    );
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/items",
+        payload: { url: "https://example.com" },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        greeting: "hi:alpha",
+        body: { url: "https://example.com" },
+      });
+      // Reading request.signal lazily registers Fastify's onAbort listener on request.raw.
+      expect(closeListenerNamesInHandler).not.toContain("onAbort");
+      expect(closeListenerNamesAfterSignalRead).toContain("onAbort");
+    } finally {
+      await app.close();
+    }
+  });
 });
