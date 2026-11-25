@@ -187,6 +187,20 @@ void test("isPlaygroundCandidate rejects non-runnable pseudocode and accepts sel
 void test("every generated data-play snippet executes cleanly in the playground", async () => {
   let snippetCount = 0;
   let sawFindCauseDocSnippet = false;
+  const tutorialOutputs: Readonly<Record<string, readonly (readonly string[])[]>> = {
+    quickstart: [
+      ["Reserve 3 items", "Enter a positive whole number", "Enter a positive whole number"],
+      ["Ok(750)", 'Err("InvalidQuantity")'],
+    ],
+    "async-workflow": [
+      ["0", "2"],
+      ["InvalidQuantity", "InsufficientStock", "Ready: 2", "2"],
+    ],
+    "failure-boundaries": [
+      ["0", "1"],
+      ["true", "open → check → close"],
+    ],
+  };
 
   for (const slug of DOC_SLUGS) {
     const loader = DOC_LOADERS[slug];
@@ -210,7 +224,16 @@ void test("every generated data-play snippet executes cleanly in the playground"
         true,
         `Generated playground snippet ${slug} #${String(idx)} failed: ${result.error ?? "unknown error"}\nCode:\n${code}`,
       );
+      const expected = tutorialOutputs[slug]?.[idx - 1];
+      if (expected !== undefined) {
+        assert.deepEqual(
+          result.logs.map((log) => log.text),
+          expected,
+          `${slug} example ${String(idx)}`,
+        );
+      }
     }
+    if (slug in tutorialOutputs) assert.equal(idx, tutorialOutputs[slug]?.length, slug);
   }
 
   assert.ok(

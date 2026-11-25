@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { test, type TestContext } from "node:test";
 
+import { DOC_LOADERS } from "../src/generated/site-data.js";
 import { PLAYGROUND_PRESETS } from "../src/presets.js";
 
 const websiteDir = resolve(import.meta.dirname, "..");
@@ -453,6 +454,58 @@ setTimeout(() => {}, 10_000);
   },
 );
 
+void test("readers can run the displayed example and navigate the tutorial on mobile", async (context) => {
+  const url = await startStaticServer(context, distDir);
+  const browser = await HeadlessBrowser.launch();
+  context.after(async () => {
+    await browser.close();
+  });
+  await browser.navigate(url);
+  const displayed = await browser.evalJs<string>(
+    'document.querySelector(".hero pre code").textContent',
+  );
+  await browser.evalJs('document.querySelector(".hero [data-play]").click()');
+  await browser.waitFor('document.querySelector("#pg-editor")');
+  assert.equal(await browser.evalJs('document.querySelector("#pg-editor").value'), displayed);
+  await browser.evalJs(`document.querySelector('[data-action="pg-run"]').click()`);
+  await browser.waitFor('document.querySelector(".pg-status-ok")');
+  assert.match(
+    await browser.evalJs<string>('document.querySelector(".pg-output").textContent'),
+    /InsufficientStock/u,
+  );
+
+  await browser.send("Emulation.setDeviceMetricsOverride", {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: true,
+  });
+  await browser.navigate(url);
+  await browser.evalJs('document.querySelector(".hero-actions .btn-primary").click()');
+  await browser.waitFor('document.querySelector(".doc-prose #your-first-result")');
+  assert.equal(
+    await browser.evalJs(
+      "document.documentElement.scrollWidth <= window.innerWidth && window.innerWidth === 390",
+    ),
+    true,
+  );
+  await browser.evalJs('document.querySelector(".compact-toc summary").click()');
+  await browser.evalJs(
+    "document.querySelector('.compact-toc a[href$=\"#transform-a-successful-value\"]').click()",
+  );
+  await browser.waitFor('location.hash.endsWith("#transform-a-successful-value")');
+  await browser.evalJs('document.querySelector(".doc-pager .next").click()');
+  await browser.waitFor('document.querySelector(".doc-prose #compose-a-lazy-workflow")');
+  await browser.evalJs('document.querySelector(".mobile-menu-btn").click()');
+  assert.equal(
+    await browser.evalJs(
+      `document.querySelector('#docs-sidebar [aria-current="page"]').textContent`,
+    ),
+    "Compose a lazy workflow",
+  );
+  assert.deepEqual(browser.uncaughtExceptions, []);
+});
+
 void test("the home page links to the full benchmark report", async (context) => {
   const url = await startStaticServer(context, distDir);
   const browser = await HeadlessBrowser.launch();
@@ -472,6 +525,47 @@ void test("the home page links to the full benchmark report", async (context) =>
   assert.equal(composing, true);
   await browser.evalJs(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`);
 
+  const layoutOverflow = await browser.evalJs<boolean>(
+    `document.documentElement.scrollWidth > window.innerWidth`,
+  );
+  assert.equal(layoutOverflow, false, "Home page must not overflow horizontally");
+
+  const initialCompareText = await browser.evalJs<string>(
+    `document.querySelector(".compare-grid")?.textContent ?? ""`,
+  );
+  assert.match(initialCompareText, /requestScope: false/u);
+
+  await browser.evalJs(`document.querySelector('[data-compare-tab="schemas"]').click()`);
+  const schemasCompareText = await browser.evalJs<string>(
+    `document.querySelector(".compare-grid")?.textContent ?? ""`,
+  );
+  assert.match(schemasCompareText, /requestJsonZod/u);
+  assert.match(schemasCompareText, /requestJsonTypeBox/u);
+
+  for (const [tab, metric, values] of [
+    ["ecosystem", "1.92×", ["35,630", "18,551"]],
+    ["adapters", "94.8%", ["43,554", "45,919"]],
+    ["core", "3.67×", ["360,620", "98,243"]],
+  ] as const) {
+    if (tab !== "ecosystem") {
+      // eslint-disable-next-line no-await-in-loop -- Switch workloads in the same browser session.
+      await browser.evalJs(`document.querySelector('[data-bench-tab="${tab}"]').click()`);
+    }
+    // eslint-disable-next-line no-await-in-loop -- Inspect the comparison after each switch.
+    const chart = await browser.evalJs<{ metric: string; values: string[]; source: string }>(`({
+      metric: document.querySelector(".bench-story strong").textContent,
+      values: Array.from(document.querySelectorAll(".bench-series b"), el => el.textContent),
+      source: document.querySelector(".bench-footer a").hash
+    })`);
+    assert.equal(chart.metric, metric);
+    assert.deepEqual(chart.values, values);
+    const [route, anchor] = chart.source.slice("#/docs/".length).split("#");
+    assert.ok(route !== undefined && anchor !== undefined);
+    // eslint-disable-next-line no-await-in-loop -- Verify that each source link reaches the measurement.
+    const page = await DOC_LOADERS[route]?.();
+    assert.ok(page?.toc.some((heading) => heading.id === anchor) === true, chart.source);
+  }
+
   await browser.evalJs(
     `document.querySelector('.hero-actions a[href="#/docs/benchmarks"]').click()`,
   );
@@ -480,7 +574,8 @@ void test("the home page links to the full benchmark report", async (context) =>
     `Array.from(document.querySelectorAll(".doc-prose h2"), (heading) => heading.textContent)`,
   );
   assert.equal(headings.length, 12);
-  assert.match(headings[0] ?? "", /v5 versus published 4\.1\.1/u);
+  assert.match(headings[0] ?? "", /Effect 4\.1\.4/u);
+  assert.ok(headings.some((heading) => /v5 versus published 4\.1\.1/u.test(heading)));
   assert.deepEqual(browser.uncaughtExceptions, []);
 });
 

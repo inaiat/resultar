@@ -129,8 +129,15 @@ const SECTIONS = [
   {
     group: "Getting Started",
     pages: [
-      { slug: "overview", title: "Overview & Quickstart", source: "README.md" },
-      { slug: "core-guide", title: "Core Package Guide", source: "packages/resultar/README.md" },
+      { slug: "quickstart", title: "Your first Result", source: "website/guides/quickstart.md" },
+      { slug: "async-workflow", title: "Compose a lazy workflow", source: "website/guides/async-workflow.md" },
+      { slug: "failure-boundaries", title: "Handle failures and cleanup", source: "website/guides/failure-boundaries.md" },
+    ],
+  },
+  {
+    group: "Adoption & Migration",
+    pages: [
+      { slug: "overview", title: "Project overview", source: "README.md" },
       {
         slug: "coming-from-effect",
         title: "Coming from Effect",
@@ -144,6 +151,7 @@ const SECTIONS = [
   {
     group: "Reference",
     pages: [
+      { slug: "core-guide", title: "Core Package Guide", source: "packages/resultar/README.md" },
       { slug: "full-reference", title: "Complete Guide", source: "DOCUMENTATION.md" },
       { slug: "recipes", title: "Executable Recipes", source: "docs/recipes.md" },
       { slug: "api-inventory", title: "Public API Inventory", source: "docs/api-inventory.md" },

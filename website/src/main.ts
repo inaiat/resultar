@@ -8,6 +8,14 @@ import {
   SITE_META,
   type DocPage,
 } from "./generated/site-data.js";
+import {
+  highlightTs,
+  renderBenchmarkShowcase,
+  renderBottomCta,
+  renderInteroperabilityShowcase,
+  type BenchTab,
+  type CompareTab,
+} from "./home-sections.js";
 import type { PlaygroundRunResult } from "./playground-runner.js";
 import { PLAYGROUND_PRESETS } from "./presets.js";
 import { searchDocs } from "./search.js";
@@ -22,13 +30,15 @@ const ALL_ORDERED_SLUGS: readonly string[] = NAV_SECTIONS.flatMap((section) =>
 );
 
 const INSTALL_COMMANDS: Readonly<Record<"pnpm" | "npm" | "jsr", string>> = {
-  pnpm: "pnpm add resultar && pnpm add -D resultar-check",
-  npm: "npm install resultar && npm install -D resultar-check",
-  jsr: "npx jsr add @inaiat/resultar",
+  pnpm: `pnpm add resultar@${SITE_META.version}`,
+  npm: `npm install resultar@${SITE_META.version}`,
+  jsr: `npx jsr add @inaiat/resultar@${SITE_META.version}`,
 };
 
 const state = {
   installTab: "pnpm" as "pnpm" | "npm" | "jsr",
+  benchTab: "ecosystem" as BenchTab,
+  compareTab: "http" as CompareTab,
   theme: "dark" as "dark" | "light",
   sidebarOpen: false,
   searchOpen: false,
@@ -137,7 +147,7 @@ const renderTopbar = (route: Route): string => {
       <div class="topbar-left">
         ${
           isDocs
-            ? `<button class="icon-btn mobile-menu-btn" type="button" data-action="toggle-sidebar" aria-label="Toggle navigation">☰</button>`
+            ? `<button class="icon-btn mobile-menu-btn" type="button" data-action="toggle-sidebar" aria-controls="docs-sidebar" aria-expanded="${String(state.sidebarOpen)}" aria-label="Toggle navigation">☰</button>`
             : ""
         }
         <a class="brand" href="#/">
@@ -146,8 +156,8 @@ const renderTopbar = (route: Route): string => {
           <span class="version-pill">v${escapeHtml(SITE_META.version)}</span>
         </a>
         <nav class="nav-links" aria-label="Main navigation">
-          <a class="nav-link ${isDocs && route.slug !== "coming-from-effect" && route.slug !== "resultar-check" && route.slug !== "api-inventory" && route.slug !== "benchmarks" ? "active" : ""}" href="#/docs/overview">Docs</a>
-          <a class="nav-link ${isDocs && route.slug === "coming-from-effect" ? "active" : ""}" href="#/docs/coming-from-effect">From Effect</a>
+          <a class="nav-link ${isDocs && !route.slug.startsWith("packages/") && route.slug !== "resultar-check" && route.slug !== "api-inventory" && route.slug !== "benchmarks" ? "active" : ""}" href="#/docs/quickstart">Docs</a>
+          <a class="nav-link ${isDocs && route.slug.startsWith("packages/") ? "active" : ""}" href="#/docs/packages/di">Packages</a>
           <a class="nav-link ${isDocs && route.slug === "api-inventory" ? "active" : ""}" href="#/docs/api-inventory">API</a>
           <a class="nav-link ${isDocs && route.slug === "benchmarks" ? "active" : ""}" href="#/docs/benchmarks">Benchmarks</a>
           <a class="nav-link ${isDocs && route.slug === "resultar-check" ? "active" : ""}" href="#/docs/resultar-check">resultar-check</a>
@@ -156,7 +166,7 @@ const renderTopbar = (route: Route): string => {
       </div>
       <div class="topbar-right">
         <button class="search-trigger" type="button" data-action="open-search">
-          <span>Search docs, API &amp; rules…</span>
+          <span>Search<span class="search-detail"> docs, API &amp; rules…</span></span>
           <span class="kbd">⌘K</span>
         </button>
         <button class="icon-btn" type="button" data-action="toggle-theme" title="Toggle theme" aria-label="Toggle theme">
@@ -169,44 +179,47 @@ const renderTopbar = (route: Route): string => {
 };
 
 const renderHome = (): string => {
-  const heroSnippet = `import { createTaggedError, ResultTask, serviceTag, Tracer } from "resultar";
+  const heroSnippet = `import { ResultTask } from "resultar";
 
-class UserNotFoundError extends createTaggedError({
-  name: "UserNotFoundError",
-  message: "User $id not found",
-}) {}
+const checkOrder = ResultTask.fn(function* (quantity: number) {
+  const stock = yield* ResultTask.ok(4);
+  if (quantity > stock) {
+    return yield* ResultTask.err("InsufficientStock" as const);
+  }
+  return quantity;
+});
 
-const UserRepo = serviceTag<{ find: (id: string) => ResultTask<string, UserNotFoundError> }>("UserRepo");
+const order = await checkOrder(5).runResult();
+console.log(order.match({
+  ok: (quantity) => \`Ready: \${quantity}\`,
+  err: (reason) => reason,
+})); // InsufficientStock`;
 
-const greet = ResultTask.fn("users.greet", function* (id: string) {
-  const repo = yield* UserRepo;
-  const name = yield* repo.find(id).withSpan("db.findUser", { id });
-  return \`Welcome, \${name}!\`;
-});`;
-
-  const encodedHero = encodeBase64Utf8(PLAYGROUND_PRESETS[4]?.code ?? heroSnippet);
+  const encodedHero = encodeBase64Utf8(heroSnippet);
   const installCmd = INSTALL_COMMANDS[state.installTab];
+  const installTabs = SITE_META.version.includes("-")
+    ? (["pnpm", "npm"] as const)
+    : (["pnpm", "npm", "jsr"] as const);
 
   return `
     <main class="home">
       <section class="hero">
         <div>
-          <div class="hero-eyebrow">TypeScript 7 · Node 24+ · ESM · sideEffects: false</div>
-          <h1>Typed error handling &amp; lazy tasks without the monolith.</h1>
+          <div class="hero-eyebrow">Resultar v${escapeHtml(SITE_META.version)} · Fastify · Hono · NestJS · Zod · TypeBox</div>
+          <h1>Typed errors &amp; lazy tasks for the stack you already use.</h1>
           <p class="hero-sub">
-            Start with zero-overhead <code>Result&lt;T, E&gt;</code>. Scale cleanly to lazy
-            <code>ResultTask&lt;A, E, R&gt;</code>, lean concurrency, opt-in tracing, and
-            ${SITE_META.ruleCount} native TypeScript-Go static checks.
+            Start with a <code>~5.9 kB</code> <code>Result&lt;T, E&gt;</code>. Scale to lazy
+            <code>ResultTask&lt;A, E, R&gt;</code>, CSP-safe scoped DI, your own schema library, and
+            ${SITE_META.ruleCount} native TypeScript-Go checks — with standard <code>Promise</code> boundaries.
           </p>
           <div class="hero-actions">
-            <a class="btn btn-primary" href="#/docs/overview">Get Started</a>
+            <a class="btn btn-primary" href="#/docs/quickstart">Get Started</a>
             <a class="btn" href="#/playground">▶ Interactive Playground</a>
-            <a class="btn" href="#/docs/coming-from-effect">Coming from Effect</a>
             <a class="btn" href="#/docs/benchmarks">Benchmarks</a>
           </div>
           <div class="install-box">
             <div class="install-tabs">
-              ${(["pnpm", "npm", "jsr"] as const)
+              ${installTabs
                 .map(
                   (tab) =>
                     `<button type="button" class="install-tab ${state.installTab === tab ? "active" : ""}" data-install-tab="${tab}">${tab}</button>`,
@@ -224,34 +237,44 @@ const greet = ResultTask.fn("users.greet", function* (id: string) {
               <button class="code-btn code-btn-play" type="button" data-play="${encodedHero}">▶ Try Live</button>
             </div>
           </div>
-          <pre><code>${escapeHtml(heroSnippet)}</code></pre>
+          <pre><code>${highlightTs(heroSnippet)}</code></pre>
         </div>
       </section>
 
       <section class="metrics-strip">
-        <div class="metric-card">
+        <a class="metric-card" href="#/docs/core-guide">
           <div class="metric-val">~5.9 kB</div>
-          <div class="metric-label"><code>resultar/result</code> gzipped subpath</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-val">${SITE_META.ruleCount} rules</div>
-          <div class="metric-label">Native Go analyzer + <code>--fix</code></div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-val">0 deps</div>
-          <div class="metric-label">Pure JS core &amp; VS Code/Cursor LSP</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-val">100% live</div>
-          <div class="metric-label">CI-verified docs, recipes &amp; agent evals</div>
-        </div>
+          <div class="metric-label"><code>resultar/result</code> gzipped · 0 deps · tree-shakeable</div>
+        </a>
+        <a class="metric-card" href="#/docs/packages/fastify">
+          <div class="metric-val">95%+ raw</div>
+          <div class="metric-label">Fastify, Hono &amp; NestJS DI · 100% CSP-safe plans</div>
+        </a>
+        <a class="metric-card" href="#/docs/benchmarks">
+          <div class="metric-val">66.4k req/s</div>
+          <div class="metric-label">Real HTTP + Mongo + Redis + BullMQ · <code>35.6k</code> redirects</div>
+        </a>
+        <a class="metric-card" href="#/docs/resultar-check">
+          <div class="metric-val">140 ms</div>
+          <div class="metric-label">${SITE_META.ruleCount} native Go rules · 120 files · <code>--fix</code> &amp; LSP</div>
+        </a>
       </section>
 
+      ${renderInteroperabilityShowcase(state.compareTab)}
+
+      ${renderBenchmarkShowcase(state.benchTab)}
+
+      <div class="home-section-label">Built for Day-One Simplicity &amp; Production Scale</div>
       <section class="feature-grid">
         <a class="feature-card" href="#/docs/core-guide">
           <span class="feature-tag">CORE ERGONOMICS</span>
           <h3>Result, ResultTask &amp; Tagged Errors</h3>
-          <p>Real Error subclasses with <code>$var</code> interpolation, redaction, exhaustive <code>Match</code>, <code>runSync</code>, error-aware <code>Retry.policy</code>, and <code>repeat</code>.</p>
+          <p>Real Error subclasses with <code>$var</code> interpolation, redaction, exhaustive <code>Match</code>, <code>runSync</code>, error-aware <code>Retry.policy</code>, and ~100% core mutation coverage.</p>
+        </a>
+        <a class="feature-card" href="#/docs/packages/di">
+          <span class="feature-tag">INTEROPERABLE DI</span>
+          <h3>One Module Across Any Framework</h3>
+          <p>Register <code>value</code>, <code>singleton</code>, <code>scoped</code>, and <code>resource</code> services once and run them in Fastify, Hono, NestJS, workers, or scripts.</p>
         </a>
         <a class="feature-card" href="#/playground?preset=concurrency">
           <span class="feature-tag">CONCURRENCY</span>
@@ -264,14 +287,9 @@ const greet = ResultTask.fn("users.greet", function* (id: string) {
           <p>Fiber-inherited ambient context, opt-in <code>TaskTracer</code> / <code>Tracer.memory()</code>, <code>withSpan</code>, named <code>ResultTask.fn</code>, and span traces on <code>Cause</code>.</p>
         </a>
         <a class="feature-card" href="#/docs/resultar-check">
-          <span class="feature-tag">STATIC ANALYSIS</span>
+          <span class="feature-tag">STATIC ANALYSIS &amp; LSP</span>
           <h3>Native TypeScript-Go Checker</h3>
-          <p>Catch unhandled results, leaked scopes, and <code>Promise&lt;Result&gt;</code> bugs at native speed. Auto-repair safe issues via <code>resultar-check --fix</code>.</p>
-        </a>
-        <a class="feature-card" href="#/docs/vscode-extension">
-          <span class="feature-tag">EDITORS</span>
-          <h3>Zed, VS Code &amp; Cursor LSP</h3>
-          <p>Inline <code>T / E / R</code> channel hover, live unsaved-buffer diagnostics, and preferred semantic quickfixes via the official thin extension.</p>
+          <p>Catch unhandled results, accidental <code>await task</code>, and leaked scopes in 140 ms — with <code>--fix</code> and live Zed, VS Code &amp; Cursor LSP support.</p>
         </a>
         <a class="feature-card" href="#/docs/agents/skill">
           <span class="feature-tag">CODING AGENTS</span>
@@ -279,6 +297,8 @@ const greet = ResultTask.fn("users.greet", function* (id: string) {
           <p>Ships <code>dist/agent/SKILL.md</code> and <code>dist/llms.txt</code> directly inside <code>node_modules/resultar</code>, verified by executable agent evals.</p>
         </a>
       </section>
+
+      ${renderBottomCta()}
     </main>
   `;
 };
@@ -290,10 +310,16 @@ const renderDocs = (page: DocPage): string => {
     index !== -1 && index + 1 < ALL_ORDERED_SLUGS.length ? ALL_ORDERED_SLUGS[index + 1] : undefined;
   const prevTitle = prevSlug === undefined ? undefined : DOC_TITLES[prevSlug];
   const nextTitle = nextSlug === undefined ? undefined : DOC_TITLES[nextSlug];
+  const sectionLinks = page.toc
+    .map(
+      (item) =>
+        `<a class="toc-link depth-${item.level}" href="#/docs/${escapeHtml(page.slug)}#${escapeHtml(item.id)}">${escapeHtml(item.text)}</a>`,
+    )
+    .join("");
 
   return `
     <div class="docs-layout">
-      <aside class="sidebar ${state.sidebarOpen ? "open" : ""}" aria-label="Documentation sidebar">
+      <nav id="docs-sidebar" class="sidebar ${state.sidebarOpen ? "open" : ""}" aria-label="Documentation">
         ${NAV_SECTIONS.map(
           (section) => `
             <div class="sidebar-group">
@@ -301,18 +327,19 @@ const renderDocs = (page: DocPage): string => {
               ${section.items
                 .map(
                   (item) =>
-                    `<a class="sidebar-link ${item.slug === page.slug ? "active" : ""}" href="#/docs/${escapeHtml(item.slug)}">${escapeHtml(item.title)}</a>`,
+                    `<a class="sidebar-link ${item.slug === page.slug ? "active" : ""}" ${item.slug === page.slug ? 'aria-current="page"' : ""} href="#/docs/${escapeHtml(item.slug)}">${escapeHtml(item.title)}</a>`,
                 )
                 .join("")}
             </div>
           `,
         ).join("")}
-      </aside>
+      </nav>
       <main class="doc-main">
         <div class="doc-meta">
           <span>${escapeHtml(page.group)} / ${escapeHtml(page.title)}</span>
           <a href="https://github.com/inaiat/resultar/blob/main/${escapeHtml(page.source)}" target="_blank" rel="noopener noreferrer">Source: ${escapeHtml(page.source)}</a>
         </div>
+        ${sectionLinks && `<details class="compact-toc"><summary>On this page</summary><nav aria-label="Sections">${sectionLinks}</nav></details>`}
         <article class="doc-prose">${page.html}</article>
         <nav class="doc-pager" aria-label="Pagination">
           ${
@@ -329,17 +356,7 @@ const renderDocs = (page: DocPage): string => {
       </main>
       <aside class="toc" aria-label="On this page">
         <div class="toc-title">On This Page</div>
-        ${
-          page.toc.length === 0
-            ? `<span class="toc-link">Top of page</span>`
-            : page.toc
-                .slice(0, 60)
-                .map(
-                  (item) =>
-                    `<a class="toc-link depth-${item.level}" href="#/docs/${escapeHtml(page.slug)}#${escapeHtml(item.id)}">${escapeHtml(item.text)}</a>`,
-                )
-                .join("")
-        }
+        ${sectionLinks || '<span class="toc-link">Top of page</span>'}
       </aside>
     </div>
   `;
@@ -728,6 +745,29 @@ document.addEventListener("click", (event: MouseEvent) => {
     const tab = installBtn.dataset.installTab;
     if (tab === "pnpm" || tab === "npm" || tab === "jsr") {
       state.installTab = tab;
+      render();
+    }
+    return;
+  }
+
+  const benchBtn = target.closest<HTMLElement>("[data-bench-tab]");
+  if (benchBtn?.dataset.benchTab !== undefined) {
+    const tab = benchBtn.dataset.benchTab;
+    if (tab === "adapters" || tab === "core" || tab === "ecosystem") {
+      state.benchTab = tab;
+      render();
+      document
+        .querySelector<HTMLButtonElement>(`[data-bench-tab="${tab}"]`)
+        ?.focus({ preventScroll: true });
+    }
+    return;
+  }
+
+  const compareBtn = target.closest<HTMLElement>("[data-compare-tab]");
+  if (compareBtn?.dataset.compareTab !== undefined) {
+    const tab = compareBtn.dataset.compareTab;
+    if (tab === "http" || tab === "schemas" || tab === "progressive") {
+      state.compareTab = tab;
       render();
     }
     return;
