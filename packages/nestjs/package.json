@@ -1,6 +1,6 @@
 {
   "name": "resultar-nestjs",
-  "version": "2.0.0-beta.2",
+  "version": "2.0.0-beta.3",
   "description": "Native NestJS services and request resource scopes for Resultar DI.",
   "keywords": [
     "dependency-injection",

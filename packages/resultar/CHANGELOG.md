@@ -1,5 +1,13 @@
 # resultar
 
+## 5.0.0-beta.3
+
+### Patch Changes
+
+- 46c28fa: Share a single memoized task execution with callers that reenter during startup.
+  Copy tagged enum fields as own data properties even when the prototype has a
+  setter with the same key.
+
 ## 5.0.0-beta.2
 
 ### Patch Changes

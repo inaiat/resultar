@@ -4,7 +4,7 @@
   "license": "MIT",
   "exports": "./src/index.ts",
   "imports": {
-    "resultar": "jsr:@inaiat/resultar@^5.0.0-beta.2",
+    "resultar": "jsr:@inaiat/resultar@^5.0.0-beta.3",
     "resultar-request": "jsr:@inaiat/resultar-request@^3.0.0-beta.2",
     "zod": "npm:zod@^4.4.3"
   },
