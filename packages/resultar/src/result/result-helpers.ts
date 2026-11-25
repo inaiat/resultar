@@ -38,7 +38,7 @@ export const getMatchErrorHandler = <T, E, A, B>(
   fnErr: MatchErrorHandler<E, B> | undefined,
 ): MatchErrorHandler<E, B> => {
   if (typeof input !== 'function') {
-    return 'err' in input ? input.err : input.error
+    return input.err
   }
 
   if (fnErr === undefined) {
@@ -48,7 +48,7 @@ export const getMatchErrorHandler = <T, E, A, B>(
   return fnErr
 }
 
-export class OkResultIterator<T> {
+class OkResultIterator<T> {
   declare public readonly done: true
   public readonly value: T
 
@@ -59,9 +59,15 @@ export class OkResultIterator<T> {
   public next(): IteratorResult<never, T> {
     return this as unknown as IteratorResult<never, T>
   }
+
+  public [Symbol.iterator](): this {
+    return this
+  }
 }
 
 Object.assign(OkResultIterator.prototype, { done: true })
+
+export const acquireOkIterator = <T>(value: T): OkResultIterator<T> => new OkResultIterator(value)
 
 /**
  * A `Disposable` is an object that has a `dispose` method that can be used to

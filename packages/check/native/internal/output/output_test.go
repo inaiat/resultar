@@ -3,6 +3,8 @@ package output
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -61,5 +63,20 @@ func TestWriteJUnit(t *testing.T) {
 	}
 	if !strings.Contains(buffer.String(), `<testsuite`) || !strings.Contains(buffer.String(), `avoid &lt;throw&gt;`) {
 		t.Fatalf("unexpected JUnit: %s", buffer.String())
+	}
+}
+
+func TestSARIFCharLengthUsesUTF16(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "source.ts")
+	if err := os.WriteFile(path, []byte("x😀é"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := Write(&buf, []Diagnostic{{File: path, Line: 1, Column: 2, Start: 1, Length: len("😀é")}}, FormatSARIF, dir); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"charLength":3`) {
+		t.Fatal(buf.String())
 	}
 }

@@ -1,5 +1,5 @@
 import { expect, expectTypeOf, test } from "vite-plus/test";
-import { ResultTask, type ResultAsync } from "resultar";
+import { ResultTask, type Result } from "resultar";
 import { createModule, resource, service } from "../src/index.js";
 
 test("useSingletons is lazy, shares acquisitions and retains resources until root close", async () => {
@@ -16,13 +16,13 @@ test("useSingletons is lazy, shares acquisitions and retains resources until roo
   });
   const scope = createModule().singleton(Connection).scope();
   const task = scope.useSingletons(["connection"], ({ connection }) =>
-    ResultTask.succeed(connection.id),
+    ResultTask.ok(connection.id),
   );
   expect(events).toEqual([]);
   expect(await ResultTask.runPromise(task)).toBe(1);
   expect(
     await ResultTask.runPromise(
-      scope.use(["connection"], ({ connection }) => ResultTask.succeed(connection.id)),
+      scope.use(["connection"], ({ connection }) => ResultTask.ok(connection.id)),
     ),
   ).toBe(1);
   expect(events).toEqual(["open"]);
@@ -36,17 +36,15 @@ test("rejects shorter-lived selections, callback tokens and request locals", asy
   const Transient = service("transient", {}, () => 2);
   const scope = createModule().scoped(Scoped).transient(Transient).scope();
   await expect(
-    ResultTask.runPromise(scope.useSingletons(["scoped"], (values) => ResultTask.succeed(values))),
+    ResultTask.runPromise(scope.useSingletons(["scoped"], (values) => ResultTask.ok(values))),
   ).rejects.toThrow("Lifetime violation");
   await expect(
-    ResultTask.runPromise(
-      scope.useSingletons(["transient"], (values) => ResultTask.succeed(values)),
-    ),
+    ResultTask.runPromise(scope.useSingletons(["transient"], (values) => ResultTask.ok(values))),
   ).rejects.toThrow("Lifetime violation");
   await expect(
     ResultTask.runPromise(
       scope.useSingletons([], () =>
-        Scoped.make.flatMap(() =>
+        Scoped.make.andThen(() =>
           ResultTask.gen(function* callback() {
             return yield* Scoped;
           }),
@@ -56,24 +54,61 @@ test("rejects shorter-lived selections, callback tokens and request locals", asy
   ).rejects.toThrow("Lifetime violation");
   await expect(
     ResultTask.runPromise(
-      scope
-        .withServices({ local: 1 })
-        .useSingletons(["local"], (values) => ResultTask.succeed(values)),
+      scope.withServices({ local: 1 }).useSingletons(["local"], (values) => ResultTask.ok(values)),
     ),
   ).rejects.toThrow("Lifetime violation");
   await ResultTask.runPromise(scope.close());
 });
 
+test("useSingletons still rejects overridden scoped and transient services", async () => {
+  const Scoped = service("scoped", {}, () => 1);
+  const Transient = service("transient", {}, () => 2);
+  const overridden = createModule()
+    .scoped(Scoped)
+    .transient(Transient)
+    .singleton("badSingleton", ["scoped"], ({ scoped }) => scoped + 1)
+    .override("scoped", 10)
+    .override("transient", 20);
+  const previousJit = process.env.RESULTAR_JIT;
+  try {
+    for (const jit of ["1", "0"]) {
+      process.env.RESULTAR_JIT = jit;
+      const scope = overridden.scope();
+      // eslint-disable-next-line no-await-in-loop
+      await expect(
+        ResultTask.runPromise(scope.useSingletons(["scoped"], (values) => ResultTask.ok(values))),
+      ).rejects.toThrow("Lifetime violation");
+      // eslint-disable-next-line no-await-in-loop
+      await expect(
+        ResultTask.runPromise(
+          scope.useSingletons(["transient"], (values) => ResultTask.ok(values)),
+        ),
+      ).rejects.toThrow("Lifetime violation");
+      // eslint-disable-next-line no-await-in-loop
+      await expect(
+        ResultTask.runPromise(
+          scope.useSingletons(["badSingleton"], (values) => ResultTask.ok(values)),
+        ),
+      ).rejects.toThrow("Lifetime violation");
+      // eslint-disable-next-line no-await-in-loop
+      await ResultTask.runPromise(scope.close());
+    }
+  } finally {
+    if (previousJit === undefined) delete process.env.RESULTAR_JIT;
+    else process.env.RESULTAR_JIT = previousJit;
+  }
+});
+
 test("root close waits for the application callback and retains selected error types", async () => {
   const finished = Promise.withResolvers<void>();
   const ready = Promise.withResolvers<void>();
-  const Bad = service("bad", ResultTask.fail("offline" as const));
+  const Bad = service("bad", ResultTask.err("offline" as const));
   const scope = createModule().singleton(Bad).value("answer", 42).scope();
-  const task = scope.useSingletons(["answer"], ({ answer }) => ResultTask.succeed(answer));
-  expectTypeOf(ResultTask.runResult(task)).toEqualTypeOf<ResultAsync<number, never>>();
+  const task = scope.useSingletons(["answer"], ({ answer }) => ResultTask.ok(answer));
+  expectTypeOf(ResultTask.runResult(task)).toEqualTypeOf<Promise<Result<number, never>>>();
   expectTypeOf(
-    ResultTask.runResult(scope.useSingletons(["bad"], () => ResultTask.succeed(1))),
-  ).toEqualTypeOf<ResultAsync<number, "offline">>();
+    ResultTask.runResult(scope.useSingletons(["bad"], () => ResultTask.ok(1))),
+  ).toEqualTypeOf<Promise<Result<number, "offline">>>();
   const running = ResultTask.runPromise(
     scope.useSingletons([], () =>
       ResultTask.tryPromise({

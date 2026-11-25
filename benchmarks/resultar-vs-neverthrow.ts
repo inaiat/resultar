@@ -146,9 +146,9 @@ const assertBenchmarkBehavior = async (): Promise<void> => {
   )
 
   assertOkValue(neverthrow.Result.combine(neverthrowAllOkList), [1, 2, 3])
-  assertOkValue(resultar.Result.combine(resultarAllOkList), [1, 2, 3])
+  assertOkValue(resultar.Result.all(resultarAllOkList), [1, 2, 3])
   assertErrValue(neverthrow.Result.combine(neverthrowWithErrList), 2)
-  assertErrValue(resultar.Result.combine(resultarWithErrList), 2)
+  assertErrValue(resultar.Result.all(resultarWithErrList), 2)
 
   assertOkValue(neverthrowJsonParse('42'), 42)
   assertOkValue(resultarJsonParse('42'), 42)
@@ -339,7 +339,7 @@ const tests: Tests = {
   },
 
   'sync/combine all Ok/resultar'() {
-    consume(resultar.Result.combine(resultarAllOkList))
+    consume(resultar.Result.all(resultarAllOkList))
   },
 
   'sync/combine with Err/neverthrow'() {
@@ -347,7 +347,7 @@ const tests: Tests = {
   },
 
   'sync/combine with Err/resultar'() {
-    consume(resultar.Result.combine(resultarWithErrList))
+    consume(resultar.Result.all(resultarWithErrList))
   },
 
   'sync/fromThrowable on Ok/neverthrow'() {

@@ -1,6 +1,6 @@
 {
   "name": "resultar-check-linux-x64",
-  "version": "5.0.1",
+  "version": "6.0.0",
   "description": "Native resultar-check binary for Linux x64",
   "license": "MIT",
   "repository": {

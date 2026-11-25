@@ -1,7 +1,7 @@
 /* eslint-disable unicorn/no-await-expression-member */
 import { defineAppConfig } from "resultar-config";
 import { appConfigProperties } from "../../../examples/hono/src/app-config.js";
-import { errAsync, okAsync } from "resultar";
+import { ResultTask } from "resultar";
 import { expect, expectTypeOf, test } from "vite-plus/test";
 import { createApplication, type AppHono } from "../../../examples/hono/src/main.js";
 import { createServices, UserReadError } from "../../../examples/hono/src/services.js";
@@ -35,8 +35,8 @@ test("the actual Hono example infers AppHono and serves lookup, deletion and hea
 
 test("the Hono example maps an overridden repository failure to 503", async () => {
   const repository = {
-    findById: () => errAsync(new UserReadError({ id: "1" })),
-    remove: () => okAsync(false),
+    findById: () => UserReadError.taskErr({ id: "1" }),
+    remove: () => ResultTask.ok(false),
   };
   const app = createApplication(createServices(testConfig).override("repository", repository));
   const response = await app.request("/users/1");

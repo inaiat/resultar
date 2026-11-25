@@ -1,4 +1,5 @@
 import { deepEqual, equal, ok as assertOk, rejects } from 'node:assert/strict'
+import { getEventListeners } from 'node:events'
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
 import {
@@ -6,16 +7,109 @@ import {
   Cause,
   Clock,
   Fiber,
-  ResultAsync,
   ResultTask,
   ResultTaskCauseError,
-  createTaggedError,
+  Result,
   err,
   ok,
 } from '../src/index.js'
-import type { Exit, FiberHandle, Result, ResultTaskScope, StrictResultAsync } from '../src/index.js'
+import type { Exit, FiberHandle, ResultTaskScope } from '../src/index.js'
 
 describe('ResultTask instance runners', () => {
+  it('runs the andThen continuation once when it returns a sync task', async () => {
+    let calls = 0
+    const task = ResultTask.ok(1).andThen((value) => {
+      calls += 1
+      return ResultTask.sync(() => value + 1)
+    })
+    deepEqual(await task.runResult(), ok(2))
+    equal(calls, 1)
+  })
+
+  it('passes a native signal to fetch without retaining abort listeners on the shared signal', async () => {
+    const task = ResultTask.tryPromise(async (signal) => {
+      signal.addEventListener('abort', () => undefined)
+      equal(getEventListeners(signal, 'abort').length, 0)
+      const response = await fetch('data:text/plain,ok', { signal })
+      return response.text()
+    })
+    deepEqual(await task.runResult(), ok('ok'))
+  })
+
+  it('trampolines nested suspensions for synchronous execution', () => {
+    const countdown = (n: number): ResultTask<number> =>
+      n === 0 ? ResultTask.ok(42) : ResultTask.suspend(() => countdown(n - 1))
+    deepEqual(countdown(50_000).runSync(), ok(42))
+  })
+
+  it('distinguishes zero arguments from a supplied undefined', () => {
+    const countArgs = (...args: readonly unknown[]) => args.length
+    const safe = Result.fromThrowable(countArgs)
+    const task = ResultTask.fn(function* (...args: readonly unknown[]) {
+      return yield* ResultTask.ok(args.length)
+    })
+    deepEqual(safe(), ok(0))
+    deepEqual(safe(undefined), ok(1))
+    deepEqual(task().runSync(), ok(0))
+    deepEqual(task(undefined).runSync(), ok(1))
+  })
+
+  it('binds both tryPromise methods to their options', async () => {
+    const options = {
+      message: 'mapped',
+      try() {
+        return Promise.reject(new Error(this.message))
+      },
+      catch(cause: unknown) {
+        return [this.message, (cause as Error).message]
+      },
+    }
+    deepEqual(await ResultTask.tryPromise(options).runResult(), err(['mapped', 'mapped']))
+  })
+
+  it('adopts foreign thenables once and preserves mapper defects', async () => {
+    let calls = 0
+    let maps = 0
+    const defect = new Error('mapper defect')
+    const rejected = {
+      then(_ok: unknown, fail: (reason: string) => void) {
+        fail('bad')
+      },
+    } as unknown as PromiseLike<number>
+    const factory = () => {
+      calls += 1
+      return rejected
+    }
+    const result = ResultTask.tryPromise(factory).runResult()
+    assertOk(result instanceof Promise)
+    deepEqual(await result, err('bad'))
+    await rejects(
+      ResultTask.tryPromise(factory, () => {
+        maps += 1
+        throw defect
+      }).runResult(),
+      defect,
+    )
+    equal(calls, 2)
+    equal(maps, 1)
+  })
+
+  it('rejects with the original mapper defect for both factory throws and rejected promises', async () => {
+    const defect = { source: 'mapper' }
+    const syncThrow = (): never => {
+      throw new Error('input')
+    }
+    const asyncReject = () => Promise.reject(new Error('input'))
+    for (const factory of [syncThrow, asyncReject]) {
+      const task = ResultTask.tryPromise(factory, () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- Foreign code can throw arbitrary values.
+        throw defect
+      })
+      await rejects(task.runResult(), (reason: unknown) => reason === defect)
+      await rejects(task.runResult({}), (reason: unknown) => reason === defect)
+    }
+  })
+
   it('starts a fresh execution for each runner and stores methods on the prototype', async () => {
     let executions = 0
     const task = ResultTask.sync(() => {
@@ -34,6 +128,21 @@ describe('ResultTask instance runners', () => {
     const fiber = task.runFork()
     equal(executions, 4)
     deepEqual(await Fiber.await(fiber).runPromise(), { _tag: 'Success', value: 4 })
+  })
+
+  it('resolves an immediate thenable on each run and skips it when already interrupted', async () => {
+    let calls = 0
+    const task = ResultTask.ok({
+      then(resolve: (value: number) => void) {
+        calls += 1
+        resolve(calls)
+      },
+    })
+
+    equal(await task.runPromise(), 1)
+    equal(await ResultTask.runPromise(task), 2)
+    await rejects(task.runPromise({ signal: AbortSignal.abort('stop') }), AbortError)
+    equal(calls, 2)
   })
 
   it('retains the static runners and starts fresh asynchronous work on repeated runs', async () => {
@@ -236,7 +345,7 @@ describe('ResultTask instance runners', () => {
     >()
 
     if (false) {
-      expectTypeOf(narrow.runResult()).toEqualTypeOf<ResultAsync<'ready', 'missing'>>()
+      expectTypeOf(narrow.runResult()).toEqualTypeOf<Promise<Result<'ready', 'missing'>>>()
       expectTypeOf(narrow.runPromise()).toEqualTypeOf<Promise<'ready'>>()
       expectTypeOf(narrow.runExit()).toEqualTypeOf<Promise<Exit<'ready', 'missing'>>>()
       expectTypeOf(narrow.runFork()).toEqualTypeOf<FiberHandle<'ready', 'missing'>>()
@@ -248,7 +357,9 @@ describe('ResultTask instance runners', () => {
         acquire: ResultTask.ok<number, 'acquire'>(1),
         release: () => ResultTask.err('release' as const),
       })
-      expectTypeOf(scoped.runResult()).toEqualTypeOf<ResultAsync<number, 'acquire' | 'release'>>()
+      expectTypeOf(scoped.runResult()).toEqualTypeOf<
+        Promise<Result<number, 'acquire' | 'release'>>
+      >()
       expectTypeOf(scoped.runExit()).toEqualTypeOf<Promise<Exit<number, 'acquire' | 'release'>>>()
       expectTypeOf(scoped.runFork()).toEqualTypeOf<FiberHandle<number, 'acquire' | 'release'>>()
       // eslint-disable-next-line @typescript-eslint/unbound-method -- Intentionally verify calls without a receiver fail type checking.
@@ -277,32 +388,28 @@ describe('ResultTask instance runners', () => {
     }
   })
 
-  it('supports binding instance runners and single-callback ResultAsync.then inference', async () => {
+  it('supports binding instance runners and native Promise.then inference', async () => {
     const task = ResultTask.ok<'ready', 'missing'>('ready')
     const boundRunResult = task.runResult.bind(task)
     const boundRunPromise = task.runPromise.bind(task)
     const boundRunExit = task.runExit.bind(task)
     const boundRunFork = task.runFork.bind(task)
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- Verify retained toResultAsync alias also binds cleanly.
-    const boundToResultAsync = task.toResultAsync.bind(task)
 
-    expectTypeOf(boundRunResult()).toEqualTypeOf<ResultAsync<'ready', 'missing'>>()
+    expectTypeOf(boundRunResult()).toEqualTypeOf<Promise<Result<'ready', 'missing'>>>()
     expectTypeOf(boundRunPromise()).toEqualTypeOf<Promise<'ready'>>()
     expectTypeOf(boundRunExit()).toEqualTypeOf<Promise<Exit<'ready', 'missing'>>>()
     expectTypeOf(boundRunFork()).toEqualTypeOf<FiberHandle<'ready', 'missing'>>()
-    expectTypeOf(boundToResultAsync()).toEqualTypeOf<ResultAsync<'ready', 'missing'>>()
 
     deepEqual(await boundRunResult(), ok('ready'))
     equal(await boundRunPromise(), 'ready')
     deepEqual(await boundRunExit(), { _tag: 'Success', value: 'ready' })
     deepEqual(await Fiber.await(boundRunFork()).runPromise(), { _tag: 'Success', value: 'ready' })
-    deepEqual(await boundToResultAsync(), ok('ready'))
 
     const singleCallbackThen = task.runResult().then((res) => (res.isOk() ? res.value.length : 0))
-    expectTypeOf(singleCallbackThen).toEqualTypeOf<PromiseLike<number>>()
+    expectTypeOf(singleCallbackThen).toEqualTypeOf<Promise<number>>()
     equal(await singleCallbackThen, 5)
     const noCallbackThen = task.runResult().then()
-    expectTypeOf(noCallbackThen).toEqualTypeOf<PromiseLike<Result<'ready', 'missing'>>>()
+    expectTypeOf(noCallbackThen).toEqualTypeOf<Promise<Result<'ready', 'missing'>>>()
     deepEqual(await noCallbackThen, ok('ready'))
   })
 
@@ -338,17 +445,7 @@ describe('ResultTask instance runners', () => {
     }
   })
 
-  it('returns a fluent ResultAsync from runResult and supports toResultAsync / ResultAsync.fromTask aliases', async () => {
-    class MissingError extends createTaggedError({
-      name: 'Missing',
-      message: 'Missing $id',
-    }).withProps<{ readonly id: string }>() {}
-
-    class ForbiddenError extends createTaggedError({
-      name: 'Forbidden',
-      message: 'Forbidden $id',
-    }).withProps<{ readonly id: string }>() {}
-
+  it('returns a native Promise<Result<A, E>> from runResult() supporting catch, finally, and assert.rejects', async () => {
     let runs = 0
     const countTask = ResultTask.sync(() => {
       runs += 1
@@ -357,93 +454,48 @@ describe('ResultTask instance runners', () => {
 
     const instanceRun = countTask.runResult()
     const staticRun = ResultTask.runResult(countTask)
-    /* eslint-disable @typescript-eslint/no-deprecated -- Verify retained alias methods delegate to runResult(). */
-    const instanceAlias = countTask.toResultAsync()
-    const staticAlias = ResultTask.toResultAsync(countTask)
-    const asyncAlias = ResultAsync.fromTask(countTask)
-    /* eslint-enable @typescript-eslint/no-deprecated */
 
-    assertOk(instanceRun instanceof ResultAsync)
-    assertOk(staticRun instanceof ResultAsync)
-    assertOk(instanceAlias instanceof ResultAsync)
-    assertOk(staticAlias instanceof ResultAsync)
-    assertOk(asyncAlias instanceof ResultAsync)
+    assertOk(instanceRun instanceof Promise)
+    assertOk(staticRun instanceof Promise)
 
-    expectTypeOf(instanceRun).toEqualTypeOf<StrictResultAsync<number, never>>()
-    expectTypeOf(staticRun).toEqualTypeOf<ResultAsync<number, never>>()
+    expectTypeOf(instanceRun).toEqualTypeOf<Promise<Result<number, never>>>()
+    expectTypeOf(staticRun).toEqualTypeOf<Promise<Result<number, never>>>()
 
-    deepEqual(await instanceRun, ok(1))
-    deepEqual(await staticRun, ok(2))
-    deepEqual(await instanceAlias, ok(3))
-    deepEqual(await staticAlias, ok(4))
-    deepEqual(await asyncAlias, ok(5))
+    let finallyCount = 0
+    const resolvedInstance = await instanceRun.finally(() => {
+      finallyCount += 1
+    })
+    const resolvedStatic = await staticRun.finally(() => {
+      finallyCount += 1
+    })
 
-    const chainedSuccess = await ResultTask.ok<number, MissingError | ForbiddenError>(10)
-      .runResult()
-      .map((value) => value * 2)
-      .andThen((value) => ok(value + 1))
-      .filterOrElse(
-        (value) => value > 10,
-        () => new ForbiddenError({ id: 'too-small' }),
-      )
-      .as('completed' as const)
-      .match(
-        (status) => `ok:${status}`,
-        (error) => `err:${error._tag}`,
-      )
-    equal(chainedSuccess, 'ok:completed')
-
-    const failingTask = ResultTask.err<number, MissingError | ForbiddenError>(
-      new MissingError({ id: 'user_42' }),
-    )
-    const recoveredTag = await ResultTask.runResult(failingTask)
-      .catchTag('Missing', (error) => ok(error.id.length))
-      .unwrapOr(0)
-    equal(recoveredTag, 7)
-
-    const matchedTags = await failingTask
-      .runResult()
-      .matchTags((value) => `value:${String(value)}`, {
-        Missing: (error) => `missing:${error.id}`,
-        Forbidden: (error) => `forbidden:${error.id}`,
-      })
-    equal(matchedTags, 'missing:user_42')
-
-    const partialMatched = await failingTask.runResult().matchTagsPartial(
-      (value) => `value:${String(value)}`,
-      { Forbidden: (error) => `forbidden:${error.id}` },
-      (error) => `fallback:${error._tag}`,
-    )
-    equal(partialMatched, 'fallback:Missing')
-
-    equal(await ResultTask.ok(99).runResult().unwrapOrThrow(), 99)
+    deepEqual(resolvedInstance, ok(1))
+    deepEqual(resolvedStatic, ok(2))
+    equal(finallyCount, 2)
   })
 
-  it('propagates defects, interruptions, and composite causes through runResult() ResultAsync chains', async () => {
+  it('rejects defects, interruptions, and composite causes directly on the native runResult() Promise', async () => {
     const defect = new Error('defect-boom')
     const dieTask = ResultTask.sync((): number => {
       throw defect
     })
-    await rejects(
-      async () => await dieTask.runResult().map((value) => value * 2),
-      (error: unknown) => error === defect,
-    )
-    const caughtViaThen = await dieTask.runResult().then(
-      () => 'unexpected',
-      (error: unknown) => (error instanceof Error ? `caught:${error.message}` : 'other'),
-    )
-    equal(caughtViaThen, 'caught:defect-boom')
+
+    await rejects(dieTask.runResult(), (error: unknown) => error === defect)
+
+    let finallyCalled = false
+    const caughtViaCatch = await dieTask
+      .runResult()
+      .catch((error: unknown) => (error instanceof Error ? `caught:${error.message}` : 'other'))
+      .finally(() => {
+        finallyCalled = true
+      })
+    equal(caughtViaCatch, 'caught:defect-boom')
+    equal(finallyCalled, true)
 
     const abortController = new AbortController()
     abortController.abort('cancelled')
     await rejects(
-      async () =>
-        await ResultTask.ok(1)
-          .runResult({ signal: abortController.signal })
-          .match(
-            () => 'ok',
-            () => 'err',
-          ),
+      ResultTask.ok(1).runResult({ signal: abortController.signal }),
       (error: unknown) => error instanceof AbortError && error.cause === 'cancelled',
     )
 
@@ -454,9 +506,6 @@ describe('ResultTask instance runners', () => {
       })
       return yield* ResultTask.err('first' as const)
     })
-    await rejects(
-      async () => await compositeTask.runResult().unwrapOr('fallback' as never),
-      ResultTaskCauseError,
-    )
+    await rejects(compositeTask.runResult(), ResultTaskCauseError)
   })
 })

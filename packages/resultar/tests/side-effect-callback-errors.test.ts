@@ -1,13 +1,14 @@
 import { equal } from 'node:assert'
 import { describe, it } from 'vite-plus/test'
 
-import { err, errAsync, ok, okAsync } from '../src/index.js'
+import { errAsync, okAsync } from '../src/entries/async.js'
+import { err, ok } from '../src/index.js'
 
 const callbackError = new Error('side effect failed')
 
 describe('Result side-effect callback failures', () => {
-  it('swallows tap callback errors and preserves the Ok result', () => {
-    const result = ok<number, Error>(1).tap(() => {
+  it('swallows inspect callback errors and preserves the Ok result', () => {
+    const result = ok<number, Error>(1).inspect(() => {
       throw callbackError
     })
 
@@ -15,9 +16,9 @@ describe('Result side-effect callback failures', () => {
     equal(result._unsafeUnwrap(), 1)
   })
 
-  it('swallows tapError callback errors and preserves the Err result', () => {
+  it('swallows inspectError callback errors and preserves the Err result', () => {
     const original = new Error('original')
-    const result = err<number, Error>(original).tapError(() => {
+    const result = err<number, Error>(original).inspectError(() => {
       throw callbackError
     })
 
@@ -50,8 +51,8 @@ describe('Result side-effect callback failures', () => {
 })
 
 describe('ResultAsync side-effect callback failures', () => {
-  it('swallows tap callback errors and preserves the Ok result', async () => {
-    const result = await okAsync<number, Error>(1).tap(() => {
+  it('swallows inspect callback errors and preserves the Ok result', async () => {
+    const result = await okAsync<number, Error>(1).inspect(() => {
       throw callbackError
     })
 
@@ -59,8 +60,8 @@ describe('ResultAsync side-effect callback failures', () => {
     equal(result._unsafeUnwrap(), 1)
   })
 
-  it('swallows rejected tap callbacks and preserves the Ok result', async () => {
-    const result = await okAsync<number, Error>(1).tap(
+  it('swallows rejected inspect callbacks and preserves the Ok result', async () => {
+    const result = await okAsync<number, Error>(1).inspect(
       async () => await Promise.reject(callbackError),
     )
 
@@ -68,9 +69,9 @@ describe('ResultAsync side-effect callback failures', () => {
     equal(result._unsafeUnwrap(), 1)
   })
 
-  it('swallows tapError callback errors and preserves the Err result', async () => {
+  it('swallows inspectError callback errors and preserves the Err result', async () => {
     const original = new Error('original')
-    const result = await errAsync<number, Error>(original).tapError(() => {
+    const result = await errAsync<number, Error>(original).inspectError(() => {
       throw callbackError
     })
 
@@ -89,15 +90,5 @@ describe('ResultAsync side-effect callback failures', () => {
 
     equal(okResult._unsafeUnwrap(), 1)
     equal(errResult._unsafeUnwrapErr(), original)
-  })
-
-  it('swallows async disposable callback errors and preserves the original result', async () => {
-    const disposable = okAsync<number, Error>(1).toAsyncDisposable(
-      async () => await Promise.reject(callbackError),
-    )
-
-    await disposable[Symbol.asyncDispose]()
-
-    equal((await disposable)._unsafeUnwrap(), 1)
   })
 })

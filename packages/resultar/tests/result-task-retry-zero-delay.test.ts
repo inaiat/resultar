@@ -16,9 +16,6 @@ describe('ResultTask retry with zero delay', () => {
     ['canonical default', Retry.policy<string>({ times: 2 })],
     ['canonical explicit', Retry.policy<string>({ times: 2, delayMs: 0 })],
     ['canonical callback', Retry.policy<string>({ times: 2, delayMs: () => 0 })],
-    ['legacy default', { times: 2 }],
-    ['legacy explicit', { times: 2, delayMs: 0 }],
-    ['legacy callback', { times: 2, delayMs: () => 0 }],
   ] as const)('retries without live timers for %s delay', async (_name, options) => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const timeout = vi.spyOn(globalThis, 'setTimeout')
@@ -91,7 +88,7 @@ describe('ResultTask retry with zero delay', () => {
     equal(timeout.mock.calls.length, 0)
   })
 
-  it.each(['onRetry', 'canonical delay', 'legacy delay'] as const)(
+  it.each(['onRetry', 'canonical delay'] as const)(
     'does not restart the body after cancellation in %s',
     async (location) => {
       const controller = new AbortController()
@@ -100,16 +97,13 @@ describe('ResultTask retry with zero delay', () => {
         if (location !== 'onRetry') controller.abort(location)
         return 0
       }
-      const options =
-        location === 'legacy delay'
-          ? { times: 1, delayMs: delay }
-          : Retry.policy({
-              times: 1,
-              onRetry: async () => {
-                if (location === 'onRetry') controller.abort(location)
-              },
-              delayMs: delay,
-            })
+      const options = Retry.policy({
+        times: 1,
+        onRetry: async () => {
+          if (location === 'onRetry') controller.abort(location)
+        },
+        delayMs: delay,
+      })
       const task = ResultTask.sync(() => {
         attempts += 1
       })

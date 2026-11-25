@@ -124,6 +124,7 @@ export class TaskScope {
     childrenSet.clear()
     for (const outcome of outcomes) {
       if (outcome._tag === 'Failure') {
+        markCleanupCause(outcome.cause)
         this.cleanup =
           this.cleanup._tag === 'Success'
             ? outcome
@@ -131,6 +132,7 @@ export class TaskScope {
                 _tag: 'Failure',
                 cause: { _tag: 'Parallel', left: this.cleanup.cause, right: outcome.cause },
               }
+        markCleanupCause(this.cleanup.cause)
       }
     }
   }
@@ -139,7 +141,9 @@ export class TaskScope {
     currentResult: Exit<unknown, unknown>,
     released: Exit<unknown, unknown>,
   ): Exit<unknown, unknown> {
+    if (released._tag === 'Failure') markCleanupCause(released.cause)
     this.cleanup = appendExit(this.cleanup, released)
+    if (this.cleanup._tag === 'Failure') markCleanupCause(this.cleanup.cause)
     return appendExit(currentResult, released)
   }
 

@@ -24,7 +24,7 @@ test("JSON task responses preserve OpenAPI and RPC status/payload contracts", as
       c,
       c.req.valid("param").id === "1"
         ? ResultTask.ok({ id: "1" })
-        : ResultTask.fail("missing" as const),
+        : ResultTask.err("missing" as const),
       {
         ok: (user) => c.json(user, 200),
         error: (error) => {
@@ -124,7 +124,7 @@ test("release errors join the typed response mapping", async () => {
       c,
       ResultTask.acquireRelease({
         acquire: ResultTask.ok(42),
-        release: () => ResultTask.fail("release" as const),
+        release: () => ResultTask.err("release" as const),
       }),
       {
         ok: (value) => c.json({ value }),

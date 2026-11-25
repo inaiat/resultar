@@ -1,7 +1,8 @@
 import { equal } from 'node:assert'
 import { describe, it } from 'vite-plus/test'
 
-import { errAsync, okAsync, ResultTask } from '../src/index.js'
+import { errAsync, okAsync } from '../src/entries/async.js'
+import { ResultTask } from '../src/index.js'
 
 const callbackError = new Error('side effect failed')
 
@@ -22,6 +23,23 @@ describe('ResultAsync inspect callback failures', () => {
 
     equal(result.isOk(), true)
     equal(result._unsafeUnwrap(), 1)
+  })
+
+  it('waits for the asynchronous inspect callback before settling', async () => {
+    const callback = Promise.withResolvers<void>()
+    let settled = false
+    const inspected = okAsync(1)
+      .inspect(() => callback.promise)
+      .then((result) => {
+        settled = true
+        return result
+      })
+    await new Promise((resolve) => {
+      setImmediate(resolve)
+    })
+    equal(settled, false)
+    callback.resolve()
+    equal((await inspected)._unsafeUnwrap(), 1)
   })
 
   it('does not await ResultTask values returned from inspect callbacks', async () => {

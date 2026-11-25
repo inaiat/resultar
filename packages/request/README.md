@@ -5,10 +5,9 @@ Fetch-first JSON request helpers for Resultar.
 Use this package when a service calls another HTTP service and needs consistent JSON parsing,
 payload validation, retry, and error mapping without coupling the request layer to a schema library.
 
-For new lazy `ResultTask` workflows, use `requestJsonTask`: construction starts no network I/O,
-each Task run invokes `request(signal)` anew with the Task's `AbortSignal`, and retries reuse
-`TaskClock` and Task interruption semantics. For existing eager boundaries, `requestJson` returns
-eager `ResultAsync` from `resultar` and starts one shared execution immediately.
+`requestJson` builds a lazy, repeatable `ResultTask<T, E>`: construction starts no network I/O,
+each run invokes `request(signal)` anew with the active Task `AbortSignal`, and retries reuse
+`TaskClock` and Task interruption semantics.
 
 ## Install
 
@@ -22,86 +21,59 @@ npm install resultar-request resultar
 
 ## Feature Map
 
-| Need | Option or API |
-| --- | --- |
-| Lazy, repeatable `ResultTask<T, E>` HTTP call | `requestJsonTask` |
-| Eager `ResultAsync<T, E>` HTTP call | `requestJson` |
-| Start a Fetch/Undici-compatible request | `request` (`(signal) => Promise<Response>` or eager `Promise<Response>`) |
-| Cooperative cancellation across attempts and retry delays | `signal` (or Task runner `signal` in `requestJsonTask`) |
-| Validate unknown JSON without transforming it | `validator` |
-| Validate and transform unknown JSON | `decode` |
-| Customize validation messages | `validationError` |
-| Map transport failures into domain errors | `mapError` |
-| Retry selected failures with delay, backoff, and jitter | `retry` |
-| Use TypeBox or Zod schemas | `resultar-request-typebox`, `resultar-request-zod` |
+| Need                                                      | Option or API                                                                 |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Lazy, repeatable `ResultTask<T, E>` HTTP call             | `requestJson`                                                                 |
+| Start a Fetch/Undici-compatible request on each run       | `request` (`(signal: AbortSignal) => Promise<Response>`)                      |
+| Cooperative cancellation across attempts and retry delays | Task runner `{ signal }`, `ResultTask.timeout`, fiber interruption, or racing |
+| Validate unknown JSON without transforming it             | `validator`                                                                   |
+| Validate and transform unknown JSON                       | `decode`                                                                      |
+| Customize validation messages                             | `validationError`                                                             |
+| Map transport failures into domain errors                 | `mapError`                                                                    |
+| Retry selected failures with delay, backoff, and jitter   | `retry`                                                                       |
+| Use TypeBox or Zod schemas                                | `resultar-request-typebox`, `resultar-request-zod`                            |
 
-## `requestJsonTask` (Lazy `ResultTask`)
+## `requestJson`
 
-`requestJsonTask` builds a lazy, repeatable `ResultTask<T, E>` directly without an `async` wrapper
-or manual `fromResultAsync` bridge:
+`requestJson` builds a lazy, repeatable `ResultTask<T, E>` directly without an `async` wrapper:
 
 ```ts
-import { ResultTask } from 'resultar'
-import { requestJsonTask, type RequestError } from 'resultar-request'
+import { ResultTask } from "resultar";
+import { requestJson, type RequestError } from "resultar-request";
 
-type User = { id: string; email: string }
+type User = { id: string; email: string };
 
 const isUser = (value: unknown): value is User =>
-  typeof value === 'object' &&
+  typeof value === "object" &&
   value !== null &&
-  'id' in value &&
-  'email' in value &&
-  typeof value.id === 'string' &&
-  typeof value.email === 'string'
+  "id" in value &&
+  "email" in value &&
+  typeof value.id === "string" &&
+  typeof value.email === "string";
 
-const fetchUserTask = (id: string): ResultTask<User, RequestError> =>
-  requestJsonTask({
+const fetchUser = (id: string): ResultTask<User, RequestError> =>
+  requestJson({
     request: (signal) => fetch(`https://example.com/users/${id}`, { signal }),
     validator: isUser,
     retry: { times: 2, delayMs: 100, backoff: 2 },
-  })
+  });
 
-const loadUserEmailTask = ResultTask.fn(function* (id: string) {
-  const user = yield* fetchUserTask(id)
-  return user.email
-})
+const loadUserEmail = ResultTask.fn(function* (id: string) {
+  const user = yield* fetchUser(id);
+  return user.email;
+});
 
-const result = await loadUserEmailTask('123').runResult()
+const result = await loadUserEmail("123").runResult();
+const label = result.match(
+  (email) => email,
+  (error) => error.message,
+);
 ```
 
 Task cancellation (runner `{ signal }`, `ResultTask.timeout`, fiber interruption, or racing)
 aborts the `signal` passed to `request(signal)`, cancels pending retry sleeps immediately on
-`TaskClock`, and surfaces Task interruption cleanly without starting further attempts.
-
-## `requestJson` (Eager `ResultAsync`)
-
-`requestJson` executes a request immediately, parses the response body as JSON, validates or decodes the payload,
-and returns `ResultAsync<T, E>` (`StrictResultAsync<T, E>`), which can be returned directly from boundary functions or yielded with `yield*` inside `Result.gen`:
-
-```ts
-import { Result, type StrictResultAsync } from 'resultar'
-import { requestJson, type RequestError } from 'resultar-request'
-
-const fetchUser = (id: string, signal?: AbortSignal): StrictResultAsync<User, RequestError> =>
-  requestJson({
-    signal,
-    request: (attemptSignal) => fetch(`https://example.com/users/${id}`, { signal: attemptSignal }),
-    validator: isUser,
-  })
-
-const loadUserEmail = (id: string): StrictResultAsync<string, RequestError> =>
-  Result.gen(async function* () {
-    const user = yield* fetchUser(id)
-    return user.email
-  })
-
-const result = await loadUserEmail('123')
-const label = result.match(email => email, error => error.message)
-```
-
-For new Task workflows, prefer `requestJsonTask` directly. When adapting an existing helper that
-already returns `ResultAsync`, wrap it in `ResultTask.fromResultAsync((signal) => fetchUser('123', signal))`
-so each Task run starts a fresh request.
+`TaskClock`, and surfaces Task interruption (`Cause.Interrupt` in `runExit()`, rejecting
+`runResult()` with `AbortError`) without starting further attempts.
 
 The core package accepts Fetch `Response` objects and Undici-shaped response objects structurally.
 It does not import `undici`, `typebox`, `zod`, or `node:*` at runtime.
@@ -140,27 +112,27 @@ pnpm add resultar-request-zod zod
 Use `decode` when validation should also transform the payload.
 
 ```ts
-const user = requestJson({
-  request: () => fetch('https://example.com/users/123'),
+const userTask = requestJson({
+  request: (signal) => fetch("https://example.com/users/123", { signal }),
   decode: (value) =>
     isUser(value)
       ? { success: true, value: { ...value, email: value.email.toLowerCase() } }
       : {
           success: false,
-          errors: [{ message: 'Expected user payload' }],
+          errors: [{ message: "Expected user payload" }],
         },
-})
+});
 ```
 
 Use `validationError` to customize the default validation failure message without replacing the
 error type:
 
 ```ts
-const user = requestJson({
-  request: () => fetch('https://example.com/users/123'),
+const userTask = requestJson({
+  request: (signal) => fetch("https://example.com/users/123", { signal }),
   validator: isUser,
   validationError: ({ errors }) => `User response has ${errors.length} validation issue(s)`,
-})
+});
 ```
 
 ## Error Mapping
@@ -168,19 +140,19 @@ const user = requestJson({
 Use `mapError` when callers need domain-specific errors instead of `RequestError`.
 
 ```ts
-const id = '123'
+const id = "123";
 
-const result = requestJson({
-  request: () => fetch(`https://example.com/users/${id}`),
+const userTask = requestJson({
+  request: (signal) => fetch(`https://example.com/users/${id}`, { signal }),
   validator: isUser,
   mapError: {
-    404: () => new Error('User not found'),
+    404: () => new Error("User not found"),
     http: ({ statusCode }) => new Error(`User API failed with status ${statusCode}`),
     invalidJson: ({ cause }) => new Error(`User API returned invalid JSON: ${cause.message}`),
     request: ({ cause }) => new Error(`User API request failed: ${cause.message}`),
     validation: ({ message }) => new Error(message),
   },
-})
+});
 ```
 
 HTTP status-specific handlers win over the generic `http` handler.
@@ -189,14 +161,14 @@ status-specific handlers.
 
 ## Retry and Cancellation
 
-`requestJson` and `requestJsonTask` can retry failed request factories using Resultar retry semantics.
+`requestJson` retries failed request factories using Resultar's `ResultTask` retry semantics and
+active `TaskClock`.
 
 ```ts
-const controller = new AbortController()
+const controller = new AbortController();
 
-const result = requestJson({
-  signal: controller.signal,
-  request: (signal) => fetch('https://example.com/users/123', { signal }),
+const userTask = requestJson({
+  request: (signal) => fetch("https://example.com/users/123", { signal }),
   validator: isUser,
   retry: {
     times: 2,
@@ -204,11 +176,12 @@ const result = requestJson({
     backoff: 2,
     jittered: 0.2,
     when: (context) =>
-      context.reason === 'request' ||
-      (context.reason === 'http' && context.statusCode >= 500),
-    onRetry: ({ attempt, reason }) => console.warn('retrying user request', { attempt, reason }),
+      context.reason === "request" || (context.reason === "http" && context.statusCode >= 500),
+    onRetry: ({ attempt, reason }) => console.warn("retrying user request", { attempt, reason }),
   },
-})
+});
+
+const result = await userTask.runResult({ signal: controller.signal });
 ```
 
 `when` can narrow the default policy with sync or async logic. `onRetry` receives the failure context
@@ -218,10 +191,8 @@ randomization to that delay.
 
 Cancellation is checked before the first attempt, after async retry hooks settle, and while waiting
 for retry delays. Once cancelled, no further attempts are scheduled—even if a custom `when` predicate
-returns `true`. In eager `requestJson`, cancellation resolves inside the declared error channel
-(`RequestError` or `mapError.request`, preserving custom `signal.reason` causes and distinguishing
-`TimeoutError` with status `408` from other aborts). Pass the supplied `signal` to `fetch` or your
-HTTP client: the adapter cannot forcibly stop an underlying transport that ignores `AbortSignal`.
+returns `true`. Pass the supplied `signal` to `fetch` or your HTTP client: the adapter cannot
+forcibly stop an underlying transport that ignores `AbortSignal`.
 
 Default retry policy:
 
@@ -230,9 +201,6 @@ Default retry policy:
 - Does not retry HTTP `4xx` responses.
 - Does not retry invalid JSON.
 - Does not retry validation failures.
-
-Retries require `request` to be a function. A promise request source cannot be retried because it has
-already started.
 
 ## Error helpers and public types
 
@@ -249,7 +217,7 @@ These helpers support custom integrations; `requestJson` already applies the
 normal request/error pipeline.
 
 Public type families include `RequestJsonInput` and its validator/decode/mapped
-variants, `RequestJsonSource`, `RequestJsonResponseData`, `FetchJsonResponseData`,
+variants, `RequestJsonFactory`, `RequestJsonResponseData`, `FetchJsonResponseData`,
 `UndiciJsonResponseData`, `RequestHeaders`, `RequestJsonValidator`,
 `RequestJsonDecoder`, decode success/failure/result types, validation issue/reason
 and error types, `RequestJsonMapError` / `RequestJsonMapErrorResult`, HTTP/request/

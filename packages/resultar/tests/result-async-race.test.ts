@@ -1,10 +1,12 @@
 import { deepEqual, equal, ok as isTrue } from 'node:assert'
+import { setImmediate } from 'node:timers/promises'
 
-import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
+import { describe, expect, expectTypeOf, it, vi } from 'vite-plus/test'
 
-import type { ResultAsyncRaceTask } from '../src/index.js'
+import type { ResultAsyncRaceTask } from '../src/entries/async.js'
 
-import { Result, ResultAsync, createTaggedError } from '../src/index.js'
+import { Result, createTaggedError } from '../src/index.js'
+import { ResultAsync } from '../src/entries/async.js'
 
 class TimeoutError extends createTaggedError({
   message: '$operation timed out after $timeoutMs milliseconds',
@@ -74,6 +76,80 @@ const immediateOk =
   }
 
 describe('ResultAsync racing helpers', () => {
+  it.each(['race', 'raceFirst'] as const)(
+    '%s stops aborting tasks after its first rejected promise',
+    async (method) => {
+      const left = Promise.withResolvers<Result<number, never>>()
+      const right = Promise.withResolvers<Result<number, never>>()
+      const defect = new Error('first rejection')
+      const abort = vi.spyOn(AbortController.prototype, 'abort')
+      try {
+        const running = ResultAsync[method](
+          () => new ResultAsync(left.promise),
+          () => new ResultAsync(right.promise),
+        )
+        left.reject(defect)
+        await expect(running).rejects.toBe(defect)
+        const attempts = abort.mock.calls.length
+        expect(attempts).toBeGreaterThan(0)
+        right.reject(new Error('late rejection'))
+        await setImmediate()
+        expect(abort).toHaveBeenCalledTimes(attempts)
+      } finally {
+        abort.mockRestore()
+      }
+    },
+  )
+
+  it.each(['race', 'raceFirst', 'raceWith'] as const)(
+    '%s rejects with the original defect and aborts its pending peer',
+    async (mode) => {
+      const defect = new Error('race defect')
+      const left = Promise.withResolvers<Result<number, never>>()
+      const right = Promise.withResolvers<Result<number, never>>()
+      const onAbort = vi.fn()
+      const onLeftDone = vi.fn((result: Result<number, never>) => result)
+      const onRightDone = vi.fn((result: Result<number, never>) => result)
+      const rejectEarly = () => new ResultAsync(left.promise)
+      const pending: ResultAsyncRaceTask<number, never> = (signal) => {
+        signal.addEventListener('abort', onAbort, { once: true })
+        return new ResultAsync(right.promise)
+      }
+      const race =
+        mode === 'raceWith'
+          ? ResultAsync.raceWith(rejectEarly, pending, { onLeftDone, onRightDone })
+          : ResultAsync[mode](rejectEarly, pending)
+      left.reject(defect)
+      await expect(race).rejects.toBe(defect)
+      expect(onAbort).toHaveBeenCalledOnce()
+      right.resolve(Result.ok(42))
+      await setImmediate()
+      expect(onLeftDone).not.toHaveBeenCalled()
+      expect(onRightDone).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['raceFirst', 'raceWith'] as const)(
+    '%s leaves the winning signal active when its peer rejects late',
+    async (mode) => {
+      const late = Promise.withResolvers<Result<string, never>>()
+      const onWinnerAbort = vi.fn()
+      const winner = immediateOk('winner', onWinnerAbort)
+      const rival = () => new ResultAsync(late.promise)
+      const result =
+        mode === 'raceWith'
+          ? ResultAsync.raceWith(rival, winner, {
+              onLeftDone: (value) => value,
+              onRightDone: (value) => value,
+            })
+          : ResultAsync.raceFirst(rival, winner)
+      expect((await result).unwrapOrThrow()).toBe('winner')
+      late.reject(new Error('late defect'))
+      await setImmediate()
+      expect(onWinnerAbort).not.toHaveBeenCalled()
+    },
+  )
+
   it('race returns the first success and ignores earlier errors', async () => {
     let completedErrorAborted = false
 

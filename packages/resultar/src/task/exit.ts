@@ -24,7 +24,29 @@ export const combineExits = (
   return failure({ _tag: tag, left: left.cause, right: right.cause })
 }
 
-export const NEVER_ABORTED_SIGNAL: AbortSignal = new AbortController().signal
+const NEVER_ABORTED_SIGNAL_KEY = Symbol.for('resultar/never-aborted-signal')
+const sharedSignals = globalThis as Record<symbol, AbortSignal | undefined>
+
+const createNeverAbortedSignal = (): AbortSignal => {
+  const signal = new AbortController().signal
+  // The shared signal has no controller capable of aborting it. Holding abort
+  // callbacks here would retain their closures for the lifetime of the process.
+  Object.defineProperties(signal, {
+    addEventListener: { value: () => undefined },
+    removeEventListener: { value: () => undefined },
+  })
+  return signal
+}
+
+const getNeverAbortedSignal = (): AbortSignal => {
+  const existing = sharedSignals[NEVER_ABORTED_SIGNAL_KEY]
+  if (existing !== undefined) return existing
+  const created = createNeverAbortedSignal()
+  sharedSignals[NEVER_ABORTED_SIGNAL_KEY] = created
+  return created
+}
+
+export const NEVER_ABORTED_SIGNAL: AbortSignal = getNeverAbortedSignal()
 
 type AbortListener = () => void
 
@@ -89,7 +111,8 @@ export class FiberSignal {
   public abort(reason?: unknown): void {
     if (this.isAborted) return
     this.isAborted = true
-    this.abortReason = reason ?? new DOMException('This operation was aborted', 'AbortError')
+    this.abortReason =
+      reason === undefined ? new DOMException('This operation was aborted', 'AbortError') : reason
     if (this.nativeController !== undefined) {
       this.nativeController.abort(this.abortReason)
     }

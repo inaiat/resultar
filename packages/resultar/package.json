@@ -1,13 +1,14 @@
 {
   "name": "resultar",
-  "version": "4.1.1",
-  "description": "Result pattern for TypeScript",
+  "version": "5.0.0",
+  "description": "Typed error handling, lazy ResultTask workflows, structured concurrency, and opt-in observability for TypeScript.",
   "keywords": [
     "error-handling",
     "functional-programming",
     "result",
     "result-pattern",
-    "resultasync",
+    "result-task",
+    "structured-concurrency",
     "tagged-errors",
     "typescript"
   ],
@@ -33,17 +34,46 @@
     "dist"
   ],
   "type": "module",
+  "sideEffects": false,
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./result": {
+      "types": "./dist/result.d.ts",
+      "import": "./dist/result.js"
+    },
+    "./task": {
+      "types": "./dist/task.d.ts",
+      "import": "./dist/task.js"
+    },
+    "./match": {
+      "types": "./dist/match.d.ts",
+      "import": "./dist/match.js"
+    },
+    "./tagged": {
+      "types": "./dist/tagged.d.ts",
+      "import": "./dist/tagged.js"
+    },
+    "./retry": {
+      "types": "./dist/retry.d.ts",
+      "import": "./dist/retry.js"
+    },
+    "./function": {
+      "types": "./dist/function.d.ts",
+      "import": "./dist/function.js"
+    },
+    "./async": {
+      "types": "./dist/async.d.ts",
+      "import": "./dist/async.js"
     }
   },
   "scripts": {
     "build": "vp pack && node ../../scripts/build-agent-guide.mjs",
     "check": "vp check",
-    "check:fallow": "fallow",
+    "check:fallow": "pnpm run test:cov && fallow --coverage coverage/coverage-final.json",
     "check:full": "pnpm run build && pnpm run check && vp test run --coverage",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",

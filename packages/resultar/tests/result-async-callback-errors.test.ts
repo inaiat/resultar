@@ -1,7 +1,8 @@
 import assert, { equal } from 'node:assert'
 import { describe, it } from 'vite-plus/test'
 
-import { ResultAsync, createTaggedError, errAsync, ok, okAsync } from '../src/index.js'
+import { createTaggedError, ok } from '../src/index.js'
+import { ResultAsync, errAsync, okAsync } from '../src/entries/async.js'
 
 class ValidationError extends createTaggedError({
   message: 'Invalid field $field',

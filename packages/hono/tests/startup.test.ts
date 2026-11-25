@@ -69,7 +69,7 @@ test("close cancels pending startup, releases resources, and never dispatches a 
       services: createModule(),
       startup: ResultTask.gen(function* initialize() {
         yield* ResultTask.acquireRelease({
-          acquire: ResultTask.succeed({}),
+          acquire: ResultTask.ok({}),
           release: () =>
             ResultTask.sync(() => {
               released += 1;
@@ -150,8 +150,8 @@ test.each(["scoped", "transient"] as const)(
 
 test("startup failure retains direct and singleton rollback failures", async () => {
   const Connection = resource("connection", {
-    acquire: ResultTask.succeed({}),
-    release: () => ResultTask.fail("root cleanup"),
+    acquire: ResultTask.ok({}),
+    release: () => ResultTask.err("root cleanup"),
   });
   const app = createHonoApp(
     {
@@ -160,10 +160,10 @@ test("startup failure retains direct and singleton rollback failures", async () 
       startup: ResultTask.gen(function* initialize() {
         yield* Connection;
         yield* ResultTask.acquireRelease({
-          acquire: ResultTask.succeed({}),
-          release: () => ResultTask.fail("task cleanup"),
+          acquire: ResultTask.ok({}),
+          release: () => ResultTask.err("task cleanup"),
         });
-        yield* ResultTask.fail("startup failed");
+        yield* ResultTask.err("startup failed");
       }),
     },
     noRoutes,
@@ -187,7 +187,7 @@ test("startup failure retains direct and singleton rollback failures", async () 
 test("startup finalizer failure rejects close while root cleanup still runs", async () => {
   let released = 0;
   const Connection = resource("connection", {
-    acquire: ResultTask.succeed({}),
+    acquire: ResultTask.ok({}),
     release: () =>
       ResultTask.sync(() => {
         released += 1;
@@ -200,8 +200,8 @@ test("startup finalizer failure rejects close while root cleanup still runs", as
       startup: ResultTask.gen(function* initialize() {
         yield* Connection;
         yield* ResultTask.acquireRelease({
-          acquire: ResultTask.succeed({}),
-          release: () => ResultTask.fail("cleanup"),
+          acquire: ResultTask.ok({}),
+          release: () => ResultTask.err("cleanup"),
         });
       }),
     },

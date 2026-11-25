@@ -8,21 +8,20 @@ each project only once for TypeScript diagnostics and Resultar analysis.
 
 ## Rules
 
-New async application workflows should use `ResultTask` and explicit runners. The
-`prefer-result-async` rule name is retained for an optional eager compatibility policy;
-`ResultAsync` and `StrictResultAsync` represent in-flight `Result` values in `resultar`. Configure that rule as `off`
-when the eager policy is not wanted. Its existing default severity and modes remain supported.
+New async application workflows should use `ResultTask` and explicit runners (`task.runResult()` returns native `Promise<Result<T, E>>`). The
+`prefer-result-async` rule defaults to `off` in v5 and is retained as an opt-in eager compatibility policy for `"resultar/async"`. `no-await-result-task` defaults to `error` to catch accidental `await task` bugs, and `no-promise-resultar` flags `Promise<ResultTask>` / `Promise<StrictResultTask>` while allowing `Promise<Result>` execution boundaries.
 
-Task diagnostics and refactors prefer `ok` / `err`, `mapErr`, `andThen`, and `orElse`, while
-recognizing the retained deprecated aliases. Prefer `RetryPolicy` for retry and `{ ok, err }`
+Task diagnostics and refactors prefer `ok` / `err`, `mapErr`, `andThen`, and `orElse`. Prefer `RetryPolicy` for retry and `{ ok, err }`
 for object-form matching. `no-discard` also tracks `Promise<Result>` / `Promise.all(...).then(...)`
 and array `.map` / `.forEach` / `.flatMap` chains through curried/static Resultar consumers,
 transformers, tuple combiners, `.bind(...)`, conditional callbacks, object-literal property callbacks,
-and higher-order callback factories. The eager entry point retains its existing compatibility contracts.
+and higher-order callback factories. `resultar-check migrate-v5` provides preview and `--fix` automation for v4 -> v5 migrations.
 
-The native backend implements these stable rule IDs and their tsconfig options:
+The native backend implements these 43 stable rule IDs and their tsconfig options:
 
 - `resultar/no-discard` (`noDiscard`, `noDiscardMode`)
+- `resultar/no-await-result-task` (`noAwaitResultTask`)
+- `resultar/no-promise-resultar` (`noPromiseResultar`)
 - `resultar/no-promise-in-result-success` (`noPromiseInResultSuccess`)
 - `resultar/no-unknown-result-error` (`noUnknownResultError`)
 - `resultar/no-unknown-task-requirements` (`noUnknownTaskRequirements`)

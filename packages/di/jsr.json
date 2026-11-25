@@ -1,8 +1,8 @@
 {
   "name": "@inaiat/resultar-di",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "license": "MIT",
   "exports": "./src/index.ts",
-  "imports": { "resultar": "jsr:@inaiat/resultar@^4.0.0" },
+  "imports": { "resultar": "jsr:@inaiat/resultar@^5.0.0" },
   "publish": { "include": ["LICENSE", "README.md", "src/**/*.ts"] }
 }

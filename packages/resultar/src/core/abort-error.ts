@@ -1,5 +1,13 @@
 /**
  * Standard cancellation error used by ResultAsync retry, race, timeout, and resource helpers.
+ *
+ * @example
+ * ```ts
+ * import { AbortError, isAbortError } from 'resultar'
+ *
+ * const err = new AbortError('Request cancelled by caller')
+ * isAbortError(err) // true
+ * ```
  */
 export class AbortError extends Error {
   /**

@@ -1,4 +1,5 @@
 import type { Result } from '../result/result.js'
+import type { MatchErrorHandler, MatchOkHandler } from '../result/result-types.js'
 import type { ResultAsync } from './result-async.js'
 export type { ResultAsyncCatchReasonHandlers, ResultAsyncCatchTagHandlers } from './tagged-types.js'
 
@@ -15,17 +16,10 @@ export type ExtractErrAsyncTypes<T extends readonly ResultAsync<unknown, unknown
 export type InferAsyncOkTypes<R> = R extends ResultAsync<infer T, unknown> ? T : never
 export type InferAsyncErrTypes<R> = R extends ResultAsync<unknown, infer E> ? E : never
 
-/** Eager compatibility operations exposed on synchronous Results. */
-export interface ResultAsyncOperations<T, E> {
-  /**
-   * Chains an async fallible operation from the Ok value.
-   */
-  asyncAndThen: <X, Y>(f: (t: T) => ResultAsync<X, Y>) => ResultAsync<X, E | Y>
-  /**
-   * Maps the Ok value with an async function and returns a `ResultAsync`.
-   */
-  asyncMap: <X>(f: (t: T) => Promise<X>) => ResultAsync<X, E>
-}
+/** Match handlers accepted by compatibility `ResultAsync` (`{ ok, err }` or legacy `{ ok, error }`). */
+export type ResultAsyncMatchHandlers<T, E, A, B = A> =
+  | { readonly err: MatchErrorHandler<E, B>; readonly ok: MatchOkHandler<T, A> }
+  | { readonly error: MatchErrorHandler<E, B>; readonly ok: MatchOkHandler<T, A> }
 
 export interface ResultAsyncAndThen {
   <T, E, U, F>(

@@ -1,218 +1,240 @@
-import { deepStrictEqual, strictEqual } from 'node:assert'
-import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { performance } from 'node:perf_hooks'
-import { pathToFileURL } from 'node:url'
+import { deepStrictEqual, strictEqual } from "node:assert";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { performance } from "node:perf_hooks";
+import { pathToFileURL } from "node:url";
 
-import * as localResultar from 'resultar'
+import * as localResultar from "resultar";
+import { type errAsync, okAsync } from "resultar/async";
 
-const { ResultTask, Retry } = localResultar
+const { ResultTask, Retry } = localResultar;
 
-// Only the published v3 APIs used by this baseline; it has no ResultTask implementation.
-type StableResultarModule = Pick<typeof localResultar, 'ok' | 'err' | 'okAsync' | 'errAsync'> & {
+// v4 returns a thenable from runResult(); v5 returns a native Promise.
+interface ComparableTask {
+  runResult(): PromiseLike<unknown>;
+  runPromise(): PromiseLike<number>;
+}
+type StableResultarModule = Pick<typeof localResultar, "ok" | "err"> & {
+  readonly ResultTask?: {
+    ok: (value: number) => ComparableTask;
+    all: (
+      tasks: readonly ComparableTask[],
+      options: { readonly concurrency: "unbounded" },
+    ) => Pick<ComparableTask, "runResult">;
+    err: (error: number) => Pick<ComparableTask, "runResult">;
+    fromPromise: (fn: () => Promise<number>) => ComparableTask;
+  };
+  readonly okAsync: typeof okAsync;
+  readonly errAsync: typeof errAsync;
   readonly Result: Pick<
     typeof localResultar.Result,
-    | 'combine'
-    | 'combineWithAllErrors'
-    | 'validateAll'
-    | 'firstSuccessOf'
-    | 'loop'
-    | 'forEach'
-    | 'when'
-    | 'unless'
-  >
-  readonly ResultAsync: Pick<
-    typeof localResultar.ResultAsync,
-    'combine' | 'forEach' | 'retry' | 'race'
-  >
-}
-type BenchFn = () => unknown
-type AsyncBenchFn = () => PromiseLike<unknown>
+    "validateAll" | "firstSuccessOf" | "loop" | "forEach" | "when" | "unless"
+  > & {
+    readonly combine: typeof localResultar.Result.all;
+    readonly combineWithAllErrors: typeof localResultar.Result.validateAll;
+  };
+  readonly ResultAsync: {
+    readonly combine: (items: readonly unknown[]) => PromiseLike<unknown>;
+    readonly forEach: (
+      items: readonly number[],
+      fn: (value: number) => PromiseLike<unknown>,
+      options?: { readonly discard?: boolean },
+    ) => PromiseLike<unknown>;
+    readonly retry: (
+      fn: (attempt: number) => PromiseLike<unknown>,
+      options?: { readonly times?: number; readonly onRetry?: () => void },
+    ) => PromiseLike<unknown>;
+    readonly race: (...fns: readonly (() => PromiseLike<unknown>)[]) => PromiseLike<unknown>;
+  };
+};
+type BenchFn = () => unknown;
+type AsyncBenchFn = () => PromiseLike<unknown>;
 
 interface Bench {
-  readonly name: string
-  readonly local: BenchFn | AsyncBenchFn
-  readonly stable: BenchFn | AsyncBenchFn
-  readonly type: 'async' | 'sync'
-  readonly expected?: unknown
+  readonly name: string;
+  readonly local: BenchFn | AsyncBenchFn;
+  readonly stable: BenchFn | AsyncBenchFn;
+  readonly type: "async" | "sync";
+  readonly expected?: unknown;
+  readonly outcome?: "err" | "value";
 }
 
 interface StablePackage {
-  readonly cleanup: () => void
-  readonly module: StableResultarModule
-  readonly spec: string
-  readonly version: string
+  readonly cleanup: () => void;
+  readonly module: StableResultarModule;
+  readonly spec: string;
+  readonly version: string;
 }
 
-type BenchTarget = 'local' | 'stable'
+type BenchTarget = "local" | "stable";
 
 const localPackage = JSON.parse(
-  readFileSync(new URL('../packages/resultar/package.json', import.meta.url), 'utf8'),
-) as { readonly version: string }
+  readFileSync(new URL("../packages/resultar/package.json", import.meta.url), "utf8"),
+) as { readonly version: string };
 
-const okValue = 10
-const errValue = 3
-const payload = { id: 1 }
-const errorPayload = { code: 'boom' }
+const okValue = 10;
+const errValue = 3;
+const payload = { id: 1 };
+const errorPayload = { code: "boom" };
 
-let sink: unknown
+let sink: unknown;
 
 const consume = (value: unknown): void => {
-  sink = value
-}
+  sink = value;
+};
 
 const collectGarbage = (): void => {
-  const gc = (globalThis as { readonly gc?: () => void }).gc
+  const gc = (globalThis as { readonly gc?: () => void }).gc;
 
   if (gc !== undefined) {
-    gc()
+    gc();
   }
-}
+};
 
 const run = (command: string, args: readonly string[], cwd: string): string => {
   const result = spawnSync(command, args, {
     cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 
   if (result.status !== 0) {
     throw new Error(
-      [`Command failed: ${command} ${args.join(' ')}`, result.stdout.trim(), result.stderr.trim()]
+      [`Command failed: ${command} ${args.join(" ")}`, result.stdout.trim(), result.stderr.trim()]
         .filter(Boolean)
-        .join('\n'),
-    )
+        .join("\n"),
+    );
   }
 
-  return result.stdout.trim()
-}
+  return result.stdout.trim();
+};
 
 const loadStablePackage = async (): Promise<StablePackage> => {
-  const entry = process.env.RESULTAR_STABLE_ENTRY
+  const entry = process.env.RESULTAR_STABLE_ENTRY;
 
   if (entry) {
     return {
       cleanup: () => undefined,
       module: (await import(pathToFileURL(entry).href)) as StableResultarModule,
       spec: entry,
-      version: 'custom',
-    }
+      version: "custom",
+    };
   }
 
-  const spec = process.env.RESULTAR_STABLE_SPEC ?? 'resultar@latest'
-  const directory = mkdtempSync(join(tmpdir(), 'resultar-stable-'))
+  const spec = process.env.RESULTAR_STABLE_SPEC ?? "resultar@4";
+  const directory = mkdtempSync(join(tmpdir(), "resultar-stable-"));
 
   try {
     const tarballName = run(
-      'npm',
-      ['pack', '--silent', spec, '--pack-destination', directory],
+      "npm",
+      ["pack", "--silent", spec, "--pack-destination", directory],
       directory,
     )
-      .split('\n')
-      .at(-1)
+      .split("\n")
+      .at(-1);
 
     if (!tarballName) {
-      throw new Error(`npm pack ${spec} did not return a tarball name`)
+      throw new Error(`npm pack ${spec} did not return a tarball name`);
     }
 
-    run('tar', ['-xzf', join(directory, tarballName), '-C', directory], directory)
+    run("tar", ["-xzf", join(directory, tarballName), "-C", directory], directory);
 
-    const packageDirectory = join(directory, 'package')
+    const packageDirectory = join(directory, "package");
     const packageJson = JSON.parse(
-      readFileSync(join(packageDirectory, 'package.json'), 'utf8'),
-    ) as { readonly version: string }
+      readFileSync(join(packageDirectory, "package.json"), "utf8"),
+    ) as { readonly version: string };
     const module = (await import(
-      pathToFileURL(join(packageDirectory, 'dist/index.js')).href
-    )) as StableResultarModule
+      pathToFileURL(join(packageDirectory, "dist/index.js")).href
+    )) as StableResultarModule;
 
     return {
       cleanup: () => {
-        rmSync(directory, { force: true, recursive: true })
+        rmSync(directory, { force: true, recursive: true });
       },
       module,
       spec,
       version: packageJson.version,
-    }
+    };
   } catch (error) {
-    rmSync(directory, { force: true, recursive: true })
-    throw error
+    rmSync(directory, { force: true, recursive: true });
+    throw error;
   }
-}
+};
 
 const createBenches = (stable: StableResultarModule): readonly Bench[] => {
-  const localOk = localResultar.ok<number, number>(okValue)
-  const localErr = localResultar.err<number, number>(errValue)
-  const stableOk = stable.ok<number, number>(okValue)
-  const stableErr = stable.err<number, number>(errValue)
+  const localOk = localResultar.ok<number, number>(okValue);
+  const localErr = localResultar.err<number, number>(errValue);
+  const stableOk = stable.ok<number, number>(okValue);
+  const stableErr = stable.err<number, number>(errValue);
 
-  const localAllOkList = [localResultar.ok(1), localResultar.ok(2), localResultar.ok(3)]
-  const stableAllOkList = [stable.ok(1), stable.ok(2), stable.ok(3)]
-  const localWithErrList = [localResultar.ok(1), localResultar.err(2), localResultar.ok(3)]
-  const stableWithErrList = [stable.ok(1), stable.err(2), stable.ok(3)]
-  const localAllOkSet = new Set(localAllOkList)
-  const stableAllOkSet = new Set(stableAllOkList)
-  const localRecord = { a: localResultar.ok(1), b: localResultar.ok(2), c: localResultar.ok(3) }
-  const stableRecord = { a: stable.ok(1), b: stable.ok(2), c: stable.ok(3) }
+  const localAllOkList = [localResultar.ok(1), localResultar.ok(2), localResultar.ok(3)];
+  const stableAllOkList = [stable.ok(1), stable.ok(2), stable.ok(3)];
+  const localWithErrList = [localResultar.ok(1), localResultar.err(2), localResultar.ok(3)];
+  const stableWithErrList = [stable.ok(1), stable.err(2), stable.ok(3)];
+  const localAllOkSet = new Set(localAllOkList);
+  const stableAllOkSet = new Set(stableAllOkList);
+  const localRecord = { a: localResultar.ok(1), b: localResultar.ok(2), c: localResultar.ok(3) };
+  const stableRecord = { a: stable.ok(1), b: stable.ok(2), c: stable.ok(3) };
   const localRecordWithErr = {
     a: localResultar.ok(1),
     b: localResultar.err(2),
     c: localResultar.err(3),
-  }
-  const stableRecordWithErr = { a: stable.ok(1), b: stable.err(2), c: stable.err(3) }
-  const numbers = [1, 2, 3, 4, 5]
+  };
+  const stableRecordWithErr = { a: stable.ok(1), b: stable.err(2), c: stable.err(3) };
+  const numbers = [1, 2, 3, 4, 5];
 
   const localDoubleTask = (value: number): localResultar.ResultTask<number, number> =>
-    ResultTask.ok(value * 2)
-  const stableDoubleAsync = (value: number) => stable.okAsync<number, number>(value * 2)
+    ResultTask.ok(value * 2);
+  const stableDoubleAsync = (value: number) => stable.okAsync<number, number>(value * 2);
   const localRetryTask = ResultTask.fn(function* (onRetry?: () => void) {
-    let attempt = 0
+    let attempt = 0;
     const operation = ResultTask.sync(() => attempt++).andThen((currentAttempt) =>
-      currentAttempt === 0 ? ResultTask.err('retry') : ResultTask.ok(1),
-    )
+      currentAttempt === 0 ? ResultTask.err("retry") : ResultTask.ok(1),
+    );
 
     return yield* operation.retry(
       Retry.policy(onRetry === undefined ? { times: 1 } : { times: 1, onRetry }),
-    )
-  })
+    );
+  });
 
-  return [
+  const benches: Bench[] = [
     {
       local: () => localResultar.ok(payload),
-      name: 'sync/ok construction',
+      name: "sync/ok construction",
       stable: () => stable.ok(payload),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () => localResultar.err(errorPayload),
-      name: 'sync/err construction',
+      name: "sync/err construction",
       stable: () => stable.err(errorPayload),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () => localOk.isOk(),
-      name: 'sync/isOk on Ok',
+      name: "sync/isOk on Ok",
       stable: () => stableOk.isOk(),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () => localErr.isErr(),
-      name: 'sync/isErr on Err',
+      name: "sync/isErr on Err",
       stable: () => stableErr.isErr(),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () => localOk.map((value) => value * 2),
-      name: 'sync/map on Ok',
+      name: "sync/map on Ok",
       stable: () => stableOk.map((value) => value * 2),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () => localOk.andThen((value) => localResultar.ok(value * 2)),
-      name: 'sync/andThen on Ok',
+      name: "sync/andThen on Ok",
       stable: () => stableOk.andThen((value) => stable.ok(value * 2)),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () =>
@@ -220,72 +242,72 @@ const createBenches = (stable: StableResultarModule): readonly Bench[] => {
           (value) => value * 2,
           (error) => error,
         ),
-      name: 'sync/match positional on Ok',
+      name: "sync/match positional on Ok",
       stable: () =>
         stableOk.match(
           (value) => value * 2,
           (error) => error,
         ),
-      type: 'sync',
+      type: "sync",
     },
     {
-      local: () => localResultar.Result.combine(localAllOkList),
-      name: 'sync/combine array all Ok',
+      local: () => localResultar.Result.all(localAllOkList),
+      name: "sync/all vs combine array all Ok",
       stable: () => stable.Result.combine(stableAllOkList),
-      type: 'sync',
+      type: "sync",
     },
     {
-      local: () => localResultar.Result.combine(localAllOkSet),
-      name: 'sync/combine iterable all Ok',
+      local: () => localResultar.Result.all(localAllOkSet),
+      name: "sync/all vs combine iterable all Ok",
       stable: () => stable.Result.combine(stableAllOkSet),
-      type: 'sync',
+      type: "sync",
     },
     {
-      local: () => localResultar.Result.combine(localWithErrList),
-      name: 'sync/combine array with Err',
+      local: () => localResultar.Result.all(localWithErrList),
+      name: "sync/all vs combine array with Err",
       stable: () => stable.Result.combine(stableWithErrList),
-      type: 'sync',
+      type: "sync",
     },
     {
-      local: () => localResultar.Result.combine(localRecord),
-      name: 'sync/combine record all Ok',
+      local: () => localResultar.Result.all(localRecord),
+      name: "sync/all vs combine record all Ok",
       stable: () => stable.Result.combine(stableRecord),
-      type: 'sync',
+      type: "sync",
     },
     {
-      local: () => localResultar.Result.combineWithAllErrors(localRecordWithErr),
-      name: 'sync/combineWithAllErrors record',
+      local: () => localResultar.Result.validateAll(localRecordWithErr),
+      name: "sync/validateAll vs combineWithAllErrors record",
       stable: () => stable.Result.combineWithAllErrors(stableRecordWithErr),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () => localResultar.Result.validateAll(localAllOkList),
-      name: 'sync/validateAll no mapper',
+      name: "sync/validateAll no mapper",
       stable: () => stable.Result.validateAll(stableAllOkList),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () =>
         localResultar.Result.validateAll(numbers, (value) => localResultar.ok(value * 2)),
-      name: 'sync/validateAll mapper',
+      name: "sync/validateAll mapper",
       stable: () => stable.Result.validateAll(numbers, (value) => stable.ok(value * 2)),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () =>
         localResultar.Result.firstSuccessOf([
-          () => localResultar.err('a'),
-          () => localResultar.err('b'),
+          () => localResultar.err("a"),
+          () => localResultar.err("b"),
           () => localResultar.ok(1),
         ]),
-      name: 'sync/firstSuccessOf after failures',
+      name: "sync/firstSuccessOf after failures",
       stable: () =>
         stable.Result.firstSuccessOf([
-          () => stable.err('a'),
-          () => stable.err('b'),
+          () => stable.err("a"),
+          () => stable.err("b"),
           () => stable.ok(1),
         ]),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () =>
@@ -294,14 +316,14 @@ const createBenches = (stable: StableResultarModule): readonly Bench[] => {
           step: (state) => state + 1,
           while: (state) => state < 5,
         }),
-      name: 'sync/loop collect',
+      name: "sync/loop collect",
       stable: () =>
         stable.Result.loop(0, {
           body: (state) => stable.ok(state + 1),
           step: (state) => state + 1,
           while: (state) => state < 5,
         }),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () =>
@@ -311,7 +333,7 @@ const createBenches = (stable: StableResultarModule): readonly Bench[] => {
           step: (state) => state + 1,
           while: (state) => state < 5,
         }),
-      name: 'sync/loop discard',
+      name: "sync/loop discard",
       stable: () =>
         stable.Result.loop(0, {
           body: (state) => stable.ok(state + 1),
@@ -319,23 +341,23 @@ const createBenches = (stable: StableResultarModule): readonly Bench[] => {
           step: (state) => state + 1,
           while: (state) => state < 5,
         }),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () => localResultar.Result.forEach(numbers, (value) => localResultar.ok(value * 2)),
-      name: 'sync/forEach collect',
+      name: "sync/forEach collect",
       stable: () => stable.Result.forEach(numbers, (value) => stable.ok(value * 2)),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () =>
         localResultar.Result.forEach(numbers, (value) => localResultar.ok(value * 2), {
           discard: true,
         }),
-      name: 'sync/forEach discard',
+      name: "sync/forEach discard",
       stable: () =>
         stable.Result.forEach(numbers, (value) => stable.ok(value * 2), { discard: true }),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () =>
@@ -343,13 +365,13 @@ const createBenches = (stable: StableResultarModule): readonly Bench[] => {
           () => true,
           () => localResultar.ok(1),
         ),
-      name: 'sync/when lazy true',
+      name: "sync/when lazy true",
       stable: () =>
         stable.Result.when(
           () => true,
           () => stable.ok(1),
         ),
-      type: 'sync',
+      type: "sync",
     },
     {
       local: () =>
@@ -357,34 +379,34 @@ const createBenches = (stable: StableResultarModule): readonly Bench[] => {
           () => false,
           () => localResultar.ok(1),
         ),
-      name: 'sync/unless lazy false',
+      name: "sync/unless lazy false",
       stable: () =>
         stable.Result.unless(
           () => false,
           () => stable.ok(1),
         ),
-      type: 'sync',
+      type: "sync",
     },
     {
       expected: okValue,
       local: () => ResultTask.runResult(ResultTask.ok(okValue)),
-      name: 'task-vs-async/ok runResult',
-      stable: async () => stable.okAsync(okValue),
-      type: 'async',
+      name: "task-vs-async/ok runResult",
+      stable: () => stable.okAsync(okValue),
+      type: "async",
     },
     {
       expected: okValue * 2,
       local: () => ResultTask.runResult(ResultTask.ok(okValue).map((value) => value * 2)),
-      name: 'task-vs-async/map on Ok',
-      stable: async () => stable.okAsync(okValue).map((value) => value * 2),
-      type: 'async',
+      name: "task-vs-async/map on Ok",
+      stable: () => stable.okAsync(okValue).map((value) => value * 2),
+      type: "async",
     },
     {
       expected: okValue * 2,
       local: () => ResultTask.runResult(ResultTask.ok(okValue).andThen(localDoubleTask)),
-      name: 'task-vs-async/andThen on Ok',
-      stable: async () => stable.okAsync(okValue).andThen(stableDoubleAsync),
-      type: 'async',
+      name: "task-vs-async/andThen on Ok",
+      stable: () => stable.okAsync(okValue).andThen(stableDoubleAsync),
+      type: "async",
     },
     {
       expected: numbers,
@@ -392,12 +414,12 @@ const createBenches = (stable: StableResultarModule): readonly Bench[] => {
         ResultTask.runResult(
           ResultTask.all(
             numbers.map((value) => ResultTask.ok(value)),
-            { concurrency: 'unbounded' },
+            { concurrency: "unbounded" },
           ),
         ),
-      name: 'task-vs-async/all array all Ok',
-      stable: async () => stable.ResultAsync.combine(numbers.map(stable.okAsync)),
-      type: 'async',
+      name: "task-vs-async/all array all Ok",
+      stable: () => stable.ResultAsync.combine(numbers.map(stable.okAsync)),
+      type: "async",
     },
     {
       expected: undefined,
@@ -405,154 +427,230 @@ const createBenches = (stable: StableResultarModule): readonly Bench[] => {
         ResultTask.runResult(
           ResultTask.forEach(numbers, (value) => ResultTask.ok(value * 2)).asVoid(),
         ),
-      name: 'task-vs-async/forEach discard',
-      stable: async () =>
+      name: "task-vs-async/forEach discard",
+      stable: () =>
         stable.ResultAsync.forEach(numbers, (value) => stable.okAsync(value * 2), {
           discard: true,
         }),
-      type: 'async',
+      type: "async",
     },
     {
       expected: 1,
       local: () => ResultTask.runResult(localRetryTask()),
-      name: 'task-vs-async/retry once no hook',
-      stable: async () =>
+      name: "task-vs-async/retry once no hook",
+      stable: () =>
         stable.ResultAsync.retry(
-          (attempt) => (attempt === 0 ? stable.errAsync('retry') : stable.okAsync(1)),
+          (attempt) => (attempt === 0 ? stable.errAsync("retry") : stable.okAsync(1)),
           { times: 1 },
         ),
-      type: 'async',
+      type: "async",
     },
     {
       expected: 1,
       local: () => ResultTask.runResult(localRetryTask(() => undefined)),
-      name: 'task-vs-async/retry once with hook',
-      stable: async () =>
+      name: "task-vs-async/retry once with hook",
+      stable: () =>
         stable.ResultAsync.retry(
-          (attempt) => (attempt === 0 ? stable.errAsync('retry') : stable.okAsync(1)),
+          (attempt) => (attempt === 0 ? stable.errAsync("retry") : stable.okAsync(1)),
           { onRetry: () => undefined, times: 1 },
         ),
-      type: 'async',
+      type: "async",
     },
     {
       expected: 1,
       local: () => ResultTask.runResult(ResultTask.race(ResultTask.ok(1), ResultTask.ok(2))),
-      name: 'task-vs-async/race immediate Ok',
-      stable: async () =>
+      name: "task-vs-async/race immediate Ok",
+      stable: () =>
         stable.ResultAsync.race(
           () => stable.okAsync(1),
           () => stable.okAsync(2),
         ),
-      type: 'async',
+      type: "async",
     },
-  ]
-}
+  ];
+  benches.push({
+    name: "eager/map on Ok",
+    type: "async",
+    expected: okValue * 2,
+    local: () => okAsync(okValue).map((n) => n * 2),
+    stable: () => stable.okAsync(okValue).map((n) => n * 2),
+  });
+
+  if (stable.ResultTask) {
+    const publishedTask = stable.ResultTask;
+    const localSuccess = ResultTask.ok(okValue);
+    const publishedSuccess = publishedTask.ok(okValue);
+    const localFailure = ResultTask.err(errValue);
+    const publishedFailure = publishedTask.err(errValue);
+    const factory = () => Promise.resolve(okValue);
+    const localAsync = ResultTask.fromPromise(factory);
+    const publishedAsync = publishedTask.fromPromise(factory);
+
+    benches.push(
+      {
+        name: "task/build Ok + runResult",
+        type: "async",
+        expected: okValue,
+        local: () => ResultTask.ok(okValue).runResult(),
+        stable: () => publishedTask.ok(okValue).runResult(),
+      },
+      {
+        name: "task/reused Ok runResult",
+        type: "async",
+        expected: okValue,
+        local: () => localSuccess.runResult(),
+        stable: () => publishedSuccess.runResult(),
+      },
+      {
+        name: "task/reused Err runResult",
+        type: "async",
+        outcome: "err",
+        expected: errValue,
+        local: () => localFailure.runResult(),
+        stable: () => publishedFailure.runResult(),
+      },
+      {
+        name: "task/reused Promise factory runResult",
+        type: "async",
+        expected: okValue,
+        local: () => localAsync.runResult(),
+        stable: () => publishedAsync.runResult(),
+      },
+      {
+        name: "task/reused Ok runPromise",
+        type: "async",
+        outcome: "value",
+        expected: okValue,
+        local: () => localSuccess.runPromise(),
+        stable: () => publishedSuccess.runPromise(),
+      },
+      {
+        name: "task/build all array all Ok + runResult",
+        type: "async",
+        expected: numbers,
+        local: () =>
+          ResultTask.all(
+            numbers.map((n) => ResultTask.ok(n)),
+            { concurrency: "unbounded" },
+          ).runResult(),
+        stable: () =>
+          publishedTask
+            .all(
+              numbers.map((n) => publishedTask.ok(n)),
+              { concurrency: "unbounded" },
+            )
+            .runResult(),
+      },
+    );
+  }
+  return benches;
+};
 
 const parsePositiveInteger = (name: string, fallback: number): number => {
-  const value = process.env[name]
+  const value = process.env[name];
 
   if (value === undefined) {
-    return fallback
+    return fallback;
   }
 
-  const parsed = Number.parseInt(value, 10)
+  const parsed = Number.parseInt(value, 10);
 
   if (!Number.isSafeInteger(parsed) || parsed < 1) {
-    throw new Error(`Invalid ${name}=${value}`)
+    throw new Error(`Invalid ${name}=${value}`);
   }
 
-  return parsed
-}
+  return parsed;
+};
 
 const selectBenches = (benches: readonly Bench[]): readonly Bench[] => {
-  const filter = process.env.BENCH_FILTER
+  const filter = process.env.BENCH_FILTER;
 
-  if (filter === undefined || filter === '') {
-    return benches
+  if (filter === undefined || filter === "") {
+    return benches;
   }
 
-  const selected = benches.filter((bench) => bench.name.includes(filter))
+  const selected = benches.filter((bench) => bench.name.includes(filter));
 
   if (selected.length === 0) {
-    throw new Error(`No benchmark tests matched BENCH_FILTER=${filter}`)
+    throw new Error(`No benchmark tests matched BENCH_FILTER=${filter}`);
   }
 
-  return selected
-}
+  return selected;
+};
 
 const median = (values: readonly number[]): number => {
-  const sorted = [...values].sort((left, right) => left - right)
-  const middle = Math.floor(sorted.length / 2)
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
 
   return sorted.length % 2 === 0
     ? ((sorted[middle - 1] as number) + (sorted[middle] as number)) / 2
-    : (sorted[middle] as number)
-}
+    : (sorted[middle] as number);
+};
 
 const runSyncBench = (fn: BenchFn, iterations: number): number => {
   for (let index = 0; index < Math.min(iterations, 1_000); index += 1) {
-    consume(fn())
+    consume(fn());
   }
 
-  collectGarbage()
+  collectGarbage();
 
-  const start = performance.now()
+  const start = performance.now();
 
   for (let index = 0; index < iterations; index += 1) {
-    consume(fn())
+    consume(fn());
   }
 
-  return iterations / ((performance.now() - start) / 1_000)
-}
+  return iterations / ((performance.now() - start) / 1_000);
+};
 
 const runAsyncBench = async (fn: AsyncBenchFn, iterations: number): Promise<number> => {
   for (let index = 0; index < Math.min(iterations, 100); index += 1) {
-    consume(await fn())
+    consume(await fn());
   }
 
-  collectGarbage()
+  collectGarbage();
 
-  const start = performance.now()
+  const start = performance.now();
 
   for (let index = 0; index < iterations; index += 1) {
-    consume(await fn())
+    consume(await fn());
   }
 
-  return iterations / ((performance.now() - start) / 1_000)
-}
+  return iterations / ((performance.now() - start) / 1_000);
+};
 
 const measureOne = async (
   bench: Bench,
-  target: 'local' | 'stable',
+  target: "local" | "stable",
   iterations: number,
 ): Promise<number> => {
-  const fn = bench[target]
+  const fn = bench[target];
 
-  return bench.type === 'async'
+  return bench.type === "async"
     ? await runAsyncBench(fn as AsyncBenchFn, iterations)
-    : runSyncBench(fn as BenchFn, iterations)
-}
+    : runSyncBench(fn as BenchFn, iterations);
+};
 
 const measurePair = async (
   bench: Bench,
   iterations: number,
   rounds: number,
 ): Promise<{ readonly localOps: number; readonly stableOps: number }> => {
-  const localSamples: number[] = []
-  const stableSamples: number[] = []
+  const localSamples: number[] = [];
+  const stableSamples: number[] = [];
 
   for (let round = 0; round < rounds; round += 1) {
     if (round % 2 === 0) {
-      localSamples.push(await measureOne(bench, 'local', iterations))
-      stableSamples.push(await measureOne(bench, 'stable', iterations))
+      localSamples.push(await measureOne(bench, "local", iterations));
+      stableSamples.push(await measureOne(bench, "stable", iterations));
     } else {
-      stableSamples.push(await measureOne(bench, 'stable', iterations))
-      localSamples.push(await measureOne(bench, 'local', iterations))
+      stableSamples.push(await measureOne(bench, "stable", iterations));
+      localSamples.push(await measureOne(bench, "local", iterations));
     }
   }
 
-  return { localOps: median(localSamples), stableOps: median(stableSamples) }
-}
+  return { localOps: median(localSamples), stableOps: median(stableSamples) };
+};
 
 const measureTarget = async (
   bench: Bench,
@@ -560,115 +658,117 @@ const measureTarget = async (
   iterations: number,
   rounds: number,
 ): Promise<number> => {
-  const samples: number[] = []
+  const samples: number[] = [];
 
   for (let round = 0; round < rounds; round += 1) {
-    samples.push(await measureOne(bench, target, iterations))
+    samples.push(await measureOne(bench, target, iterations));
   }
 
-  return median(samples)
-}
+  return median(samples);
+};
 
 const parseBenchTarget = (): BenchTarget | undefined => {
-  const target = process.env.BENCH_TARGET
+  const target = process.env.BENCH_TARGET;
 
-  if (target === undefined || target === '') {
-    return undefined
+  if (target === undefined || target === "") {
+    return undefined;
   }
 
-  if (target === 'local' || target === 'stable') {
-    return target
+  if (target === "local" || target === "stable") {
+    return target;
   }
 
-  throw new Error(`BENCH_TARGET must be "local" or "stable"; got ${target}`)
-}
+  throw new Error(`BENCH_TARGET must be "local" or "stable"; got ${target}`);
+};
 
 const formatOps = (value: number): string =>
-  Math.round(value).toLocaleString('en-US', { maximumFractionDigits: 0 })
+  Math.round(value).toLocaleString("en-US", { maximumFractionDigits: 0 });
 
 const formatDelta = (localOps: number, stableOps: number): string => {
-  const delta = (localOps / stableOps - 1) * 100
-  const sign = delta >= 0 ? '+' : ''
+  const delta = (localOps / stableOps - 1) * 100;
+  const sign = delta >= 0 ? "+" : "";
 
-  return `${sign}${delta.toFixed(1)}%`
-}
+  return `${sign}${delta.toFixed(1)}%`;
+};
 
 const printRow = (columns: readonly string[], widths: readonly number[]): void => {
-  console.log(columns.map((column, index) => column.padEnd(widths[index] as number)).join('  '))
-}
+  console.log(columns.map((column, index) => column.padEnd(widths[index] as number)).join("  "));
+};
 
-const stablePackage = await loadStablePackage()
+const stablePackage = await loadStablePackage();
 
 try {
-  const syncIterations = parsePositiveInteger('BENCH_SYNC_ITERATIONS', 100_000)
-  const asyncIterations = parsePositiveInteger('BENCH_ASYNC_ITERATIONS', 5_000)
-  const rounds = parsePositiveInteger('BENCH_ROUNDS', 5)
-  const target = parseBenchTarget()
-  const benches = selectBenches(createBenches(stablePackage.module))
-  const rows: string[][] = []
+  const syncIterations = parsePositiveInteger("BENCH_SYNC_ITERATIONS", 100_000);
+  const asyncIterations = parsePositiveInteger("BENCH_ASYNC_ITERATIONS", 5_000);
+  const rounds = parsePositiveInteger("BENCH_ROUNDS", 5);
+  const target = parseBenchTarget();
+  const benches = selectBenches(createBenches(stablePackage.module));
+  const rows: string[][] = [];
 
   console.log(
     `Comparing local workspace resultar@${localPackage.version} against ${stablePackage.spec} (${stablePackage.version})`,
-  )
+  );
   console.log(
     `Rounds: ${rounds}; sync iterations/round: ${syncIterations}; async iterations/round: ${asyncIterations}`,
-  )
-  console.log('Async workloads: local ResultTask.runResult vs published eager ResultAsync.')
-  console.log('')
+  );
+  console.log(
+    "Async groups: task/ compares Task runners, eager/ compares ResultAsync, task-vs-async/ measures migration.",
+  );
+  console.log("");
 
   const validationTargets: readonly BenchTarget[] =
-    target === undefined ? ['local', 'stable'] : [target]
+    target === undefined ? ["local", "stable"] : [target];
 
   for (const bench of benches) {
-    if (bench.type === 'async') {
+    if (bench.type === "async") {
       // Validate execution and payloads outside the timed loops.
       for (const benchTarget of validationTargets) {
-        const result = await bench[benchTarget]()
-        strictEqual(
-          typeof result === 'object' &&
-            result !== null &&
-            'isOk' in result &&
-            typeof result.isOk === 'function' &&
-            result.isOk(),
-          true,
-          `${bench.name} (${benchTarget}) must execute to Ok`,
-        )
-        deepStrictEqual(
-          typeof result === 'object' && result !== null && 'value' in result
-            ? result.value
-            : undefined,
-          bench.expected,
-          `${bench.name} (${benchTarget}) payload`,
-        )
+        const result = await bench[benchTarget]();
+        const label = `${bench.name} (${benchTarget})`;
+        if (bench.outcome === "value") {
+          deepStrictEqual(result, bench.expected, label);
+          continue;
+        }
+        if (
+          typeof result !== "object" ||
+          result === null ||
+          !("isOk" in result) ||
+          typeof result.isOk !== "function"
+        ) {
+          throw new Error(`${label} must resolve to a Result`);
+        }
+        strictEqual(result.isOk(), bench.outcome !== "err", label);
+        const key = bench.outcome === "err" ? "error" : "value";
+        deepStrictEqual(Reflect.get(result, key), bench.expected, label);
       }
     }
   }
 
   if (target !== undefined) {
     for (const bench of benches) {
-      const iterations = bench.type === 'async' ? asyncIterations : syncIterations
-      const ops = await measureTarget(bench, target, iterations, rounds)
+      const iterations = bench.type === "async" ? asyncIterations : syncIterations;
+      const ops = await measureTarget(bench, target, iterations, rounds);
 
-      rows.push([bench.name, bench.type, target, formatOps(ops)])
+      rows.push([bench.name, bench.type, target, formatOps(ops)]);
     }
 
-    const headers = ['benchmark', 'type', 'target', 'ops/s']
+    const headers = ["benchmark", "type", "target", "ops/s"];
     const widths = headers.map((header, index) =>
       Math.max(header.length, ...rows.map((row) => (row[index] as string).length)),
-    )
+    );
 
-    printRow(headers, widths)
+    printRow(headers, widths);
     printRow(
-      widths.map((width) => '-'.repeat(width)),
+      widths.map((width) => "-".repeat(width)),
       widths,
-    )
+    );
     for (const row of rows) {
-      printRow(row, widths)
+      printRow(row, widths);
     }
   } else {
     for (const bench of benches) {
-      const iterations = bench.type === 'async' ? asyncIterations : syncIterations
-      const { localOps, stableOps } = await measurePair(bench, iterations, rounds)
+      const iterations = bench.type === "async" ? asyncIterations : syncIterations;
+      const { localOps, stableOps } = await measurePair(bench, iterations, rounds);
 
       rows.push([
         bench.name,
@@ -676,25 +776,25 @@ try {
         formatOps(localOps),
         formatOps(stableOps),
         formatDelta(localOps, stableOps),
-      ])
+      ]);
     }
 
-    const headers = ['benchmark', 'type', 'local ops/s', 'stable ops/s', 'local delta']
+    const headers = ["benchmark", "type", "local ops/s", "stable ops/s", "local delta"];
     const widths = headers.map((header, index) =>
       Math.max(header.length, ...rows.map((row) => (row[index] as string).length)),
-    )
+    );
 
-    printRow(headers, widths)
+    printRow(headers, widths);
     printRow(
-      widths.map((width) => '-'.repeat(width)),
+      widths.map((width) => "-".repeat(width)),
       widths,
-    )
+    );
 
     for (const row of rows) {
-      printRow(row, widths)
+      printRow(row, widths);
     }
   }
 } finally {
-  stablePackage.cleanup()
-  void sink
+  stablePackage.cleanup();
+  void sink;
 }

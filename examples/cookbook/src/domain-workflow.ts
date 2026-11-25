@@ -5,20 +5,11 @@
  * - Chaining dependent domain steps with `.andThen()`, `.map()`, and `.mapErr()`
  * - Writing linear imperative-style workflows with `Result.gen` and `ResultTask.gen`
  *   (returning plain values and unwrapping typed steps via `yield*`)
- * - Preserving the legacy `safeTry` generator helper for gradual v4 migration
  * - Wrapping low-level infrastructure causes (`StorageWriteError`) in domain errors
  *   (`AccountCreateError`) and inspecting the cause chain with `findCause`
  * - Exhaustive error union handling at the boundary with `.matchTags()`
  */
-import {
-  Result,
-  ResultTask,
-  createTaggedError,
-  findCause,
-  ok,
-  safeTry,
-  type StrictResult,
-} from "resultar";
+import { Result, ResultTask, createTaggedError, findCause, ok, type StrictResult } from "resultar";
 
 export interface PaidAccountRequest {
   readonly cardToken: string;
@@ -158,22 +149,6 @@ export const createPaidAccountTaskWithGen = (
       .mapErr((cause) => new AccountCreateError({ cause, email: request.email }));
 
     return persisted;
-  });
-
-/**
- * Legacy `safeTry` generator style (preserved for gradual v4 migration):
- * Unlike `Result.gen`, `safeTry` expects the generator body to return a `Result` directly.
- */
-export const createPaidAccountWithSafeTry = (
-  request: PaidAccountRequest,
-): StrictResult<PaidAccount, CreatePaidAccountError | PaymentDeclinedError | PlanNotFoundError> =>
-  safeTry(function* () {
-    const plan = yield* selectPlan(request.planCode);
-    const receipt = yield* chargeCard(request.cardToken, plan.priceCents);
-
-    return persistAccount(request, plan, receipt).mapErr(
-      (cause) => new AccountCreateError({ cause, email: request.email }),
-    );
   });
 
 /**

@@ -1,55 +1,9 @@
 /**
- * Typed error workflows built around `Result<T, E>` and `ResultTask<T, E, R>`.
+ * Typed error workflows built around synchronous `Result<T, E>` and lazy `ResultTask<T, E, R>`.
  *
  * @module
  */
 
-export { DisposableResultAsync } from './result-async/disposable-result-async.js'
-export {
-  errAsync,
-  fromCallback,
-  fromPromise,
-  fromSafePromise,
-  fromThrowableAsync,
-  okAsync,
-  ResultAsync,
-  runPromise,
-  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
-  tryCatchAsync as tryAsync,
-  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
-  tryCatchAsync,
-  tryResultAsync,
-  unitAsync,
-} from './result-async/result-async.js'
-
-export type {
-  AsyncResultGenOptions,
-  ResultAsyncGenerator,
-  SafeTryAsyncOptions,
-  SafeTryOptions,
-} from './result-async/generator-types.js'
-export type {
-  ResultAsyncAbortSignal,
-  ResultAsyncCallbackCleanup,
-  ResultAsyncCallbackContext,
-  ResultAsyncConcurrency,
-  ResultAsyncFromCallbackOptions,
-  ResultAsyncRaceHandle,
-  ResultAsyncRaceTask,
-  ResultAsyncResourceAcquire,
-  ResultAsyncResourceEffect,
-  ResultAsyncResourceRelease,
-  ResultAsyncResourceReleaseContext,
-  ResultAsyncResourceUse,
-  ResultAsyncRetryContext,
-  ResultAsyncRetryOptions,
-  ResultAsyncRetryOrElseOptions,
-  ResultAsyncRetryTask,
-  ResultAsyncTimeoutOptions,
-  ResultAsyncWithResourceOptions,
-  StrictResultAsync,
-  TryResultAsyncOptions,
-} from './result-async/result-async.js'
 export {
   DisposableResult,
   err,
@@ -57,18 +11,9 @@ export {
   ok,
   Result,
   runSync,
-  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
-  safeTry,
-  // eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated export.
-  tryCatch,
   tryResult,
   unit,
 } from './result/result.js'
-
-/** @deprecated Import the named `tryResult` export instead. */
-// eslint-disable-next-line typescript/no-deprecated -- Keep the supported deprecated exports.
-export { tryCatch as default, tryCatch as try } from './result/result.js'
-
 export type {
   ErrResult,
   OkResult,
@@ -90,6 +35,21 @@ export { Retry } from './core/retry.js'
 export type { RetryContext, RetryPolicy, RetryPolicyOptions } from './core/retry.js'
 export { isRedacted, redact, revealRedacted } from './core/redacted.js'
 export type { Redacted } from './core/redacted.js'
+export { Deferred } from './task/deferred.js'
+export { Queue } from './task/queue.js'
+export { Ref } from './task/ref.js'
+export { TaskLocal } from './task/task-local.js'
+export { Tracer } from './task/tracer.js'
+export type {
+  MemoryTracer,
+  RecordedSpan,
+  SpanAttributes,
+  SpanAttributeValue,
+  SpanTraceFrame,
+  TaskSpan,
+  TaskTracer,
+  TaskTracerStartOptions,
+} from './task/tracer.js'
 export {
   isResultTask,
   isServiceTag,
@@ -117,6 +77,8 @@ export type {
   ResultTaskLoopDiscardOptions,
   ResultTaskLoopOptions,
   ResultTaskMatchOptions,
+  ResultTaskRepeatInput,
+  ResultTaskRepeatOptions,
   ResultTaskRunOptions,
   ResultTaskScope,
   ResultTaskScopeOwner,
@@ -128,6 +90,7 @@ export type {
   ResultTaskYieldOf,
   ResultTaskZipOptions,
   ServiceTag,
+  StrictResultTask,
 } from './task/result-task.js'
 export {
   createTaggedError,

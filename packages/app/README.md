@@ -8,21 +8,21 @@ pnpm add resultar-app
 ```
 
 ```ts
-import { createModule, defineAppConfig, ResultTask, t } from 'resultar-app'
+import { createModule, defineAppConfig, ResultTask, t } from "resultar-app";
 
 const config = defineAppConfig({
   properties: { PORT: t.Integer({ default: 3000, minimum: 1, maximum: 65535 }) },
-})
+});
 const services = createModule()
   .merge(config)
-  .singleton('httpConfig', ['appConfig'], ({ appConfig }) => ({ port: appConfig.PORT }))
+  .singleton("httpConfig", ["appConfig"], ({ appConfig }) => ({ port: appConfig.PORT }));
 
-const result = await services.use(['httpConfig'], ({ httpConfig }) =>
-  ResultTask.ok(httpConfig.port),
-).runResult()
+const result = await services
+  .use(["httpConfig"], ({ httpConfig }) => ResultTask.ok(httpConfig.port))
+  .runResult();
 
-if (result.isOk()) console.log(result.value) // number
-else console.error(result.error.issues) // ConfigError
+if (result.isOk()) console.log(result.value); // number
+else console.error(result.error.issues); // ConfigError
 ```
 
 For configuration alone, use `await config.load().runResult()`. Construction is lazy;
@@ -32,7 +32,7 @@ Resources remain owned by the existing scopes and are released by `use` / `close
 ## Public API
 
 - All named exports from [`resultar`](../resultar/README.md), including `Result`,
-  `ResultTask`, `ResultAsync`, tagged errors, matching and workflow types.
+  `ResultTask`, tagged errors, matching, concurrency, and workflow types.
 - The services, resources, scopes and composition APIs from
   [`resultar-di`](../di/README.md), including `createModule`, `Service`, `service`,
   `resource` and their types.
@@ -53,7 +53,7 @@ pnpm add resultar-app
 ```
 
 ```ts
-import { Result, ResultTask, createModule, defineAppConfig, t } from 'resultar-app'
+import { Result, ResultTask, createModule, defineAppConfig, t } from "resultar-app";
 ```
 
 Direct component imports remain supported. Declare each component you import as
@@ -64,7 +64,7 @@ pnpm add resultar
 ```
 
 ```ts
-import { Result, ResultTask } from 'resultar'
+import { Result, ResultTask } from "resultar";
 ```
 
 The same rule applies to `resultar-di`, `resultar-config` and direct `typebox`
@@ -84,8 +84,13 @@ pnpm add resultar-app resultar-hono hono
 Import application services/configuration from `resultar-app`, and `createHonoApp`
 from `resultar-hono`. See the [Hono example](../../examples/hono/README.md).
 `resultar-app` does not start a server or register process handlers when imported.
-Configuration uses the Node environment; this combined entry point targets Node.js
-24+ and ESM. HTTP adapters continue owning their application and request lifetimes.
+Importing `resultar-app` performs no dynamic code generation (`new Function`), so
+workflow and DI APIs reexported from `resultar` and `resultar-di` run cleanly even
+under `--disallow-code-generation-from-strings` / strict CSP; resolving
+`defineAppConfig` (`load()` / `appConfig`) relies on AJV v8 in Node.js 24+ and
+requires dynamic code generation at resolution time. Configuration uses the Node
+environment; this combined entry point targets Node.js 24+ and ESM. HTTP adapters
+continue owning their application and request lifetimes.
 
 ## Validation
 

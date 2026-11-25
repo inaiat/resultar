@@ -89,42 +89,30 @@ export const suppressedTask = async () => ResultTask.ok(0)
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("expected 4 JSON diagnostics (suppressedTask suppressed), got %d:\n%s", len(lines), string(raw))
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 JSON diagnostics (Task contracts only; Promise<Result> accepted and suppressedTask suppressed), got %d:\n%s", len(lines), string(raw))
 	}
 
-	var first, second, third, fourth output.Diagnostic
+	var first, second output.Diagnostic
 	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(lines[2]), &third); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal([]byte(lines[3]), &fourth); err != nil {
-		t.Fatal(err)
-	}
 	if first.Rule != "no-promise-resultar" || first.Severity != "error" || first.Line != 2 || first.Column != 14 || first.Length != len("loadTask") || !strings.Contains(first.Message, "ResultTask<number>") {
 		t.Fatalf("unexpected first CLI diagnostic: %#v", first)
 	}
-	if second.Rule != "no-promise-resultar" || second.Severity != "error" || second.Line != 3 || second.Column != 14 || second.Length != len("loadResult") || !strings.Contains(second.Message, "ResultAsync<string, never>") {
-		t.Fatalf("unexpected second CLI diagnostic: %#v", second)
-	}
-	if third.Rule != "no-promise-resultar" || third.Severity != "error" || third.Line != 4 || third.Length != len("Promise<T>") || !strings.Contains(third.Message, "ResultAsync<number, Error>") {
-		t.Fatalf("unexpected third CLI diagnostic for constrained generic: %#v", third)
-	}
-	if fourth.Rule != "no-promise-resultar" || fourth.Severity != "error" || fourth.Line != 7 || !strings.Contains(fourth.Message, "ResultTask<number | string, Error>") || !strings.Contains(fourth.Message, "ResultAsync<number | string, Error>") {
-		t.Fatalf("unexpected fourth CLI diagnostic for heterogeneous union: %#v", fourth)
+	if second.Rule != "no-promise-resultar" || second.Severity != "error" || second.Line != 7 || !strings.Contains(second.Message, "ResultTask<number | string, Error>") {
+		t.Fatalf("unexpected second CLI diagnostic for heterogeneous union: %#v", second)
 	}
 
 	// 2. Editor LSP integration verifies live diagnostics and live suppression / fix via unsaved overlay.
 	uri := fileURI(servicePath)
 	server := lspServer{project: configPath, writer: &bytes.Buffer{}, documents: map[string]lspDocument{}}
 	diags, err := server.diagnostics()
-	if err != nil || len(diags) != 4 {
-		t.Fatalf("expected 4 LSP diagnostics on disk, got %#v (err=%v)", diags, err)
+	if err != nil || len(diags) != 2 {
+		t.Fatalf("expected 2 LSP diagnostics on disk, got %#v (err=%v)", diags, err)
 	}
 	lspFirst := toLSPDiagnostic(diags[0])
 	if lspFirst.Severity != 1 || lspFirst.Code != "no-promise-resultar" || lspFirst.Source != "resultar-check" || lspFirst.Range.Start.Line != 1 || lspFirst.Range.Start.Character != 13 || lspFirst.Range.End.Character != 13+len("loadTask") {

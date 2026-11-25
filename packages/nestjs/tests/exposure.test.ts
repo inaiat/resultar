@@ -1,10 +1,22 @@
-import { BadRequestException, Controller, Get, Query, type PipeTransform } from "@nestjs/common";
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Inject,
+  Module,
+  Query,
+  type PipeTransform,
+} from "@nestjs/common";
+import { NestFactory } from "@nestjs/core";
 import { ResultTask } from "resultar";
 import { createModule, withProvider } from "resultar-di";
 import { describe, expect, expectTypeOf, it } from "vite-plus/test";
 import {
+  APP_SERVICES,
   createNestApp,
   createNestModule,
+  FastifyAdapter,
+  getAppServices,
   getRequestServices,
   type NestRequest,
   type NestServicesOptions,
@@ -77,5 +89,73 @@ describe("framework service exposure", () => {
     expect([opened, closed]).toEqual([2, 2]);
     await app.close();
     expect(closed).toBe(2);
+  });
+
+  it("preserves prototype methods, getters, and instanceof on @Inject(APP_SERVICES) when exposeApplication returns a class instance", async () => {
+    class AppServicesFacade {
+      readonly prefix: string;
+      constructor(prefix: string) {
+        this.prefix = prefix;
+      }
+
+      get upper(): string {
+        return this.prefix.toUpperCase();
+      }
+
+      format(name: string): string {
+        return `${this.prefix}:${name}`;
+      }
+    }
+
+    @Controller()
+    class FacadeController {
+      readonly #facade: AppServicesFacade;
+      constructor(@Inject(APP_SERVICES) facade: AppServicesFacade) {
+        this.#facade = facade;
+      }
+
+      @Get()
+      get() {
+        return {
+          isInstance: this.#facade instanceof AppServicesFacade,
+          upper: this.#facade.upper,
+          formatted: this.#facade.format("users"),
+        };
+      }
+    }
+
+    const app = createNestApp({
+      services: createModule().value("prefix", "api"),
+      appBindings: ["prefix"],
+      bindings: [],
+      exposeApplication: (access) =>
+        new AppServicesFacade(access.get("prefix").unwrapOrThrow() as string),
+      controllers: [FacadeController],
+    });
+    const response = await app.inject("/");
+    expect(response.json()).toEqual({ isInstance: true, upper: "API", formatted: "api:users" });
+    expect(app.services).toBeInstanceOf(AppServicesFacade);
+    expect(app.get(APP_SERVICES)).toBeInstanceOf(AppServicesFacade);
+    await app.close();
+
+    // Also verify standalone createNestModule + NestFactory.create
+    const nestModule = createNestModule({
+      services: createModule().value("prefix", "mod"),
+      appBindings: ["prefix"],
+      bindings: [],
+      exposeApplication: (access) =>
+        new AppServicesFacade(access.get("prefix").unwrapOrThrow() as string),
+    });
+    @Module({ imports: [nestModule], controllers: [FacadeController] })
+    class StandaloneModule {}
+    const nativeApp = await NestFactory.create(StandaloneModule, new FastifyAdapter(), {
+      logger: false,
+    });
+    await nativeApp.init();
+    const resolved = getAppServices<AppServicesFacade>(nativeApp);
+    expect(resolved).toBeInstanceOf(AppServicesFacade);
+    expect(resolved?.upper).toBe("MOD");
+    expect(resolved?.format("items")).toBe("mod:items");
+    await nativeApp.close();
   });
 });

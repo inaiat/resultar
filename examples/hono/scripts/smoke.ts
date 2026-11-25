@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { appConfigProperties } from "../src/app-config.ts";
-import { defineAppConfig, errAsync, okAsync, ResultTask } from "resultar-app";
+import { defineAppConfig, ResultTask } from "resultar-app";
 import { createServices, UserReadError } from "../src/services.ts";
 import { createApplication } from "../src/main.ts";
 const testConfig = defineAppConfig({ properties: appConfigProperties, source: {} });
@@ -33,8 +33,8 @@ try {
 }
 
 const brokenRepository = {
-  findById: () => errAsync(new UserReadError({ id: "1" })),
-  remove: () => okAsync(false),
+  findById: () => UserReadError.taskErr({ id: "1" }),
+  remove: () => ResultTask.ok(false),
 };
 const broken = createApplication(
   createServices(testConfig).override("repository", brokenRepository),

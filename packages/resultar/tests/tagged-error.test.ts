@@ -1,7 +1,7 @@
 import { deepEqual, equal, ok as isTrue, throws } from 'node:assert'
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import type { ErrResult, Redacted, ResultAsync, ResultTask, TaggedEnum } from '../src/index.js'
+import type { ErrResult, Redacted, ResultTask, TaggedEnum } from '../src/index.js'
 
 import {
   Result,
@@ -11,6 +11,7 @@ import {
   isError,
   matchError,
   matchErrorPartial,
+  taggedEnum,
 } from '../src/index.js'
 
 class UserNotFoundError extends createTaggedError({
@@ -48,7 +49,56 @@ const createKnownTaggedError = (): UserNotFoundError | DatabaseError =>
 const createUnknownTaggedError = (): UserNotFoundError | DatabaseError =>
   new DatabaseError({ operation: 'write' })
 
+it('constructs tagged variants whose names also exist on Object.prototype', () => {
+  const names = taggedEnum<{ constructor: object; toString: object; __proto__: object }>()
+  for (const tag of ['constructor', 'toString', '__proto__'] as const) {
+    const value = names[tag]({})
+    equal(value._tag, tag)
+    equal(names.$is(tag, value), true)
+  }
+})
+
+it('copies enumerable enum fields as own data without invoking inherited setters', () => {
+  const key = 'resultarEnumSetterProbe'
+  const symbol = Symbol(key)
+  const hidden = Symbol('hidden')
+  const setter = (): never => {
+    throw new Error('inherited setter ran')
+  }
+  const descriptor = { configurable: true, set: setter }
+  const items = taggedEnum<{ Item: { [key]: number; [symbol]: number } }>()
+  /* eslint-disable no-extend-native -- Reproduce an inherited setter and restore the prototype. */
+  Object.defineProperty(Object.prototype, key, descriptor)
+  Object.defineProperty(Object.prototype, symbol, descriptor)
+  /* eslint-enable no-extend-native */
+  try {
+    const fields = { [key]: 1, [symbol]: 2 }
+    const reserved = {
+      [key]: 1,
+      [symbol]: 2,
+      get _tag(): never {
+        throw new Error('reserved getter ran')
+      },
+    }
+    for (const props of [fields, reserved]) {
+      Object.defineProperty(props, hidden, { value: 'hidden' })
+      const item = items.Item(props)
+      deepEqual(item, { _tag: 'Item', [key]: 1, [symbol]: 2 })
+      deepEqual(Reflect.ownKeys(item), ['_tag', key, symbol])
+      equal(Object.isFrozen(item), true)
+    }
+  } finally {
+    Reflect.deleteProperty(Object.prototype, key)
+    Reflect.deleteProperty(Object.prototype, symbol)
+  }
+})
+
 describe('tagged errors', async () => {
+  it('concatenates adjacent numeric placeholders', () => {
+    const Adjacent = createTaggedError({ name: 'Adjacent', message: '$a$b failed' })
+    equal(new Adjacent({ a: 10, b: 20 }).message, '1020 failed')
+  })
+
   it('creates a typed Error subclass with interpolated props', () => {
     const error = new UserNotFoundError({ id: '123', source: 'users' })
 
@@ -129,19 +179,7 @@ describe('tagged errors', async () => {
     equal(result.error.message, 'Static failure')
   })
 
-  it('creates ResultAsync and ResultTask failures from static errAsync and taskErr helpers', async () => {
-    const asyncResult = UserNotFoundError.errAsync({ id: '123', source: 'users' })
-    const resolvedAsync = await asyncResult
-
-    isTrue(resolvedAsync.isErr())
-    isTrue(resolvedAsync.error instanceof UserNotFoundError)
-    equal(resolvedAsync.error.message, 'User 123 not found in users')
-    equal(resolvedAsync.error.id, '123')
-
-    const staticAsyncResult = await StaticMessageError.errAsync()
-    isTrue(staticAsyncResult.isErr())
-    equal(staticAsyncResult.error.message, 'Static failure')
-
+  it('creates ResultTask failures from static taskErr helpers', async () => {
     const task = UserNotFoundError.taskErr({ id: '456', source: 'accounts' })
     const resolvedTask = await ResultTaskValue.runResult(task)
 
@@ -206,6 +244,21 @@ describe('tagged errors', async () => {
     })
 
     equal(message, 'user: 789')
+  })
+
+  it('only dispatches prototype-shaped tags to explicitly supplied handlers', () => {
+    for (const tag of ['toString', 'constructor', '__proto__']) {
+      const problem = Object.assign(new Error('fallback'), { _tag: tag })
+      equal(
+        matchErrorPartial(problem, {} as never, (e) => e.message),
+        'fallback',
+      )
+      equal(
+        matchErrorPartial(problem, { [tag]: () => 'handled' } as never, () => 'fallback'),
+        'handled',
+      )
+      deepEqual(ResultTaskValue.err(problem).catchTags({}).runSync(), Result.err(problem))
+    }
   })
 
   it('matches partial handlers with fallback', () => {
@@ -333,6 +386,113 @@ describe('tagged errors', async () => {
     equal(error.id, '123')
     equal(error.source, 'users')
   })
+
+  it('defines _tag, fingerprint, messageTemplate, and name as own enumerable properties preserved by spread', () => {
+    const Missing = createTaggedError({ name: 'Missing' })
+    const missingA = new Missing({ message: 'first missing' })
+    const missingB = new Missing({ message: 'second missing' })
+    const staticA = new StaticMessageError()
+    const staticB = new StaticMessageError()
+    const expectedKeys = ['_tag', 'fingerprint', 'messageTemplate', 'name'] as const
+
+    for (const key of expectedKeys) {
+      isTrue(Object.hasOwn(missingA, key))
+      isTrue(Object.hasOwn(staticA, key))
+      const desc = Object.getOwnPropertyDescriptor(missingA, key)
+      isTrue(desc)
+      deepEqual(
+        { configurable: desc.configurable, enumerable: desc.enumerable, writable: desc.writable },
+        { configurable: true, enumerable: true, writable: true },
+      )
+    }
+
+    deepEqual(Object.keys(missingA), [...expectedKeys])
+    deepEqual(Object.keys(staticA), [...expectedKeys])
+    isTrue(Object.isFrozen(missingA.fingerprint))
+    equal(missingA.fingerprint, missingB.fingerprint)
+    equal(staticA.fingerprint, staticB.fingerprint)
+
+    /* eslint-disable oxc/no-rest-spread-properties, typescript/no-misused-spread -- Explicitly testing object-spread cloning of tagged error instances. */
+    deepEqual(
+      { ...missingA },
+      {
+        _tag: 'Missing',
+        fingerprint: ['Missing', '$message'],
+        messageTemplate: '$message',
+        name: 'Missing',
+      },
+    )
+    deepEqual(
+      { ...new UserNotFoundError({ id: '99', source: 'db' }) },
+      {
+        _tag: 'UserNotFoundError',
+        fingerprint: ['UserNotFoundError', 'User $id not found in $source'],
+        id: '99',
+        messageTemplate: 'User $id not found in $source',
+        name: 'UserNotFoundError',
+        source: 'db',
+      },
+    )
+    /* eslint-enable oxc/no-rest-spread-properties, typescript/no-misused-spread */
+    deepEqual(missingA.toJSON(), {
+      _tag: 'Missing',
+      fingerprint: ['Missing', '$message'],
+      message: 'first missing',
+      messageTemplate: '$message',
+      name: 'Missing',
+    })
+  })
+
+  it('preserves own enumerable metadata descriptors, spread, cause, and toJSON on custom base error classes', () => {
+    const rootCause = new Error('policy denied')
+    const forbiddenA = new ForbiddenError({ permission: 'admin:write' })
+    const forbiddenB = new ForbiddenError({ cause: rootCause, permission: 'admin:read' })
+
+    for (const key of ['_tag', 'fingerprint', 'messageTemplate', 'name'] as const) {
+      isTrue(Object.hasOwn(forbiddenA, key))
+      const desc = Object.getOwnPropertyDescriptor(forbiddenA, key)
+      isTrue(desc)
+      deepEqual(
+        { configurable: desc.configurable, enumerable: desc.enumerable, writable: desc.writable },
+        { configurable: true, enumerable: true, writable: true },
+      )
+    }
+
+    deepEqual(Object.keys(forbiddenA), [
+      'statusCode',
+      '_tag',
+      'fingerprint',
+      'messageTemplate',
+      'name',
+      'permission',
+    ])
+    isTrue(Object.isFrozen(forbiddenA.fingerprint))
+    equal(forbiddenA.fingerprint, forbiddenB.fingerprint)
+    equal(forbiddenB.cause, rootCause)
+    /* eslint-disable oxc/no-rest-spread-properties, typescript/no-misused-spread -- Explicitly testing object-spread cloning of custom-base tagged errors. */
+    deepEqual(
+      { ...forbiddenA },
+      {
+        _tag: 'ForbiddenError',
+        fingerprint: ['ForbiddenError', 'Missing permission $permission'],
+        messageTemplate: 'Missing permission $permission',
+        name: 'ForbiddenError',
+        permission: 'admin:write',
+        statusCode: 403,
+      },
+    )
+    /* eslint-enable oxc/no-rest-spread-properties, typescript/no-misused-spread */
+    deepEqual(forbiddenB.toJSON(), {
+      _tag: 'ForbiddenError',
+      cause: { message: 'policy denied', name: 'Error', stack: rootCause.stack },
+      fingerprint: ['ForbiddenError', 'Missing permission $permission'],
+      message: 'Missing permission admin:read',
+      messageTemplate: 'Missing permission $permission',
+      name: 'ForbiddenError',
+      permission: 'admin:read',
+      statusCode: 403,
+    })
+  })
 })
 
 describe('tagged error types', async () => {
@@ -361,7 +521,6 @@ describe('tagged error types', async () => {
   it('infers template props and narrows handlers', () => {
     const error = new UserNotFoundError({ id: '123', source: 'users' })
     const defaultResult = UserNotFoundError.err({ id: '123', source: 'users' })
-    const defaultAsyncResult = UserNotFoundError.errAsync({ id: '123', source: 'users' })
     const defaultTaskResult = UserNotFoundError.taskErr({ id: '123', source: 'users' })
     const assignableResult: Result<string, UserNotFoundError> = UserNotFoundError.err({
       id: '123',
@@ -372,7 +531,6 @@ describe('tagged error types', async () => {
     expectTypeOf(error.source).toEqualTypeOf<string | number | Redacted<unknown>>()
     expectTypeOf(defaultResult).toEqualTypeOf<ErrResult<never, UserNotFoundError>>()
     expectTypeOf(defaultResult.error).toEqualTypeOf<UserNotFoundError>()
-    expectTypeOf(defaultAsyncResult).toEqualTypeOf<ResultAsync<never, UserNotFoundError>>()
     expectTypeOf(defaultTaskResult).toEqualTypeOf<ResultTask<never, UserNotFoundError, never>>()
     if (assignableResult.isErr()) {
       expectTypeOf(assignableResult.error).toEqualTypeOf<UserNotFoundError>()
@@ -404,9 +562,6 @@ describe('tagged error types', async () => {
 
       // @ts-expect-error source is required by the message template.
       void UserNotFoundError.err({ id: '123' })
-
-      // @ts-expect-error id and source are required by the message template.
-      void UserNotFoundError.errAsync()
 
       // @ts-expect-error id and source are required by the message template.
       void UserNotFoundError.taskErr()
@@ -443,4 +598,105 @@ describe('tagged error types', async () => {
       })
     }
   })
+})
+
+it('keeps enum factories awaitable as plain values and copies reserved object keys as data', async () => {
+  const variants = taggedEnum<{ Item: { label: string } }>()
+  equal(Reflect.get(variants, 'then'), undefined)
+  equal(await Promise.resolve(variants), variants)
+  const props = Object.defineProperty({ label: 'x' }, '__proto__', {
+    value: 'metadata',
+    enumerable: true,
+  })
+  const item = variants.Item(props)
+  equal(Object.getPrototypeOf(item), Object.prototype)
+  equal(Object.getOwnPropertyDescriptor(item, '__proto__')?.value, 'metadata')
+  const record = new StaticMessageError()
+  Object.defineProperty(record, 'valueOf', { value: 'extra', enumerable: true })
+  deepEqual(Object.getOwnPropertyDescriptor(record.toJSON(), 'valueOf'), {
+    value: 'extra',
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
+})
+
+it('uses an overridden toJSON when serializing a tagged cause', () => {
+  class CustomCause extends createTaggedError({ name: 'CustomCause', message: 'failure' }) {
+    public override toJSON = () => ({ publicMessage: `custom ${this.message}` })
+  }
+  const cause = new CustomCause()
+  const outer = new StaticMessageError({ cause })
+  deepEqual(Reflect.get(outer.toJSON(), 'cause'), { publicMessage: 'custom failure' })
+})
+
+it('reports the tag or malformed value when no tagged enum handler matches', () => {
+  const variants = taggedEnum<{ Item: { label: string } }>()
+  const handlers = { Item: () => 'item' }
+  throws(() => variants.$match({ _tag: 'Unknown' } as never, handlers), {
+    message: 'No tagged enum handler for Unknown',
+  })
+  throws(() => variants.$match(null as never, handlers), {
+    message: 'No tagged enum handler for null',
+  })
+})
+
+it('invokes synchronous try and generator options with their receiver', () => {
+  function recover(this: { marker: number }) {
+    return this.marker
+  }
+  const opts = {
+    marker: 7,
+    try() {
+      return this.marker
+    },
+    catch: recover,
+  }
+  equal(Result.try(opts).unwrapOr(0), 7)
+  const failed = {
+    marker: 7,
+    catch: recover,
+    try() {
+      throw new Error('stop')
+    },
+  }
+  deepEqual(Result.try(failed), Result.err(7))
+  const gen = {
+    marker: 7,
+    catch: recover,
+    *try() {
+      return yield* Result.ok(this.marker)
+    },
+  }
+  deepEqual(Result.gen(gen), Result.ok(7))
+  const broken = {
+    marker: 7,
+    catch: recover,
+    *try() {
+      yield* Result.ok(0)
+      throw new Error('stop')
+    },
+  }
+  deepEqual(Result.gen(broken), Result.err(7))
+})
+
+it('handles default $message template fallbacks and taggedEnum props alongside an ignored _tag', () => {
+  const DefaultMessageError = createTaggedError({ name: 'DefaultMessageError' })
+  const noArgs = new (DefaultMessageError as unknown as new () => Error)()
+  equal(noArgs.message, '$message')
+  const missingMessage = new (DefaultMessageError as unknown as new (v: object) => Error)({})
+  equal(missingMessage.message, '$message')
+  const withMessage = new DefaultMessageError({ message: 'explicit' })
+  equal(withMessage.message, 'explicit')
+
+  const extraSym = Symbol('extra')
+  const Variants = taggedEnum<{ Item: { readonly label: string; readonly [extraSym]?: number } }>()
+  const built = (
+    Variants.Item as unknown as (
+      props: Record<PropertyKey, unknown>,
+    ) => Record<PropertyKey, unknown>
+  )({ _tag: 'Ignored', label: 'kept', [extraSym]: 99 })
+  equal(built['_tag'], 'Item')
+  equal(built['label'], 'kept')
+  equal(built[extraSym], 99)
 })

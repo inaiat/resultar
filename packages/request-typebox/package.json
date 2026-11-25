@@ -1,6 +1,6 @@
 {
   "name": "resultar-request-typebox",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "description": "TypeBox adapter for request.",
   "keywords": [
     "fetch",
@@ -26,6 +26,7 @@
     "README.md"
   ],
   "type": "module",
+  "sideEffects": false,
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
@@ -34,7 +35,7 @@
     }
   },
   "scripts": {
-    "analyze": "fallow",
+    "check:fallow": "fallow",
     "build": "vp pack",
     "check": "vp check",
     "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",

@@ -120,8 +120,8 @@ test.each(["scoped", "transient"] as const)(
 
 test("startup and both resource cleanup failures remain observable", async () => {
   const Connection = resource("connection", {
-    acquire: ResultTask.succeed({}),
-    release: () => ResultTask.fail("root cleanup"),
+    acquire: ResultTask.ok({}),
+    release: () => ResultTask.err("root cleanup"),
   });
   const app = createFastifyApp(
     {
@@ -130,10 +130,10 @@ test("startup and both resource cleanup failures remain observable", async () =>
       startup: ResultTask.gen(function* initialize() {
         yield* Connection;
         yield* ResultTask.acquireRelease({
-          acquire: ResultTask.succeed({}),
-          release: () => ResultTask.fail("task cleanup"),
+          acquire: ResultTask.ok({}),
+          release: () => ResultTask.err("task cleanup"),
         });
-        yield* ResultTask.fail("startup failed");
+        yield* ResultTask.err("startup failed");
       }),
     },
     noRoutes,
@@ -156,7 +156,7 @@ test("startup and both resource cleanup failures remain observable", async () =>
 test("closing releases startup resources even when their finalizer fails", async () => {
   let released = 0;
   const Connection = resource("connection", {
-    acquire: ResultTask.succeed({}),
+    acquire: ResultTask.ok({}),
     release: () =>
       ResultTask.sync(() => {
         released += 1;
@@ -169,8 +169,8 @@ test("closing releases startup resources even when their finalizer fails", async
       startup: ResultTask.gen(function* initialize() {
         yield* Connection;
         yield* ResultTask.acquireRelease({
-          acquire: ResultTask.succeed({}),
-          release: () => ResultTask.fail("cleanup"),
+          acquire: ResultTask.ok({}),
+          release: () => ResultTask.err("cleanup"),
         });
       }),
     },
@@ -204,7 +204,7 @@ const types = () => {
     noRoutes,
   );
   // @ts-expect-error Startup must return void, not discard a business value.
-  createFastifyApp({ services: createModule(), startup: ResultTask.succeed(42) }, noRoutes);
+  createFastifyApp({ services: createModule(), startup: ResultTask.ok(42) }, noRoutes);
   createFastifyApp(
     {
       services: createModule(),
@@ -228,7 +228,7 @@ test("native readiness timeout can close and cancel a pending startup", async ()
       services: createModule(),
       startup: ResultTask.gen(function* initialize() {
         yield* ResultTask.acquireRelease({
-          acquire: ResultTask.succeed({}),
+          acquire: ResultTask.ok({}),
           release: () =>
             ResultTask.sync(() => {
               released += 1;

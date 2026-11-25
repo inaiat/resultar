@@ -165,4 +165,50 @@ describe('Cause.pretty', () => {
     }
     equal(Cause.pretty({ _tag: 'Die', defect: payload }), 'Die: [Unserializable value]')
   })
+
+  it('formats span frames with empty, unserializable, or undefined-toJSON attributes', () => {
+    const emptyExit = ResultTask.err('e')
+      .withSpan('empty-attrs', { skipped: undefined })
+      .runSyncExit()
+    if (emptyExit._tag === 'Failure') {
+      equal(Cause.pretty(emptyExit.cause), 'Fail: e\nSpan trace:\n  at empty-attrs')
+    }
+
+    const undefinedJson = { toJSON: () => undefined, toString: () => 'custom-string' }
+    const throwingJson = {
+      toJSON(): never {
+        throw new Error('attr-boom')
+      },
+    }
+    const weirdExit = ResultTask.err('e')
+      .withSpan('weird-attrs', {
+        fallback: undefinedJson as unknown as string,
+        broken: throwingJson as unknown as string,
+      })
+      .runSyncExit()
+    if (weirdExit._tag === 'Failure') {
+      equal(
+        Cause.pretty(weirdExit.cause),
+        'Fail: e\nSpan trace:\n  at weird-attrs (fallback=custom-string, broken=[Unserializable value])',
+      )
+    }
+
+    const throwingProxy = new Proxy(
+      {},
+      {
+        ownKeys(): never {
+          throw new Error('proxy-boom')
+        },
+      },
+    )
+    const proxyExit = ResultTask.err('e')
+      .withSpan('proxy-attrs', throwingProxy as unknown as Record<string, string>)
+      .runSyncExit()
+    if (proxyExit._tag === 'Failure') {
+      equal(
+        Cause.pretty(proxyExit.cause),
+        'Fail: e\nSpan trace:\n  at proxy-attrs ([Unserializable attributes])',
+      )
+    }
+  })
 })

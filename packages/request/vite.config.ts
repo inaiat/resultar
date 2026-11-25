@@ -15,12 +15,12 @@ const config: UserConfig = defineConfig({
   staged: { "*": "vp check --fix" },
   pack: {
     clean: true,
-    dts: true,
+    dts: { sourcemap: false },
     deps: { onlyBundle: false },
     entry: ["src/index.ts"],
     format: ["esm"],
     outExtensions: () => ({ dts: ".d.ts", js: ".js" }),
-    sourcemap: true,
+    sourcemap: false,
   },
   fmt: { ignorePatterns, objectWrap: "collapse" },
   lint: {
@@ -78,11 +78,6 @@ const config: UserConfig = defineConfig({
       "unicorn/switch-case-braces": "allow",
     },
     overrides: [
-      {
-        // This eager compatibility adapter and its tests retain the ResultAsync contract.
-        files: ["src/request-json.ts", "tests/request-json.test.ts"],
-        rules: { "@typescript-eslint/no-deprecated": "allow" },
-      },
       {
         files: ["**/tests/**", "**/test/**", "scripts/**/*.ts"],
         rules: {

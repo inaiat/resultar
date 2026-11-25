@@ -1,6 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 
-import { createTaggedError, err, ok, ResultAsync, type StrictResult } from "resultar";
+import { createTaggedError, err, ok, ResultTask, type StrictResult } from "resultar";
 
 export class AccountExampleServerError extends createTaggedError({
   name: "AccountExampleServerError",
@@ -42,23 +42,23 @@ export const createAccountExampleServer = () =>
   });
 
 const listen = (server: Server) =>
-  ResultAsync.fromCallback<void, AccountExampleServerError>({
-    catch: mapServerError("start"),
+  ResultTask.fromCallback<void, AccountExampleServerError>({
     subscribe: ({ reject, resolve }) => {
-      const onError = (error: Error) => reject(error);
+      const onError = (error: Error) => reject(mapServerError("start")(error));
 
       server.once("error", onError);
-      server.listen(0, "127.0.0.1", resolve);
+      server.listen(0, "127.0.0.1", () => resolve(undefined));
 
       return () => server.off("error", onError);
     },
   });
 
 export const closeServer = (server: Server) =>
-  ResultAsync.fromCallback<void, AccountExampleServerError>({
-    catch: mapServerError("close"),
+  ResultTask.fromCallback<void, AccountExampleServerError>({
     subscribe: ({ reject, resolve }) => {
-      server.close((error) => (error === undefined ? resolve() : reject(error)));
+      server.close((error) =>
+        error === undefined ? resolve(undefined) : reject(mapServerError("close")(error)),
+      );
     },
   });
 
@@ -70,10 +70,10 @@ const getBaseUrl = (server: Server): StrictResult<string, AccountExampleServerEr
     : err(new AccountExampleServerError({ operation: "start" }));
 };
 
-export const startAccountExampleServer = () => {
-  const server = createAccountExampleServer();
-
-  return listen(server)
-    .andThen(() => getBaseUrl(server))
-    .map((baseUrl) => ({ baseUrl, server }));
-};
+export const startAccountExampleServer = () =>
+  ResultTask.gen(function* () {
+    const server = createAccountExampleServer();
+    yield* listen(server);
+    const baseUrl = yield* getBaseUrl(server);
+    return { baseUrl, server };
+  });

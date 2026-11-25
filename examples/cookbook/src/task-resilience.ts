@@ -127,7 +127,8 @@ export const runTaskResilience = async () => {
   ).timeout(5, () => new TaskDeadlineError({ milliseconds: 5 }));
   const timeoutRun = slowQuery.runResult({ clock });
   await clock.advanceBy(7);
-  const timedOut = await timeoutRun.match({
+  const timeoutResult = await timeoutRun;
+  const timedOut = timeoutResult.match({
     ok: () => "unexpected-success",
     err: (error) => error._tag,
   });

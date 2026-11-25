@@ -4,19 +4,19 @@
     {
       "id": 1,
       "prompt": "Refactor a TypeScript createUser service that currently throws for invalid email, duplicate users, and repository failures. Use the Resultar version installed in the repository, preserve concrete error metadata and causes, and show how an HTTP route converts the final workflow into responses.",
-      "expected_output": "Inspects local Resultar truth; models expected failures with createTaggedError and StrictResult/StrictResultAsync; composes narrow errors with map, andThen, or asyncAndThen; and uses exhaustive matchTags at the HTTP boundary without T | Error, broad catches, or production unsafe unwraps.",
+      "expected_output": "Inspects local Resultar truth; models expected failures with createTaggedError and StrictResult/StrictResultTask; composes narrow errors with map, andThen, or ResultTask.gen; and uses exhaustive matchTags at the HTTP boundary without T | Error, broad catches, or production unsafe unwraps.",
       "files": []
     },
     {
       "id": 2,
       "prompt": "Design a Resultar async workflow that loads a user from a flaky upstream, retries only retryable failures, applies one overall timeout, races a primary and replica for the first success, writes the result with bounded concurrency, always releases an acquired session, and records metrics. Explain cancellation and cleanup semantics.",
-      "expected_output": "Chooses ResultAsync for existing Promise-shaped work or ResultTask for reusable lazy work; uses retry policies, an overall timeout, race for first success and raceFirst only for first completion, and bounded forEach. Uses scoped/acquireRelease for owned task resources or documents best-effort withResource release for ResultAsync. Uses ResultAsync inspect/inspectError for best-effort observation; legacy tap/tapError remain equivalent, while ResultTask tap/tapError failures participate in the workflow. Forwards AbortSignal and explains cooperative cancellation and awaited task cleanup.",
+      "expected_output": "Uses ResultTask for async workflows; uses Retry.policy, an overall timeout, race for first success and raceFirst only for first completion, and bounded forEach. Uses scoped/acquireRelease for owned task resources. Uses inspect/inspectError for best-effort observation and ResultTask tap/tapError when side-effect failures should participate in the workflow. Forwards AbortSignal and explains cooperative cancellation and awaited task cleanup.",
       "files": []
     },
     {
       "id": 3,
       "prompt": "Add tests for a Resultar tagged-error workflow. Cover success and every expected failure at runtime, inferred template props and error unions at the type level, exhaustive boundary matching, and deterministic retry, timeout, cancellation, and cleanup behavior. Use this repository's real test runner.",
-      "expected_output": "Uses vite-plus/test in the Resultar repository, runtime assertions for Ok and Err paths, expectTypeOf and @ts-expect-error for type behavior, and deterministic fakes or Clock.virtual for time-dependent task policies. Tests inspect/inspectError as best-effort observations and verifies that deprecated Result/ResultAsync taps preserve their existing equivalent behavior. ResultTask tap failures affect its outcome. Preserves task laziness, keeps _unsafeUnwrap helpers in tests only, and validates exhaustive tagged-error handling.",
+      "expected_output": "Uses vite-plus/test in the Resultar repository, runtime assertions for Ok and Err paths, expectTypeOf and @ts-expect-error for type behavior, and deterministic fakes or Clock.virtual for time-dependent task policies. Tests inspect/inspectError as best-effort observations and verifies ResultTask tap failures affect its outcome. Preserves task laziness, keeps _unsafeUnwrap helpers in tests only, and validates exhaustive tagged-error handling.",
       "files": []
     },
     {
@@ -76,19 +76,19 @@
     {
       "id": 13,
       "prompt": "Wrap a Promise-returning SDK in a new repository whose public methods return lazy ResultTasks. Keep the driver boundary distinct from application and native execution contracts.",
-      "expected_output": "Uses ResultTask.tryPromise directly, concrete tagged errors and cancellation forwarding. Factories are not async; returns no Promise<ResultTask> or Promise<Result>. Retains typed Async bridges only for existing ResultAsync adapters.",
+      "expected_output": "Uses ResultTask.tryPromise directly, concrete tagged errors and cancellation forwarding. Factories are not async; returns no Promise<ResultTask>. Retains typed Async bridges only for legacy resultar/async adapters.",
       "files": []
     },
     {
       "id": 14,
-      "prompt": "Implement unannotated Task and eager ResultAsync adapter factories for Promise-returning drivers without wrapping either Resultar return contract in an outer async Promise.",
-      "expected_output": "Returns ResultTask directly from ResultTask.tryPromise and ResultAsync directly from tryResultAsync without async wrappers, preserving concrete tagged errors and failing no-promise-resultar if async is added even without explicit return type annotations.",
+      "prompt": "Implement unannotated Task and opt-in eager ResultAsync (from resultar/async) adapter factories for Promise-returning drivers without wrapping either Resultar return contract in an outer async Promise.",
+      "expected_output": "Returns ResultTask directly from ResultTask.tryPromise and ResultAsync directly from tryResultAsync (imported from resultar/async) without async wrappers, preserving concrete tagged errors and failing no-promise-resultar if async is added to the Task factory even without explicit return type annotations.",
       "files": []
     },
     {
       "id": 15,
-      "prompt": "Implement a Task-native Zod HTTP client using requestJsonZodTask with exponential backoff, stage-accurate domain error mapping, safe HTTP error handling, and cooperative Task cancellation.",
-      "expected_output": "Uses requestJsonZodTask directly without async or manual fromResultAsync bridging, maps 404/http/invalidJson/request/validation into a tagged error, classifies transport SyntaxError as request, handles circular response headers safely, and stops retries immediately on Task cancellation.",
+      "prompt": "Implement a Task-native Zod HTTP client using requestJsonZod with exponential backoff, stage-accurate domain error mapping, safe HTTP error handling, and cooperative Task cancellation.",
+      "expected_output": "Uses requestJsonZod directly without async or manual fromResultAsync bridging, maps 404/http/invalidJson/request/validation into a tagged error, classifies transport SyntaxError as request, handles circular response headers safely, and stops retries immediately on Task cancellation.",
       "files": []
     }
   ],

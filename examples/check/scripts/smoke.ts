@@ -10,6 +10,7 @@ const launcher = join(dirname(require.resolve("resultar-check/schema.json")), "d
 const expectedRules = [
   "no-await-in-result-task-gen",
   "no-await-in-safe-try",
+  "no-await-result-task",
   "no-discard",
   "no-fn-iife",
   "no-invalid-lifetime",
@@ -56,6 +57,7 @@ type ExpectedRule = (typeof expectedRules)[number];
 const expectedCounts = {
   "no-await-in-result-task-gen": 2,
   "no-await-in-safe-try": 1,
+  "no-await-result-task": 1,
   "no-discard": 5,
   "no-fn-iife": 1,
   "no-invalid-lifetime": 2,
@@ -218,21 +220,19 @@ const taskContractFindings = taskContractsRun.stdout
 if (
   taskContractsRun.status === 0 ||
   taskContractsRun.stderr.trim() !== "" ||
-  taskContractFindings.length !== 9 ||
+  taskContractFindings.length !== 5 ||
   taskContractFindings.some(
     (finding) =>
       finding.rule !== "no-promise-resultar" ||
       finding.severity !== "error" ||
       !finding.file.endsWith("/src/task-contracts.ts"),
   ) ||
-  !taskContractFindings.some(
-    (finding) =>
-      finding.message.includes("ResultTask<number | User, UserLookupError>") &&
-      finding.message.includes("ResultAsync<number | User, UserLookupError>"),
+  !taskContractFindings.some((finding) =>
+    finding.message.includes("ResultTask<number | User, UserLookupError>"),
   )
 ) {
   throw new Error(
-    `Expected documented Task-first config to reject all 9 Promise<Result/StrictResult/ResultTask> contracts (including constrained generics and heterogeneous unions) and allow raw SDK/Exit/direct contracts\n${taskContractsRun.stdout}${taskContractsRun.stderr}`,
+    `Expected documented Task-first config to reject all 5 Promise<ResultTask/StrictResultTask> contracts (including constrained generics and heterogeneous unions) and allow Promise<Result> boundaries, raw SDK, Exit, and direct contracts\n${taskContractsRun.stdout}${taskContractsRun.stderr}`,
   );
 }
 

@@ -2,6 +2,7 @@ import { deepEqual, equal, ok as isTrue, rejects, throws } from 'node:assert'
 import { describe, expect, it } from 'vite-plus/test'
 
 import { createResultarError } from '../src/core/error.js'
+import * as resultarAsync from '../src/entries/async.js'
 import type { Fiber as FiberType, Result, TaggedEnum } from '../src/index.js'
 import * as resultar from '../src/index.js'
 import { Fiber, ResultTask, Semaphore, err } from '../src/index.js'
@@ -10,25 +11,11 @@ import { registerFiberTaskFactory, startFiber } from '../src/task/fiber-runtime.
 import { MissingServiceError, ResultTaskYieldTypeId } from '../src/task/result-task.js'
 import { TaskScope } from '../src/task/scope.js'
 import { schedulerCheckpoint } from '../src/task/task-scheduler.js'
-import type * as ResultAsyncAdapter from '../src/result-async/result-async-adapter.js'
-
-const resultAsyncForEach: typeof resultar.ResultAsync.forEach = resultar.ResultAsync.forEach
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
-
-const delayedOkTask =
-  <T, E = never>(value: T, delayMs: number): resultar.ResultAsyncRaceTask<T, E> =>
-  () =>
-    new resultar.ResultAsync<T, E>(
-      Promise.try(async () => {
-        await sleep(delayMs)
-
-        return resultar.ok<T, E>(value)
-      }),
-    )
 
 const CoverageReason = resultar.taggedEnum<{
   Primary: { readonly code: string }
@@ -97,24 +84,17 @@ describe('coverage-focused public behavior', () => {
     equal(yielded.value, errResult)
     deepEqual(iterator.next(), { done: true, value: errResult })
 
-    const safeUnwrapIterator = errResult.safeUnwrap()
-    const safeYielded = safeUnwrapIterator.next()
-
-    isTrue(!safeYielded.done)
-    deepEqual(safeYielded.value, resultar.err('failure'))
-    throws(() => safeUnwrapIterator.next(), /Do not use this generator/u)
-
     const ifResult = errResult
       .if(() => true)
       .true(() => resultar.ok('yes'))
       .false(() => resultar.ok('no'))
 
     equal(ifResult._unsafeUnwrapErr(), 'failure')
-    const okTapError = resultar.ok('value').tapError(() => {
+    const okInspectError = resultar.ok('value').inspectError(() => {
       throw new Error('should not run')
     })
 
-    equal(okTapError._unsafeUnwrap(), 'value')
+    equal(okInspectError._unsafeUnwrap(), 'value')
     throws(
       () => resultar.ok('value')._unsafeUnwrapErr({ withStackTrace: true }),
       (error) => {
@@ -227,21 +207,22 @@ describe('coverage-focused public behavior', () => {
   })
 
   it('covers ResultAsync error paths and async iterators', async () => {
-    const ifResult = await resultar
+    const ifResult = await resultarAsync
       .errAsync<string, string>('async failure')
       .if(() => true)
-      .true(() => resultar.okAsync('yes'))
-      .false(() => resultar.okAsync('no'))
+      .true(() => resultarAsync.okAsync('yes'))
+      .false(() => resultarAsync.okAsync('no'))
 
     equal(ifResult._unsafeUnwrapErr(), 'async failure')
 
-    const okTapError = await resultar.okAsync('value').tapError(() => {
+    const okInspectError = await resultarAsync.okAsync('value').inspectError(() => {
       throw new Error('should not run')
     })
 
-    equal(okTapError._unsafeUnwrap(), 'value')
+    equal(okInspectError._unsafeUnwrap(), 'value')
 
-    const asyncIterator = resultar.errAsync<string, string>('async failure')[Symbol.asyncIterator]()
+    const asyncErr = resultarAsync.errAsync<string, string>('async failure')
+    const asyncIterator = asyncErr[Symbol.asyncIterator]()
     const yielded = await asyncIterator.next()
 
     isTrue(!yielded.done)
@@ -249,23 +230,23 @@ describe('coverage-focused public behavior', () => {
     deepEqual(await asyncIterator.next(), { done: true, value: undefined })
 
     await rejects(
-      async () => await resultar.errAsync<never, Error>(new Error('boom')).unwrapOrThrow(),
+      async () => await resultarAsync.errAsync<never, Error>(new Error('boom')).unwrapOrThrow(),
       /boom/u,
     )
   })
 
   it('covers ResultAsync predicate, match, and throw branches', async () => {
     const original = new Error('original')
-    const unmapped = await resultar.tryResultAsync(Promise.reject(original))
-    const falsePredicate = await resultar.okAsync<number, string>(0).filterOrElse(
+    const unmapped = await resultarAsync.tryResultAsync(Promise.reject(original))
+    const falsePredicate = await resultarAsync.okAsync<number, string>(0).filterOrElse(
       async (value) => value > 0,
       async () => 'invalid',
     )
-    const truePredicate = await resultar.okAsync<number, string>(1).filterOrElse(
+    const truePredicate = await resultarAsync.okAsync<number, string>(1).filterOrElse(
       async (value) => value > 0,
       async () => 'invalid',
     )
-    const errPredicate = await resultar.errAsync<number, string>('failure').filterOrElse(
+    const errPredicate = await resultarAsync.errAsync<number, string>('failure').filterOrElse(
       async () => true,
       async () => 'invalid',
     )
@@ -277,7 +258,7 @@ describe('coverage-focused public behavior', () => {
     await rejects(
       async () =>
         await (
-          resultar.errAsync<string, string>('failure').match as unknown as (
+          resultarAsync.errAsync<string, string>('failure').match as unknown as (
             fnOk: (value: string) => string,
           ) => Promise<string>
         )((value) => value),
@@ -285,72 +266,52 @@ describe('coverage-focused public behavior', () => {
     )
     await rejects(
       async () =>
-        await resultar
+        await resultarAsync
           .errAsync<string, Error>(new Error('missing async handler'))
           .matchTags(String, {} as never),
       /missing async handler/u,
     )
   })
 
-  it('covers record and iterable aggregation branches', async () => {
-    const recordFirstError = resultar.Result.combine({
+  it('covers record and iterable aggregation branches', () => {
+    const recordFirstError = resultar.Result.all({
       first: resultar.ok<number, 'first-error'>(1),
       second: resultar.err<number, 'second-error'>('second-error'),
     })
-    const recordAllOk = resultar.Result.combineWithAllErrors({
+    const recordAllOk = resultar.Result.validateAll({
       first: resultar.ok<number, 'first-error'>(1),
       second: resultar.ok<number, 'second-error'>(2),
     })
-    const iterableAllErrors = resultar.Result.combineWithAllErrors(
+    const iterableAllErrors = resultar.Result.validateAll(
       new Set([resultar.ok<number, string>(1), resultar.err<number, string>('bad')]),
     )
     const primitiveStringRecord = (
-      resultar.Result.combineWithAllErrors as (
-        input: unknown,
-      ) => Result<Record<string, unknown>, unknown>
+      resultar.Result.validateAll as (input: unknown) => Result<Record<string, unknown>, unknown>
     )('')
-    const asyncRecordAllOk = await resultar.ResultAsync.combineWithAllErrors({
-      first: resultar.okAsync<number, 'first-error'>(1),
-      second: resultar.okAsync<number, 'second-error'>(2),
-    })
-    const asyncRecordAllErrors = await resultar.ResultAsync.combineWithAllErrors({
-      first: resultar.errAsync<number, 'first-error'>('first-error'),
-      second: resultar.okAsync<number, 'second-error'>(2),
-    })
-    const asyncIterableCombined = await resultar.ResultAsync.combine(
-      new Set([resultar.okAsync<number, string>(1), resultar.okAsync<number, string>(2)]),
-    )
-    const asyncIterableAllErrors = await resultar.ResultAsync.combineWithAllErrors(
-      new Set([resultar.okAsync<number, string>(1), resultar.errAsync<number, string>('bad')]),
-    )
 
     equal(recordFirstError._unsafeUnwrapErr(), 'second-error')
     deepEqual(recordAllOk._unsafeUnwrap(), { first: 1, second: 2 })
     deepEqual(iterableAllErrors._unsafeUnwrapErr(), ['bad'])
     deepEqual(primitiveStringRecord._unsafeUnwrap(), {})
-    deepEqual(asyncRecordAllOk._unsafeUnwrap(), { first: 1, second: 2 })
-    deepEqual(asyncRecordAllErrors._unsafeUnwrapErr(), ['first-error'])
-    deepEqual(asyncIterableCombined._unsafeUnwrap(), [1, 2])
-    deepEqual(asyncIterableAllErrors._unsafeUnwrapErr(), ['bad'])
   })
 
-  it('covers static tryCatch branches', async () => {
+  it('covers static try branches', async () => {
     const original = new Error('original')
-    const mapped = resultar.Result.tryCatch(
+    const mapped = resultar.Result.try(
       () => {
         throw original
       },
       (error) => new Error(`mapped ${(error as Error).message}`),
     )
-    const unmapped = resultar.Result.tryCatch(() => {
+    const unmapped = resultar.Result.try(() => {
       throw original
     })
-    const asyncMapped = await resultar.ResultAsync.tryCatch(
+    const asyncMapped = await resultarAsync.ResultAsync.try(
       () => Promise.reject(original),
       (error) => new Error(`async mapped ${(error as Error).message}`),
     )
-    const asyncUnmapped = await resultar.ResultAsync.tryCatch(Promise.reject(original))
-    const asyncFactoryOk = await resultar.ResultAsync.tryCatch(() => Promise.resolve('ok'))
+    const asyncUnmapped = await resultarAsync.ResultAsync.try(Promise.reject(original))
+    const asyncFactoryOk = await resultarAsync.ResultAsync.try(() => Promise.resolve('ok'))
 
     equal(mapped._unsafeUnwrapErr().message, 'mapped original')
     equal(unmapped._unsafeUnwrapErr(), original)
@@ -423,34 +384,34 @@ describe('coverage-focused public behavior', () => {
   })
 
   it('covers async reason-aware ok and non-matching branches', async () => {
-    const asyncOkReason = await resultar
+    const asyncOkReason = await resultarAsync
       .okAsync<number, CoverageParentError>(1)
-      .catchReason('CoverageParentError', 'Primary', () => resultar.okAsync('unused'))
-    const asyncOkReasons = await resultar
+      .catchReason('CoverageParentError', 'Primary', () => resultarAsync.okAsync('unused'))
+    const asyncOkReasons = await resultarAsync
       .okAsync<number, CoverageParentError>(1)
-      .catchReasons('CoverageParentError', { Primary: () => resultar.okAsync('unused') })
-    const asyncOkUnwrap = await resultar
+      .catchReasons('CoverageParentError', { Primary: () => resultarAsync.okAsync('unused') })
+    const asyncOkUnwrap = await resultarAsync
       .okAsync<number, CoverageParentError>(1)
       .unwrapReason('CoverageParentError')
-    const asyncWrongParent = await resultar
+    const asyncWrongParent = await resultarAsync
       .errAsync<number, CoverageParentError | CoverageOtherError>(new CoverageOtherError())
-      .catchReason('CoverageParentError', 'Primary', () => resultar.okAsync('unused'))
-    const asyncWrongReason = await resultar
+      .catchReason('CoverageParentError', 'Primary', () => resultarAsync.okAsync('unused'))
+    const asyncWrongReason = await resultarAsync
       .errAsync<number, CoverageParentError | CoverageOtherError>(
         new CoverageParentError(CoverageReason.Secondary({ code: 's' })),
       )
-      .catchReason('CoverageParentError', 'Primary', () => resultar.okAsync('unused'))
-    const asyncMissingReasonHandler = await resultar
+      .catchReason('CoverageParentError', 'Primary', () => resultarAsync.okAsync('unused'))
+    const asyncMissingReasonHandler = await resultarAsync
       .errAsync<number, CoverageParentError | CoverageOtherError>(
         new CoverageParentError(CoverageReason.Secondary({ code: 's' })),
       )
-      .catchReasons('CoverageParentError', { Primary: () => resultar.okAsync('unused') })
-    const asyncPrimitiveReason = await resultar
+      .catchReasons('CoverageParentError', { Primary: () => resultarAsync.okAsync('unused') })
+    const asyncPrimitiveReason = await resultarAsync
       .errAsync<number, CoverageParentError | CoverageOtherError>(
         new CoverageParentError('primitive' as unknown as CoverageReason),
       )
-      .catchReasons('CoverageParentError', { Primary: () => resultar.okAsync('unused') })
-    const asyncWrongUnwrap = await resultar
+      .catchReasons('CoverageParentError', { Primary: () => resultarAsync.okAsync('unused') })
+    const asyncWrongUnwrap = await resultarAsync
       .errAsync<number, CoverageParentError | CoverageOtherError>(new CoverageOtherError())
       .unwrapReason('CoverageParentError')
 
@@ -470,12 +431,14 @@ describe('coverage-focused public behavior', () => {
         new CoverageParentError(CoverageReason.Primary({ code: 'sync' })),
       )
       .catchReasons('CoverageParentError', { Primary: (reason) => resultar.ok(reason.code) })
-    const asyncHandled = await resultar
+    const asyncHandled = await resultarAsync
       .errAsync<number, CoverageParentError>(
         new CoverageParentError(CoverageReason.Primary({ code: 'async' })),
       )
-      .catchReasons('CoverageParentError', { Primary: (reason) => resultar.okAsync(reason.code) })
-    const asyncUnwrapped = await resultar
+      .catchReasons('CoverageParentError', {
+        Primary: (reason) => resultarAsync.okAsync(reason.code),
+      })
+    const asyncUnwrapped = await resultarAsync
       .errAsync<number, CoverageParentError>(
         new CoverageParentError(CoverageReason.Primary({ code: 'unwrap' })),
       )
@@ -484,117 +447,6 @@ describe('coverage-focused public behavior', () => {
     equal(syncHandled._unsafeUnwrap(), 'sync')
     equal(asyncHandled._unsafeUnwrap(), 'async')
     deepEqual(asyncUnwrapped._unsafeUnwrapErr(), CoverageReason.Primary({ code: 'unwrap' }))
-  })
-
-  it('covers async traversal rejection branches', async () => {
-    const throwingIterable = {
-      [Symbol.iterator](): Iterator<number> {
-        return {
-          next() {
-            throw new Error('iterator failed')
-          },
-        }
-      },
-    }
-
-    await rejects(
-      async () =>
-        await resultar.ResultAsync.validateAll(throwingIterable, (value) =>
-          resultar.okAsync<number, string>(value),
-        ),
-      /iterator failed/u,
-    )
-    await rejects(
-      async () =>
-        await resultAsyncForEach(throwingIterable, (value) =>
-          resultar.okAsync<number, string>(value),
-        ),
-      /iterator failed/u,
-    )
-    await rejects(
-      async () =>
-        await resultar.ResultAsync.validateAll(
-          [0, 1],
-          (value) => {
-            if (value === 0) {
-              return delayedOkTask<number, string>(value, 5)(new AbortController().signal)
-            }
-
-            throw new Error('validate mapper failed')
-          },
-          { concurrency: 2 },
-        ),
-      /validate mapper failed/u,
-    )
-    await rejects(
-      async () =>
-        await resultAsyncForEach(
-          [0, 1],
-          (value) => {
-            if (value === 0) {
-              return delayedOkTask<number, string>(value, 5)(new AbortController().signal)
-            }
-
-            throw new Error('forEach mapper failed')
-          },
-          { concurrency: 2 },
-        ),
-      /forEach mapper failed/u,
-    )
-    await rejects(
-      async () =>
-        await resultar.ResultAsync.validateAll(
-          [1],
-          () =>
-            new resultar.ResultAsync<number, Error>(
-              Promise.reject(new Error('rejected validation')),
-            ),
-        ),
-      /rejected validation/u,
-    )
-    await rejects(
-      async () =>
-        await resultAsyncForEach(
-          [1],
-          () =>
-            new resultar.ResultAsync<number, Error>(Promise.reject(new Error('rejected forEach'))),
-        ),
-      /rejected forEach/u,
-    )
-
-    await sleep(10)
-  })
-
-  it('covers late racing settlements and race handles', async () => {
-    const first = await resultar.ResultAsync.raceFirst(
-      delayedOkTask<string, string>('fast', 0),
-      delayedOkTask<string, string>('slow', 50),
-    )
-    const success = await resultar.ResultAsync.race(
-      delayedOkTask<string, string>('fast', 0),
-      delayedOkTask<string, string>('slow', 50),
-    )
-    const withHandle = await resultar.ResultAsync.raceWith(
-      delayedOkTask<string, string>('left', 0),
-      delayedOkTask<string, string>('right', 50),
-      {
-        onLeftDone: (result, right) => {
-          isTrue(right.signal instanceof AbortSignal)
-          right.abort(new Error('stop right'))
-          return result
-        },
-        onRightDone: (result, left) => {
-          left.abort(new Error('stop left'))
-          return result
-        },
-      },
-    )
-
-    equal(first._unsafeUnwrap(), 'fast')
-    equal(success._unsafeUnwrap(), 'fast')
-    equal(withHandle._unsafeUnwrap(), 'left')
-
-    await sleep(60)
   })
 
   it('covers redaction and tagged enum defensive branches', () => {
@@ -617,21 +469,13 @@ describe('coverage-focused public behavior', () => {
     )
   })
 
-  it('covers ResultAsync adapter registration failure in isolation', async () => {
-    const adapter = (await import(
-      new URL('../src/result-async/result-async-adapter.ts?coverage', import.meta.url).href
-    )) as typeof ResultAsyncAdapter
-
-    throws(() => adapter.createResultAsync(Promise.resolve(resultar.ok(1))), /not registered/u)
-  })
-
-  it('covers safeTry uncaught throw and rejection branches', async () => {
+  it('covers Result.gen and ResultAsync.gen uncaught throw and rejection branches', async () => {
     const thrown = new Error('sync generator throw')
     const rejected = new Error('async generator rejection')
 
     throws(
       () =>
-        resultar.safeTry(function* () {
+        resultar.Result.gen(function* () {
           yield* [] as Iterable<Result<never, Error>>
           throw thrown
         }),
@@ -639,10 +483,10 @@ describe('coverage-focused public behavior', () => {
     )
     await rejects(
       async () =>
-        await resultar.safeTry(async function* () {
+        await resultarAsync.ResultAsync.gen(async function* () {
           yield* [] as Iterable<Result<never, Error>>
           await Promise.reject(rejected)
-          return resultar.ok(1)
+          return 1
         }),
       rejected,
     )
@@ -739,29 +583,29 @@ describe('coverage-focused public behavior', () => {
     equal(partialNative, 'native')
   })
 
-  it('covers index re-exports', () => {
+  it('covers root and async subpath re-exports', () => {
     equal(typeof resultar.Result, 'function')
-    equal(typeof resultar.ResultAsync, 'function')
+    equal(typeof resultar.ResultTask, 'function')
     equal(typeof resultar.ok, 'function')
     equal(typeof resultar.err, 'function')
     equal(typeof resultar.unit, 'function')
-    equal(typeof resultar.tryCatch, 'function')
+    equal(typeof resultar.tryResult, 'function')
     equal(typeof resultar.fromThrowable, 'function')
-    equal(typeof resultar.okAsync, 'function')
-    equal(typeof resultar.errAsync, 'function')
-    equal(typeof resultar.unitAsync, 'function')
-    equal(typeof resultar.fromPromise, 'function')
-    equal(typeof resultar.fromSafePromise, 'function')
-    equal(typeof resultar.fromThrowableAsync, 'function')
-    equal(typeof resultar.runPromise, 'function')
     equal(typeof resultar.runSync, 'function')
-    equal(typeof resultar.tryCatchAsync, 'function')
-    equal(typeof resultar.safeTry, 'function')
     equal(typeof resultar.createTaggedError, 'function')
     equal(typeof resultar.findCause, 'function')
     equal(typeof resultar.isError, 'function')
     equal(typeof resultar.matchError, 'function')
     equal(typeof resultar.matchErrorPartial, 'function')
+    equal(typeof resultarAsync.ResultAsync, 'function')
+    equal(typeof resultarAsync.okAsync, 'function')
+    equal(typeof resultarAsync.errAsync, 'function')
+    equal(typeof resultarAsync.unitAsync, 'function')
+    equal(typeof resultarAsync.fromPromise, 'function')
+    equal(typeof resultarAsync.fromSafePromise, 'function')
+    equal(typeof resultarAsync.tryResultAsync, 'function')
+    equal(typeof resultarAsync.asyncMap, 'function')
+    equal(typeof resultarAsync.asyncAndThen, 'function')
   })
 
   /* eslint-disable max-statements, no-throw-literal, no-empty-function, no-promise-executor-return, init-declarations, prefer-promise-reject-errors, unicorn/no-array-for-each, unicorn/prefer-native-coercion-functions, unicorn/require-array-join-separator, @typescript-eslint/no-non-null-assertion, @typescript-eslint/only-throw-error, @typescript-eslint/prefer-promise-reject-errors */
@@ -1757,12 +1601,7 @@ describe('coverage-focused public behavior', () => {
           throw 'fastpath-andthen-non-error'
         })
         .runResult(),
-    ).rejects.toThrow(
-      expect.objectContaining({
-        message: 'fastpath-andthen-non-error',
-        cause: 'fastpath-andthen-non-error',
-      }),
-    )
+    ).rejects.toBe('fastpath-andthen-non-error')
 
     // runTryPromiseResult fast-path branches (result-task.ts:5742, 5754-5757, 5776, 5785)
     await expect(
@@ -1805,9 +1644,7 @@ describe('coverage-focused public behavior', () => {
           throw 'sync-catch-non-error'
         },
       }).runResult(),
-    ).rejects.toThrow(
-      expect.objectContaining({ message: 'sync-catch-non-error', cause: 'sync-catch-non-error' }),
-    )
+    ).rejects.toBe('sync-catch-non-error')
 
     // canonicalRetryDelay zero-delay uninterruptible fast-path with resolving async onRetry (task-helpers.ts:208)
     let retryAttempts = 0

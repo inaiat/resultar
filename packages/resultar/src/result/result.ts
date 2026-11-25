@@ -2,12 +2,7 @@ import { dual } from '../core/dual.js'
 import { type ErrorConfig, createResultarError } from '../core/error.js'
 import { type FnPipe, Pipeable, runFnPipe } from '../core/pipe.js'
 import type { InferErrTypes, InferOkTypes } from '../core/utils.js'
-import {
-  callTaggedHandler,
-  hasTag,
-  isTaggedHandlerMatch,
-  matchTaggedOr,
-} from '../tagged/tagged-match.js'
+import { getTaggedHandler, hasTag, matchTaggedOr } from '../tagged/tagged-match.js'
 import type {
   CatchReasonHandlerResult,
   CatchTagHandlerResult,
@@ -26,24 +21,14 @@ import type {
   TagsOf,
   TagsWithReasonOf,
 } from '../tagged/tagged-types.js'
-import { createResultAsync } from '../result-async/result-async-adapter.js'
-import type { ResultAsync } from '../result-async/result-async.js'
-import type { ResultAsyncAndThen, ResultAsyncMap } from '../result-async/async-types.js'
-import type {
-  AsyncResultGenGuard,
-  AsyncResultGenOptions,
-  LegacySafeTry,
-  SafeTryAsyncOptions,
-  SafeTryOptions,
-} from '../result-async/generator-types.js'
 import {
+  acquireOkIterator,
   callSyncSideEffect,
   createEmptyResultsCollectionError,
   DisposableResult,
   getMatchErrorHandler,
   getReason,
   isIterable,
-  OkResultIterator,
 } from './result-helpers.js'
 import type {
   CombineResults,
@@ -121,7 +106,6 @@ import type {
 } from './result-types.js'
 
 export { createEmptyResultsCollectionError, DisposableResult } from './result-helpers.js'
-export type { AsyncResultGenOptions } from '../result-async/generator-types.js'
 export type {
   ErrResult,
   OkResult,
@@ -150,6 +134,15 @@ const combineResultList = <T, E>(resultList: readonly Result<T, E>[]): Result<re
   return ok(values)
 }
 
+const defineDataProperty = (target: Record<string, unknown>, key: string, value: unknown): void => {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
+}
+
 const combineResultRecord = <T extends ResultRecord>(resultRecord: T): CombineResultsRecord<T> => {
   const values: Record<string, unknown> = {}
 
@@ -158,7 +151,7 @@ const combineResultRecord = <T extends ResultRecord>(resultRecord: T): CombineRe
       return err(result.error) as CombineResultsRecord<T>
     }
 
-    values[key] = result.value
+    defineDataProperty(values, key, result.value)
   }
 
   return ok(values) as CombineResultsRecord<T>
@@ -194,7 +187,7 @@ const combineResultRecordWithAllErrors = <T extends ResultRecord>(
     if (result.isErr()) {
       errors.push(result.error)
     } else {
-      values[key] = result.value
+      defineDataProperty(values, key, result.value)
     }
   }
 
@@ -394,17 +387,13 @@ interface ResultStatic {
   readonly asVoid: ResultAsVoid
   /** Validates success in direct or curried form, retaining refinement narrowing. */
   readonly filterOrElse: ResultFilterOrElse
-  /** Chains eager ResultAsync work from success in direct or curried form. */
-  readonly asyncAndThen: ResultAsyncAndThen
-  /** Maps success with an eager Promise callback in direct or curried form. */
-  readonly asyncMap: ResultAsyncMap
   /**
    * Runtime `instanceof Result` support for Ok and Err values.
    */
   [Symbol.hasInstance]: (value: unknown) => boolean
   /**
-   * Runs a generator workflow that unwraps yielded Results and wraps the returned value in Ok,
-   * matching `ResultTask.gen`.
+   * Runs a synchronous generator workflow that unwraps yielded Results and wraps the returned value
+   * in Ok, matching `ResultTask.gen`.
    *
    * @example
    * ```ts
@@ -419,9 +408,8 @@ interface ResultStatic {
    */
   gen: typeof resultGen
   /**
-   * Wraps a synchronous or asynchronous generator function so each call runs a `Result.gen`
-   * workflow, optionally piping the resulting `Result` or `ResultAsync` through post-body
-   * operators.
+   * Wraps a synchronous generator function so each call runs a `Result.gen` workflow, optionally
+   * piping the resulting `Result` through post-body operators.
    *
    * @example
    * ```ts
@@ -454,18 +442,6 @@ interface ResultStatic {
    * ```
    */
   try: typeof tryResult
-  /**
-   * Runs synchronous work and captures thrown values into a Result.
-   *
-   * Compatibility alias. Prefer `Result.try` or the top-level `tryResult` helper in new code.
-   *
-   * @deprecated Use Result.try or tryResult instead; this alias retains its existing behavior.
-   */
-  tryCatch: <T, E>(
-    this: void,
-    fn: () => Exclude<T, Promise<unknown>>,
-    errorFn?: (e: unknown) => E,
-  ) => Result<T, E>
   /**
    * Wraps a throwing synchronous function so every later call returns a Result.
    */
@@ -518,24 +494,6 @@ interface ResultStatic {
     <T = never>(this: void, err: void): ErrResult<T, void>
   }
   /**
-   * Combines many Result values and stops at the first Err.
-   *
-   * Arrays return an Ok array, records return an Ok record with the same keys, and iterables return
-   * an Ok readonly array.
-   */
-  combine: {
-    <T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
-      this: void,
-      resultList: T,
-    ): CombineResults<T>
-    <T extends readonly Result<unknown, unknown>[]>(this: void, resultList: T): CombineResults<T>
-    <T extends ResultRecord>(this: void, resultRecord: T): CombineResultsRecord<T>
-    <R extends Result<unknown, unknown>>(
-      this: void,
-      results: Iterable<R>,
-    ): CombineResultsIterable<R>
-  }
-  /**
    * Combines many Result values and stops at the first Err, matching `ResultTask.all` and `Promise.all`.
    *
    * Arrays return an Ok array, records return an Ok record with the same keys, and iterables return
@@ -554,9 +512,9 @@ interface ResultStatic {
     ): CombineResultsIterable<R>
   }
   /**
-   * Combines many Result values and collects every Err instead of stopping at the first one.
+   * Validates many Result values (array, record, iterable, or items with a mapper) and collects every Err.
    */
-  combineWithAllErrors: {
+  validateAll: {
     <T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
       this: void,
       resultList: T,
@@ -570,21 +528,6 @@ interface ResultStatic {
       this: void,
       results: Iterable<R>,
     ): CombineResultsIterableWithAllErrors<R>
-  }
-  /**
-   * Validates many Result values and collects every Err.
-   *
-   * When passed items plus a mapper, the mapper must return a Result for each item.
-   */
-  validateAll: {
-    <T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
-      this: void,
-      resultList: T,
-    ): CombineResultsWithAllErrorsArray<T>
-    <T extends readonly Result<unknown, unknown>[]>(
-      this: void,
-      resultList: T,
-    ): CombineResultsWithAllErrorsArray<T>
     <Item, R extends Result<unknown, unknown>>(
       this: void,
       items: Iterable<Item>,
@@ -880,29 +823,17 @@ class ResultNamespace {
     ) => self.filterOrElse(predicate, onFalse),
   ) as ResultFilterOrElse
 
-  public static readonly asyncAndThen: ResultAsyncAndThen = dual(
-    (args) => args.length === 2,
-    (self: Result<unknown, unknown>, f: (value: unknown) => ResultAsync<unknown, unknown>) =>
-      self.asyncAndThen(f),
-  ) as ResultAsyncAndThen
-
-  public static readonly asyncMap: ResultAsyncMap = dual(
-    (args) => args.length === 2,
-    (self: Result<unknown, unknown>, f: (value: unknown) => Promise<unknown>) => self.asyncMap(f),
-  ) as ResultAsyncMap
-
   public static [Symbol.hasInstance](value: unknown): boolean {
     return value instanceof Ok || value instanceof Err
   }
 
   /**
-   * Runs a generator that returns a plain success value and composes Results with `yield*`.
+   * Runs a synchronous generator that returns a plain success value and composes Results with `yield*`.
    */
   public static readonly gen: typeof resultGen = resultGen
 
   /**
-   * Wraps a synchronous or asynchronous generator function so each call runs a `Result.gen`
-   * workflow.
+   * Wraps a synchronous generator function so each call runs a `Result.gen` workflow.
    */
   public static readonly fn: typeof resultFn = resultFn
 
@@ -931,33 +862,6 @@ class ResultNamespace {
   public static readonly try: typeof tryResult = tryResult
 
   /**
-   * Creates a `Result` by running a function that might throw.
-   * If the function throws, the error will be caught and returned as an `Err`.
-   * If the function succeeds, the value will be wrapped in an `Ok`.
-   *
-   * Compatibility alias. Prefer `Result.try` or the top-level `tryResult` helper in new code.
-   *
-   * @deprecated Use Result.try or tryResult instead; this alias retains its existing behavior.
-   * @param fn - The function to execute, which might throw an error
-   * @param errorFn - Optional function to transform the thrown error before wrapping in `Err`
-   * @returns A `Result` containing either the function's return value or the caught error
-   */
-  public static tryCatch<T, E>(
-    this: void,
-    fn: () => Exclude<T, Promise<unknown>>,
-    errorFn?: (e: unknown) => E,
-  ): Result<T, E> {
-    try {
-      return ok(fn())
-    } catch (error) {
-      if (errorFn) {
-        return err(errorFn(error))
-      }
-      return err(error as E)
-    }
-  }
-
-  /**
    * Wraps a function with a try catch, creating a new function with the same
    * arguments but returning `Ok` if successful, `Err` if the function throws
    *
@@ -973,7 +877,7 @@ class ResultNamespace {
       return function (this: unknown, a?: unknown): Result<ReturnType<Fn>, E> {
         try {
           /* Stryker disable all: 0/1-arg fast-path avoids rest array allocation and is equivalent to Reflect.apply. */
-          if (this === undefined && arguments.length <= 1) {
+          if (this === undefined && arguments.length === 1) {
             return ok((fn as (arg?: unknown) => ReturnType<Fn>)(a))
           }
           /* Stryker restore all */
@@ -987,7 +891,7 @@ class ResultNamespace {
     return function (this: unknown, a?: unknown): Result<ReturnType<Fn>, E> {
       try {
         /* Stryker disable all: 0/1-arg fast-path avoids rest array allocation and is equivalent to Reflect.apply. */
-        if (this === undefined && arguments.length <= 1) {
+        if (this === undefined && arguments.length === 1) {
           return ok((fn as (arg?: unknown) => ReturnType<Fn>)(a))
         }
         /* Stryker restore all */
@@ -1028,47 +932,6 @@ class ResultNamespace {
     return err<T, E>(error)
   }
 
-  public static combine<
-    T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
-  >(this: void, resultList: T): CombineResults<T>
-  public static combine<T extends readonly Result<unknown, unknown>[]>(
-    this: void,
-    resultList: T,
-  ): CombineResults<T>
-  public static combine<T extends ResultRecord>(
-    this: void,
-    resultRecord: T,
-  ): CombineResultsRecord<T>
-  public static combine<R extends Result<unknown, unknown>>(
-    this: void,
-    results: Iterable<R>,
-  ): CombineResultsIterable<R>
-  public static combine<
-    T extends
-      | readonly Result<unknown, unknown>[]
-      | ResultRecord
-      | Iterable<Result<unknown, unknown>>,
-  >(
-    this: void,
-    input: T,
-  ):
-    | CombineResults<T & readonly Result<unknown, unknown>[]>
-    | CombineResultsRecord<ResultRecord>
-    | CombineResultsIterable<Result<unknown, unknown>> {
-    // Stryker disable next-line all: array fast path avoids cloning arrays through the iterable branch.
-    if (Array.isArray(input)) {
-      return combineResultList(input) as CombineResults<T & readonly Result<unknown, unknown>[]>
-    }
-
-    if (isIterable(input)) {
-      return combineResultList([...input] as readonly Result<unknown, unknown>[]) as
-        | CombineResults<T & readonly Result<unknown, unknown>[]>
-        | CombineResultsIterable<Result<unknown, unknown>>
-    }
-
-    return combineResultRecord(input)
-  }
-
   public static all<T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]>(
     this: void,
     resultList: T,
@@ -1094,38 +957,62 @@ class ResultNamespace {
     | CombineResults<T & readonly Result<unknown, unknown>[]>
     | CombineResultsRecord<ResultRecord>
     | CombineResultsIterable<Result<unknown, unknown>> {
-    return ResultNamespace.combine(input as readonly Result<unknown, unknown>[]) as CombineResults<
-      T & readonly Result<unknown, unknown>[]
-    >
+    // Stryker disable next-line all: array fast path avoids cloning arrays through the iterable branch.
+    if (Array.isArray(input)) {
+      return combineResultList(input) as CombineResults<T & readonly Result<unknown, unknown>[]>
+    }
+
+    if (isIterable(input)) {
+      return combineResultList([...input] as readonly Result<unknown, unknown>[]) as
+        | CombineResults<T & readonly Result<unknown, unknown>[]>
+        | CombineResultsIterable<Result<unknown, unknown>>
+    }
+
+    return combineResultRecord(input)
   }
 
-  public static combineWithAllErrors<
+  public static validateAll<
     T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
   >(this: void, resultList: T): CombineResultsWithAllErrorsArray<T>
-  public static combineWithAllErrors<T extends readonly Result<unknown, unknown>[]>(
+  public static validateAll<T extends readonly Result<unknown, unknown>[]>(
     this: void,
     resultList: T,
   ): CombineResultsWithAllErrorsArray<T>
-  public static combineWithAllErrors<T extends ResultRecord>(
+  public static validateAll<T extends ResultRecord>(
     this: void,
     resultRecord: T,
   ): CombineResultsRecordWithAllErrors<T>
-  public static combineWithAllErrors<R extends Result<unknown, unknown>>(
+  public static validateAll<R extends Result<unknown, unknown>>(
     this: void,
     results: Iterable<R>,
   ): CombineResultsIterableWithAllErrors<R>
-  public static combineWithAllErrors<
+  public static validateAll<Item, R extends Result<unknown, unknown>>(
+    this: void,
+    items: Iterable<Item>,
+    f: (value: Item, index: number) => R,
+  ): ResultValidatedAll<R>
+  public static validateAll<
     T extends
       | readonly Result<unknown, unknown>[]
       | ResultRecord
       | Iterable<Result<unknown, unknown>>,
+    Item,
+    R extends Result<unknown, unknown>,
   >(
     this: void,
-    input: T,
+    input: T | Iterable<Item>,
+    f?: (value: Item, index: number) => R,
   ):
     | CombineResultsWithAllErrorsArray<T & readonly Result<unknown, unknown>[]>
     | CombineResultsRecordWithAllErrors<ResultRecord>
-    | CombineResultsIterableWithAllErrors<Result<unknown, unknown>> {
+    | CombineResultsIterableWithAllErrors<Result<unknown, unknown>>
+    | ResultValidatedAll<R> {
+    if (f !== undefined) {
+      const resultList = Array.from(input as Iterable<Item>, f)
+
+      return combineResultListWithAllErrors(resultList) as ResultValidatedAll<R>
+    }
+
     // Stryker disable next-line all: array fast path avoids cloning arrays through the iterable branch.
     if (Array.isArray(input)) {
       return combineResultListWithAllErrors(input) as CombineResultsWithAllErrorsArray<
@@ -1139,40 +1026,7 @@ class ResultNamespace {
         | CombineResultsIterableWithAllErrors<Result<unknown, unknown>>
     }
 
-    return combineResultRecordWithAllErrors(input)
-  }
-
-  public static validateAll<
-    T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]],
-  >(this: void, resultList: T): CombineResultsWithAllErrorsArray<T>
-  public static validateAll<T extends readonly Result<unknown, unknown>[]>(
-    this: void,
-    resultList: T,
-  ): CombineResultsWithAllErrorsArray<T>
-  public static validateAll<Item, R extends Result<unknown, unknown>>(
-    this: void,
-    items: Iterable<Item>,
-    f: (value: Item, index: number) => R,
-  ): ResultValidatedAll<R>
-  public static validateAll<
-    T extends readonly Result<unknown, unknown>[],
-    Item,
-    R extends Result<unknown, unknown>,
-  >(
-    this: void,
-    resultListOrItems: T | Iterable<Item>,
-    f?: (value: Item, index: number) => R,
-  ): CombineResultsWithAllErrorsArray<T> | ResultValidatedAll<R> {
-    // Stryker disable next-line all: no-mapper fast path avoids Array.from identity mapping.
-    if (f === undefined) {
-      return combineResultListWithAllErrors(
-        resultListOrItems as T,
-      ) as CombineResultsWithAllErrorsArray<T>
-    }
-
-    const resultList = Array.from(resultListOrItems as Iterable<Item>, f)
-
-    return combineResultListWithAllErrors(resultList) as ResultValidatedAll<R>
+    return combineResultRecordWithAllErrors(input as ResultRecord)
   }
 
   public static zip<Left extends Result<unknown, unknown>, Right extends Result<unknown, unknown>>(
@@ -1180,7 +1034,9 @@ class ResultNamespace {
     left: Left,
     right: Right,
   ): ResultZipped<Left, Right> {
-    return combineResultList([left, right]) as ResultZipped<Left, Right>
+    if (left.isErr()) return err(left.error) as ResultZipped<Left, Right>
+    if (right.isErr()) return err(right.error) as ResultZipped<Left, Right>
+    return ok([left.value, right.value]) as ResultZipped<Left, Right>
   }
 
   public static firstSuccessOf<Candidates extends Iterable<ResultCandidate>>(
@@ -1404,7 +1260,20 @@ class ResultNamespace {
   }
 }
 
-/** Static helpers for creating, combining, and iterating over Result values. */
+/**
+ * Static helpers for creating, combining, validating, and iterating over synchronous `Result` values.
+ *
+ * @example
+ * ```ts
+ * import { Result, ok, err } from 'resultar'
+ *
+ * const total = Result.gen(function* () {
+ *   const a = yield* ok(10)
+ *   const b = yield* ok(32)
+ *   return a + b
+ * })
+ * ```
+ */
 export const Result: ResultStatic = ResultNamespace
 
 abstract class ResultVariant<T, E> extends Pipeable {
@@ -1439,16 +1308,6 @@ abstract class ResultVariant<T, E> extends Pipeable {
 
   public asVoid(): Result<void, E> {
     return this.as(undefined)
-  }
-
-  /** @deprecated Use inspect; the original best-effort behavior is preserved. */
-  public tap(fn: (value: T) => void): this {
-    return this.inspect(fn)
-  }
-
-  /** @deprecated Use inspectError; the original best-effort behavior is preserved. */
-  public tapError(fn: (error: E) => void): this {
-    return this.inspectError(fn)
   }
 
   public toDisposable(f: ResultFinalizer<T, E>): DisposableResult<T, E> {
@@ -1588,17 +1447,6 @@ class Ok<T, E> {
     return fCondition(this.value) ? fTrue(this.value) : fFalse(this.value)
   }
 
-  public asyncAndThen<X, Y>(f: (t: T) => ResultAsync<X, Y>): ResultAsync<X, E | Y>
-  public asyncAndThen<X, Y>(f: (t: T) => ResultAsync<X, E>): ResultAsync<X, E | Y> {
-    return f(this.value)
-  }
-
-  public asyncMap<X>(f: (t: T) => Promise<X>): ResultAsync<X, E> {
-    return createResultAsync<ResultAsync<X, E>>(
-      Promise.resolve(f(this.value)).then((value) => ok<X, E>(value)),
-    )
-  }
-
   public unwrapOr<A>(_defaultValue: A): T | A {
     return this.value
   }
@@ -1671,16 +1519,7 @@ class Ok<T, E> {
   }
 
   public [Symbol.iterator](): Generator<Result<never, E>, T> {
-    return new OkResultIterator(this.value) as unknown as Generator<Result<never, E>, T>
-  }
-
-  /** @deprecated Use `yield* result` inside Result.gen. */
-  public safeUnwrap(): Generator<Result<never, E>, T> {
-    const { value } = this
-    /* eslint-disable-next-line require-yield */
-    return (function* () {
-      return value
-    })()
+    return acquireOkIterator(this.value) as unknown as Generator<Result<never, E>, T>
   }
 }
 
@@ -1770,10 +1609,10 @@ class Err<T, E> {
     | InferErrTypes<CatchTagHandlerResult<Handlers>>
   > {
     const error = this.error
-    const handled = callTaggedHandler<CatchTagHandlerResult<Handlers>>(error, handlers)
+    const handler = getTaggedHandler<CatchTagHandlerResult<Handlers>>(error, handlers)
 
-    if (isTaggedHandlerMatch(handled)) {
-      return handled.value as Result<
+    if (handler !== undefined) {
+      return handler(error) as Result<
         T | InferOkTypes<CatchTagHandlerResult<Handlers>>,
         | ExcludeTag<E, CoveredHandlerKeys<Handlers> & string>
         | InferErrTypes<CatchTagHandlerResult<Handlers>>
@@ -1820,21 +1659,17 @@ class Err<T, E> {
     if (hasTag(this.error, errorTag)) {
       const reason = getReason(this.error)
 
-      if (typeof reason === 'object' && reason !== null && '_tag' in reason) {
-        const handler = (handlers as Record<string, unknown>)[
-          (reason as { readonly _tag: string })._tag
-        ]
+      const handler = getTaggedHandler(reason, handlers)
 
-        if (handler !== undefined) {
-          return (handler as (reason: unknown, error: unknown) => Result<unknown, unknown>)(
-            reason,
-            this.error,
-          ) as Result<
-            T | InferOkTypes<CatchReasonHandlerResult<Handlers>>,
-            | ExcludeReasonTag<E, ErrorTag, CoveredHandlerKeys<Handlers> & string>
-            | InferErrTypes<CatchReasonHandlerResult<Handlers>>
-          >
-        }
+      if (handler !== undefined) {
+        return (handler as (reason: unknown, error: unknown) => Result<unknown, unknown>)(
+          reason,
+          this.error,
+        ) as Result<
+          T | InferOkTypes<CatchReasonHandlerResult<Handlers>>,
+          | ExcludeReasonTag<E, ErrorTag, CoveredHandlerKeys<Handlers> & string>
+          | InferErrTypes<CatchReasonHandlerResult<Handlers>>
+        >
       }
     }
 
@@ -1849,15 +1684,6 @@ class Err<T, E> {
     }
 
     return err(this.error as ExcludeTag<E, ErrorTag>)
-  }
-
-  public asyncAndThen<X, Y>(_f: (t: T) => ResultAsync<X, Y>): ResultAsync<X, E | Y>
-  public asyncAndThen<X, Y>(_f: (t: T) => ResultAsync<X, E>): ResultAsync<X, E | Y> {
-    return createResultAsync<ResultAsync<X, E | Y>>(Promise.resolve(err<X, E | Y>(this.error)))
-  }
-
-  public asyncMap<X>(_f: (t: T) => Promise<X>): ResultAsync<X, E> {
-    return createResultAsync<ResultAsync<X, E>>(Promise.resolve(err<X, E>(this.error)))
   }
 
   public unwrapOr<A>(defaultValue: A): T | A {
@@ -1946,23 +1772,18 @@ class Err<T, E> {
     yield this as never
     return this as never
   }
-
-  /** @deprecated Use `yield* result` inside Result.gen. */
-  public safeUnwrap(): Generator<Result<never, E>, T> {
-    const { error } = this
-    return (function* () {
-      yield err(error)
-
-      throw new Error('Do not use this generator out of `safeTry`')
-    })()
-  }
 }
 
 /* Stryker disable all: copying shared methods onto Ok/Err prototypes avoids derived constructor super() overhead while keeping V8 fast prototype mode. */
 const copyPrototypeMethods = (target: object, source: object): void => {
   for (const name of Object.getOwnPropertyNames(source)) {
     if (name !== 'constructor') {
-      ;(target as Record<string, unknown>)[name] = (source as Record<string, unknown>)[name]
+      Object.defineProperty(target, name, {
+        configurable: true,
+        enumerable: false,
+        value: (source as Record<string, unknown>)[name],
+        writable: true,
+      })
     }
   }
 }
@@ -1972,57 +1793,29 @@ copyPrototypeMethods(Err.prototype, Pipeable.prototype)
 copyPrototypeMethods(Err.prototype, ResultVariant.prototype)
 /* Stryker restore all */
 
-const resultGenStep = (
-  step: IteratorResult<Result<never, unknown>, unknown>,
-): Result<unknown, unknown> => (step.done === true ? ok(step.value) : step.value)
-
-const safeTryStep = (
-  step: IteratorResult<Result<never, unknown>, unknown>,
-): Result<unknown, unknown> => step.value as Result<unknown, unknown>
-
-const runResultGenerator = (
+const runSyncResultGenerator = (
   input:
     | (() => Generator<Result<never, unknown>, unknown>)
-    | (() => AsyncGenerator<Result<never, unknown>, unknown>)
-    | ResultGenOptions<Result<never, unknown>, unknown, unknown>
-    | AsyncResultGenOptions<Result<never, unknown>, unknown, unknown>,
-  onStep: (step: IteratorResult<Result<never, unknown>, unknown>) => Result<unknown, unknown>,
-): Result<unknown, unknown> | ResultAsync<unknown, unknown> => {
-  const body = typeof input === 'function' ? input : input.try
-  const catchFn = typeof input === 'function' ? undefined : input.catch
-  let n:
-    | IteratorResult<Result<never, unknown>, unknown>
-    | Promise<IteratorResult<Result<never, unknown>, unknown>> = undefined as never
-
+    | ResultGenOptions<Result<never, unknown>, unknown, unknown>,
+): Result<unknown, unknown> => {
   try {
-    n = body().next()
-    if (!(n instanceof Promise)) return onStep(n)
+    const step = (typeof input === 'function' ? input() : input.try()).next()
+    return step.done === true ? ok(step.value) : step.value
   } catch (error) {
-    if (catchFn) {
-      return err(catchFn(error))
+    if (typeof input !== 'function' && input.catch !== undefined) {
+      return err(input.catch(error))
     }
 
     throw error
   }
-
-  return createResultAsync<ResultAsync<unknown, unknown>>(
-    n.then(onStep).catch((error: unknown) => {
-      if (catchFn) {
-        return err(catchFn(error))
-      }
-
-      throw error
-    }),
-  )
 }
 
 /**
- * Evaluates a synchronous or asynchronous generator and returns the first yielded Err or wraps the
- * returned value in Ok(value).
+ * Evaluates a synchronous generator and returns the first yielded Err or wraps the returned value
+ * in Ok(value).
  *
- * Inside the generator, use `yield* result` (or `yield* resultAsync` in async generators) to unwrap
- * Ok values and short-circuit on Err. The object form can map thrown or rejected setup errors into
- * the error channel.
+ * Inside the generator, use `yield* result` to unwrap Ok values and short-circuit on Err. The
+ * object form can map thrown setup errors into the error channel.
  */
 function resultGen<Body extends () => Generator<Result<never, unknown>, unknown>>(
   input: Body & SyncResultGenGuard<ResultGeneratorReturn<ReturnType<Body>>>,
@@ -2033,23 +1826,12 @@ function resultGen<Input extends ResultGenOptions<Result<never, unknown>, unknow
   ResultGeneratorReturn<ReturnType<Input['try']>>,
   ResultGeneratorError<ReturnType<Input['try']>> | ResultGeneratorCatch<Input>
 >
-function resultGen<Body extends () => AsyncGenerator<Result<never, unknown>, unknown>>(
-  input: Body & AsyncResultGenGuard<ResultGeneratorReturn<ReturnType<Body>>>,
-): ResultAsync<ResultGeneratorReturn<ReturnType<Body>>, ResultGeneratorError<ReturnType<Body>>>
-function resultGen<Input extends AsyncResultGenOptions<Result<never, unknown>, unknown, unknown>>(
-  input: Input & AsyncResultGenGuard<ResultGeneratorReturn<ReturnType<Input['try']>>>,
-): ResultAsync<
-  ResultGeneratorReturn<ReturnType<Input['try']>>,
-  ResultGeneratorError<ReturnType<Input['try']>> | ResultGeneratorCatch<Input>
->
 function resultGen(
   input:
     | (() => Generator<Result<never, unknown>, unknown>)
-    | (() => AsyncGenerator<Result<never, unknown>, unknown>)
-    | ResultGenOptions<Result<never, unknown>, unknown, unknown>
-    | AsyncResultGenOptions<Result<never, unknown>, unknown, unknown>,
-): Result<unknown, unknown> | ResultAsync<unknown, unknown> {
-  return runResultGenerator(input, resultGenStep)
+    | ResultGenOptions<Result<never, unknown>, unknown, unknown>,
+): Result<unknown, unknown> {
+  return runSyncResultGenerator(input)
 }
 
 /* eslint-disable max-params */
@@ -2121,32 +1903,28 @@ function resultFn<Body extends ResultFnBody>(
   ...fns: readonly FnPipe<never, readonly never[], unknown>[]
 ): (this: ThisParameterType<Body>, ...args: Parameters<Body>) => unknown {
   return function (this: ThisParameterType<Body>, ...args: Parameters<Body>): unknown {
-    const initial = runResultGenerator(
-      () =>
-        (
-          body as (
-            this: ThisParameterType<Body>,
-            ...input: Parameters<Body>
-          ) => Generator<Result<never, unknown>, unknown>
-        ).call(this, ...args),
-      resultGenStep,
+    const initial = runSyncResultGenerator(() =>
+      (
+        body as (
+          this: ThisParameterType<Body>,
+          ...input: Parameters<Body>
+        ) => Generator<Result<never, unknown>, unknown>
+      ).call(this, ...args),
     )
     return runFnPipe(initial, args, fns)
   }
 }
 /* eslint-enable max-params */
 
-/** @deprecated Use Result.gen or ResultTask.gen with plain success returns; this helper retains its returned Result contract. */
-export const safeTry: LegacySafeTry = ((
-  input:
-    | (() => Generator<Result<never, unknown>, Result<unknown, unknown>>)
-    | (() => AsyncGenerator<Result<never, unknown>, Result<unknown, unknown>>)
-    | SafeTryOptions<Result<never, unknown>, Result<unknown, unknown>, unknown>
-    | SafeTryAsyncOptions<Result<never, unknown>, Result<unknown, unknown>, unknown>,
-) => runResultGenerator(input, safeTryStep)) as LegacySafeTry
-
 /**
- * Creates an Ok result.
+ * Creates a successful `OkResult<T, E>`.
+ *
+ * @example
+ * ```ts
+ * import { ok } from 'resultar'
+ *
+ * const doubled = ok(21).map((n) => n * 2) // Ok(42)
+ * ```
  */
 export function ok<T, E = never>(value: T): OkResult<T, E>
 export function ok<E = never>(value: void): OkResult<void, E>
@@ -2155,7 +1933,14 @@ export function ok<T, E = never>(value: T): OkResult<T, E> {
 }
 
 /**
- * Creates an Err result.
+ * Creates a failed `ErrResult<T, E>`.
+ *
+ * @example
+ * ```ts
+ * import { err } from 'resultar'
+ *
+ * const failed = err(new Error('invalid input'))
+ * ```
  */
 export function err<T = never, E extends string = string>(err: E): ErrResult<T, E>
 export function err<T = never, E = unknown>(err: E): ErrResult<T, E>
@@ -2227,17 +2012,12 @@ export function tryResult<T, E = unknown>(
   input: (() => Exclude<T, Promise<unknown>>) | TryResultOptions<T, E>,
   errorFn?: (e: unknown) => E,
 ): Result<T, E> {
-  const fn = typeof input === 'function' ? input : input.try
-  const catchFn = typeof input === 'function' ? errorFn : input.catch
-
   try {
-    return ok<T, E>(fn() as T)
+    return ok<T, E>((typeof input === 'function' ? input() : input.try()) as T)
   } catch (error) {
-    if (catchFn) {
-      return err<T, E>(catchFn(error))
-    }
-
-    return err<T, E>(error as E)
+    if (typeof input !== 'function' && input.catch !== undefined)
+      return err<T, E>(input.catch(error))
+    return err<T, E>(errorFn === undefined ? (error as E) : errorFn(error))
   }
 }
 
@@ -2255,6 +2035,3 @@ export function unit<E = never>(): OkResult<undefined, E> {
  * boundaries after the error channel has already been modeled with Resultar.
  */
 export const runSync = <T, E>(result: Result<T, E>): T => result.unwrapOrThrow()
-
-/** @deprecated Use tryResult; this alias retains its existing behavior. */
-export const tryCatch: typeof tryResult = tryResult

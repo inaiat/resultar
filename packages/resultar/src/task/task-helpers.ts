@@ -1,17 +1,18 @@
 import {
-  isRetryPolicy,
+  isRetryElapsedExceeded,
+  isPromiseLike,
   observeRetry,
   retryContext,
   retryPolicyDelay,
   validateRetryPolicy,
 } from '../core/retry.js'
 import type { RetryContext, RetryPolicy } from '../core/retry.js'
-import type { Cause } from './cause.js'
+import { Cause } from './cause.js'
 import { transformCause, withoutInterruptions } from './cause-transform.js'
 import { isCleanupCause } from './cleanup-cause.js'
-import { combineExits, died, failure, success } from './exit.js'
+import { combineExits, died, failure, interrupted, success } from './exit.js'
 import type { SupervisedFiber } from './fiber-runtime.js'
-import { detachedPromise, NEVER_ABORTED_SIGNAL } from './promise-interruption.js'
+import { detachedPromise } from './promise-interruption.js'
 import type { Exit, ResultTask } from './result-task.js'
 import type { TaskClock } from './task-clock.js'
 import type { ResultTaskRuntimeContext } from './task-service.js'
@@ -26,23 +27,12 @@ export interface ResultTaskZipOptions {
   readonly concurrent?: boolean
 }
 
-/** Retries count additional attempts; only simple typed failures are retried. */
-export interface ResultTaskRetryOptions<E> {
-  readonly times: number
-  readonly delayMs?: number | ((retry: number, error: E) => number)
-  readonly backoff?: number
-  readonly jittered?: boolean
-  readonly while?: (error: E, retry: number) => boolean
-}
-
-export type ResultTaskRetryInput<E> = ResultTaskRetryOptions<E> | RetryPolicy<E>
-
 /** Rejection used when a simplified boundary cannot represent multiple failures. */
 export class ResultTaskCauseError extends Error {
   public override readonly cause!: Cause<unknown>
 
   public constructor(cause: Cause<unknown>) {
-    super('ResultTask execution failed with multiple causes')
+    super(`ResultTask execution failed with multiple causes:\n${Cause.pretty(cause)}`)
     this.name = 'ResultTaskCauseError'
     Object.defineProperty(this, 'cause', {
       configurable: true,
@@ -51,43 +41,42 @@ export class ResultTaskCauseError extends Error {
       writable: true,
     })
   }
+
+  /** Human-readable formatted breakdown of every leaf and span trace in {@link cause}. */
+  public get prettyCause(): string {
+    return Cause.pretty(this.cause)
+  }
+
+  static {
+    Object.defineProperty(
+      ResultTaskCauseError.prototype,
+      Symbol.for('nodejs.util.inspect.custom'),
+      {
+        configurable: true,
+        enumerable: false,
+        value(this: ResultTaskCauseError): string {
+          return `${this.name}: ${this.message}`
+        },
+        writable: true,
+      },
+    )
+  }
 }
 
 /** Handlers for matching both success and failure cases of a ResultTask. */
-export type ResultTaskMatchOptions<A, E, B, C = B> =
-  | { readonly ok: (value: A) => B; readonly err: (error: E) => C }
-  | { readonly ok: (value: A) => B; readonly error: (error: E) => C }
-  | { readonly onSuccess: (value: A) => B; readonly onFailure: (error: E) => C }
+export type ResultTaskMatchOptions<A, E, B, C = B> = {
+  readonly ok: (value: A) => B
+  readonly err: (error: E) => C
+}
 
 export const taskSuccessHandler = <A, E, B, C>(
   handlers: ResultTaskMatchOptions<A, E, B, C>,
-): ((value: A) => B) => ('onSuccess' in handlers ? handlers.onSuccess : handlers.ok)
+): ((value: A) => B) => handlers.ok
 
 export const taskFailureHandler = <A, E, B, C>(
   handlers: ResultTaskMatchOptions<A, E, B, C>,
-): ((error: E) => C) => {
-  if ('onFailure' in handlers) return handlers.onFailure
-  if ('error' in handlers) return handlers.error
-  return handlers.err
-}
+): ((error: E) => C) => handlers.err
 
-/**
- * A lazy, composable workflow that can succeed with `A`, fail with a typed error `E`,
- * and declare execution requirements `R` (such as `ServiceTag`s or `ResultTaskScope`).
- *
- * Constructing a `ResultTask` never starts its work. Use `ResultTask.runResult`,
- * `ResultTask.runExit`, `ResultTask.runPromise`, or `ResultTask.runFork` at an
- * explicit application boundary to execute it.
- *
- * @example
- * ```ts
- * import { ResultTask } from 'resultar'
- *
- * const task = ResultTask.ok(21).map((n) => n * 2)
- * const result = await ResultTask.runResult(task)
- * // Ok(42)
- * ```
- */
 /** Scheduler defects are appended once at the cleanup boundary, never to intermediate yields. */
 export const completeCleanup = <A, E>(
   exit: Exit<A, E>,
@@ -111,120 +100,116 @@ export const checkedConcurrency = (options?: ResultTaskConcurrencyOptions): numb
   return concurrency
 }
 
-const checkedRandom = (clock: TaskClock): number => {
-  const random = clock.random()
-  if (!Number.isFinite(random) || random < 0 || random > 1)
-    throw new RangeError('Task clock random must return a number between zero and one')
-  return random
-}
-
-const retryDelay = (
-  retry: number,
-  error: unknown,
-  policy: { readonly options: ResultTaskRetryOptions<unknown>; readonly clock: TaskClock },
-): number => {
-  const { options, clock } = policy
-  const base =
-    typeof options.delayMs === 'function'
-      ? options.delayMs(retry + 1, error)
-      : (options.delayMs ?? 0)
-  const delay = checkedDuration(base * (options.backoff ?? 1) ** retry)
-  return options.jittered === true ? delay * checkedRandom(clock) : delay
-}
-
-export const legacyRetryDelay = (
-  error: unknown,
-  retry: number,
-  runtime: { readonly options: ResultTaskRetryOptions<unknown>; readonly clock: TaskClock },
-): number | undefined => {
-  const { options, clock } = runtime
-  if (options.while?.(error, retry + 1) === false) return undefined
-  return retryDelay(retry, error, { options, clock })
-}
-
-interface CanonicalRetryRuntime {
-  readonly policy: RetryPolicy<unknown>
-  readonly clock: TaskClock
-  readonly signal: AbortSignal
-}
-
 type RetryPlan = Exit<number | undefined, never>
 
 const ZERO_RETRY_PLAN: RetryPlan = success(0)
 
-const canonicalRetryDecision = async (
-  policy: RetryPolicy<unknown>,
-  error: unknown,
-  runtime: { readonly context: RetryContext; readonly signal: AbortSignal },
-): Promise<Exit<boolean, never>> => {
-  const predicate = policy.while
-  if (predicate === undefined) return success(true)
-  return detachedPromise(
-    runtime.signal,
-    () => Promise.resolve(predicate(error, runtime.context)),
-    throwDefect,
-  )
+export const validateTaskRetry = (policy: RetryPolicy<unknown>): void => {
+  validateRetryPolicy(policy)
 }
 
-const canonicalRetryDelayAsync = async (
-  error: unknown,
-  context: RetryContext,
-  runtime: CanonicalRetryRuntime,
-): Promise<RetryPlan> => {
-  const { policy, clock, signal } = runtime
-  const decision = await canonicalRetryDecision(policy, error, { context, signal })
-  if (decision._tag === 'Failure') return decision
-  if (!decision.value) return success(undefined)
-  const observation = await detachedPromise(
-    signal,
-    () => observeRetry(policy, error, context),
-    throwDefect,
-  )
-  if (observation._tag === 'Failure') return observation
-  return success(retryPolicyDelay(policy, context, () => clock.random()))
+/** Configuration for repeating a succeeding `ResultTask` (`task.repeat(...)` / `ResultTask.repeat(...)`). */
+export interface ResultTaskRepeatOptions<A = unknown> {
+  /** Maximum number of additional repetitions after the initial execution (`0` means run once). */
+  readonly times: number
+  /** Base delay in milliseconds (or a function of `(context, value)`) before backoff, jitter, and capping. */
+  readonly delayMs?: number | ((context: RetryContext, value: A) => number)
+  /** Exponential multiplier (`>= 1`) applied per repetition (`base * backoff ** attempt`). */
+  readonly backoff?: number
+  /** Upper bound in milliseconds on the computed delay after backoff and jitter. */
+  readonly maxDelayMs?: number
+  /** Total elapsed time budget in milliseconds across repetitions; stops repeating once exhausted. */
+  readonly maxElapsedMs?: number
+  /** Symmetric jitter factor (`>= 0`). A factor of `0.5` varies delay within `[0.5 * d, 1.5 * d]`. */
+  readonly jittered?: number
+  /** Continues repeating while returning `true`. Returning `false` stops with the latest `Success`. */
+  readonly while?: (value: A, context: RetryContext) => boolean | Promise<boolean>
+  /** Stops repeating with the latest `Success` once returning `true`. */
+  readonly until?: (value: A, context: RetryContext) => boolean | Promise<boolean>
+  /** Observer awaited before sleeping for the next repetition; thrown errors are swallowed. */
+  readonly onRepeat?: (value: A, context: RetryContext) => void | Promise<void>
 }
 
-export const canonicalRetryDelay = (
-  retryError: unknown,
-  attempt: number,
-  runtime: CanonicalRetryRuntime,
+export type ResultTaskRepeatInput<A = unknown> = ResultTaskRepeatOptions<A> | RetryPolicy<A>
+
+export const validateTaskRepeat = <A>(options: ResultTaskRepeatInput<A>): void => {
+  validateRetryPolicy(options)
+}
+
+// Continue synchronously until a policy hook actually returns a promise.
+const afterScheduleHook = <T extends boolean | void>(
+  hook: () => T | Promise<T>,
+  signal: AbortSignal,
+  next: (value: T) => RetryPlan | Promise<RetryPlan>,
 ): RetryPlan | Promise<RetryPlan> => {
-  const { policy, signal } = runtime
-  /* Stryker disable all: uninterruptible zero-delay fast-path is equivalent to canonicalRetryDelayAsync. */
-  if (
-    signal === NEVER_ABORTED_SIGNAL &&
-    policy.while === undefined &&
-    (policy.delayMs === undefined || policy.delayMs === 0)
-  ) {
-    if (policy.onRetry === undefined) return ZERO_RETRY_PLAN
-    const context = retryContext(attempt, policy.times)
-    try {
-      const observation = policy.onRetry(retryError, context)
-      if (observation === undefined) return ZERO_RETRY_PLAN
-      return observation.then(
-        () => ZERO_RETRY_PLAN,
-        () => ZERO_RETRY_PLAN,
-      )
-    } catch {
-      return ZERO_RETRY_PLAN
-    }
+  if (signal.aborted) return interrupted(signal)
+  const value = hook()
+  if (!isPromiseLike(value)) return signal.aborted ? interrupted(signal) : next(value)
+  if (signal.aborted) {
+    void Promise.resolve(value).catch(() => undefined)
+    return interrupted(signal)
   }
-  /* Stryker restore all */
-  return canonicalRetryDelayAsync(retryError, retryContext(attempt, policy.times), runtime)
+  return detachedPromise(signal, () => value, throwDefect).then((exit) => {
+    if (exit._tag === 'Failure') return exit
+    return signal.aborted ? interrupted(signal) : next(exit.value)
+  })
 }
 
-export const validateTaskRetry = (options: ResultTaskRetryInput<unknown>): void => {
-  if (isRetryPolicy(options)) {
-    validateRetryPolicy(options)
-    return
+export const scheduleDelayPlan = <A>(
+  value: A,
+  attempt: number,
+  runtime: {
+    readonly options: ResultTaskRepeatInput<A>
+    readonly clock: TaskClock
+    readonly signal: AbortSignal
+    readonly startedAt: number
+  },
+): RetryPlan | Promise<RetryPlan> => {
+  const { options, clock, signal, startedAt } = runtime
+  const until = 'until' in options ? options.until : undefined
+  const observer = 'onRepeat' in options ? options.onRepeat : (options as RetryPolicy<A>).onRetry
+  if (
+    options.while === undefined &&
+    until === undefined &&
+    observer === undefined &&
+    options.maxElapsedMs === undefined &&
+    (options.delayMs ?? 0) === 0
+  )
+    return ZERO_RETRY_PLAN
+  const context = retryContext(attempt, options.times)
+  const exceedsBudget = (nextDelayMs: number): boolean =>
+    isRetryElapsedExceeded(options.maxElapsedMs, { startedAt, now: clock.now(), nextDelayMs })
+  const planDelay = (): RetryPlan => {
+    const delay = retryPolicyDelay(options as RetryPolicy<A>, context, {
+      random: () => clock.random(),
+      error: value,
+    })
+    return success(exceedsBudget(delay) ? undefined : delay)
   }
-  if (!Number.isSafeInteger(options.times) || options.times < 0) {
-    throw new RangeError('Task retries must be a non-negative safe integer')
+  const observe = (): RetryPlan | Promise<RetryPlan> => {
+    if (exceedsBudget(0)) return success(undefined)
+    return afterScheduleHook(
+      () => observeRetry({ onRetry: observer }, value, context),
+      signal,
+      planDelay,
+    )
   }
-  if (options.backoff !== undefined && (!Number.isFinite(options.backoff) || options.backoff < 1)) {
-    throw new RangeError('Task backoff must be at least one')
-  }
-  if (typeof options.delayMs === 'number') checkedDuration(options.delayMs)
+  const checkUntil = (): RetryPlan | Promise<RetryPlan> =>
+    until === undefined
+      ? observe()
+      : afterScheduleHook(
+          () => until(value, context),
+          signal,
+          (stop) => (stop ? success(undefined) : observe()),
+        )
+  const predicate = options.while
+  return predicate === undefined
+    ? checkUntil()
+    : afterScheduleHook(
+        () => predicate(value, context),
+        signal,
+        (keepGoing) => (keepGoing ? checkUntil() : success(undefined)),
+      )
 }
 
 const collectionFailure = (
@@ -235,7 +220,7 @@ const collectionFailure = (
   if (validate && exit.cause._tag === 'Fail') return success(undefined)
   const cause = withoutInterruptions(exit.cause)
   if (cause === undefined) return success(undefined)
-  return validate ? died(new ResultTaskCauseError(cause)) : failure(cause)
+  return validate && cause._tag !== 'Die' ? died(new ResultTaskCauseError(cause)) : failure(cause)
 }
 
 export const collectOutcomes = (

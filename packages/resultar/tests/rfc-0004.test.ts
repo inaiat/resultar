@@ -1,4 +1,5 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vite-plus/test'
+import { ResultAsync } from '../src/entries/async.js'
 import {
   Cause,
   Clock,
@@ -11,7 +12,6 @@ import {
   ok,
   pipe,
   Result,
-  ResultAsync,
   ResultTask,
   ResultTaskCauseError,
   Retry,
@@ -43,13 +43,13 @@ describe('functional utilities', () => {
     const invalidPipeline = () => pipe(1, undefined as unknown as (value: number) => number)
     expect(invalidPipeline).toThrow(TypeError)
     expect(invalidPipeline).toThrow('pipe requires transformation functions')
-    expect(ok<string, Error>('Ready').match({ ok: identity, error: constant('Unavailable') })).toBe(
+    expect(ok<string, Error>('Ready').match({ ok: identity, err: constant('Unavailable') })).toBe(
       'Ready',
     )
     expect(
       err<string, Error>(new Error('offline')).match({
         ok: identity,
-        error: constant('Unavailable'),
+        err: constant('Unavailable'),
       }),
     ).toBe('Unavailable')
     const increment = (value: number) => value + 1
@@ -140,7 +140,7 @@ describe('task ergonomics', () => {
     let visits = 0
     const load = ResultTask.fn(function* (this: { base: number }, id: number, extra = 0) {
       visits += 1
-      return yield* ResultTask.succeed(this.base + id + extra)
+      return yield* ResultTask.ok(this.base + id + extra)
     })
     const task = load.call({ base: 2 }, 3)
     expect(visits).toBe(0)
@@ -156,7 +156,7 @@ describe('task ergonomics', () => {
     const load = ResultTask.fn(function* (id: string) {
       const clock = yield* Clock
       try {
-        yield* ResultTask.fail<Missing>({ _tag: 'Missing', id })
+        yield* ResultTask.err<Missing>({ _tag: 'Missing', id })
         return clock.now()
       } finally {
         yield* ResultTask.sync(() => {
@@ -174,11 +174,11 @@ describe('task ergonomics', () => {
   })
 
   it('recovers selected tags in instance, direct, and curried forms', async () => {
-    const source: ResultTask<number, Missing | Denied> = ResultTask.fail({
+    const source: ResultTask<number, Missing | Denied> = ResultTask.err({
       _tag: 'Missing',
       id: 'abc',
     })
-    const recover = (error: Missing) => ResultTask.succeed(error.id)
+    const recover = (error: Missing) => ResultTask.ok(error.id)
     const instance = source.catchTag('Missing', recover)
     expectTypeOf(instance).toEqualTypeOf<ResultTask<number | string, Denied>>()
     expect(await ResultTask.runPromise(instance)).toBe('abc')
@@ -194,7 +194,7 @@ describe('task ergonomics', () => {
     expect(await ResultTask.runPromise(partial)).toBe('abc')
     expect(
       await ResultTask.runExit(
-        ResultTask.fail<Missing | Denied>({ _tag: 'Denied' }).catchTags(handlers),
+        ResultTask.err<Missing | Denied>({ _tag: 'Denied' }).catchTags(handlers),
       ),
     ).toEqual({ _tag: 'Failure', cause: { _tag: 'Fail', error: { _tag: 'Denied' } } })
     if (false) {
@@ -205,30 +205,28 @@ describe('task ergonomics', () => {
       // @ts-expect-error Curried recovery cannot accept an unrelated tag.
       ResultTask.catchTags({ Other: recover })(source)
       // @ts-expect-error Curried recovery cannot accept an unrelated tag.
-      ResultTask.catchTag('Other', () => ResultTask.succeed(1))(source)
+      ResultTask.catchTag('Other', () => ResultTask.ok(1))(source)
     }
   })
 
   it('preserves scope errors and composite defects during recovery', async () => {
     const releaseError: Denied = { _tag: 'Denied' }
     const acquired = ResultTask.acquireRelease({
-      acquire: ResultTask.succeed(1),
-      release: () => ResultTask.fail(releaseError),
+      acquire: ResultTask.ok(1),
+      release: () => ResultTask.err(releaseError),
     })
     const task = acquired
-      .flatMap(() => ResultTask.fail<Missing>({ _tag: 'Missing', id: 'abc' }))
-      .catchTag('Missing', () => ResultTask.succeed(2))
+      .andThen(() => ResultTask.err<Missing>({ _tag: 'Missing', id: 'abc' }))
+      .catchTag('Missing', () => ResultTask.ok(2))
     expectTypeOf(task).toEqualTypeOf<ResultTask<number, never, ResultTaskScope<Denied>>>()
     expect(await ResultTask.runExit(ResultTask.scoped(task))).toEqual({
       _tag: 'Failure',
       cause: { _tag: 'Fail', error: releaseError },
     })
     const composite = ResultTask.scoped(
-      acquired.flatMap(() => ResultTask.fail<Missing>({ _tag: 'Missing', id: 'abc' })),
+      acquired.andThen(() => ResultTask.err<Missing>({ _tag: 'Missing', id: 'abc' })),
     )
-    const exit = await ResultTask.runExit(
-      composite.catchTags({ Missing: () => ResultTask.succeed(2) }),
-    )
+    const exit = await ResultTask.runExit(composite.catchTags({ Missing: () => ResultTask.ok(2) }))
     expect(exit._tag).toBe('Failure')
     if (exit._tag === 'Failure' && exit.cause._tag === 'Die')
       expect(exit.cause.defect).toBeInstanceOf(ResultTaskCauseError)
@@ -236,7 +234,7 @@ describe('task ergonomics', () => {
 
   it('unions recovery errors and requirements and propagates callback defects', async () => {
     const Clock = ResultTask.service<{ now: () => number }>()('RecoveryClock')
-    const source: ResultTask<number, Missing | Denied> = ResultTask.fail({
+    const source: ResultTask<number, Missing | Denied> = ResultTask.err({
       _tag: 'Missing',
       id: 'abc',
     })
@@ -244,7 +242,7 @@ describe('task ergonomics', () => {
       Missing: () =>
         ResultTask.gen(function* () {
           const clock = yield* Clock
-          return yield* ResultTask.fail(clock.now())
+          return yield* ResultTask.err(clock.now())
         }),
     })
     expectTypeOf(recovered).toEqualTypeOf<ResultTask<number, Denied | number, typeof Clock>>()
@@ -272,7 +270,7 @@ describe('task ergonomics', () => {
     controller.abort('stop')
     const interrupted = source.catchTag('Missing', () => {
       called = true
-      return ResultTask.succeed(1)
+      return ResultTask.ok(1)
     })
     expect((await ResultTask.runExit(interrupted, { signal: controller.signal }))._tag).toBe(
       'Failure',
@@ -294,13 +292,13 @@ describe('task ergonomics', () => {
     const task = ResultTask.scoped(
       ResultTask.gen(function* () {
         yield* ResultTask.acquireDisposable(
-          ResultTask.succeed({
+          ResultTask.ok({
             [Symbol.dispose]: () => {
               events.push('first')
             },
           }),
         )
-        return yield* ResultTask.acquireDisposable(ResultTask.succeed(resource))
+        return yield* ResultTask.acquireDisposable(ResultTask.ok(resource))
       }),
     )
     expect(await ResultTask.runPromise(task)).toBe(resource)
@@ -312,12 +310,12 @@ describe('task ergonomics', () => {
   it('preserves body and disposal failures and cleans up during abort', async () => {
     const defect = new Error('dispose')
     const task = ResultTask.acquireDisposable(
-      ResultTask.succeed({
+      ResultTask.ok({
         [Symbol.dispose]: () => {
           throw defect
         },
       }),
-    ).flatMap(() => ResultTask.fail('body'))
+    ).andThen(() => ResultTask.err('body'))
     expect(await ResultTask.runExit(task)).toEqual({
       _tag: 'Failure',
       cause: {
@@ -347,13 +345,13 @@ describe('task ergonomics', () => {
 
   it('skips failed acquisitions and awaits rejected async disposal', async () => {
     type Resource = { [Symbol.dispose]: () => void }
-    const acquire: ResultTask<Resource, Missing> = ResultTask.fail({ _tag: 'Missing', id: 'abc' })
+    const acquire: ResultTask<Resource, Missing> = ResultTask.err({ _tag: 'Missing', id: 'abc' })
     const failed = ResultTask.acquireDisposable(acquire)
     expect((await ResultTask.runExit(failed))._tag).toBe('Failure')
     let disposed = false
     const defect = new Error('async disposal')
     const acquired = ResultTask.acquireDisposable(
-      ResultTask.succeed({
+      ResultTask.ok({
         [Symbol.asyncDispose]: async () => {
           await Promise.resolve()
           disposed = true
@@ -368,7 +366,7 @@ describe('task ergonomics', () => {
     expect(disposed).toBe(true)
     if (false) {
       // @ts-expect-error Acquisition must return a disposable resource.
-      ResultTask.acquireDisposable(ResultTask.succeed({ value: 1 }))
+      ResultTask.acquireDisposable(ResultTask.ok({ value: 1 }))
     }
   })
 })
@@ -380,20 +378,20 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
       new RangeError('Task concurrency must be a positive safe integer or unbounded'),
     )
 
-    expect(() => ResultTask.retry(ResultTask.err('fail'), { times: -1 })).toThrow(
-      new RangeError('Task retries must be a non-negative safe integer'),
+    expect(() => Retry.policy({ times: -1 })).toThrow(
+      new RangeError('Retry times must be a non-negative safe integer'),
     )
-    expect(() => ResultTask.retry(ResultTask.err('fail'), { times: 1.5 })).toThrow(
-      new RangeError('Task retries must be a non-negative safe integer'),
+    expect(() => Retry.policy({ times: 1.5 })).toThrow(
+      new RangeError('Retry times must be a non-negative safe integer'),
     )
-    expect(() => ResultTask.retry(ResultTask.err('fail'), { times: 1, backoff: 0.5 })).toThrow(
-      new RangeError('Task backoff must be at least one'),
+    expect(() => Retry.policy({ times: 1, backoff: 0.5 })).toThrow(
+      new RangeError('Retry backoff must be a finite number at least one'),
     )
-    expect(() =>
-      ResultTask.retry(ResultTask.err('fail'), { times: 1, backoff: Number.NaN }),
-    ).toThrow(new RangeError('Task backoff must be at least one'))
-    expect(() => ResultTask.retry(ResultTask.err('fail'), { times: 1, delayMs: -1 })).toThrow(
-      new RangeError('Task duration must be a finite non-negative number'),
+    expect(() => Retry.policy({ times: 1, backoff: Number.NaN })).toThrow(
+      new RangeError('Retry backoff must be a finite number at least one'),
+    )
+    expect(() => Retry.policy({ times: 1, delayMs: -1 })).toThrow(
+      new RangeError('Retry delayMs must be a finite non-negative number'),
     )
     expect(() =>
       ResultTask.retry(
@@ -424,7 +422,7 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
     const zeroRetry = ResultTask.gen(function* () {
       attempts += 1
       return yield* ResultTask.err('fail')
-    }).retry({ times: 0 })
+    }).retry(Retry.policy({ times: 0 }))
     expect(await ResultTask.runExit(zeroRetry)).toEqual({
       _tag: 'Failure',
       cause: { _tag: 'Fail', error: 'fail' },
@@ -435,7 +433,7 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
     const twoRetries = ResultTask.gen(function* () {
       twoAttempts += 1
       return yield* ResultTask.err('fail')
-    }).retry({ times: 2, backoff: 1, delayMs: 0 })
+    }).retry(Retry.policy({ times: 2, backoff: 1, delayMs: 0 }))
     expect(await ResultTask.runExit(twoRetries)).toEqual({
       _tag: 'Failure',
       cause: { _tag: 'Fail', error: 'fail' },
@@ -451,25 +449,26 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
       random: () => randomValue,
     })
 
-    await ResultTask.runExit(ResultTask.err('fail').retry({ times: 1, delayMs: 10 }), {
-      clock: makeClock(0.5),
-    })
+    await ResultTask.runExit(
+      ResultTask.err('fail').retry(Retry.policy({ times: 1, delayMs: 10 })),
+      { clock: makeClock(0.5) },
+    )
     expect(slept).toEqual([10])
 
     slept.length = 0
     await ResultTask.runExit(
-      ResultTask.err('fail').retry({ times: 1, delayMs: 10, jittered: true }),
+      ResultTask.err('fail').retry(Retry.policy({ times: 1, delayMs: 10, jittered: 0.5 })),
       { clock: makeClock(0) },
     )
     await ResultTask.runExit(
-      ResultTask.err('fail').retry({ times: 1, delayMs: 10, jittered: true }),
+      ResultTask.err('fail').retry(Retry.policy({ times: 1, delayMs: 10, jittered: 0.5 })),
       { clock: makeClock(1) },
     )
-    expect(slept).toEqual([0, 10])
+    expect(slept).toEqual([5, 15])
 
     for (const badRandom of [Number.NaN, -0.1, 1.1]) {
       const badExit = await ResultTask.runExit(
-        ResultTask.err('fail').retry({ times: 1, delayMs: 10, jittered: true }),
+        ResultTask.err('fail').retry(Retry.policy({ times: 1, delayMs: 10, jittered: 0.5 })),
         { clock: makeClock(badRandom) },
       )
       expect(badExit._tag).toBe('Failure')
@@ -477,7 +476,7 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
         expect(badExit.cause._tag).toBe('Die')
         if (badExit.cause._tag === 'Die') {
           expect(badExit.cause.defect).toEqual(
-            new RangeError('Task clock random must return a number between zero and one'),
+            new RangeError('Retry random must return a finite number between zero and one'),
           )
         }
       }
@@ -1211,25 +1210,25 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
       await ResultTask.runResult(pipe(matchingTask, ResultTask.unwrapReason('Outer'))),
     ).toEqual(err({ _tag: 'Inner', msg: 'found' }))
 
-    // tapBoth & inspectBoth overloads (including onSuccess/onFailure) and errors
+    // tapBoth & inspectBoth overloads and errors
     const events: string[] = []
     await ResultTask.runResult(
       ResultTask.ok(1).tapBoth({
         ok: (v) => {
           events.push(`ok:${v}`)
         },
-        error: (e) => {
+        err: (e) => {
           events.push(`err:${String(e)}`)
         },
       }),
     )
     await ResultTask.runResult(
       ResultTask.ok(10).tapBoth({
-        onSuccess: (v) => {
-          events.push(`onSuccess:${v}`)
+        ok: (v) => {
+          events.push(`ok:${v}`)
         },
-        onFailure: (e) => {
-          events.push(`onFailure:${String(e)}`)
+        err: (e) => {
+          events.push(`err:${String(e)}`)
         },
       }),
     )
@@ -1269,7 +1268,7 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
         ok: (v) => {
           events.push(`curried-obj-ok:${v}`)
         },
-        error: (e) => {
+        err: (e) => {
           events.push(`curried-obj-err:${e}`)
         },
       })(ResultTask.ok(3)),
@@ -1297,17 +1296,17 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
     )
     await ResultTask.runResult(
       ResultTask.inspectBoth(ResultTask.ok(5), {
-        onSuccess: (v) => {
+        ok: (v) => {
           events.push(`insp-obj-ok:${v}`)
         },
-        onFailure: (e) => {
+        err: (e) => {
           events.push(`insp-obj-err:${String(e)}`)
         },
       }),
     )
     expect(events).toEqual([
       'ok:1',
-      'onSuccess:10',
+      'ok:10',
       'err:bad',
       'static-ok:2',
       'curried-err:e2',
@@ -1524,7 +1523,7 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
             },
             catch: (e) => String(e),
           }),
-          { times: 2 },
+          Retry.policy({ times: 2 }),
         ),
         { signal: retryAbortController.signal },
       ),
@@ -1532,9 +1531,10 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
     expect(retryAttempts).toBe(1)
 
     expect(
-      await ResultTask.runExit(ResultTask.retry(ResultTask.err('e'), { times: 2, delayMs: 10 }), {
-        clock: { now: () => 0, sleep: () => Promise.reject('clock-defect'), random: () => 0.5 },
-      }),
+      await ResultTask.runExit(
+        ResultTask.retry(ResultTask.err('e'), Retry.policy({ times: 2, delayMs: 10 })),
+        { clock: { now: () => 0, sleep: () => Promise.reject('clock-defect'), random: () => 0.5 } },
+      ),
     ).toEqual({ _tag: 'Failure', cause: { _tag: 'Die', defect: 'clock-defect' } })
 
     // Semaphore abort right when permit is granted
@@ -1940,44 +1940,6 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
       value: { _tag: 'Failure', cause: { _tag: 'Die', defect: 'raw-execute-reject' } },
     })
 
-    const fnIterable = Object.assign(() => {}, {
-      *[Symbol.iterator]() {
-        yield ResultAsync.ok(7)
-      },
-    })
-    expect(
-      (
-        await ResultAsync.combine(fnIterable as unknown as readonly [ResultAsync<number, never>])
-      )._unsafeUnwrap(),
-    ).toEqual([7])
-    expect(await ResultAsync.combine('' as never)).toEqual(Result.ok({}))
-
-    await expect(
-      ResultAsync.forEach([1], () => {
-        throw 'raw-string-throw'
-      }),
-    ).rejects.toThrow('raw-string-throw')
-
-    await expect(
-      ResultAsync.forEach(
-        [1, 2],
-        (x) => {
-          if (x === 1) {
-            return new ResultAsync(Promise.reject(new Error('reject-1')))
-          }
-          throw new Error('reject-2')
-        },
-        { concurrency: 2 },
-      ),
-    ).rejects.toThrow('reject-2')
-
-    const seenErr: string[] = []
-    const errDisposable = ResultAsync.err('disp-err').toAsyncDisposable((_val, errVal) => {
-      if (errVal !== undefined) seenErr.push(errVal)
-    })
-    await errDisposable[Symbol.asyncDispose]()
-    expect(seenErr).toEqual(['disp-err'])
-
     type TaggedWithReasons =
       | { readonly _tag: 'Target'; readonly reason: { readonly _tag: 'R' } }
       | { readonly _tag: 'Other' }
@@ -1987,7 +1949,9 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
     expect(nonMatchingReasonResult).toEqual(Result.err({ _tag: 'Other' }))
 
     expect(
-      await ResultTask.runResult(ResultTask.err('retry-no-delay').retry({ times: 1 })),
+      await ResultTask.runResult(
+        ResultTask.err('retry-no-delay').retry(Retry.policy({ times: 1 })),
+      ),
     ).toEqual(Result.err('retry-no-delay'))
     expect(
       await ResultTask.runResult(
@@ -2009,9 +1973,9 @@ describe('ResultTask runtime edge cases and combinator contracts', () => {
     ).toEqual([1, 2])
 
     /* eslint-disable typescript/no-deprecated -- Verifies retained deprecated static ResultTask methods. */
-    expect(() => ResultTask.mapError(null as never)).toThrow(TypeError)
-    expect(() => ResultTask.flatMap(null as never)).toThrow(TypeError)
-    expect(() => ResultTask.catchAll(null as never)).toThrow(TypeError)
+    expect(() => ResultTask.mapErr(null as never)).toThrow(TypeError)
+    expect(() => ResultTask.andThen(null as never)).toThrow(TypeError)
+    expect(() => ResultTask.orElse(null as never)).toThrow(TypeError)
     /* eslint-enable typescript/no-deprecated */
     expect(() => ResultTask.orElseSucceed(null as never)).toThrow(TypeError)
     expect(() => ResultTask.tapCause(null as never)).toThrow(TypeError)

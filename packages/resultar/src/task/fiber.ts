@@ -4,8 +4,10 @@ import { awaitFiber, joinFiber } from './fiber-runtime.js'
 /** Options controlling how a joining fiber reacts when the joiner itself is interrupted. */
 export interface FiberJoinOptions {
   /**
-   * `'wait'` (default) interrupts the joined child fiber and awaits its cleanup before exiting;
-   * `'detach'` cancels only the current waiter without interrupting the target fiber.
+   * `'wait'` (default) waits for the joined fiber to finish without interrupting it before
+   * returning the waiter's interruption (use `fiber.interrupt()` / `Fiber.interrupt(fiber)` to
+   * interrupt the target fiber and await its cleanup);
+   * `'detach'` cancels only the current waiter immediately without interrupting the target fiber.
    */
   readonly interruption?: 'wait' | 'detach'
 }
@@ -33,6 +35,8 @@ export interface Fiber<out A, out E = never> {
 export interface FiberHandle<out A, out E = never> extends Fiber<A, E> {
   /** Monotonically increasing numeric identifier unique to this fiber. */
   readonly id: number
+  /** Waits for the fiber to settle and returns its terminal {@link Exit} without replaying failures. */
+  readonly await: () => ResultTask<Exit<A, E>>
   /** Synchronously returns the terminal {@link Exit} after cleanup, or `undefined` while still running. */
   readonly poll: () => Exit<A, E> | undefined
   /** Registers a best-effort completion observer and returns an unsubscribe function. */

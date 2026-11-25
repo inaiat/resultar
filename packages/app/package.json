@@ -1,6 +1,6 @@
 {
   "name": "resultar-app",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Unified application entry point for Resultar workflows, services and configuration.",
   "keywords": [
     "application",
@@ -25,6 +25,7 @@
     "README.md"
   ],
   "type": "module",
+  "sideEffects": false,
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
@@ -33,9 +34,9 @@
     }
   },
   "scripts": {
-    "analyze": "fallow",
     "build": "vp pack",
     "check": "vp check",
+    "check:fallow": "fallow",
     "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",

@@ -3,6 +3,8 @@ package analyzer
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/microsoft/TypeScript/tsc/internal/ast"
 	"github.com/microsoft/TypeScript/tsc/internal/scanner"
@@ -62,6 +64,59 @@ func sourceComments(file *ast.SourceFile) []ast.CommentRange {
 	return result
 }
 
+func asciiLowerByte(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + ('a' - 'A')
+	}
+	return b
+}
+
+// indexASCIIFold locates a lowercase ASCII needle in s case-insensitively while
+// preserving exact byte offsets in s (unlike strings.ToLower, which changes byte
+// lengths for Unicode characters such as Ⱥ or İ).
+func indexASCIIFold(s, lowerNeedle string) int {
+	n := len(lowerNeedle)
+	if n == 0 {
+		return 0
+	}
+	if n > len(s) {
+		return -1
+	}
+	for i := 0; i <= len(s)-n; i++ {
+		matched := true
+		for j := 0; j < n; j++ {
+			if asciiLowerByte(s[i+j]) != lowerNeedle[j] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return i
+		}
+	}
+	return -1
+}
+
+// suppressionJustificationIndex returns the earliest byte offset in rest where an
+// inline justification begins (`//` or whitespace-preceded `--`), or -1 if none.
+func suppressionJustificationIndex(rest string) int {
+	earliest := strings.Index(rest, "//")
+	for i := 0; i < len(rest); {
+		r, size := utf8.DecodeRuneInString(rest[i:])
+		if unicode.IsSpace(r) {
+			next := i + size
+			if next+1 < len(rest) && rest[next] == '-' && rest[next+1] == '-' {
+				if earliest < 0 || next < earliest {
+					earliest = next
+				}
+				break
+			}
+		}
+		i += size
+	}
+	return earliest
+}
+
 func parseSuppressions(file *ast.SourceFile) []suppression {
 	text := file.Text()
 	result := []suppression{}
@@ -70,18 +125,17 @@ func parseSuppressions(file *ast.SourceFile) []suppression {
 			continue
 		}
 		comment := text[range_.Pos():range_.End()]
-		lowered := strings.ToLower(comment)
 		for _, directive := range []struct {
 			name   string
 			offset int
 		}{{"resultar-check-disable-next-line", 1}, {"resultar-check-disable-line", 0}} {
-			position := strings.Index(lowered, directive.name)
+			position := indexASCIIFold(comment, directive.name)
 			if position < 0 {
 				continue
 			}
 			start := range_.Pos() + position
 			rest := comment[position+len(directive.name):]
-			if justification := strings.Index(rest, "//"); justification >= 0 {
+			if justification := suppressionJustificationIndex(rest); justification >= 0 {
 				rest = rest[:justification]
 			}
 			rules, entries := map[string]struct{}{}, map[string][2]int{}
@@ -93,8 +147,10 @@ func parseSuppressions(file *ast.SourceFile) []suppression {
 				entries[key] = [2]int{range_.Pos() + relative, len(rule)}
 				cursor = relative + len(rule)
 			}
-			line := strings.Count(text[:range_.Pos()], "\n") + 1 + directive.offset
-			result = append(result, suppression{line: line, start: start, length: len(directive.name) + len(strings.TrimRight(rest, " \t\r")), rules: rules, entries: entries})
+			line, _ := scanner.GetECMALineAndUTF16CharacterOfPosition(file, range_.Pos())
+			line += 1 + directive.offset
+			trimmedRest := strings.TrimRightFunc(rest, unicode.IsSpace)
+			result = append(result, suppression{line: line, start: start, length: len(directive.name) + len(trimmedRest), rules: rules, entries: entries})
 		}
 	}
 	return result

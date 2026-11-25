@@ -1,0 +1,13 @@
+{
+  "name": "resultar-website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "content": "node scripts/build-content.mjs",
+    "dev": "pnpm run content && vp dev",
+    "build": "pnpm run content && vp build",
+    "preview": "vp preview",
+    "check": "pnpm run content && vp check",
+    "test": "pnpm run content && vpx --test tests/content.test.ts tests/playground.test.ts tests/playground-browser.test.ts"
+  }
+}

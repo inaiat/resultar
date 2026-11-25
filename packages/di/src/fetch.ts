@@ -9,16 +9,39 @@ export const runScopedResponse = (
   const finished = Promise.withResolvers<void>();
   const signal = new AbortController();
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined = undefined;
+  let readerCancelPromise: Promise<void> | undefined = undefined;
   let output: ReadableStreamDefaultController<Uint8Array> | undefined = undefined;
   let empty: Response | undefined = undefined;
   let bodyFailure: unknown = undefined;
-  const cancel = async (reason: unknown) => {
+  let canceling = false;
+  const cancel = (reason: unknown): Promise<void> => {
+    canceling = true;
+    if (reader === undefined) {
+      signal.abort(reason);
+      finished.resolve();
+      return Promise.resolve();
+    }
+    if (readerCancelPromise !== undefined) return readerCancelPromise;
+    const activeReader = reader;
+    const deferred = Promise.withResolvers<void>();
+    readerCancelPromise = deferred.promise;
     signal.abort(reason);
     try {
-      await reader?.cancel(reason);
-    } finally {
+      Promise.resolve(activeReader.cancel(reason)).then(
+        () => {
+          finished.resolve();
+          deferred.resolve();
+        },
+        (error: unknown) => {
+          finished.resolve();
+          deferred.reject(error);
+        },
+      );
+    } catch (error) {
       finished.resolve();
+      deferred.reject(error);
     }
+    return readerCancelPromise;
   };
   const onAbort = () => {
     cancel(request.signal.reason).catch(ready.reject);
@@ -36,6 +59,10 @@ export const runScopedResponse = (
           }
           const source: ReadableStreamDefaultReader<Uint8Array> = response.body.getReader();
           reader = source;
+          if (canceling) {
+            await cancel(request.signal.reason);
+            return;
+          }
           const body = new ReadableStream<Uint8Array>(
             {
               start(controller) {
@@ -44,6 +71,7 @@ export const runScopedResponse = (
               async pull(controller) {
                 try {
                   const chunk = await source.read();
+                  if (canceling) return;
                   if (chunk.done) {
                     finished.resolve();
                     const exit = await completion;

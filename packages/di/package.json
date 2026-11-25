@@ -1,6 +1,6 @@
 {
   "name": "resultar-di",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Typed dependency composition and scoped resources for ResultTask.",
   "keywords": [
     "composition",
@@ -26,6 +26,7 @@
     "README.md"
   ],
   "type": "module",
+  "sideEffects": false,
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
@@ -34,7 +35,7 @@
     }
   },
   "scripts": {
-    "analyze": "fallow",
+    "check:fallow": "fallow",
     "build": "vp pack && node --import vite-plus/register scripts/declaration-imports.ts",
     "check": "vp check",
     "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",

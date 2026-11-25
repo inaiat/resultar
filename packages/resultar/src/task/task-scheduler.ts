@@ -1,5 +1,5 @@
 import { AbortError } from '../core/abort-error.js'
-import { toNativeAbortSignal } from './exit.js'
+import { NEVER_ABORTED_SIGNAL, toNativeAbortSignal } from './exit.js'
 import type { TaskClock } from './task-clock.js'
 
 /**
@@ -11,6 +11,34 @@ export interface TaskScheduler {
   readonly yield: (signal: AbortSignal) => PromiseLike<void>
 }
 
+const macrotaskHost = globalThis as {
+  readonly setImmediate?: (callback: () => void) => unknown
+  readonly clearImmediate?: (handle: unknown) => void
+}
+
+/**
+ * Schedules a single macrotask callback with cancellation, using `setImmediate` when available
+ * and falling back to `setTimeout(..., 0)` in browsers and edge runtimes.
+ */
+export const scheduleMacrotask = (callback: () => void): (() => void) => {
+  let cancelled = false
+  const run = (): void => {
+    if (!cancelled) callback()
+  }
+  if (typeof macrotaskHost.setImmediate === 'function') {
+    const handle = macrotaskHost.setImmediate(run)
+    return () => {
+      cancelled = true
+      macrotaskHost.clearImmediate?.(handle)
+    }
+  }
+  const handle = setTimeout(run, 0)
+  return () => {
+    cancelled = true
+    clearTimeout(handle)
+  }
+}
+
 const live: TaskScheduler = Object.freeze({
   yield: (signal: AbortSignal): Promise<void> =>
     new Promise((resolve, reject) => {
@@ -19,12 +47,16 @@ const live: TaskScheduler = Object.freeze({
         return
       }
 
+      if (signal === NEVER_ABORTED_SIGNAL) {
+        scheduleMacrotask(resolve)
+        return
+      }
       const onAbort = (): void => {
-        clearImmediate(handle)
+        cancel()
         signal.removeEventListener('abort', onAbort)
         reject(new AbortError('Task yield interrupted', { cause: signal.reason }))
       }
-      const handle = setImmediate(() => {
+      const cancel = scheduleMacrotask(() => {
         signal.removeEventListener('abort', onAbort)
         resolve()
       })
@@ -44,7 +76,7 @@ const live: TaskScheduler = Object.freeze({
  * ```
  */
 export const Scheduler: {
-  /** Default macrotask scheduler that yields to the event loop via `setImmediate`. */
+  /** Default macrotask scheduler yielding via `setImmediate` when present or `setTimeout(..., 0)`. */
   readonly live: TaskScheduler
 } = Object.freeze({ live })
 
@@ -54,6 +86,7 @@ export interface TaskScheduling {
   readonly yieldEvery: number
   readonly clock: TaskClock
   remaining: number
+  syncRunner?: boolean
 }
 
 const createSchedulingWithOptions = (
@@ -87,6 +120,7 @@ export const forkScheduling = (parent: TaskScheduling): TaskScheduling => ({
   yieldEvery: parent.yieldEvery,
   clock: parent.clock,
   remaining: parent.yieldEvery,
+  syncRunner: parent.syncRunner === true,
 })
 
 /** A failed dispatcher cannot prevent registered finalizers from being executed. */

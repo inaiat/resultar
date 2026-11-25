@@ -1,15 +1,38 @@
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+
+import { applyEdits, modify, parse, type JSONPath, type ParseError } from "jsonc-parser";
 
 type JsonRecord = Record<string, unknown>;
+export type EditorTarget = "zed" | "vscode" | "cursor" | "all";
+
+interface SetupOptions {
+  readonly editor: EditorTarget;
+  readonly force: boolean;
+  readonly project: string;
+}
 
 const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const parseOptions = (
-  args: readonly string[],
-): { readonly force: boolean; readonly project: string } => {
+const parseEditor = (value: string): EditorTarget => {
+  switch (value) {
+    case "zed":
+    case "vscode":
+    case "cursor":
+    case "all": {
+      return value;
+    }
+    default: {
+      // resultar-check-disable-next-line prefer-tagged-error
+      throw new Error(`Unknown --editor value: ${value} (expected zed, vscode, cursor, or all)`);
+    }
+  }
+};
+
+const parseOptions = (args: readonly string[]): SetupOptions => {
+  let editor: EditorTarget = "zed";
   let force = false;
   let project = "tsconfig.json";
   for (let index = 0; index < args.length; index += 1) {
@@ -35,39 +58,51 @@ const parseOptions = (
       project = argument.slice("--project=".length);
       continue;
     }
+    if (argument === "--editor" || argument === "-e") {
+      const value = args[index + 1];
+      if (value === undefined) {
+        // resultar-check-disable-next-line prefer-tagged-error
+        throw new Error("Missing value for --editor");
+      }
+      editor = parseEditor(value);
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--editor=")) {
+      editor = parseEditor(argument.slice("--editor=".length));
+      continue;
+    }
     // resultar-check-disable-next-line prefer-tagged-error
     throw new Error(`Unknown argument: ${argument}`);
   }
-  return { force, project };
+  return { editor, force, project };
 };
 
 const setupUsage = `Usage: resultar-check <init|doctor> [options]
 
 Commands:
-  init                         Create the portable Zed LSP setup.
-  doctor                       Check the project, binary, pnpm, and Zed setup.
+  init                         Create editor setup for Zed, VS Code, Cursor, or all.
+  doctor                       Check the project, binary, pnpm, and editor setup.
 
 Options:
+  -e, --editor <target>        Target editor: zed (default), vscode, cursor, or all.
   -p, --project <path>         TypeScript project (default: tsconfig.json).
-  -f, --force                  Refresh .zed/settings.json while preserving other settings.
+  -f, --force                  Refresh generated entries while preserving other settings.
 `;
 
 const projectPathFrom = (root: string, project: string): string =>
   resolve(root, isAbsolute(project) ? project : project);
 
-const zedProjectPath = (root: string, projectPath: string): string => {
+const normalizedProjectPath = (root: string, projectPath: string): string => {
   const projectRelative = relative(root, projectPath);
-  if (
-    projectRelative === "" ||
-    projectRelative.startsWith(`..${sep}`) ||
-    isAbsolute(projectRelative)
-  ) {
+  if (projectRelative === "") return ".";
+  if (projectRelative.startsWith(`..${sep}`) || isAbsolute(projectRelative)) {
     return projectPath.replaceAll(sep, "/");
   }
   return projectRelative.replaceAll(sep, "/");
 };
 
-const generatedSettings = (project: string): JsonRecord => ({
+const generatedZedSettings = (project: string): JsonRecord => ({
   lsp: {
     "typescript-language-server": {
       binary: { arguments: ["exec", "resultar-check", "lsp", "--project", project], path: "pnpm" },
@@ -79,8 +114,82 @@ const generatedSettings = (project: string): JsonRecord => ({
   },
 });
 
+const RESULTAR_PROBLEM_MATCHER: readonly JsonRecord[] = [
+  {
+    owner: "resultar-check",
+    // eslint-disable-next-line no-template-curly-in-string
+    fileLocation: ["relative", "${workspaceFolder}"],
+    pattern: {
+      regexp: String.raw`^(.+):(\d+):(\d+) resultar/([a-z0-9-]+) \((error|warning)\) - (.+)$`,
+      file: 1,
+      line: 2,
+      column: 3,
+      code: 4,
+      severity: 5,
+      message: 6,
+    },
+  },
+  {
+    owner: "resultar-check-info",
+    severity: "info",
+    // eslint-disable-next-line no-template-curly-in-string
+    fileLocation: ["relative", "${workspaceFolder}"],
+    pattern: {
+      regexp: String.raw`^(.+):(\d+):(\d+) resultar/([a-z0-9-]+) \((?:suggestion|message)\) - (.+)$`,
+      file: 1,
+      line: 2,
+      column: 3,
+      code: 4,
+      message: 5,
+    },
+  },
+];
+
+const generatedVscodeTasks = (project: string): readonly JsonRecord[] => [
+  {
+    label: "resultar-check",
+    type: "shell",
+    command: "pnpm",
+    args: ["exec", "resultar-check", "--project", project],
+    group: "test",
+    presentation: { reveal: "silent", panel: "dedicated", clear: true },
+    problemMatcher: RESULTAR_PROBLEM_MATCHER,
+  },
+  {
+    label: "resultar-check: fix",
+    type: "shell",
+    command: "pnpm",
+    args: ["exec", "resultar-check", "--fix", "--project", project],
+    presentation: { reveal: "always", panel: "dedicated", clear: true },
+    problemMatcher: RESULTAR_PROBLEM_MATCHER,
+  },
+];
+
+const generatedCursorRule = (project: string): string =>
+  [
+    "---",
+    "description: Run resultar-check static diagnostics on Resultar TypeScript code",
+    "globs:",
+    '  - "**/*.ts"',
+    '  - "**/*.tsx"',
+    "alwaysApply: false",
+    "---",
+    "",
+    "# Resultar diagnostics",
+    "",
+    `Run \`pnpm exec resultar-check --project ${project}\` after editing TypeScript files that use \`resultar\`, \`resultar-di\`, or \`resultar-app\`.`,
+    `Use \`pnpm exec resultar-check --fix --project ${project}\` to apply safe correction fixes automatically.`,
+    "Never auto-silence `no-discard` diagnostics with `void` unless discarding the result is explicitly intentional.",
+    "",
+  ].join("\n");
+
 const readJsonRecord = (filePath: string): JsonRecord => {
-  const parsed: unknown = JSON.parse(readFileSync(filePath, "utf8"));
+  const errors: ParseError[] = [];
+  const parsed: unknown = parse(readFileSync(filePath, "utf8"), errors, {
+    allowTrailingComma: true,
+  });
+  if (errors.length > 0)
+    throw new SyntaxError(`Invalid JSONC in ${filePath} at offset ${errors[0]?.offset}`);
   if (!isRecord(parsed)) {
     // resultar-check-disable-next-line prefer-tagged-error
     throw new Error(`${filePath} must contain a JSON object`);
@@ -88,7 +197,37 @@ const readJsonRecord = (filePath: string): JsonRecord => {
   return parsed;
 };
 
-const mergeSettings = (existing: JsonRecord, generated: JsonRecord): JsonRecord => {
+const writeEditorSettings = (path: string, next: JsonRecord): void => {
+  if (!existsSync(path)) {
+    writeFileSync(path, `${JSON.stringify(next, undefined, 2)}\n`, "utf8");
+    return;
+  }
+  let source = readFileSync(path, "utf8");
+  const formattingOptions = {
+    insertSpaces: true,
+    tabSize: 2,
+    eol: source.includes("\r\n") ? "\r\n" : "\n",
+  };
+  const update = (keys: JSONPath, before: unknown, after: unknown): void => {
+    if (before === after) return;
+    if (isRecord(before) && isRecord(after)) {
+      for (const [key, value] of Object.entries(after)) update([...keys, key], before[key], value);
+      for (const key of Object.keys(before)) {
+        if (!Object.hasOwn(after, key)) update([...keys, key], before[key], undefined);
+      }
+    } else if (Array.isArray(before) && Array.isArray(after)) {
+      for (const [index, value] of after.entries()) update([...keys, index], before[index], value);
+      for (let index = before.length - 1; index >= after.length; index -= 1)
+        update([...keys, index], before[index], undefined);
+    } else {
+      source = applyEdits(source, modify(source, keys, after, { formattingOptions }));
+    }
+  };
+  update([], readJsonRecord(path), next);
+  writeFileSync(path, source, "utf8");
+};
+
+const mergeZedSettings = (existing: JsonRecord, generated: JsonRecord): JsonRecord => {
   const merged: JsonRecord = { ...existing };
   for (const key of ["lsp", "languages"]) {
     const generatedValue = generated[key];
@@ -99,29 +238,138 @@ const mergeSettings = (existing: JsonRecord, generated: JsonRecord): JsonRecord 
     const section: JsonRecord = { ...existingValue };
     for (const [entryKey, entryValue] of Object.entries(generatedValue)) {
       const previous = existingValue[entryKey];
-      section[entryKey] =
-        isRecord(previous) && isRecord(entryValue) ? { ...previous, ...entryValue } : entryValue;
+      if (isRecord(previous) && isRecord(entryValue)) {
+        const mergedEntry = { ...previous, ...entryValue };
+        if (
+          Array.isArray(previous.language_servers) &&
+          Array.isArray(entryValue.language_servers)
+        ) {
+          const servers = previous.language_servers as unknown[];
+          const added = (entryValue.language_servers as unknown[]).filter(
+            (server) => !servers.includes(server) && !servers.includes(`!${String(server)}`),
+          );
+          const wildcard = servers.indexOf("...");
+          const insertAt = wildcard === -1 ? servers.length : wildcard;
+          mergedEntry.language_servers = [
+            ...servers.slice(0, insertAt),
+            ...added,
+            ...servers.slice(insertAt),
+          ];
+        }
+        section[entryKey] = mergedEntry;
+      } else {
+        section[entryKey] = entryValue;
+      }
     }
     merged[key] = section;
   }
   return merged;
 };
 
-const writeZedSettings = (root: string, project: string, force: boolean): string => {
+const mergeVscodeTasks = (existing: JsonRecord, tasks: readonly JsonRecord[]): JsonRecord => {
+  const existingTasks: readonly unknown[] = Array.isArray(existing.tasks) ? existing.tasks : [];
+  const managedLabels = new Set(
+    tasks.map((task) => (typeof task.label === "string" ? task.label : "")),
+  );
+  const preserved: unknown[] = existingTasks.filter(
+    (entry) =>
+      !(isRecord(entry) && typeof entry.label === "string" && managedLabels.has(entry.label)),
+  );
+  return {
+    version: typeof existing.version === "string" ? existing.version : "2.0.0",
+    ...existing,
+    tasks: [...preserved, ...tasks],
+  };
+};
+
+type WriteAction = "created" | "updated" | "already exists";
+
+const resolveAction = (existed: boolean, force: boolean): WriteAction => {
+  if (!existed) {
+    return "created";
+  }
+  return force ? "updated" : "already exists";
+};
+
+const writeZedSetup = (root: string, project: string, force: boolean): WriteAction => {
   const zedDirectory = join(root, ".zed");
   const settingsPath = join(zedDirectory, "settings.json");
-  const generated = generatedSettings(project);
+  const existed = existsSync(settingsPath);
+  const generated = generatedZedSettings(project);
   mkdirSync(zedDirectory, { recursive: true });
   let settings = generated;
-  if (existsSync(settingsPath)) {
+  if (existed) {
     if (!force) {
-      return settingsPath;
+      return "already exists";
     }
-    settings = mergeSettings(readJsonRecord(settingsPath), generated);
+    settings = mergeZedSettings(readJsonRecord(settingsPath), generated);
   }
-  writeFileSync(settingsPath, `${JSON.stringify(settings, undefined, 2)}\n`, "utf8");
-  return settingsPath;
+  writeEditorSettings(settingsPath, settings);
+  return resolveAction(existed, force);
 };
+
+const VSCODE_EXTENSION_ID = "inaiat.resultar-check";
+
+const mergeVscodeExtensions = (existing: JsonRecord): JsonRecord => {
+  const existingRecs: readonly unknown[] = Array.isArray(existing.recommendations)
+    ? existing.recommendations
+    : [];
+  const hasExtension = existingRecs.includes(VSCODE_EXTENSION_ID);
+  return {
+    ...existing,
+    recommendations: hasExtension ? [...existingRecs] : [...existingRecs, VSCODE_EXTENSION_ID],
+  };
+};
+
+const writeVscodeExtensions = (root: string, force: boolean): WriteAction => {
+  const vscodeDirectory = join(root, ".vscode");
+  const extensionsPath = join(vscodeDirectory, "extensions.json");
+  const existed = existsSync(extensionsPath);
+  mkdirSync(vscodeDirectory, { recursive: true });
+  let payload: JsonRecord = { recommendations: [VSCODE_EXTENSION_ID] };
+  if (existed) {
+    if (!force) {
+      return "already exists";
+    }
+    payload = mergeVscodeExtensions(readJsonRecord(extensionsPath));
+  }
+  writeEditorSettings(extensionsPath, payload);
+  return resolveAction(existed, force);
+};
+
+const writeVscodeTasks = (root: string, project: string, force: boolean): WriteAction => {
+  const vscodeDirectory = join(root, ".vscode");
+  const tasksPath = join(vscodeDirectory, "tasks.json");
+  const existed = existsSync(tasksPath);
+  const tasks = generatedVscodeTasks(project);
+  mkdirSync(vscodeDirectory, { recursive: true });
+  let payload: JsonRecord = { version: "2.0.0", tasks };
+  if (existed) {
+    if (!force) {
+      return "already exists";
+    }
+    payload = mergeVscodeTasks(readJsonRecord(tasksPath), tasks);
+  }
+  writeEditorSettings(tasksPath, payload);
+  return resolveAction(existed, force);
+};
+
+const writeCursorRule = (root: string, project: string, force: boolean): WriteAction => {
+  const rulesDirectory = join(root, ".cursor", "rules");
+  const rulePath = join(rulesDirectory, "resultar-check.mdc");
+  const existed = existsSync(rulePath);
+  if (existed && !force) {
+    return "already exists";
+  }
+  mkdirSync(rulesDirectory, { recursive: true });
+  writeFileSync(rulePath, generatedCursorRule(project), "utf8");
+  return resolveAction(existed, force);
+};
+
+const includesZed = (editor: EditorTarget): boolean => editor === "zed" || editor === "all";
+const includesVscodeTasks = (editor: EditorTarget): boolean =>
+  editor === "vscode" || editor === "cursor" || editor === "all";
+const includesCursor = (editor: EditorTarget): boolean => editor === "cursor" || editor === "all";
 
 export const runInit = (args: readonly string[]): number => {
   try {
@@ -136,23 +384,46 @@ export const runInit = (args: readonly string[]): number => {
       // resultar-check-disable-next-line prefer-tagged-error
       throw new Error(`TypeScript project not found: ${projectPath}`);
     }
-    const project = zedProjectPath(root, projectPath);
-    const settingsPath = join(root, ".zed", "settings.json");
-    const existed = existsSync(settingsPath);
-    writeZedSettings(root, project, options.force);
-    let action = "created";
-    if (!options.force && existed) {
-      action = "already exists";
-    } else if (options.force && existed) {
-      action = "updated";
-    }
-    process.stdout.write(
-      `resultar-check: Zed setup ${action} at ${settingsPath}\n` +
-        `  LSP command: pnpm exec resultar-check lsp --project ${project}\n`,
-    );
-    if (!options.force && existed) {
+    const project = normalizedProjectPath(root, projectPath);
+    let sawExisting = false;
+
+    if (includesZed(options.editor)) {
+      const settingsPath = join(root, ".zed", "settings.json");
+      const action = writeZedSetup(root, project, options.force);
+      sawExisting ||= action === "already exists";
       process.stdout.write(
-        "  Use --force to refresh the Resultar LSP entry while preserving other settings.\n",
+        `resultar-check: Zed setup ${action} at ${settingsPath}\n` +
+          `  LSP command: pnpm exec resultar-check lsp --project ${project}\n`,
+      );
+    }
+
+    if (includesVscodeTasks(options.editor)) {
+      const tasksPath = join(root, ".vscode", "tasks.json");
+      const action = writeVscodeTasks(root, project, options.force);
+      sawExisting ||= action === "already exists";
+      const label = options.editor === "cursor" ? "VS Code/Cursor" : "VS Code";
+      process.stdout.write(
+        `resultar-check: ${label} tasks ${action} at ${tasksPath}\n` +
+          `  Tasks: "resultar-check" and "resultar-check: fix" (project: ${project})\n`,
+      );
+      const extensionsPath = join(root, ".vscode", "extensions.json");
+      const extAction = writeVscodeExtensions(root, options.force);
+      sawExisting ||= extAction === "already exists";
+      process.stdout.write(
+        `resultar-check: ${label} extension recommendation ${extAction} at ${extensionsPath} (${VSCODE_EXTENSION_ID})\n`,
+      );
+    }
+
+    if (includesCursor(options.editor)) {
+      const rulePath = join(root, ".cursor", "rules", "resultar-check.mdc");
+      const action = writeCursorRule(root, project, options.force);
+      sawExisting ||= action === "already exists";
+      process.stdout.write(`resultar-check: Cursor rule ${action} at ${rulePath}\n`);
+    }
+
+    if (!options.force && sawExisting) {
+      process.stdout.write(
+        "  Use --force to refresh the generated Resultar entries while preserving other settings.\n",
       );
     }
     return 0;
@@ -178,6 +449,101 @@ const executableAvailable = (filePath: string): boolean => {
   }
 };
 
+const checkZedSetup = (root: string): boolean => {
+  const settingsPath = join(root, ".zed", "settings.json");
+  if (!existsSync(settingsPath)) {
+    return check(
+      "Zed settings",
+      false,
+      `${settingsPath} is missing; run resultar-check init --editor zed`,
+    );
+  }
+  let settings: JsonRecord | undefined = undefined;
+  try {
+    settings = readJsonRecord(settingsPath);
+  } catch (error: unknown) {
+    return check("Zed settings", false, error instanceof Error ? error.message : String(error));
+  }
+  const lsp = isRecord(settings.lsp) ? settings.lsp["typescript-language-server"] : undefined;
+  const binary = isRecord(lsp) && isRecord(lsp.binary) ? lsp.binary : undefined;
+  const path = binary?.path;
+  const binaryArguments = binary?.arguments;
+  const configured =
+    path === "pnpm" &&
+    Array.isArray(binaryArguments) &&
+    binaryArguments[0] === "exec" &&
+    binaryArguments[1] === "resultar-check";
+  return check(
+    "Zed LSP",
+    configured,
+    configured ? "pnpm exec resultar-check lsp" : "run resultar-check init --editor zed --force",
+  );
+};
+
+const hasResultarTask = (tasks: unknown): boolean => {
+  if (!Array.isArray(tasks)) {
+    return false;
+  }
+  return tasks.some((entry) => {
+    if (!isRecord(entry)) {
+      return false;
+    }
+    const args = Array.isArray(entry.args) ? entry.args : [];
+    const command = typeof entry.command === "string" ? entry.command : "";
+    return (
+      entry.label === "resultar-check" &&
+      (command.includes("resultar-check") ||
+        args.some((item) => typeof item === "string" && item.includes("resultar-check")))
+    );
+  });
+};
+
+const checkVscodeTasks = (root: string, editor: EditorTarget): boolean => {
+  const tasksPath = join(root, ".vscode", "tasks.json");
+  const hint = `run resultar-check init --editor ${editor === "all" ? "all" : editor}`;
+  if (!existsSync(tasksPath)) {
+    return check("VS Code tasks", false, `${tasksPath} is missing; ${hint}`);
+  }
+  let tasksFile: JsonRecord | undefined = undefined;
+  try {
+    tasksFile = readJsonRecord(tasksPath);
+  } catch (error: unknown) {
+    return check("VS Code tasks", false, error instanceof Error ? error.message : String(error));
+  }
+  const configured = hasResultarTask(tasksFile.tasks);
+  return check(
+    "VS Code tasks",
+    configured,
+    configured ? tasksPath : `missing resultar-check task; ${hint} --force`,
+  );
+};
+
+const checkCursorRule = (root: string): boolean => {
+  const rulePath = join(root, ".cursor", "rules", "resultar-check.mdc");
+  const exists = existsSync(rulePath);
+  return check(
+    "Cursor rule",
+    exists,
+    exists ? rulePath : `${rulePath} is missing; run resultar-check init --editor cursor`,
+  );
+};
+
+const findLocalBinary = (startDir: string): string | undefined => {
+  const binName = process.platform === "win32" ? "resultar-check.cmd" : "resultar-check";
+  let current = resolve(startDir);
+  for (;;) {
+    const candidate = join(current, "node_modules", ".bin", binName);
+    if (existsSync(candidate) && (process.platform === "win32" || executableAvailable(candidate))) {
+      return candidate;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      return undefined;
+    }
+    current = parent;
+  }
+};
+
 export const runDoctor = (args: readonly string[]): number => {
   try {
     if (args.includes("--help") || args.includes("-h")) {
@@ -187,18 +553,11 @@ export const runDoctor = (args: readonly string[]): number => {
     const options = parseOptions(args);
     const root = process.cwd();
     const projectPath = projectPathFrom(root, options.project);
-    const settingsPath = join(root, ".zed", "settings.json");
     let healthy = true;
     healthy = check("project", existsSync(projectPath), projectPath) && healthy;
 
-    const localBinary = join(
-      root,
-      "node_modules",
-      ".bin",
-      process.platform === "win32" ? "resultar-check.cmd" : "resultar-check",
-    );
-    const binaryHealthy =
-      existsSync(localBinary) && (process.platform === "win32" || executableAvailable(localBinary));
+    const localBinary = findLocalBinary(root);
+    const binaryHealthy = localBinary !== undefined;
     healthy =
       check(
         "resultar-check binary",
@@ -206,46 +565,45 @@ export const runDoctor = (args: readonly string[]): number => {
         binaryHealthy ? localBinary : "missing; run pnpm install",
       ) && healthy;
 
-    const pnpm = spawnSync("pnpm", ["--version"], { cwd: root, encoding: "utf8" });
+    const pnpm = spawnSync("pnpm", ["--version"], {
+      cwd: root,
+      shell: process.platform === "win32",
+      encoding: "utf8",
+    });
     const pnpmHealthy = pnpm.status === 0;
     healthy =
       check("pnpm", pnpmHealthy, pnpmHealthy ? pnpm.stdout.trim() : "not found on PATH") && healthy;
 
-    let settings: JsonRecord | undefined = undefined;
-    if (existsSync(settingsPath)) {
-      try {
-        settings = readJsonRecord(settingsPath);
-      } catch (error: unknown) {
-        healthy =
-          check("Zed settings", false, error instanceof Error ? error.message : String(error)) &&
-          healthy;
-      }
-    } else {
-      healthy =
-        check("Zed settings", false, `${settingsPath} is missing; run resultar-check init`) &&
-        healthy;
+    if (includesZed(options.editor)) {
+      healthy = checkZedSetup(root) && healthy;
     }
-    if (settings !== undefined) {
-      const lsp = isRecord(settings.lsp) ? settings.lsp["typescript-language-server"] : undefined;
-      const binary = isRecord(lsp) && isRecord(lsp.binary) ? lsp.binary : undefined;
-      const path = binary?.path;
-      const binaryArguments = binary?.arguments;
-      const configured =
-        path === "pnpm" &&
-        Array.isArray(binaryArguments) &&
-        binaryArguments[0] === "exec" &&
-        binaryArguments[1] === "resultar-check";
-      healthy =
-        check(
-          "Zed LSP",
-          configured,
-          configured ? "pnpm exec resultar-check lsp" : "run resultar-check init --force",
-        ) && healthy;
+    if (includesVscodeTasks(options.editor)) {
+      healthy = checkVscodeTasks(root, options.editor) && healthy;
+      const path = join(root, ".vscode", "extensions.json");
+      try {
+        const recommendations = existsSync(path) ? readJsonRecord(path).recommendations : undefined;
+        healthy =
+          check(
+            "VS Code extensions",
+            Array.isArray(recommendations) && recommendations.includes(VSCODE_EXTENSION_ID),
+            path,
+          ) && healthy;
+      } catch (error: unknown) {
+        healthy = check(
+          "VS Code extensions",
+          false,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+    if (includesCursor(options.editor)) {
+      healthy = checkCursorRule(root) && healthy;
     }
 
     if (pnpmHealthy && binaryHealthy) {
       const version = spawnSync("pnpm", ["exec", "resultar-check", "--version"], {
         cwd: root,
+        shell: process.platform === "win32",
         encoding: "utf8",
       });
       const versionHealthy = version.status === 0 && version.stdout.trim().length > 0;

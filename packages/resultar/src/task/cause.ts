@@ -1,5 +1,7 @@
 import { err, ok } from '../result/result.js'
 import type { Result } from '../result/result.js'
+import { getCauseSpans } from './tracer.js'
+import type { SpanTraceFrame } from './tracer.js'
 
 /**
  * Lossless failure tree produced by a `ResultTask` execution (`Exit` failure channel,
@@ -107,6 +109,53 @@ const hasFails = <E>(cause: Cause<E>): boolean => hasReason(cause, 'Fail')
 const hasDies = <E>(cause: Cause<E>): boolean => hasReason(cause, 'Die')
 const hasInterrupts = <E>(cause: Cause<E>): boolean => hasReason(cause, 'Interrupt')
 
+const isInterruptedOnly = <E>(cause: Cause<E>): boolean => {
+  let sawInterrupt = false
+  for (const leaf of leaves(cause)) {
+    if (leaf._tag === 'Interrupt') {
+      sawInterrupt = true
+    } else {
+      return false
+    }
+  }
+  return sawInterrupt
+}
+
+const fail = <E>(error: E): Cause<E> => ({ _tag: 'Fail', error })
+const die = (defect: unknown): Cause<never> => ({ _tag: 'Die', defect })
+const interrupt = (reason?: unknown): Cause<never> => ({ _tag: 'Interrupt', reason })
+const sequential = <E1, E2>(left: Cause<E1>, right: Cause<E2>): Cause<E1 | E2> => ({
+  _tag: 'Sequential',
+  left,
+  right,
+})
+const parallel = <E1, E2>(left: Cause<E1>, right: Cause<E2>): Cause<E1 | E2> => ({
+  _tag: 'Parallel',
+  left,
+  right,
+})
+
+const spans = <E>(cause: Cause<E>): readonly SpanTraceFrame[] => {
+  if (cause._tag !== 'Parallel' && cause._tag !== 'Sequential') return getCauseSpans(cause)
+  // Visit children before their parent to prefer the first traced branch, innermost first.
+  const path: Cause<E>[] = []
+  const pending: (Cause<E> | null)[] = [cause]
+  while (pending.length > 0) {
+    const item = pending.pop()
+    const current = item === null ? path.pop() : item
+    if (item !== null && (current?._tag === 'Parallel' || current?._tag === 'Sequential')) {
+      path.push(current)
+      pending.push(null, current.right, current.left)
+    } else if (current !== undefined) {
+      const frames = getCauseSpans(current)
+      if (frames.length > 0) {
+        return Object.freeze([...new Set([...frames, ...path.toReversed().flatMap(getCauseSpans)])])
+      }
+    }
+  }
+  return getCauseSpans(cause)
+}
+
 const failures = <E>(cause: Cause<E>): readonly E[] => {
   const result: E[] = []
   for (const leaf of leaves(cause)) {
@@ -131,24 +180,54 @@ const findError = <E>(cause: Cause<E>): Result<E, Cause<never>> => {
   return err(cause as Cause<never>)
 }
 
+const safeJsonStringify = (value: unknown): string | undefined => {
+  const ancestors: object[] = []
+  const active = new Set<object>()
+  return JSON.stringify(value, function (this: unknown, _key: string, entry: unknown): unknown {
+    while (ancestors.length > 0 && ancestors.at(-1) !== this) {
+      const popped = ancestors.pop()
+      if (popped !== undefined) active.delete(popped)
+    }
+    if (typeof entry === 'bigint') return `${entry}n`
+    if (typeof entry === 'symbol' || typeof entry === 'function') return String(entry)
+    if (typeof entry === 'object' && entry !== null) {
+      if (active.has(entry)) return '[Circular]'
+      ancestors.push(entry)
+      active.add(entry)
+    }
+    return entry
+  })
+}
+
 const formatValue = (value: unknown): string => {
-  if (value instanceof Error) return value.stack ?? `${value.name}: ${value.message}`
   if (typeof value === 'string') return value
   try {
-    const seen = new WeakSet<object>()
-    return (
-      JSON.stringify(value, (_key, entry: unknown): unknown => {
-        if (typeof entry === 'bigint') return `${entry}n`
-        if (typeof entry === 'symbol' || typeof entry === 'function') return String(entry)
-        if (typeof entry === 'object' && entry !== null) {
-          if (seen.has(entry)) return '[Circular]'
-          seen.add(entry)
-        }
-        return entry
-      }) ?? String(value)
-    )
+    if (value instanceof Error) return value.stack ?? `${value.name}: ${value.message}`
+    return safeJsonStringify(value) ?? String(value)
   } catch {
     return '[Unserializable value]'
+  }
+}
+
+const formatSpanAttribute = (value: unknown): string => {
+  try {
+    return safeJsonStringify(value) ?? String(value)
+  } catch {
+    return '[Unserializable value]'
+  }
+}
+
+const formatSpanFrame = (frame: SpanTraceFrame): string => {
+  if (frame.attributes === undefined) return `  at ${frame.name}`
+  try {
+    const entries = Object.entries(frame.attributes).filter(([, value]) => value !== undefined)
+    if (entries.length === 0) return `  at ${frame.name}`
+    const formatted = entries
+      .map(([key, value]) => `${key}=${formatSpanAttribute(value)}`)
+      .join(', ')
+    return `  at ${frame.name} (${formatted})`
+  } catch {
+    return `  at ${frame.name} ([Unserializable attributes])`
   }
 }
 
@@ -161,11 +240,19 @@ const pretty = <E>(cause: Cause<E>): string => {
     else value = leaf.reason
     lines.push(`${leaf._tag}: ${formatValue(value).replaceAll('\n', '\n  ')}`)
   }
+  const trace = spans(cause)
+  if (trace.length > 0) {
+    lines.push('Span trace:')
+    for (const frame of trace) {
+      lines.push(formatSpanFrame(frame))
+    }
+  }
   return lines.join('\n')
 }
 
 /**
- * Inspection and diagnostic formatting utilities for sequential and parallel {@link Cause} trees.
+ * Constructors, inspection predicates, and diagnostic formatting utilities for sequential and
+ * parallel {@link Cause} trees.
  *
  * @example
  * ```ts
@@ -181,6 +268,16 @@ const pretty = <E>(cause: Cause<E>): string => {
  * ```
  */
 export const Cause: {
+  /** Constructs a typed `Fail` leaf cause. */
+  readonly fail: <E>(error: E) => Cause<E>
+  /** Constructs an unexpected `Die` defect leaf cause. */
+  readonly die: (defect: unknown) => Cause<never>
+  /** Constructs an `Interrupt` leaf cause with an optional reason. */
+  readonly interrupt: (reason?: unknown) => Cause<never>
+  /** Combines two causes that happened sequentially (for example body failure + cleanup failure). */
+  readonly sequential: <E1, E2>(left: Cause<E1>, right: Cause<E2>) => Cause<E1 | E2>
+  /** Combines two causes that happened concurrently (for example parallel siblings). */
+  readonly parallel: <E1, E2>(left: Cause<E1>, right: Cause<E2>) => Cause<E1 | E2>
   /** Stack-safe structural type guard for {@link Cause} trees (rejects cyclic objects). */
   readonly isCause: (value: unknown) => value is Cause<unknown>
   /** Returns `true` if any leaf in `cause` is a typed `Fail` node. */
@@ -189,6 +286,8 @@ export const Cause: {
   readonly hasDies: <E>(cause: Cause<E>) => boolean
   /** Returns `true` if any leaf in `cause` is an `Interrupt` node. */
   readonly hasInterrupts: <E>(cause: Cause<E>) => boolean
+  /** Returns `true` iff every leaf in `cause` is an `Interrupt` node (no `Fail` or `Die`). */
+  readonly isInterruptedOnly: <E>(cause: Cause<E>) => boolean
   /** Collects all typed `Fail` errors from `cause` in left-to-right leaf order. */
   readonly failures: <E>(cause: Cause<E>) => readonly E[]
   /** Collects all `Die` defects from `cause` in left-to-right leaf order. */
@@ -198,15 +297,24 @@ export const Cause: {
    * or `Err(causeWithoutFails)` typed as `Cause<never>` when no `Fail` leaf exists.
    */
   readonly findError: <E>(cause: Cause<E>) => Result<E, Cause<never>>
-  /** Formats every leaf in left-to-right order (including `Error` stacks) for human diagnostics. */
+  /** Returns the logical span stack attached to `cause` (innermost-first), or an empty array. */
+  readonly spans: <E>(cause: Cause<E>) => readonly SpanTraceFrame[]
+  /** Formats every leaf and any attached span trace in left-to-right order for human diagnostics. */
   readonly pretty: <E>(cause: Cause<E>) => string
 } = Object.freeze({
+  fail,
+  die,
+  interrupt,
+  sequential,
+  parallel,
   isCause,
   hasFails,
   hasDies,
   hasInterrupts,
+  isInterruptedOnly,
   failures,
   defects,
   findError,
+  spans,
   pretty,
 })

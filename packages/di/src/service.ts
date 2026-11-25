@@ -14,6 +14,16 @@ export type ServiceClass<Self, Identifier extends string, E = never, R = never> 
   Self
 > & { readonly make: ResultTask<Self, E, R> } & (abstract new (...args: never[]) => object);
 
+export interface SyncServiceMeta {
+  readonly dependencyMap: readonly (readonly [string, string])[];
+  readonly create: (dependencies: Readonly<Record<string, unknown>>) => unknown;
+}
+
+export const syncServiceMetadata: WeakMap<object, SyncServiceMeta> = new WeakMap<
+  object,
+  SyncServiceMeta
+>();
+
 function createServiceClass<const Identifier extends string, Self, E = never, R = never>(
   identifier: Identifier,
   definition: { readonly make: ResultTask<Self, E, R> },
@@ -194,21 +204,31 @@ export function service(
   dependencies: ResultTask<unknown, unknown, unknown> | Tags,
   create?: (dependencies: Readonly<Record<string, unknown>>) => unknown,
 ): ServiceClass<unknown, string, unknown, unknown> {
-  const make =
-    dependencies instanceof ResultTask
-      ? dependencies
-      : ResultTask.gen(function* construct() {
-          const values = yield* resolveDependencies(dependencies);
-          if (create === undefined) throw new TypeError("A service factory is required");
-          const value = create(values);
-          if (
-            value instanceof ResultTask ||
-            (value !== null && typeof value === "object" && "then" in value)
-          )
-            throw new TypeError("Use service(name, task) for asynchronous initialization");
-          return value;
-        });
-  return Service<unknown>()(name, { make });
+  const isTask = dependencies instanceof ResultTask;
+  const make = isTask
+    ? dependencies
+    : ResultTask.gen(function* construct() {
+        const values = yield* resolveDependencies(dependencies);
+        if (create === undefined) throw new TypeError("A service factory is required");
+        const value = create(values);
+        if (
+          value instanceof ResultTask ||
+          (value !== null &&
+            (typeof value === "object" || typeof value === "function") &&
+            "then" in value &&
+            typeof value.then === "function")
+        )
+          throw new TypeError("Use service(name, task) for asynchronous initialization");
+        return value;
+      });
+  const token = Service<unknown>()(name, { make });
+  if (!isTask && create !== undefined) {
+    const dependencyMap = Object.entries(dependencies).map(
+      ([propKey, tag]) => [propKey, tag.identifier] as const,
+    );
+    syncServiceMetadata.set(token, { dependencyMap, create });
+  }
+  return token;
 }
 
 /** Defines acquisition and cleanup; singleton/scoped/transient chooses the lifetime. */

@@ -1,6 +1,6 @@
 /* eslint-disable unicorn/no-await-expression-member, unicorn/no-null */
 import { expect, expectTypeOf, test } from "vite-plus/test";
-import { ResultTask, type ResultAsync } from "resultar";
+import { ResultTask, type Result } from "resultar";
 import { createModule, resource, Service, service } from "resultar-di";
 import type { Hono } from "hono";
 import { createHonoApp, type HonoApplication, type InferRequestServices } from "../src/index.js";
@@ -22,7 +22,7 @@ test("infers selected readonly services from applications and factories for sepa
     InferRequestServices<ReturnType<typeof createApplication>>
   >().toEqualTypeOf<Bindings>();
   expectTypeOf(app).toExtend<HonoApplication>();
-  expectTypeOf<ReturnType<typeof app.close>>().toEqualTypeOf<ResultAsync<void, never>>();
+  expectTypeOf<ReturnType<typeof app.close>>().toEqualTypeOf<Promise<Result<void, never>>>();
   expect(app).not.toHaveProperty("serviceTypes");
   expect(await (await app.request("/")).json()).toEqual({ answer: 42 });
   await app.close();
@@ -63,7 +63,7 @@ test("rolls back application resources when optional startup fails", async () =>
       services: createModule().singleton(Connection),
       startup: ResultTask.gen(function* failStartup() {
         yield* Connection;
-        return yield* ResultTask.fail("offline" as const);
+        return yield* ResultTask.err("offline" as const);
       }),
       bindings: [],
     },
@@ -258,7 +258,7 @@ test("handles empty responses, 404, Hono errors and overrides", async () => {
 });
 
 test("provider errors reject fetch and cleanup errors remain typed at close", async () => {
-  const Failing = service("failing", ResultTask.fail("offline" as const));
+  const Failing = service("failing", ResultTask.err("offline" as const));
   const broken = createHonoApp(
     { services: createModule().scoped(Failing), bindings: ["failing"] },
     (app) => app.get("/", (c) => c.text("unreachable")),
@@ -266,15 +266,15 @@ test("provider errors reject fetch and cleanup errors remain typed at close", as
   await expect(broken.request("/")).rejects.toThrow("Request scope failed");
   await broken.close();
   const Shared = resource("shared", {
-    acquire: ResultTask.succeed(1),
-    release: () => ResultTask.fail("cleanup" as const),
+    acquire: ResultTask.ok(1),
+    release: () => ResultTask.err("cleanup" as const),
   });
   const app = createHonoApp(
     { services: createModule().singleton(Shared), bindings: ["shared"] },
     (r) => r.get("/", (c) => c.body(null, 204)),
   );
   await app.request("/");
-  expectTypeOf(app.close()).toEqualTypeOf<ResultAsync<void, "cleanup">>();
+  expectTypeOf(app.close()).toEqualTypeOf<Promise<Result<void, "cleanup">>>();
   const closed = await app.close();
   expect(closed.isErr()).toBe(true);
   if (closed.isErr()) expect(closed.error).toBe("cleanup");
@@ -300,8 +300,8 @@ test("stream errors and child cleanup failures surface to the body consumer", as
   await app.close();
   expect(events).toEqual(["open root", "close child", "close root"]);
   const Local = resource("local", {
-    acquire: ResultTask.succeed(1),
-    release: () => ResultTask.fail("cleanup"),
+    acquire: ResultTask.ok(1),
+    release: () => ResultTask.err("cleanup"),
   });
   const other = createHonoApp(
     { services: createModule().scoped(Local), bindings: ["local"] },

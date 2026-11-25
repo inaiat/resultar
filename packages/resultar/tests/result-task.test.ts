@@ -91,9 +91,9 @@ describe('ResultTask', () => {
 
   it('composes tasks lazily and short-circuits typed failures', async () => {
     let chainedExecutions = 0
-    const task = ResultTask.succeed(2)
+    const task = ResultTask.ok(2)
       .map((value) => value + 1)
-      .flatMap((value) =>
+      .andThen((value) =>
         ResultTask.try({
           try: () => {
             chainedExecutions += 1
@@ -110,7 +110,7 @@ describe('ResultTask', () => {
     equal(chainedExecutions, 1)
 
     const recovered = await ResultTask.runResult(
-      ResultTask.fail<'missing'>('missing').catchAll((error) => ResultTask.succeed(error.length)),
+      ResultTask.err<'missing'>('missing').orElse((error) => ResultTask.ok(error.length)),
     )
 
     deepEqual(recovered, { value: 7 })
@@ -125,16 +125,14 @@ describe('ResultTask', () => {
   })
 
   it('short-circuits every composition form and supports static aliases', async () => {
-    const failed = ResultTask.fail<'stop'>('stop')
+    const failed = ResultTask.err<'stop'>('stop')
     const mapped = failed.map(() => 1)
-    const flatMapped = failed.flatMap(() => ResultTask.succeed(1))
-    const mappedFunction = ResultTask.map(ResultTask.succeed(1), (value) => value + 1)
-    const recovered = failed.catchAll((error) => ResultTask.succeed(error.length))
-    const recoveredFunction = ResultTask.catchAll(failed, (error) =>
-      ResultTask.succeed(error.length),
-    )
-    const successfulRecovery = ResultTask.succeed(1).catchAll(() => ResultTask.succeed(2))
-    const chained = ResultTask.succeed(1).andThen((value) => ResultTask.succeed(value + 1))
+    const flatMapped = failed.andThen(() => ResultTask.ok(1))
+    const mappedFunction = ResultTask.map(ResultTask.ok(1), (value) => value + 1)
+    const recovered = failed.orElse((error) => ResultTask.ok(error.length))
+    const recoveredFunction = ResultTask.orElse(failed, (error) => ResultTask.ok(error.length))
+    const successfulRecovery = ResultTask.ok(1).orElse(() => ResultTask.ok(2))
+    const chained = ResultTask.ok(1).andThen((value) => ResultTask.ok(value + 1))
 
     deepEqual(await ResultTask.runResult(mapped), { error: 'stop' })
     deepEqual(await ResultTask.runResult(flatMapped), { error: 'stop' })
@@ -149,7 +147,7 @@ describe('ResultTask', () => {
     const defect = new Error('bug')
     const task = ResultTask.sync(() => {
       throw defect
-    }).catchAll(() => ResultTask.succeed('recovered'))
+    }).orElse(() => ResultTask.ok('recovered'))
 
     const exit = await ResultTask.runExit(task)
 
@@ -191,8 +189,8 @@ describe('ResultTask', () => {
   })
 
   it('returns the success value from runPromise and rejects typed failures', async () => {
-    equal(await ResultTask.runPromise(ResultTask.succeed('ready')), 'ready')
-    await rejects(() => ResultTask.runPromise(ResultTask.fail('not-found')))
+    equal(await ResultTask.runPromise(ResultTask.ok('ready')), 'ready')
+    await rejects(() => ResultTask.runPromise(ResultTask.err('not-found')))
   })
 
   it('passes the run signal to promise boundaries', async () => {
@@ -205,9 +203,7 @@ describe('ResultTask', () => {
   })
 
   it('supports functional combinators and public exit types', async () => {
-    const task = ResultTask.flatMap(ResultTask.succeed(1), (value) =>
-      ResultTask.succeed(String(value)),
-    )
+    const task = ResultTask.andThen(ResultTask.ok(1), (value) => ResultTask.ok(String(value)))
     const result = await ResultTask.runResult(task)
 
     deepEqual(result, { value: '1' })
@@ -230,9 +226,9 @@ describe('ResultTask', () => {
   it('runs generator workflows and short-circuits on the first failure', async () => {
     let skippedExecutions = 0
     const task = ResultTask.gen(function* () {
-      const first = yield* ResultTask.succeed(2)
+      const first = yield* ResultTask.ok(2)
       const second = yield* ResultTask.try({ try: () => 3, catch: () => 'unreachable' as const })
-      const skipped = yield* ResultTask.fail<'stop'>('stop')
+      const skipped = yield* ResultTask.err<'stop'>('stop')
 
       skippedExecutions += 1
       void skipped
@@ -249,7 +245,7 @@ describe('ResultTask', () => {
     let closed = false
     const task = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.fail<'stop'>('stop')
+        yield* ResultTask.err<'stop'>('stop')
         return 'unreachable'
       } finally {
         closed = true
@@ -265,9 +261,9 @@ describe('ResultTask', () => {
     let cleaned = false
     const task = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.fail<'stop'>('stop')
+        yield* ResultTask.err<'stop'>('stop')
       } finally {
-        cleaned = yield* ResultTask.succeed(true)
+        cleaned = yield* ResultTask.ok(true)
       }
     })
 
@@ -282,10 +278,10 @@ describe('ResultTask', () => {
     let closed = false
     const task = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.fail<'stop'>('stop')
+        yield* ResultTask.err<'stop'>('stop')
       } finally {
         try {
-          yield* ResultTask.fail<'cleanup'>('cleanup')
+          yield* ResultTask.err<'cleanup'>('cleanup')
         } finally {
           closed = true
         }
@@ -304,7 +300,7 @@ describe('ResultTask', () => {
     let closed = false
     const task = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.fail<'stop'>('stop')
+        yield* ResultTask.err<'stop'>('stop')
       } finally {
         try {
           yield* ResultTask.sync(() => {
@@ -332,7 +328,7 @@ describe('ResultTask', () => {
     let closed = false
     const task = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.fail<'stop'>('stop')
+        yield* ResultTask.err<'stop'>('stop')
       } finally {
         const cleanup = yield* Cleanup
         cleanup.close()
@@ -359,7 +355,7 @@ describe('ResultTask', () => {
     const task = ResultTask.gen(() =>
       (function* () {
         try {
-          yield* ResultTask.fail<'stop'>('stop')
+          yield* ResultTask.err<'stop'>('stop')
         } finally {
           yield null as never
         }
@@ -381,7 +377,7 @@ describe('ResultTask', () => {
           throw taskDefect
         })
       } finally {
-        yield* ResultTask.succeed(undefined)
+        yield* ResultTask.ok(undefined)
         closed = true
       }
     })
@@ -400,7 +396,7 @@ describe('ResultTask', () => {
     }
     const task = ResultTask.gen(function* () {
       try {
-        yield* ResultTask.fail<'stop'>('stop')
+        yield* ResultTask.err<'stop'>('stop')
       } finally {
         throwFinalizerDefect()
       }
@@ -415,17 +411,17 @@ describe('ResultTask', () => {
   it('turns generator defects and unsupported yields into Die causes', async () => {
     const generatorDefect = new Error('generator failed')
     const defective = ResultTask.gen(function* () {
-      yield* ResultTask.succeed(undefined)
+      yield* ResultTask.ok(undefined)
       throw generatorDefect
     })
-    const recovered = defective.catchAll(() => ResultTask.succeed('recovered'))
+    const recovered = defective.orElse(() => ResultTask.ok('recovered'))
     const unsupported = ResultTask.gen(() =>
       (function* () {
         try {
           yield 42 as never
           return 'unreachable'
         } finally {
-          yield* ResultTask.succeed(undefined)
+          yield* ResultTask.ok(undefined)
         }
       })(),
     )
@@ -459,7 +455,7 @@ describe('ResultTask', () => {
     )
     const wrongTagTaskYield = ResultTask.gen(() =>
       (function* () {
-        yield { _tag: 'NotResultTask', task: ResultTask.succeed('unexpected') } as never
+        yield { _tag: 'NotResultTask', task: ResultTask.ok('unexpected') } as never
         return 'unreachable'
       })(),
     )
@@ -496,7 +492,7 @@ describe('ResultTask', () => {
   })
 
   it('rejects a failed task value sent directly into its generator', () => {
-    const iterator = ResultTask.fail<'stop'>('stop')[Symbol.iterator]()
+    const iterator = ResultTask.err<'stop'>('stop')[Symbol.iterator]()
     iterator.next()
 
     throws(
@@ -580,7 +576,7 @@ describe('ResultTask', () => {
       return true
     })
     const resolved = ResultTask.provideServiceResolver(task, {
-      Logger: () => ResultTask.succeed<Logger>({ info: (message) => messages.push(message) }),
+      Logger: () => ResultTask.ok<Logger>({ info: (message) => messages.push(message) }),
     })
 
     expectTypeOf(resolved).toEqualTypeOf<ResultTask<boolean, never, never>>()
@@ -599,7 +595,7 @@ describe('ResultTask', () => {
         const clock = yield* Clock
         return clock.now()
       } finally {
-        yield* ResultTask.succeed(undefined)
+        yield* ResultTask.ok(undefined)
       }
     })
     const provided = ResultTask.provideServices(task, { Clock: { now: () => 42 } })
@@ -628,31 +624,29 @@ describe('ResultTask', () => {
   })
 
   it('is stack-safe for 10,000+ chained flatMap and map calls without call stack overflow', async () => {
-    let flatMapTask = ResultTask.succeed(0)
+    let flatMapTask = ResultTask.ok(0)
     for (let i = 0; i < 10_000; i += 1) {
-      flatMapTask = flatMapTask.flatMap((x) => ResultTask.succeed(x + 1))
+      flatMapTask = flatMapTask.andThen((x) => ResultTask.ok(x + 1))
     }
     equal(await ResultTask.runPromise(flatMapTask), 10_000)
 
-    let mapTask = ResultTask.succeed(0)
+    let mapTask = ResultTask.ok(0)
     for (let i = 0; i < 10_000; i += 1) {
       mapTask = mapTask.map((x) => x + 1)
     }
     equal(await ResultTask.runPromise(mapTask), 10_000)
 
-    let mixedTask = ResultTask.succeed(0)
+    let mixedTask = ResultTask.ok(0)
     for (let i = 0; i < 5000; i += 1) {
-      mixedTask = mixedTask.map((x) => x + 1).flatMap((x) => ResultTask.succeed(x + 1))
+      mixedTask = mixedTask.map((x) => x + 1).andThen((x) => ResultTask.ok(x + 1))
     }
     equal(await ResultTask.runPromise(mixedTask), 10_000)
 
-    let recoveredTask = ResultTask.fail<'init-error'>('init-error').catchAll(() =>
-      ResultTask.succeed(0),
-    )
+    let recoveredTask = ResultTask.err<'init-error'>('init-error').orElse(() => ResultTask.ok(0))
     for (let i = 0; i < 5000; i += 1) {
       recoveredTask = recoveredTask
-        .flatMap((x) => ResultTask.succeed(x + 1))
-        .catchAll(() => ResultTask.succeed(-1))
+        .andThen((x) => ResultTask.ok(x + 1))
+        .orElse(() => ResultTask.ok(-1))
     }
     equal(await ResultTask.runPromise(recoveredTask), 5000)
   })
@@ -936,31 +930,20 @@ describe('ResultTask', () => {
         events.push(`ok:${value}`)
         throw new Error('ignored')
       },
-      error: (error: 'boom') => {
+      err: (error: 'boom') => {
         events.push(`err:${error}`)
         throw new Error('ignored')
       },
     }
-    const onSuccessFailureHandlers = {
-      onSuccess: (value: number) => {
-        events.push(`succ:${value}`)
-      },
-      onFailure: (error: 'boom') => {
-        events.push(`fail:${error}`)
-      },
-    }
 
     deepEqual(await ResultTask.runResult(okTask.inspectBoth(okErrHandlers)), { value: 10 })
-    deepEqual(await ResultTask.runResult(errTask.inspectBoth(onSuccessFailureHandlers)), {
-      error: 'boom',
+    deepEqual(await ResultTask.runResult(errTask.inspectBoth(okErrHandlers)), { error: 'boom' })
+    deepEqual(await ResultTask.runResult(okTask.inspectBoth(okErrHandlers.ok, okErrHandlers.err)), {
+      value: 10,
     })
     deepEqual(
-      await ResultTask.runResult(okTask.inspectBoth(okErrHandlers.ok, okErrHandlers.error)),
-      { value: 10 },
-    )
-    deepEqual(
       await ResultTask.runResult(
-        ResultTask.inspectBoth(errTask, okErrHandlers.ok, okErrHandlers.error),
+        ResultTask.inspectBoth(errTask, okErrHandlers.ok, okErrHandlers.err),
       ),
       { error: 'boom' },
     )
@@ -972,7 +955,7 @@ describe('ResultTask', () => {
     })
     deepEqual(
       await ResultTask.runResult(
-        pipe(errTask, ResultTask.inspectBoth(okErrHandlers.ok, okErrHandlers.error)),
+        pipe(errTask, ResultTask.inspectBoth(okErrHandlers.ok, okErrHandlers.err)),
       ),
       { error: 'boom' },
     )
@@ -983,7 +966,7 @@ describe('ResultTask', () => {
         ),
       { name: 'TypeError', message: 'ResultTask.inspectBoth requires an error handler' },
     )
-    deepEqual(events, ['ok:10', 'fail:boom', 'ok:10', 'err:boom', 'ok:10', 'ok:10', 'err:boom'])
+    deepEqual(events, ['ok:10', 'err:boom', 'ok:10', 'err:boom', 'ok:10', 'ok:10', 'err:boom'])
   })
 })
 

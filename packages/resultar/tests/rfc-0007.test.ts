@@ -1,12 +1,6 @@
 import { expect, expectTypeOf, test } from 'vite-plus/test'
-import {
-  ResultTask,
-  ResultAsync,
-  ok,
-  err,
-  type Result,
-  type ResultTaskScope,
-} from '../src/index.js'
+import { ResultAsync } from '../src/entries/async.js'
+import { ResultTask, ok, err, type Result, type ResultTaskScope } from '../src/index.js'
 
 test('Promise factories are lazy, repeatable and have no typed failures', async () => {
   let runs = 0

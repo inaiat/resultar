@@ -18,10 +18,14 @@ export interface RetryContext {
 export interface RetryPolicyOptions<E = unknown> {
   /** Maximum number of retry attempts after the initial execution (`0` means no retries). */
   readonly times: number
-  /** Base delay in milliseconds (or a function of {@link RetryContext}) before backoff and jitter. */
-  readonly delayMs?: number | ((context: RetryContext) => number)
+  /** Base delay in milliseconds (or a function of `(context, error)`) before backoff, jitter, and capping. */
+  readonly delayMs?: number | ((context: RetryContext, error: E) => number)
   /** Exponential multiplier (`>= 1`) applied per retry (`base * backoff ** attempt`). */
   readonly backoff?: number
+  /** Upper bound in milliseconds on the computed delay after backoff and jitter. */
+  readonly maxDelayMs?: number
+  /** Total elapsed time budget in milliseconds across retries; stops retrying once exhausted. */
+  readonly maxElapsedMs?: number
   /** Symmetric jitter factor (`>= 0`). A factor of `0.5` varies delay within `[0.5 * d, 1.5 * d]`. */
   readonly jittered?: number
   /** Predicate evaluated when retry budget remains; returning `false` stops retrying immediately. */
@@ -57,6 +61,18 @@ export const validateRetryPolicy = <E>(options: RetryPolicyOptions<E>): void => 
     throw new RangeError('Retry backoff must be a finite number at least one')
   }
   if (
+    options.maxDelayMs !== undefined &&
+    (!Number.isFinite(options.maxDelayMs) || options.maxDelayMs < 0)
+  ) {
+    throw new RangeError('Retry maxDelayMs must be a finite non-negative number')
+  }
+  if (
+    options.maxElapsedMs !== undefined &&
+    (!Number.isFinite(options.maxElapsedMs) || options.maxElapsedMs < 0)
+  ) {
+    throw new RangeError('Retry maxElapsedMs must be a finite non-negative number')
+  }
+  if (
     options.jittered !== undefined &&
     (!Number.isFinite(options.jittered) || options.jittered < 0)
   ) {
@@ -87,8 +103,7 @@ export const validateRetryPolicy = <E>(options: RetryPolicyOptions<E>): void => 
  */
 export const Retry: {
   /**
-   * Validates and freezes a portable {@link RetryPolicy} that can be passed to `ResultTask.retry`,
-   * `ResultAsync.retry`, and `ResultAsync.retryOrElse`.
+   * Validates and freezes a portable {@link RetryPolicy} for `ResultTask.retry` and `ResultTask.repeat`.
    */
   readonly policy: <E = unknown>(options: RetryPolicyOptions<E>) => RetryPolicy<E>
 } = Object.freeze({
@@ -105,7 +120,7 @@ export const isRetryPolicy = <E>(value: unknown): value is RetryPolicy<E> =>
   value !== null &&
   (value as Partial<RetryPolicy<E>>)[RetryPolicyTypeId] === RetryPolicyTypeId
 
-/** Internal context construction shared by both execution models. */
+/** Internal context construction for retry and repeat scheduling. */
 export const retryContext = (attempt: number, times: number): RetryContext => ({
   attempt,
   nextAttempt: attempt + 1,
@@ -116,31 +131,61 @@ export const retryContext = (attempt: number, times: number): RetryContext => ({
 export const retryPolicyDelay = <E>(
   policy: RetryPolicy<E>,
   context: RetryContext,
-  random: () => number,
+  runtime: { readonly random: () => number; readonly error?: E },
 ): number => {
   const base = checkedRetryDelay(
-    typeof policy.delayMs === 'function' ? policy.delayMs(context) : (policy.delayMs ?? 0),
+    typeof policy.delayMs === 'function'
+      ? policy.delayMs(context, runtime.error as E)
+      : (policy.delayMs ?? 0),
   )
-  const delay = checkedRetryDelay(base === 0 ? 0 : base * (policy.backoff ?? 1) ** context.attempt)
+  const cap = policy.maxDelayMs ?? Infinity
+  const delay = checkedRetryDelay(
+    Math.min(cap, base === 0 ? 0 : base * (policy.backoff ?? 1) ** context.attempt),
+  )
   const jittered = policy.jittered ?? 0
   if (jittered === 0 || delay === 0) return delay
-  const value = random()
+  const value = runtime.random()
   if (!Number.isFinite(value) || value < 0 || value > 1) {
     throw new RangeError('Retry random must return a finite number between zero and one')
   }
   const minimum = Math.max(0, delay - delay * jittered)
   const maximum = delay + delay * jittered
-  return checkedRetryDelay(minimum + (maximum - minimum) * value)
+  return checkedRetryDelay(
+    Math.min(cap, value === 0 ? minimum : minimum + (maximum - minimum) * value),
+  )
+}
+
+/** Returns `true` when elapsed retry time plus `nextDelayMs` exceeds `maxElapsedMs`. */
+export const isRetryElapsedExceeded = (
+  maxElapsedMs: number | undefined,
+  timing: { readonly startedAt: number; readonly now: number; readonly nextDelayMs: number },
+): boolean => {
+  if (maxElapsedMs === undefined) return false
+  const elapsed = Math.max(0, timing.now - timing.startedAt)
+  return elapsed >= maxElapsedMs || elapsed + timing.nextDelayMs > maxElapsedMs
+}
+
+export const isPromiseLike = <T>(value: T | PromiseLike<T>): value is PromiseLike<T> =>
+  value instanceof Promise ||
+  (value !== undefined && value !== null && typeof (value as PromiseLike<T>).then === 'function')
+
+const ignoreObserverRejection = async (pending: PromiseLike<void>): Promise<void> => {
+  try {
+    await pending
+  } catch {
+    // An asynchronous observer is also best effort.
+  }
 }
 
 /** Internal best-effort hook shared by eager and lazy retry loops. */
-export const observeRetry = async <E>(
-  policy: Pick<RetryPolicyOptions<E>, 'onRetry'>,
+export const observeRetry = <E>(
+  policy: { readonly onRetry?: RetryPolicyOptions<E>['onRetry'] },
   error: E,
   context: RetryContext,
-): Promise<void> => {
+): void | Promise<void> => {
   try {
-    await policy.onRetry?.(error, context)
+    const observed = policy.onRetry?.(error, context)
+    if (isPromiseLike(observed)) return ignoreObserverRejection(observed)
   } catch {
     // Observation cannot change the retry outcome.
   }

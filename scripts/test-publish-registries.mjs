@@ -8,9 +8,15 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
-function publish(context, registry, scenario, dryRun = false) {
+function publish(
+  context,
+  registry,
+  scenario,
+  { dryRun = false, next = false, mixed = false } = {},
+) {
   const fixture = mkdtempSync(join(tmpdir(), "resultar-publish-"));
   context.after(() => rmSync(fixture, { recursive: true, force: true }));
+  writeFileSync(join(fixture, "calls.jsonl"), "");
   mkdirSync(join(fixture, "scripts"));
   const script = `scripts/publish-${registry}.mjs`;
   const source = readFileSync(join(root, script), "utf8");
@@ -19,7 +25,16 @@ function publish(context, registry, scenario, dryRun = false) {
   for (const directory of directories) {
     mkdirSync(join(fixture, directory), { recursive: true });
     const manifest = registry === "npm" ? "package.json" : "jsr.json";
-    cpSync(join(root, directory, manifest), join(fixture, directory, manifest));
+    const sourceManifest = join(root, directory, manifest);
+    const targetManifest = join(fixture, directory, manifest);
+    if (next) {
+      const contents = JSON.parse(readFileSync(sourceManifest, "utf8"));
+      contents.version =
+        mixed && directory === directories.at(-1) ? "8.0.0+build-info" : "8.0.0-beta.2";
+      writeFileSync(targetManifest, JSON.stringify(contents));
+    } else {
+      cpSync(sourceManifest, targetManifest);
+    }
   }
   writeFileSync(
     join(fixture, "mock.mjs"),
@@ -69,13 +84,20 @@ syncBuiltinESMExports();
   );
   const result = spawnSync(
     process.execPath,
-    ["--import", "./mock.mjs", script, ...(dryRun ? ["--dry-run"] : [])],
+    [
+      "--import",
+      "./mock.mjs",
+      script,
+      ...(dryRun ? ["--dry-run"] : []),
+      ...(next ? ["--next"] : []),
+    ],
     { cwd: fixture, encoding: "utf8", timeout: 10_000 },
   );
   assert.equal(result.error, undefined);
   const calls = readFileSync(join(fixture, "calls.jsonl"), "utf8")
     .trim()
     .split("\n")
+    .filter(Boolean)
     .map(JSON.parse);
   const uploads = calls.filter(
     (call) =>
@@ -117,7 +139,7 @@ for (const registry of ["npm", "jsr"]) {
     assert.match(result.stderr, /E401 Unauthorized/u);
   });
   test(`${registry} dry runs do not query registries or wait`, (context) => {
-    const result = publish(context, registry, "staged", true);
+    const result = publish(context, registry, "staged", { dryRun: true });
     assert.equal(result.status, 0, result.stderr);
     assert.ok(result.uploads.every((call) => call.args.includes("--dry-run")));
     assert.equal(
@@ -131,6 +153,23 @@ test("npm lookup authentication errors are not treated as absent versions", (con
   const result = publish(context, "npm", "lookup-auth");
   assert.notEqual(result.status, 0);
   assert.equal(result.uploads.length, 0);
+});
+
+test("npm next uploads and tags prereleases exclusively under next", (context) => {
+  const result = publish(context, "npm", "success", { next: true });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.uploads.length, 1);
+  assert.equal(result.uploads[0].args[result.uploads[0].args.indexOf("--tag") + 1], "next");
+  const tags = result.calls.filter((call) => call.args?.[0] === "dist-tag");
+  assert.equal(tags.length, 17);
+  assert.ok(tags.every((call) => call.args[1] === "add" && call.args[3] === "next"));
+});
+
+test("npm next rejects a stable manifest before building or making registry calls", (context) => {
+  const result = publish(context, "npm", "success", { next: true, mixed: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Cannot publish resultar-request-zod@8\.0\.0\+build-info to next/u);
+  assert.deepEqual(result.calls, []);
 });
 
 for (const scenario of ["retry", "server-error"]) {

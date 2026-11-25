@@ -13,8 +13,8 @@ Native NestJS modules, parameter decorators and request services backed by `resu
 Controllers keep ordinary `async` handlers, `@Controller()`, `@Get()`, `@Post()`, `@Param()`,
 `@Body()`, guards, pipes, interceptors, exception filters and `@Res({ passthrough: true })`.
 
-Prefer lazy `ResultTask` values for new async service methods and run them explicitly in controllers.
-`ResultAsync` and `StrictResultAsync` are the in-flight `Result` types in `resultar` (returned by `task.runResult()`); existing eager contracts keep one
+Use lazy `ResultTask` values for async service methods and run them explicitly in controllers.
+`task.runResult()` returns a native `Promise<Result<T, E>>`; legacy eager `ResultAsync` contracts from `resultar/async` keep one
 shared execution and can be adapted with `ResultTask.fromResultAsync(() => legacyMethod())`.
 
 ```sh
@@ -39,11 +39,11 @@ import `createNestModule` in your own `@Module({ imports: [...] })`.
 
 ## Optional request bindings
 
-| Configuration | Services resolved and exposed before the handler |
-| --- | --- |
-| `bindings` omitted | All services registered in the module |
+| Configuration                   | Services resolved and exposed before the handler                     |
+| ------------------------------- | -------------------------------------------------------------------- |
+| `bindings` omitted              | All services registered in the module                                |
 | `bindings: ["users", "health"]` | Only the listed services; their dependencies are resolved internally |
-| `bindings: []` | None |
+| `bindings: []`                  | None                                                                 |
 
 Creating the application still initializes no providers. On a request, the effective selection
 is resolved in registration order for the default view, following dependency resolution and

@@ -28,6 +28,7 @@ type Options struct {
 	NoDiscard                        Severity
 	NoDiscardMode                    string
 	NoAwaitInSafeTry                 Severity
+	NoAwaitResultTask                Severity
 	NoPromiseInResultSuccess         Severity
 	NoPromiseResultar                Severity
 	NoTaggedErrorConstructorOverride Severity
@@ -92,6 +93,7 @@ func Defaults() Options {
 		NoUnknownTaskRequirements:        SeveritySuggestion,
 		UnusedSuppression:                SeveritySuggestion,
 		NoAwaitInSafeTry:                 SeverityError,
+		NoAwaitResultTask:                SeverityError,
 		NoDiscard:                        SeverityError,
 		NoDiscardMode:                    "must-use",
 		NoPromiseInResultSuccess:         SeverityWarning,
@@ -109,7 +111,7 @@ func Defaults() Options {
 		PreferFirstSuccessOf:             SeverityWarning,
 		PreferMap:                        SeverityWarning,
 		PreferMapErr:                     SeverityWarning,
-		PreferResultAsync:                SeverityWarning,
+		PreferResultAsync:                SeverityOff,
 		PreferResultAsyncMode:            "result",
 		PreferResultForEach:              SeverityWarning,
 		PreferTaggedError:                SeverityWarning,
@@ -235,7 +237,9 @@ func resolveExtendsPath(configPath, extension string) (string, error) {
 		candidates = append(candidates, filepath.Join(base, "tsconfig.json"))
 	}
 
-	if filepath.IsAbs(extension) || strings.HasPrefix(extension, ".") {
+	if filepath.IsAbs(extension) {
+		appendCandidates(extension)
+	} else if strings.HasPrefix(extension, ".") {
 		appendCandidates(filepath.Join(filepath.Dir(configPath), extension))
 	} else {
 		for directory := filepath.Dir(configPath); ; directory = filepath.Dir(directory) {
@@ -287,6 +291,9 @@ func applyPlugin(options *Options, plugin map[string]any) error {
 		return err
 	}
 	if err := setSeverity(plugin, "noAwaitInSafeTry", &options.NoAwaitInSafeTry); err != nil {
+		return err
+	}
+	if err := setSeverity(plugin, "noAwaitResultTask", &options.NoAwaitResultTask); err != nil {
 		return err
 	}
 	if err := setSeverity(plugin, "noDiscard", &options.NoDiscard); err != nil {
@@ -572,7 +579,7 @@ func canonicalRule(name string) string {
 
 var ruleNames = map[string]struct{}{
 	"nounknowntaskrequirements": {}, "unusedsuppression": {},
-	"noawaitinsafetry": {}, "nodiscard": {}, "nopromiseinresultsuccess": {}, "nopromiseresultar": {},
+	"noawaitinsafetry": {}, "noawaitresulttask": {}, "nodiscard": {}, "nopromiseinresultsuccess": {}, "nopromiseresultar": {},
 	"notaggederrorconstructoroverride": {}, "nothrow": {}, "notrycatch": {},
 	"notrycatchinsafetry": {}, "nounknownresulterror": {}, "nouselessrecovery": {},
 	"nounsafeawait": {}, "noinvalidlifetime": {}, "nounscopedacquirerelease": {},
@@ -596,6 +603,8 @@ func setRuleSeverity(options *Options, name string, value Severity) error {
 		options.UnusedSuppression = value
 	case "noawaitinsafetry":
 		options.NoAwaitInSafeTry = value
+	case "noawaitresulttask":
+		options.NoAwaitResultTask = value
 	case "nodiscard":
 		options.NoDiscard = value
 	case "nopromiseinresultsuccess":
@@ -901,8 +910,44 @@ func normalizeJSONC(contents []byte) []byte {
 		result.WriteByte(char)
 	}
 
-	withoutTrailingCommas := regexp.MustCompile(`,\s*([}\]])`).ReplaceAllString(result.String(), "$1")
-	return []byte(withoutTrailingCommas)
+	return []byte(stripTrailingCommas(result.String()))
+}
+
+func stripTrailingCommas(input string) string {
+	var out strings.Builder
+	out.Grow(len(input))
+	inString := false
+	escaped := false
+	for i := 0; i < len(input); i++ {
+		ch := input[i]
+		if inString {
+			out.WriteByte(ch)
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		if ch == '"' {
+			inString = true
+			out.WriteByte(ch)
+			continue
+		}
+		if ch == ',' {
+			j := i + 1
+			for j < len(input) && (input[j] == ' ' || input[j] == '\t' || input[j] == '\r' || input[j] == '\n') {
+				j++
+			}
+			if j < len(input) && (input[j] == '}' || input[j] == ']') {
+				continue
+			}
+		}
+		out.WriteByte(ch)
+	}
+	return out.String()
 }
 
 // RuleSeverity resolves canonical, kebab-case, and fully qualified rule IDs.
@@ -914,6 +959,8 @@ func RuleSeverity(options Options, name string) (Severity, bool) {
 		return options.UnusedSuppression, true
 	case "noawaitinsafetry":
 		return options.NoAwaitInSafeTry, true
+	case "noawaitresulttask":
+		return options.NoAwaitResultTask, true
 	case "nodiscard":
 		return options.NoDiscard, true
 	case "nopromiseinresultsuccess":

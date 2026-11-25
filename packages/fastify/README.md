@@ -12,8 +12,8 @@ The DI package has one entry point; migrate old `resultar-di/advanced` imports t
 Native Fastify plugins and request services backed by `resultar-di`. Routes keep ordinary
 `async` handlers, schemas, type providers, `request.log` and `reply.code().send()`.
 
-Prefer lazy `ResultTask` values for new async service methods and run them explicitly in routes.
-`ResultAsync` and `StrictResultAsync` are the in-flight `Result` types in `resultar` (returned by `task.runResult()`); existing eager contracts keep one
+Use lazy `ResultTask` values for async service methods and run them explicitly in routes.
+`task.runResult()` returns a native `Promise<Result<T, E>>`; legacy eager `ResultAsync` contracts from `resultar/async` keep one
 shared execution and can be adapted with `ResultTask.fromResultAsync(() => legacyMethod())`.
 
 ```sh
@@ -38,11 +38,11 @@ and `requestIdHeader`). It does not start a listener or initialize providers; na
 
 ## Optional request bindings
 
-| Configuration | Services resolved and exposed before the handler |
-| --- | --- |
-| `bindings` omitted | All services registered in the module |
+| Configuration                   | Services resolved and exposed before the handler                     |
+| ------------------------------- | -------------------------------------------------------------------- |
+| `bindings` omitted              | All services registered in the module                                |
 | `bindings: ["users", "health"]` | Only the listed services; their dependencies are resolved internally |
-| `bindings: []` | None |
+| `bindings: []`                  | None                                                                 |
 
 Creating the application still initializes no providers. On a request, the effective selection
 is resolved in registration order for the default view, following dependency resolution and
@@ -53,6 +53,15 @@ Omission is convenient for small modules. Restrict the list when an unrelated se
 not initialize for those routes: an acquisition failure in any selected service prevents the
 handler from running. Missing or incompatible requirements are checked for the effective
 selection. No route-body analysis or automatic property-based resolution is performed.
+
+Set `config.resultar.requestScope` to `false` on a route that can run without request
+services. The Resultar plugin skips its locals callback, request service acquisition, and
+custom request exposure for that route. The `request.services` decorator is undefined there, and
+application services remain available through `app.services`.
+
+```ts
+app.get("/health", { config: { resultar: { requestScope: false } } }, () => ({ status: "ok" }));
+```
 
 ## Routes in separate files
 
@@ -102,41 +111,52 @@ tests import `createApplication` without starting a listener.
 To register on an existing instance:
 
 ```ts
-import Fastify from 'fastify'
-import { ResultTask } from 'resultar'
-import { createModule, service, createFastifyPlugin, type InferRequestServices } from 'resultar-fastify'
+import Fastify from "fastify";
+import { ResultTask } from "resultar";
+import {
+  createModule,
+  service,
+  createFastifyPlugin,
+  type InferRequestServices,
+} from "resultar-fastify";
 
-const Greeting = service('greeting', {}, () => ({
-  greet(name: string) { return ResultTask.sync(() => ({ message: `Hello, ${name}` })) },
-}))
+const Greeting = service("greeting", {}, () => ({
+  greet(name: string) {
+    return ResultTask.sync(() => ({ message: `Hello, ${name}` }));
+  },
+}));
 
 const plugin = createFastifyPlugin({
   services: createModule().scoped(Greeting),
-  bindings: ['greeting'],
-})
+  bindings: ["greeting"],
+});
 
-type Services = InferRequestServices<typeof plugin>
-declare module 'fastify' {
-  interface FastifyRequest { services: Services }
+type Services = InferRequestServices<typeof plugin>;
+declare module "fastify" {
+  interface FastifyRequest {
+    services: Services;
+  }
 }
 
-const app = Fastify()
-await app.register(plugin)
-app.get<{ Params: { name: string } }>('/hello/:name', async (request, reply) => {
-  const result = await request.services.greeting.greet(request.params.name).runResult()
-  return result.match(value => reply.send(value), () => reply.code(500).send())
-})
-await app.listen({ port: 3000 })
+const app = Fastify();
+await app.register(plugin);
+app.get<{ Params: { name: string } }>("/hello/:name", async (request, reply) => {
+  const result = await request.services.greeting.greet(request.params.name).runResult();
+  return result.match(
+    (value) => reply.send(value),
+    () => reply.code(500).send(),
+  );
+});
+await app.listen({ port: 3000 });
 ```
 
 Use `Service` classes with `requires` for dependencies, or
 `service(name, dependencies, factory)` for a function-based service. The
 [runnable example](../../examples/fastify/README.md) combines class-based `UsersRepository`
-and `Users` with function-based `Health`. That fixture retains eager `StrictResultAsync`
-methods and `Result.gen` from `resultar` for compatibility coverage, and maps errors explicitly in TypeBox
-routes. New service methods should use `ResultTask.gen` and `tryPromise`; Task has no `.then`,
-`map` is synchronous, and `match` returns a Task. Run it at the route boundary, or match the
-`Result` returned by `runResult` as above.
+and `Users` with function-based `Health`. That fixture uses `StrictResultTask` and `ResultTask.gen`
+from `resultar`, and maps errors explicitly in TypeBox
+routes. Task has no `.then`, `map` is synchronous, and `match` returns a Task. Run it at the route
+boundary with `.runResult()`, or match the `Result` returned by `await task.runResult()` as above.
 
 ## Application and request lifetimes
 
@@ -161,15 +181,15 @@ An application task can carry its own `R` requirements without repeating those s
 `appBindings`:
 
 ```ts
-import { ResultTask } from 'resultar'
+import { ResultTask } from "resultar";
 
 const startup = ResultTask.gen(function* () {
-  const database = yield* Database
-  yield* database.ensureSchema()
-  yield* database.seed()
-})
+  const database = yield* Database;
+  yield* database.ensureSchema();
+  yield* database.seed();
+});
 
-createFastifyPlugin({ services, startup, bindings: ['users'] })
+createFastifyPlugin({ services, startup, bindings: ["users"] });
 ```
 
 The task runs once during Fastify's `ready()` sequence through the same DI root as application
@@ -186,13 +206,14 @@ For configuration and locals, annotate callback parameters with the native frame
 TypeScript can infer the complete graph before checking selections:
 
 ```ts
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from "fastify";
 
 const plugin = createFastifyPlugin({
-  services: (app: FastifyInstance) => features.value('settings', app.getDecorator<Settings>('settings')),
-  bindings: ['users'],
-  locals: (request: FastifyRequest) => ({ tenant: request.getDecorator<string>('tenant') }),
-})
+  services: (app: FastifyInstance) =>
+    features.value("settings", app.getDecorator<Settings>("settings")),
+  bindings: ["users"],
+  locals: (request: FastifyRequest) => ({ tenant: request.getDecorator<string>("tenant") }),
+});
 ```
 
 Declaration merging describes the application's registration; it does not install the plugin or
@@ -225,14 +246,14 @@ failures reject shutdown with their causes retained.
 Cleanup ownership is registered before acquisition, including Fastify plugin timeouts; pending
 startup work must settle before its resources can be released.
 
-Internal readiness, completion and shutdown retain eager `ResultAsync` compatibility boundaries;
-lifecycle signals are adapted with
-`ResultAsync.fromCallback`. Readiness failures are typed `Err` values. Completion retains the full
+Internal readiness, completion, and shutdown use `Deferred` and `ResultTask` boundaries returning
+native `Promise<Result<...>>` and `Promise<Exit<...>>` directly (with zero `ResultAsync` coupling).
+Readiness failures are typed `Err` values. Completion retains the full
 `Exit`, including interruptions and composite release failures, without starting a second execution.
 Native module/locals callbacks continue to accept ordinary async functions.
 
-The adapter composes native lifecycle failures with `tryResult`, `tryResultAsync`, `orElse` and `mapErr`.
-Rollback is awaited before `unwrapOrThrow()` hands the original failure back to Fastify;
+The adapter composes native lifecycle failures with `ResultTask` / `Result` helpers.
+Rollback is awaited before propagating the original failure back to Fastify;
 initialization and rollback failures are retained together when both fail.
 
 Fastify owns listeners, connection draining and shutdown settings. Stop accepting requests and

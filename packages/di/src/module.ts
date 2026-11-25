@@ -2,7 +2,13 @@ import { ResultTask, tryResult, type Exit, type ResultTaskScope, type ServiceTag
 
 import { ServiceAccessError, type ServiceAccess, type ServiceProvider } from "./access.js";
 import { runScopedResponse } from "./fetch.js";
-import type { ServiceClass } from "./service.js";
+import {
+  compileSyncSubgraph,
+  type CompiledSyncPlan,
+  type SyncAnalyzableDefinition,
+  type SyncDefinitionKind,
+} from "./jit.js";
+import { syncServiceMetadata, type ServiceClass } from "./service.js";
 
 export type ServiceLifetime = "singleton" | "scoped" | "transient";
 
@@ -372,10 +378,15 @@ type RuntimeTask<A = unknown, E = unknown, R = never> = ResultTask<A, E, R>;
 
 const succeedVoid = (): RuntimeTask<void, never, never> => ResultTask.ok(globalThis.undefined);
 
-interface Definition {
+interface Definition extends SyncAnalyzableDefinition {
+  readonly kind: SyncDefinitionKind;
   readonly dependencies: readonly string[];
   readonly lifetime: ServiceLifetime;
   readonly create: (services: RuntimeServices, owner: RuntimeScope) => RuntimeTask;
+  readonly constantValue?: unknown;
+  readonly rawSyncFactory?: (services: RuntimeServices) => unknown;
+  readonly syncDependencyMap?: readonly (readonly [string, string])[];
+  readonly syncAssert?: (value: unknown) => void;
   readonly synchronousFactory?: boolean;
   readonly synchronous?: (access: ServiceAccess) => unknown;
   readonly release?: (value: unknown, exit: Exit<unknown, unknown>) => RuntimeTask<void>;
@@ -402,20 +413,68 @@ const makeDefinition = (
   create: Definition["create"],
   lifetime: ServiceLifetime = "scoped",
   synchronous?: Definition["synchronous"],
-): Definition => ({ dependencies, create, lifetime, synchronous });
+  meta?: {
+    readonly kind?: SyncDefinitionKind;
+    readonly constantValue?: unknown;
+    readonly rawSyncFactory?: (services: RuntimeServices) => unknown;
+    readonly syncDependencyMap?: readonly (readonly [string, string])[];
+    readonly syncAssert?: (value: unknown) => void;
+  },
+): Definition => ({
+  kind: meta?.kind ?? "task",
+  dependencies,
+  create,
+  lifetime,
+  synchronous,
+  constantValue: meta?.constantValue,
+  rawSyncFactory: meta?.rawSyncFactory,
+  syncDependencyMap: meta?.syncDependencyMap,
+  syncAssert: meta?.syncAssert,
+});
 
 const die = (cause: unknown): RuntimeTask<never> =>
   ResultTask.sync(() => {
     throw cause;
   });
 
+const assertTokenSync = (value: unknown): void => {
+  if (
+    value instanceof ResultTask ||
+    (value !== null &&
+      (typeof value === "object" || typeof value === "function") &&
+      "then" in value &&
+      typeof value.then === "function")
+  ) {
+    throw new TypeError("Use service(name, task) for asynchronous initialization");
+  }
+};
+
+const MAX_PLAN_CACHE_SIZE = 64;
+const EMPTY_LOCALS: RuntimeServices = Object.freeze({});
+const SYNC_PLAN_BRIDGE = Symbol.for("resultar-di/sync-plan-bridge");
+
 class RuntimeScope {
   public readonly cache = new Map<string, unknown>();
   private readonly tasks = new Map<string, Resolution>();
   private readonly resources = ResultTask.makeScope();
-  private readonly children = new Set<Promise<void>>();
   private readonly localNames = new Set<string>();
-  private finished: (() => void) | undefined;
+  private readonly syncPlans = new Map<string, CompiledSyncPlan | undefined>();
+  private lastPlan:
+    | {
+        readonly keys: readonly string[];
+        readonly localCount: number;
+        readonly singleLocalKey: string | undefined;
+        readonly requestedBy: ServiceLifetime | undefined;
+        readonly plan: CompiledSyncPlan | undefined;
+      }
+    | undefined = undefined;
+  private defaultResolvers:
+    | { readonly localCount: number; readonly map: Readonly<Record<string, () => RuntimeTask>> }
+    | undefined = undefined;
+  private activeChildren = 0;
+  private drainWaiters: (() => void)[] | undefined = undefined;
+  private finished: (() => void) | undefined = undefined;
+  private finishedCalled = false;
   private closed = false;
   private disposing = false;
 
@@ -428,30 +487,102 @@ class RuntimeScope {
     return this.parent === undefined ? this : this.parent.root;
   }
 
-  public child(locals: RuntimeServices = {}): RuntimeScope {
+  public isClosedOrDisposing(): boolean {
+    return this.closed || this.disposing || this.root.closed || this.root.disposing;
+  }
+
+  public beginChild(): void {
+    this.activeChildren += 1;
+  }
+
+  public endChild(): void {
+    this.activeChildren -= 1;
+    if (this.activeChildren === 0 && this.drainWaiters !== undefined) {
+      const waiters = this.drainWaiters;
+      this.drainWaiters = undefined;
+      for (const resolve of waiters) resolve();
+    }
+  }
+
+  public waitForChildren(): Promise<void> | undefined {
+    if (this.activeChildren === 0) return undefined;
+    return new Promise<void>((resolve) => {
+      this.drainWaiters ??= [];
+      this.drainWaiters.push(resolve);
+    });
+  }
+
+  public getSyncPlan(
+    keys: readonly string[],
+    localKeys: readonly string[],
+    requestedBy?: ServiceLifetime,
+  ): CompiledSyncPlan | undefined {
+    for (const localKey of localKeys) {
+      if (this.definitions.has(localKey)) return undefined;
+    }
+    const last = this.lastPlan;
+    if (
+      last !== undefined &&
+      last.keys === keys &&
+      last.localCount === localKeys.length &&
+      last.requestedBy === requestedBy &&
+      (localKeys.length === 0 || (localKeys.length === 1 && last.singleLocalKey === localKeys[0]))
+    ) {
+      return last.plan;
+    }
+    const cacheKey = JSON.stringify([keys, localKeys, requestedBy ?? ""]);
+    let plan: CompiledSyncPlan | undefined = undefined;
+    if (this.syncPlans.has(cacheKey)) {
+      plan = this.syncPlans.get(cacheKey);
+    } else {
+      plan = compileSyncSubgraph(this.definitions, keys, localKeys, assertSynchronous, requestedBy);
+      if (this.syncPlans.size < MAX_PLAN_CACHE_SIZE) {
+        this.syncPlans.set(cacheKey, plan);
+      }
+    }
+    if (Object.isFrozen(keys) && localKeys.length <= 1) {
+      this.lastPlan = {
+        keys,
+        localCount: localKeys.length,
+        singleLocalKey: localKeys[0],
+        requestedBy,
+        plan,
+      };
+    }
+    return plan;
+  }
+
+  public child(locals: RuntimeServices = EMPTY_LOCALS): RuntimeScope {
     if (this.closed) throw new TypeError("Cannot create a child from a closed service scope");
-    const definitions = new Map(this.definitions);
-    for (const [name, value] of Object.entries(locals)) {
-      if (definitions.has(name))
-        throw new TypeError(`Local service duplicates registration: ${name}`);
-      this.root.localNames.add(name);
-      definitions.set(
-        name,
-        makeDefinition(
-          [],
-          () => ResultTask.ok(value),
-          "scoped",
-          () => value,
-        ),
-      );
+    const localEntries = Object.entries(locals);
+    let definitions = this.definitions;
+    if (localEntries.length > 0) {
+      const mutable = new Map(this.definitions);
+      for (const [name, value] of localEntries) {
+        if (mutable.has(name))
+          throw new TypeError(`Local service duplicates registration: ${name}`);
+        this.root.localNames.add(name);
+        mutable.set(
+          name,
+          makeDefinition(
+            [],
+            () => ResultTask.ok(value),
+            "scoped",
+            () => value,
+            { kind: "value", constantValue: value },
+          ),
+        );
+      }
+      definitions = mutable;
     }
     const child = new RuntimeScope(definitions, this);
-    const completion = new Promise<void>((resolve) => {
-      child.finished = resolve;
-    });
-    this.children.add(completion);
-    // eslint-disable-next-line no-void
-    void completion.then(() => this.children.delete(completion));
+    this.beginChild();
+    child.finished = () => {
+      if (!child.finishedCalled) {
+        child.finishedCalled = true;
+        this.endChild();
+      }
+    };
     return child;
   }
 
@@ -459,17 +590,57 @@ class RuntimeScope {
     validateKeys(this.definitions, keys);
   }
 
+  private buildResolvers(
+    requestedBy?: ServiceLifetime,
+    path: readonly Resolution[] = [],
+  ): Readonly<Record<string, () => RuntimeTask>> {
+    const map: Record<string, () => RuntimeTask> = {};
+    const setResolver = (key: string): void => {
+      const resolver = () => this.resolve(key, requestedBy, path);
+      if (key in map) {
+        Object.defineProperty(map, key, {
+          value: resolver,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      } else {
+        map[key] = resolver;
+      }
+    };
+    for (const key of this.definitions.keys()) {
+      setResolver(key);
+    }
+    for (const key of this.root.localNames) {
+      if (!Object.hasOwn(map, key)) {
+        setResolver(key);
+      }
+    }
+    return map;
+  }
+
+  private getResolvers(
+    requestedBy?: ServiceLifetime,
+    path: readonly Resolution[] = [],
+  ): Readonly<Record<string, () => RuntimeTask>> {
+    if (requestedBy !== undefined || path.length > 0) {
+      return this.buildResolvers(requestedBy, path);
+    }
+    const localCount = this.root.localNames.size;
+    if (this.defaultResolvers !== undefined && this.defaultResolvers.localCount === localCount) {
+      return this.defaultResolvers.map;
+    }
+    const map = this.buildResolvers();
+    this.defaultResolvers = { localCount, map };
+    return map;
+  }
+
   public bind(
     task: RuntimeTask<unknown, unknown, unknown>,
     requestedBy?: ServiceLifetime,
     path: readonly Resolution[] = [],
   ): RuntimeTask {
-    const resolvers = Object.fromEntries(
-      [...new Set([...this.definitions.keys(), ...this.root.localNames])].map((key) => [
-        key,
-        () => this.resolve(key, requestedBy, path),
-      ]),
-    );
+    const resolvers = this.getResolvers(requestedBy, path);
     // Runtime erasure is confined to the adapter; the public module checks service contracts.
     const serviceTask = task as unknown as ResultTask<
       unknown,
@@ -529,6 +700,14 @@ class RuntimeScope {
     if (this.disposing || this.root.disposing)
       return die(new TypeError("Cannot resolve from a closed service scope"));
 
+    if (path.some((node) => node.name === key)) {
+      return die(
+        new TypeError(
+          `Cyclic dependencies detected: ${[...path.map((node) => node.name), key].join(" -> ")}`,
+        ),
+      );
+    }
+
     const scope = owner ?? this;
     let resolution = owner?.tasks.get(key);
     if (resolution === undefined) {
@@ -581,7 +760,7 @@ class RuntimeScope {
   ) {
     return tryResult(
       () => {
-        if (this.closed || this.root.closed)
+        if (this.disposing || this.root.disposing)
           throw new ServiceAccessError("closed", key, "Cannot resolve from a closed service scope");
         const definition = this.definitions.get(key);
         if (definition === undefined)
@@ -693,14 +872,12 @@ class RuntimeScope {
         ResultTask.sync(() => {
           this.closed = true;
         })
-          .andThen(() =>
-            ResultTask.tryPromise({
-              try: async () => {
-                await Promise.all(this.children);
-              },
-              catch: (error) => error,
-            }),
-          )
+          .andThen(() => {
+            const pending = this.waitForChildren();
+            return pending === undefined
+              ? succeedVoid()
+              : ResultTask.tryPromise({ try: () => pending, catch: (error) => error });
+          })
           .andThen(() => {
             this.disposing = true;
             return this.resources.close(exit);
@@ -764,6 +941,12 @@ const scopedUse =
     use: (services: RuntimeServices) => RuntimeTask,
   ): RuntimeTask => {
     runtime.validate(dependencies.filter((key) => !Object.hasOwn(locals, key)));
+    const localKeys = locals === EMPTY_LOCALS ? [] : Object.keys(locals);
+    const syncPlan =
+      requestedBy === undefined || requestedBy === "singleton"
+        ? runtime.getSyncPlan(dependencies, localKeys, requestedBy)
+        : undefined;
+    const usablePlan = syncPlan !== undefined && syncPlan.tier === 0 ? syncPlan : undefined;
     const task = ResultTask.gen(function* runScopedUse() {
       const child = runtime.child(locals);
       const owned = ResultTask.acquireRelease({
@@ -771,7 +954,10 @@ const scopedUse =
         release: (_resource, exit) => child.close(exit),
       }).andThen(() =>
         ResultTask.gen(function* resolveAndUse() {
-          const services = yield* child.resolveMany(dependencies, requestedBy);
+          const services =
+            usablePlan === undefined
+              ? yield* child.resolveMany(dependencies, requestedBy)
+              : yield* ResultTask.sync(() => usablePlan.resolve(runtime.root.cache, locals));
           return yield* child.bind(use(services), requestedBy);
         }),
       );
@@ -785,10 +971,213 @@ const scopeRuntimes = new WeakMap<
   { readonly runtime: RuntimeScope; readonly locals: RuntimeServices }
 >();
 
+const isPromiseLike = <T>(value: T | Promise<T>): value is Promise<T> =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as PromiseLike<T>).then === "function";
+
+const createInterruptScopeError = (signal: AbortSignal): Error => {
+  const reason: unknown = signal.reason;
+  return new Error("Request scope failed", { cause: { _tag: "Interrupt", reason } });
+};
+
+const attachFastStreamLifecycle = (
+  runtime: RuntimeScope,
+  signal: AbortSignal,
+  response: Response,
+): Response => {
+  const responseBody = response.body;
+  if (responseBody === null) {
+    runtime.endChild();
+    return response;
+  }
+  const source: ReadableStreamDefaultReader<Uint8Array> = responseBody.getReader();
+  let output: ReadableStreamDefaultController<Uint8Array> | undefined = undefined;
+  let cancelPromise: Promise<void> | undefined = undefined;
+  let settled = false;
+  let aborted = false;
+  let canceling = false;
+
+  const finish = (): void => {
+    if (settled) return;
+    settled = true;
+    signal.removeEventListener("abort", onAbort);
+    try {
+      source.releaseLock();
+    } catch {
+      /* Reader lock already released or canceled. */
+    }
+    runtime.endChild();
+  };
+
+  const cancelSource = (reason: unknown): Promise<void> => {
+    canceling = true;
+    if (cancelPromise !== undefined) return cancelPromise;
+    const deferred = Promise.withResolvers<void>();
+    cancelPromise = deferred.promise;
+    try {
+      Promise.resolve(source.cancel(reason)).then(
+        () => {
+          finish();
+          deferred.resolve();
+        },
+        (error: unknown) => {
+          finish();
+          deferred.reject(error);
+        },
+      );
+    } catch (error) {
+      finish();
+      deferred.reject(error);
+    }
+    return cancelPromise;
+  };
+
+  const onAbort = (): void => {
+    aborted = true;
+    canceling = true;
+    const reason: unknown = signal.reason;
+    const error = createInterruptScopeError(signal);
+    if (output !== undefined) {
+      try {
+        output.error(error);
+      } catch {
+        /* Stream already closed or errored. */
+      }
+    }
+    cancelSource(reason).catch(() => {
+      /* Abort completion does not surface an unhandled rejection. */
+    });
+  };
+
+  signal.addEventListener("abort", onAbort, { once: true });
+
+  const body = new ReadableStream<Uint8Array>(
+    {
+      start(controller) {
+        output = controller;
+      },
+      pull(controller) {
+        return source.read().then(
+          (chunk) => {
+            if (aborted || canceling) return;
+            if (chunk.done) {
+              finish();
+              controller.close();
+            } else {
+              controller.enqueue(chunk.value);
+            }
+          },
+          (error: unknown) => {
+            const alreadyCanceling = aborted || canceling;
+            return cancelSource(error)
+              .catch(() => {
+                /* Preserve the original stream error. */
+              })
+              .then(() => {
+                if (!alreadyCanceling) {
+                  controller.error(error);
+                }
+              });
+          },
+        );
+      },
+      cancel(reason) {
+        return cancelSource(reason);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+
+  if (signal.aborted) {
+    onAbort();
+  }
+
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+};
+
+const settleFastResponse = (
+  runtime: RuntimeScope,
+  signal: AbortSignal,
+  response: Response,
+): Promise<Response> => {
+  if (signal.aborted) {
+    return Promise.resolve()
+      .then(() => response.body?.cancel(signal.reason))
+      .catch(() => {
+        /* Preserve the request interruption error if the body is locked or fails to cancel. */
+      })
+      .finally(() => {
+        runtime.endChild();
+      })
+      .then(() => {
+        throw createInterruptScopeError(signal);
+      });
+  }
+  try {
+    return Promise.resolve(attachFastStreamLifecycle(runtime, signal, response));
+  } catch (error) {
+    runtime.endChild();
+    return Promise.reject(new Error("Request scope failed", { cause: { _tag: "Fail", error } }));
+  }
+};
+
+const runFastFetch = (
+  runtime: RuntimeScope,
+  plan: CompiledSyncPlan,
+  locals: RuntimeServices,
+  handle: (services: RuntimeServices, request: Request) => Response | Promise<Response>,
+  request: Request,
+): Promise<Response> => {
+  if (runtime.isClosedOrDisposing()) {
+    return Promise.reject(
+      new Error("Request scope failed", {
+        cause: {
+          _tag: "Die",
+          defect: new TypeError("Cannot create a child from a closed service scope"),
+        },
+      }),
+    );
+  }
+  if (request.signal.aborted) {
+    return Promise.reject(createInterruptScopeError(request.signal));
+  }
+  runtime.beginChild();
+  let responseOrPromise: Response | Promise<Response> | undefined = undefined;
+  let services: RuntimeServices = EMPTY_LOCALS;
+  try {
+    services = plan.resolve(runtime.root.cache, locals);
+  } catch (defect) {
+    runtime.endChild();
+    return Promise.reject(new Error("Request scope failed", { cause: { _tag: "Die", defect } }));
+  }
+  try {
+    responseOrPromise = handle(services, request);
+  } catch (error) {
+    runtime.endChild();
+    return Promise.reject(new Error("Request scope failed", { cause: { _tag: "Fail", error } }));
+  }
+  if (!isPromiseLike(responseOrPromise)) {
+    return settleFastResponse(runtime, request.signal, responseOrPromise);
+  }
+  return responseOrPromise.then(
+    (response) => settleFastResponse(runtime, request.signal, response),
+    (error: unknown) => {
+      runtime.endChild();
+      throw new Error("Request scope failed", { cause: { _tag: "Fail", error } });
+    },
+  );
+};
+
 const makeScope = <Services extends object, E, R, G extends Graph>(
   runtime: RuntimeScope,
-  locals: RuntimeServices = {},
+  locals: RuntimeServices = EMPTY_LOCALS,
 ): ServiceScope<Services, E, R, G> => {
+  const localKeys = locals === EMPTY_LOCALS ? [] : Object.keys(locals);
   const scope: ServiceScope<Services, E, R, G> = {
     use: scopedUse(runtime, locals) as ServiceScope<Services, E, R, G>["use"],
     useSingletons: scopedUse(runtime, locals, "singleton") as ServiceScope<
@@ -797,30 +1186,43 @@ const makeScope = <Services extends object, E, R, G extends Graph>(
       R,
       G
     >["useSingletons"],
-    fetch: (dependencies, handle) => (request) =>
-      runScopedResponse(request, (respond) => {
-        const requestScope = makeScope(runtime, locals);
-        const use = requestScope.use as unknown as (
-          keys: readonly string[],
-          callback: (services: RuntimeServices) => RuntimeTask<void>,
-        ) => RuntimeTask<void>;
-        return use(dependencies, (services) =>
-          ResultTask.tryPromise({
-            try: async () => {
-              const response = await handle(services as Parameters<typeof handle>[0], request);
-              if (request.signal.aborted) await response.body?.cancel(request.signal.reason);
-              return response;
-            },
-            catch: (error) => error,
-          }).andThen((response) => respond(response)),
-        );
-      }),
+    fetch: (dependencies, handle) => {
+      const syncPlan = runtime.getSyncPlan(dependencies, localKeys);
+      if (syncPlan !== undefined) {
+        const fastHandle = handle as unknown as (
+          services: RuntimeServices,
+          request: Request,
+        ) => Response | Promise<Response>;
+        return (request) => runFastFetch(runtime, syncPlan, locals, fastHandle, request);
+      }
+      return (request) =>
+        runScopedResponse(request, (respond) => {
+          const requestScope = makeScope(runtime, locals);
+          const use = requestScope.use as unknown as (
+            keys: readonly string[],
+            callback: (services: RuntimeServices) => RuntimeTask<void>,
+          ) => RuntimeTask<void>;
+          return use(dependencies, (services) =>
+            ResultTask.tryPromise({
+              try: async () => {
+                const response = await handle(services as Parameters<typeof handle>[0], request);
+                if (request.signal.aborted) await response.body?.cancel(request.signal.reason);
+                return response;
+              },
+              catch: (error) => error,
+            }).andThen((response) => respond(response)),
+          );
+        });
+    },
     close: () =>
       runtime.close({ _tag: "Success", value: globalThis.undefined }) as unknown as ResultTask<
         void,
         ScopeError<R>
       >,
     withServices: (values) => {
+      if (locals === EMPTY_LOCALS) {
+        return makeScope(runtime, Object.freeze({ ...values }));
+      }
       for (const key of Object.keys(values)) {
         if (Object.hasOwn(locals, key))
           throw new TypeError(`Local service already supplied: ${key}`);
@@ -829,6 +1231,20 @@ const makeScope = <Services extends object, E, R, G extends Graph>(
     },
   };
   scopeRuntimes.set(scope, { runtime, locals });
+  if (locals === EMPTY_LOCALS) {
+    Object.defineProperty(scope, SYNC_PLAN_BRIDGE, {
+      value: {
+        isClosed: () => runtime.isClosedOrDisposing(),
+        beginChild: () => runtime.beginChild(),
+        endChild: () => runtime.endChild(),
+        settleResponse: (signal: AbortSignal, response: Response) =>
+          settleFastResponse(runtime, signal, response),
+        getPlan: (keys: readonly string[], planLocalKeys: readonly string[]) =>
+          runtime.getSyncPlan(keys, planLocalKeys),
+        rootCache: runtime.root.cache,
+      },
+    });
+  }
   return scope;
 };
 
@@ -874,11 +1290,25 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
         }
 
         const service = nameOrService;
+        const syncMeta = syncServiceMetadata.get(service);
         return makeModule(
           register(
             definitions,
             service.identifier,
-            makeDefinition([], () => service.make as RuntimeTask, lifetime),
+            makeDefinition(
+              [],
+              () => service.make as RuntimeTask,
+              lifetime,
+              undefined,
+              syncMeta === undefined
+                ? { kind: "class" }
+                : {
+                    kind: "sync",
+                    rawSyncFactory: syncMeta.create,
+                    syncDependencyMap: syncMeta.dependencyMap,
+                    syncAssert: assertTokenSync,
+                  },
+            ),
           ),
         );
       }
@@ -900,6 +1330,8 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
                 return value;
               }),
             lifetime,
+            undefined,
+            { kind: "sync", rawSyncFactory: create },
           ),
         ),
       );
@@ -945,6 +1377,7 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
             () => ResultTask.ok(value),
             "singleton",
             () => value,
+            { kind: "value", constantValue: value },
           ),
         ),
       ),
@@ -963,6 +1396,8 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
             (services) =>
               create(services as Parameters<typeof create>[0]) as unknown as RuntimeTask,
             options?.lifetime,
+            undefined,
+            { kind: "task" },
           ),
         ),
       ),
@@ -983,6 +1418,8 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
               }) as RuntimeTask;
             },
             options.lifetime,
+            undefined,
+            { kind: "resource" },
           ),
         ),
       ),
@@ -1000,6 +1437,7 @@ const makeModule = <Services extends object, E, R, G extends Graph>(
               () => ResultTask.ok(value),
               previous?.lifetime ?? "singleton",
               () => value,
+              { kind: "value", constantValue: value },
             ),
           ],
         ]),
@@ -1055,12 +1493,15 @@ export function withProvider<
       () => ResultTask.ok(provider.value),
       "singleton",
       () => provider.value,
+      { kind: "value", constantValue: provider.value },
     );
   } else if ("task" in provider) {
     definition = makeDefinition(
       [],
       () => provider.task as RuntimeTask,
       provider.lifetime ?? "singleton",
+      undefined,
+      { kind: "task" },
     );
   } else {
     definition = {
@@ -1073,6 +1514,7 @@ export function withProvider<
           assertSynchronous(value);
           return value;
         },
+        { kind: "provider" },
       ),
       synchronousFactory: true,
       allowTransientDependencies: provider.allowTransientDependencies,

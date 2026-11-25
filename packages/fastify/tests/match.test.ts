@@ -1,5 +1,5 @@
 import fastify, { type FastifyReply } from "fastify";
-import { createTaggedError, errAsync, Match, okAsync, type ResultAsync } from "resultar";
+import { createTaggedError, Match, ResultTask } from "resultar";
 import { expect, expectTypeOf, test } from "vite-plus/test";
 import { createFastifyPlugin, createModule, type InferRequestServices } from "../src/index.js";
 
@@ -13,10 +13,10 @@ type Route = {
   Params: { id: string };
   Reply: { 200: User; 404: { error: string; id: string }; 503: { error: string } };
 };
-const find = (id: string): ResultAsync<User, MissingError | OfflineError> => {
-  if (id === "1") return okAsync({ id, name: "Ada" });
-  if (id === "offline") return errAsync(new OfflineError());
-  return errAsync(new MissingError({ id }));
+const find = (id: string): ResultTask<User, MissingError | OfflineError> => {
+  if (id === "1") return ResultTask.ok({ id, name: "Ada" });
+  if (id === "offline") return ResultTask.err(new OfflineError());
+  return ResultTask.err(new MissingError({ id }));
 };
 
 const respondError = Match.context<
@@ -37,10 +37,10 @@ test("Match.context maps typed native Fastify service errors and replies", async
   app.get<Route>("/users/:id", async (request, reply) => {
     const services = request.getDecorator<InferRequestServices<typeof plugin>>("services");
     expectTypeOf(services.users.find).toEqualTypeOf<typeof find>();
-    const result = await services.users.find(request.params.id);
+    const result = await services.users.find(request.params.id).runResult();
     return result.match({
       ok: (user) => reply.code(200).send(user),
-      error: (error) => respondError(error, reply),
+      err: (error) => respondError(error, reply),
     });
   });
   try {

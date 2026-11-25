@@ -82,6 +82,7 @@ Documentation bundled with this package version. Installed declarations remain a
 - [Boundary integrations (HTTP, DB, queues, callbacks)](agent/references/integrations.md)
 - [Code review and pre-commit checklist](agent/references/review-checklist.md)
 - [Complete human guide](agent/manual/DOCUMENTATION.md)
+- [Coming from Effect](agent/manual/docs/coming-from-effect.md)
 - [Public API inventory](agent/manual/docs/api-inventory.md)
 - [Executable recipes](agent/manual/docs/recipes.md)
 - [Compiled core example](agent/examples/workflow.mjs)

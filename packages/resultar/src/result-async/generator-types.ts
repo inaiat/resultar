@@ -3,7 +3,11 @@ import type { ResultTask } from '../task/result-task.js'
 import type { InferErrTypes, InferOkTypes } from '../core/utils.js'
 import type { ResultAsync } from './result-async.js'
 
-/** Object-form synchronous generator workflow accepted by `safeTry`. */
+/**
+ * Object-form synchronous generator workflow accepted by `safeTry`.
+ *
+ * @deprecated Compatibility-only in v5 (`resultar/async`). Prefer `Result.gen` with plain success returns.
+ */
 export interface SafeTryOptions<
   YieldErr extends Result<never, unknown>,
   GeneratorReturnResult extends Result<unknown, unknown>,
@@ -21,7 +25,11 @@ export interface SafeTryOptions<
   readonly catch?: (e: unknown) => CatchErr
 }
 
-/** Object-form asynchronous generator workflow accepted by `safeTry`. */
+/**
+ * Object-form asynchronous generator workflow accepted by `safeTry`.
+ *
+ * @deprecated Compatibility-only in v5 (`resultar/async`). Prefer `ResultTask.gen` from `resultar` for new async workflows.
+ */
 export interface SafeTryAsyncOptions<
   YieldErr extends Result<never, unknown>,
   GeneratorReturnResult extends Result<unknown, unknown>,
@@ -40,7 +48,11 @@ export interface SafeTryAsyncOptions<
   readonly catch?: (e: unknown) => CatchErr
 }
 
-/** Object-form asynchronous gen workflow, returning a plain success value. */
+/**
+ * Object-form asynchronous `ResultAsync.gen` workflow, returning a plain success value.
+ *
+ * @deprecated Compatibility-only in v5 (`resultar/async`). Prefer `ResultTask.gen` from `resultar` for new async workflows.
+ */
 export interface AsyncResultGenOptions<
   YieldErr extends Result<never, unknown>,
   ReturnValue,
@@ -50,7 +62,11 @@ export interface AsyncResultGenOptions<
   readonly catch?: (e: unknown) => CatchErr
 }
 
-/** Generator return type annotation helper for asynchronous `gen`, `fn`, and composable sub-generators. */
+/**
+ * Generator return type annotation helper for `ResultAsync.gen`, `ResultAsync.fn`, and composable async sub-generators.
+ *
+ * @deprecated Compatibility-only in v5 (`resultar/async`). Prefer `ResultTaskGenerator` from `resultar` for new async workflows.
+ */
 export type ResultAsyncGenerator<T, E = never> = AsyncGenerator<Result<never, E>, T>
 
 export type AsyncResultGenGuard<Returned> = [
@@ -61,6 +77,25 @@ export type AsyncResultGenGuard<Returned> = [
 ] extends [never]
   ? unknown
   : never
+
+export type AsyncResultGeneratorReturn<GeneratorValue> =
+  GeneratorValue extends AsyncGenerator<unknown, infer Returned> ? Returned : never
+
+export type AsyncResultGeneratorError<GeneratorValue> =
+  GeneratorValue extends AsyncGenerator<infer Yielded, unknown> ? InferErrTypes<Yielded> : never
+
+export type AsyncResultGeneratorCatch<Input> = Input extends unknown
+  ? 'catch' extends keyof Input
+    ? Input extends { readonly catch?: (e: unknown) => infer CatchErr }
+      ? CatchErr
+      : never
+    : never
+  : never
+
+export type AsyncResultFnBody = (
+  ...args: never[]
+) => AsyncGenerator<Result<never, unknown>, unknown>
+
 export type AsyncResultFnOutput<Body extends (...args: never[]) => unknown> =
   ReturnType<Body> extends AsyncGenerator<infer Yielded, infer Returned>
     ? ResultAsync<Returned, InferErrTypes<Yielded>>
@@ -74,22 +109,22 @@ export type AsyncResultFnGuard<Body extends (...args: never[]) => unknown> =
 /**
  * Legacy generator runner requiring a final `Result` return value.
  *
- * @deprecated Since v4. Use Result.gen for synchronous generators and ResultTask.gen for async workflows.
+ * @deprecated Since v4 (compatibility-only in v5 `resultar/async`). Use `Result.gen` for synchronous generators and `ResultTask.gen` for async workflows.
  */
 export interface LegacySafeTry {
-  /** @deprecated Since v4. Use Result.gen for synchronous generators and ResultTask.gen for async workflows. */
+  /** @deprecated Since v4. Use `Result.gen` for synchronous generators and `ResultTask.gen` for async workflows. */
   <T, E, CatchErr = E>(
     input: SafeTryOptions<Result<never, E>, Result<T, E>, CatchErr> & {
       readonly catch: (e: unknown) => CatchErr
     },
   ): Result<T, E | CatchErr>
-  /** @deprecated Since v4. Use Result.gen for synchronous generators and ResultTask.gen for async workflows. */
+  /** @deprecated Since v4. Use `Result.gen` for synchronous generators and `ResultTask.gen` for async workflows. */
   <T, E>(
     input:
       | (() => Generator<Result<never, E>, Result<T, E>>)
       | SafeTryOptions<Result<never, E>, Result<T, E>>,
   ): Result<T, E>
-  /** @deprecated Since v4. Use Result.gen for synchronous generators and ResultTask.gen for async workflows. */
+  /** @deprecated Since v4. Use `Result.gen` for synchronous generators and `ResultTask.gen` for async workflows. */
   <
     YieldErr extends Result<never, unknown>,
     GeneratorReturnResult extends Result<unknown, unknown>,
@@ -102,7 +137,7 @@ export interface LegacySafeTry {
     InferOkTypes<GeneratorReturnResult>,
     InferErrTypes<YieldErr> | InferErrTypes<GeneratorReturnResult> | CatchErr
   >
-  /** @deprecated Since v4. Use Result.gen for synchronous generators and ResultTask.gen for async workflows. */
+  /** @deprecated Since v4. Use `Result.gen` for synchronous generators and `ResultTask.gen` for async workflows. */
   <YieldErr extends Result<never, unknown>, GeneratorReturnResult extends Result<unknown, unknown>>(
     input:
       | (() => Generator<YieldErr, GeneratorReturnResult>)
@@ -111,19 +146,19 @@ export interface LegacySafeTry {
     InferOkTypes<GeneratorReturnResult>,
     InferErrTypes<YieldErr> | InferErrTypes<GeneratorReturnResult>
   >
-  /** @deprecated Since v4. Use Result.gen for synchronous generators and ResultTask.gen for async workflows. */
+  /** @deprecated Since v4. Use `Result.gen` for synchronous generators and `ResultTask.gen` for async workflows. */
   <T, E, CatchErr = E>(
     input: SafeTryAsyncOptions<Result<never, E>, Result<T, E>, CatchErr> & {
       readonly catch: (e: unknown) => CatchErr
     },
   ): ResultAsync<T, E | CatchErr>
-  /** @deprecated Since v4. Use Result.gen for synchronous generators and ResultTask.gen for async workflows. */
+  /** @deprecated Since v4. Use `Result.gen` for synchronous generators and `ResultTask.gen` for async workflows. */
   <T, E>(
     input:
       | (() => AsyncGenerator<Result<never, E>, Result<T, E>>)
       | SafeTryAsyncOptions<Result<never, E>, Result<T, E>>,
   ): ResultAsync<T, E>
-  /** @deprecated Since v4. Use Result.gen for synchronous generators and ResultTask.gen for async workflows. */
+  /** @deprecated Since v4. Use `Result.gen` for synchronous generators and `ResultTask.gen` for async workflows. */
   <
     YieldErr extends Result<never, unknown>,
     GeneratorReturnResult extends Result<unknown, unknown>,
@@ -136,7 +171,7 @@ export interface LegacySafeTry {
     InferOkTypes<GeneratorReturnResult>,
     InferErrTypes<YieldErr> | InferErrTypes<GeneratorReturnResult> | CatchErr
   >
-  /** @deprecated Since v4. Use Result.gen for synchronous generators and ResultTask.gen for async workflows. */
+  /** @deprecated Since v4. Use `Result.gen` for synchronous generators and `ResultTask.gen` for async workflows. */
   <YieldErr extends Result<never, unknown>, GeneratorReturnResult extends Result<unknown, unknown>>(
     input:
       | (() => AsyncGenerator<YieldErr, GeneratorReturnResult>)

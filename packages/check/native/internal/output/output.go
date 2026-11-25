@@ -5,9 +5,11 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/microsoft/TypeScript/tsc/resultar-check/internal/analyzer"
 )
@@ -122,6 +124,7 @@ type sarifRegion struct {
 
 func writeSARIF(w io.Writer, diagnostics []Diagnostic, cwd string) error {
 	rules := make(map[string]struct{})
+	sources := map[string][]byte{}
 	results := make([]sarifResult, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		ruleID := diagnostic.Rule
@@ -141,9 +144,20 @@ func writeSARIF(w io.Writer, diagnostics []Diagnostic, cwd string) error {
 			if relative, err := filepath.Rel(cwd, diagnostic.File); err == nil && !strings.HasPrefix(relative, "..") {
 				uri = filepath.ToSlash(relative)
 			}
+			source, read := sources[diagnostic.File]
+			if !read {
+				source, _ = os.ReadFile(diagnostic.File)
+				sources[diagnostic.File] = source
+			}
+			charLength := 0
+			if diagnostic.Start >= 0 && diagnostic.Length > 0 && diagnostic.Start <= len(source)-diagnostic.Length {
+				for _, r := range string(source[diagnostic.Start : diagnostic.Start+diagnostic.Length]) {
+					charLength += utf16.RuneLen(r)
+				}
+			}
 			result.Locations = []sarifLocation{{PhysicalLocation: sarifPhysicalLocation{
 				ArtifactLocation: sarifArtifactLocation{URI: uri},
-				Region:           sarifRegion{StartLine: diagnostic.Line, StartColumn: diagnostic.Column, CharLength: diagnostic.Length},
+				Region:           sarifRegion{StartLine: diagnostic.Line, StartColumn: diagnostic.Column, CharLength: charLength},
 			}}}
 		}
 		results = append(results, result)

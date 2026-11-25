@@ -5,7 +5,7 @@ describe('scope finalizer registration', () => {
   it('rejects finalizer registration as soon as closing starts', async () => {
     const scope = ResultTask.makeScope()
     const closing = ResultTask.runExit(scope.close())
-    expect(() => scope.addFinalizer(() => ResultTask.succeed(undefined))).toThrow('closing')
+    expect(() => scope.addFinalizer(() => ResultTask.ok(undefined))).toThrow('closing')
     expect(await closing).toEqual({ _tag: 'Success', value: undefined })
   })
 
@@ -20,7 +20,7 @@ describe('scope finalizer registration', () => {
     await ResultTask.runPromise(
       scope.use(
         ResultTask.acquireRelease({
-          acquire: ResultTask.succeed('second'),
+          acquire: ResultTask.ok('second'),
           release: (value) =>
             ResultTask.sync(() => {
               events.push(value)
@@ -37,7 +37,7 @@ describe('scope finalizer registration', () => {
     await ResultTask.runPromise(scope.close())
     await ResultTask.runPromise(scope.close())
     expect(events).toEqual(['third', 'second', 'first'])
-    expect(() => scope.addFinalizer(() => ResultTask.succeed(undefined))).toThrow('closing')
+    expect(() => scope.addFinalizer(() => ResultTask.ok(undefined))).toThrow('closing')
   })
 
   it('retains typed cleanup failures and thrown defects while draining all finalizers', async () => {
@@ -50,7 +50,7 @@ describe('scope finalizer registration', () => {
         released = true
       }),
     )
-    scope.addFinalizer(() => ResultTask.fail(failure))
+    scope.addFinalizer(() => ResultTask.err(failure))
     scope.addFinalizer(() => {
       throw defect
     })

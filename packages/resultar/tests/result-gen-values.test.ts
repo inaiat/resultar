@@ -1,21 +1,17 @@
 /* eslint-disable require-yield -- Completion without yields is part of the Result.gen contract under test. */
-/* eslint-disable @typescript-eslint/no-deprecated -- These tests preserve the supported safeTry alias contract. */
 import { deepEqual, equal, rejects, throws } from 'node:assert/strict'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
+import { type AsyncResultGenOptions, ResultAsync, errAsync, okAsync } from '../src/entries/async.js'
 import {
   Result,
-  ResultAsync,
   ResultTask,
+  type ResultGenOptions,
   createTaggedError,
   err,
-  errAsync,
   ok,
-  okAsync,
-  safeTry,
 } from '../src/index.js'
-import type { AsyncResultGenOptions, ResultGenOptions } from '../src/result/result.js'
 
 describe('Result.gen completed values', () => {
   it('wraps primitives and absent values while preserving literal types', () => {
@@ -76,10 +72,8 @@ describe('Result.gen completed values', () => {
       mapErr: (f: (error: never) => unknown) => native.mapErr(f),
       andThen: (f: (value: number) => Result<unknown, unknown>) => native.andThen(f),
       orElse: (f: (error: never) => Result<unknown, unknown>) => native.orElse(f),
-      match: (handlers: {
-        readonly ok: (value: number) => unknown
-        readonly error: () => unknown
-      }) => native.match(handlers),
+      match: (handlers: { readonly ok: (value: number) => unknown; readonly err: () => unknown }) =>
+        native.match(handlers),
     }
     const result = Result.gen(function* () {
       return payload
@@ -123,30 +117,6 @@ describe('Result.gen completed values', () => {
     equal(result._unsafeUnwrap(), 2)
     equal(workflow('ok')._unsafeUnwrap(), '2')
     equal(workflow('err')._unsafeUnwrapErr(), 'validate')
-  })
-
-  it('preserves final Results and explicit nested success values on deprecated safeTry', () => {
-    const success = ok<number, 'expected'>(42)
-    const failure = err<number, 'expected'>('expected')
-    const nested = ok(failure)
-    const plain = safeTry(function* () {
-      return success
-    })
-    const explicit = safeTry<number, 'expected'>(function* () {
-      yield* success
-      return failure
-    })
-    const boxed = safeTry<Result<number, 'expected'>, never>(function* () {
-      return nested
-    })
-
-    expectTypeOf(plain).toEqualTypeOf<Result<number, 'expected'>>()
-    expectTypeOf(explicit).toEqualTypeOf<Result<number, 'expected'>>()
-    expectTypeOf(boxed).toEqualTypeOf<Result<Result<number, 'expected'>, never>>()
-    equal(plain, success)
-    equal(explicit, failure)
-    equal(boxed, nested)
-    equal(boxed._unsafeUnwrap(), failure)
   })
 
   it('maps sync defects without mapping yielded errors or losing precise catch types', () => {
@@ -263,7 +233,7 @@ describe('Result.gen completed values', () => {
     equal(unknown._unsafeUnwrap(), payload)
   })
 
-  it('rejects returned Result, Promise, ResultAsync, and ResultTask values in Result.gen while leaving safeTry typed to final Results', () => {
+  it('rejects returned Result, Promise, ResultAsync, and ResultTask values in Result.gen and ResultAsync.gen', () => {
     if (false) {
       // @ts-expect-error Result.gen requires plain return values or yield* delegation, not returned Ok.
       Result.gen(function* () {
@@ -273,20 +243,24 @@ describe('Result.gen completed values', () => {
       Result.gen(function* () {
         return err('boom')
       })
-      // @ts-expect-error Async Result.gen requires plain return values or yield* delegation, not returned Ok.
+      // @ts-expect-error Result.gen is sync-only in v5; use ResultAsync.gen for async generators.
       Result.gen(async function* () {
+        return 1
+      })
+      // @ts-expect-error ResultAsync.gen requires plain return values or yield* delegation, not returned Ok.
+      ResultAsync.gen(async function* () {
         return ok(1)
       })
-      // @ts-expect-error Async Result.gen requires yield* err(...), not returned Err.
-      Result.gen(async function* () {
+      // @ts-expect-error ResultAsync.gen requires yield* err(...), not returned Err.
+      ResultAsync.gen(async function* () {
         return err('boom')
       })
-      // @ts-expect-error Async Result.gen requires yield* okAsync(...), not returned ResultAsync.
-      Result.gen(async function* () {
+      // @ts-expect-error ResultAsync.gen requires yield* okAsync(...), not returned ResultAsync.
+      ResultAsync.gen(async function* () {
         return okAsync(1)
       })
-      // @ts-expect-error Async Result.gen requires yield* errAsync(...), not returned ResultAsync.
-      Result.gen(async function* () {
+      // @ts-expect-error ResultAsync.gen requires yield* errAsync(...), not returned ResultAsync.
+      ResultAsync.gen(async function* () {
         return errAsync('boom')
       })
       // @ts-expect-error Sync generators cannot return a Promise as implicit success.
@@ -302,22 +276,18 @@ describe('Result.gen completed values', () => {
         return ResultTask.ok(1)
       })
       // @ts-expect-error Async generators cannot implicitly return an unexecuted ResultTask.
-      Result.gen(async function* () {
+      ResultAsync.gen(async function* () {
         return ResultTask.ok(1)
-      })
-      // @ts-expect-error The deprecated alias preserves its original final-Result signature.
-      safeTry(function* () {
-        return 42
       })
     }
     equal(true, true)
   })
 })
 
-describe('async Result.gen completed values', () => {
+describe('ResultAsync.gen completed values', () => {
   it('starts eagerly and composes mixed sync and async yields into a raw value', async () => {
     const events: string[] = []
-    const pending = Result.gen(async function* () {
+    const pending = ResultAsync.gen(async function* () {
       events.push('started')
       const first = yield* okAsync<number, 'async read'>(2)
       const second = yield* ok<number, 'sync read'>(3)
@@ -329,35 +299,30 @@ describe('async Result.gen completed values', () => {
     equal((await pending)._unsafeUnwrap(), 5)
   })
 
-  it('delegates final success/failure via yield* in Result.gen and preserves awaited ResultAsync returns in safeTry', async () => {
+  it('delegates final success/failure via yield* in ResultAsync.gen', async () => {
     const success = ok<number, 'returned'>(42)
     const failure = err<number, 'returned'>('returned')
-    const succeeded = Result.gen(async function* () {
+    const succeeded = ResultAsync.gen(async function* () {
       return yield* success
     })
-    const failed = Result.gen(async function* () {
+    const failed = ResultAsync.gen(async function* () {
       yield* okAsync<number, 'yielded'>(1)
       return yield* failure
-    })
-    const legacy = safeTry<number, 'returned'>(async function* () {
-      return okAsync<number, 'returned'>(42)
     })
 
     expectTypeOf(succeeded).toEqualTypeOf<ResultAsync<number, 'returned'>>()
     expectTypeOf(failed).toEqualTypeOf<ResultAsync<number, 'yielded' | 'returned'>>()
-    expectTypeOf(legacy).toEqualTypeOf<ResultAsync<number, 'returned'>>()
     equal((await succeeded)._unsafeUnwrap(), 42)
     equal(await failed, failure)
-    equal((await legacy)._unsafeUnwrap(), 42)
   })
 
   it('uses JavaScript awaiting for completed Promise values and preserves undefined returns', async () => {
     const object = { id: 'user-1' }
-    const pending = Result.gen(async function* () {
+    const pending = ResultAsync.gen(async function* () {
       // eslint-disable-next-line unicorn/no-useless-promise-resolve-reject -- Verify native async-generator return assimilation.
       return Promise.resolve(object)
     })
-    const absent = Result.gen(async function* () {
+    const absent = ResultAsync.gen(async function* () {
       return undefined
     })
 
@@ -381,7 +346,7 @@ describe('async Result.gen completed values', () => {
         // This generator fixture has no resources.
       },
     }
-    const pending = Result.gen(() => generator)
+    const pending = ResultAsync.gen(() => generator)
 
     expectTypeOf(pending).toEqualTypeOf<ResultAsync<Promise<number>, never>>()
     equal(await (await pending)._unsafeUnwrap(), 42)
@@ -397,7 +362,7 @@ describe('async Result.gen completed values', () => {
         return undefined
       },
     }
-    const pending = Result.gen(async function* () {
+    const pending = ResultAsync.gen(async function* () {
       return payload
     })
 
@@ -412,7 +377,7 @@ describe('async Result.gen completed values', () => {
       executed += 1
       return 42
     })
-    const pending = Result.gen(async function* () {
+    const pending = ResultAsync.gen(async function* () {
       return { task }
     })
 
@@ -426,7 +391,7 @@ describe('async Result.gen completed values', () => {
   it('keeps early async Err identity and leaves finally undrained for raw success returns', async () => {
     const failure = err<never, 'read'>('read')
     const events: string[] = []
-    const pending = Result.gen(async function* () {
+    const pending = ResultAsync.gen(async function* () {
       try {
         yield* errAsync<number, 'read'>('read')
         events.push('continued')
@@ -435,7 +400,7 @@ describe('async Result.gen completed values', () => {
         events.push('finally')
       }
     })
-    const syncYield = Result.gen(async function* () {
+    const syncYield = ResultAsync.gen(async function* () {
       yield* failure
       return 42
     })
@@ -448,10 +413,10 @@ describe('async Result.gen completed values', () => {
 
   it('maps asynchronous defects and infers never for rejected bodies', async () => {
     const defect = new Error('unexpected')
-    const rejected = Result.gen(async function* () {
+    const rejected = ResultAsync.gen(async function* () {
       throw defect
     })
-    const caught = Result.gen({
+    const caught = ResultAsync.gen({
       async *try() {
         yield* okAsync<number, 'read'>(1)
         // eslint-disable-next-line unicorn/no-useless-promise-resolve-reject -- Verify rejected final Promises map through the object catch.
@@ -462,7 +427,7 @@ describe('async Result.gen completed values', () => {
         return { _tag: 'Unexpected' as const, cause }
       },
     })
-    const always = Result.gen({
+    const always = ResultAsync.gen({
       async *try() {
         throw defect
       },
@@ -486,7 +451,7 @@ describe('async Result.gen completed values', () => {
       },
       catch: () => 'unexpected',
     }
-    const pending = Result.gen(options)
+    const pending = ResultAsync.gen(options)
 
     expectTypeOf(pending).toEqualTypeOf<ResultAsync<number, 'read' | 'unexpected'>>()
     equal((await pending)._unsafeUnwrap(), 42)
@@ -499,7 +464,7 @@ describe('async Result.gen completed values', () => {
     }
     const mapped = { try: body, catch: (_cause: unknown) => 'caught' as const }
     const unhandled = { try: body }
-    const run = (input: typeof mapped | typeof unhandled) => Result.gen(input)
+    const run = (input: typeof mapped | typeof unhandled) => ResultAsync.gen(input)
     const caught = run(mapped)
 
     expectTypeOf(caught).toEqualTypeOf<ResultAsync<number, 'caught'>>()
@@ -572,11 +537,11 @@ describe('Result.fn', () => {
     }
   })
 
-  it('wraps async generator functions and pipes ResultAsync operators with original arguments', async () => {
+  it('wraps async generator functions with ResultAsync.fn and pipes ResultAsync operators with original arguments', async () => {
     const fetchScore = (id: string): ResultAsync<number, MissingIdError> =>
       id === 'missing' ? ResultAsync.err(new MissingIdError({ id })) : okAsync(id.length * 10)
 
-    const loadUserScore = Result.fn(
+    const loadUserScore = ResultAsync.fn(
       async function* (id: string, bonus: number) {
         const base = yield* fetchScore(id)
         const extra = yield* ok<number, never>(bonus)
@@ -595,8 +560,8 @@ describe('Result.fn', () => {
     equal((await loadUserScore('missing', 5))._unsafeUnwrap(), 'missing:5=7')
 
     if (false) {
-      // @ts-expect-error Result.fn async generator must not return a ResultTask.
-      Result.fn(async function* () {
+      // @ts-expect-error ResultAsync.fn async generator must not return a ResultTask.
+      ResultAsync.fn(async function* () {
         return ResultTask.ok(1)
       })
     }

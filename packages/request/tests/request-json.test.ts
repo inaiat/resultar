@@ -1,11 +1,14 @@
 import { strict as assert } from "node:assert";
-import { Cause, Clock, Match, ResultTask, type ResultAsync } from "resultar";
+import { AbortError, Cause, Clock, isAbortError, Match, ResultTask } from "resultar";
 import { describe, it } from "vite-plus/test";
 
 import {
+  baseRequestErrorHandler,
+  HttpClientRequestErrorCause,
+  HttpResponseErrorCauseError,
+  integrationErrorHandler,
   isHttpResponseError,
   requestJson,
-  requestJsonTask,
   RequestError,
   type RequestJsonMapError,
   type UndiciJsonResponseData,
@@ -30,6 +33,13 @@ class MappedRequestJsonError extends Error {
   ) {
     super(message);
     this.name = "MappedRequestJsonError";
+  }
+}
+
+class NotFoundRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NotFoundRequestError";
   }
 }
 
@@ -84,18 +94,44 @@ const rejectPlainRequestFailure = <T>() =>
   Reflect.apply(getPromiseReject(), Promise, [createPlainRequestFailure()]) as Promise<T>;
 
 const expectType = <T>(value: T) => value;
-const requestJsonUnsafe = requestJson as (input: unknown) => ResultAsync<unknown, Error>;
+const requestJsonUnsafe = requestJson as (input: unknown) => ResultTask<unknown, Error>;
 
 describe("requestJson", () => {
+  it("stays lazy at construction and executes fresh on every run", async () => {
+    let calls = 0;
+
+    const task = requestJson({
+      request: async (signal) => {
+        assert.equal(signal.aborted, false);
+        calls += 1;
+
+        return createFetchResponse({ ...userSample, name: `User ${calls}` });
+      },
+      validator: isUserSample,
+    });
+
+    expectType<ResultTask<UserSample, RequestError>>(task);
+    assert.equal(calls, 0);
+
+    const first = await task.runResult();
+    const second = await task.runResult();
+
+    assert.equal(calls, 2);
+    assert.ok(first.isOk());
+    assert.ok(second.isOk());
+    assert.equal(first.value.name, "User 1");
+    assert.equal(second.value.name, "User 2");
+  });
+
   it("given Fetch Response and valid JSON, then returns typed payload", async () => {
-    const result = requestJson({
+    const task = requestJson({
       request: async () => createFetchResponse(userSample),
       validator: isUserSample,
     });
 
-    expectType<ResultAsync<UserSample, RequestError>>(result);
+    expectType<ResultTask<UserSample, RequestError>>(task);
 
-    const awaited = await result;
+    const awaited = await task.runResult();
 
     assert.ok(awaited.isOk());
     assert.deepEqual(awaited.value, userSample);
@@ -105,7 +141,7 @@ describe("requestJson", () => {
     const result = await requestJson({
       request: async () => createUndiciResponse(userSample),
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isOk());
     assert.deepEqual(result.value, userSample);
@@ -118,13 +154,40 @@ describe("requestJson", () => {
         isUserSample(value)
           ? { success: true, value: { ...value, email: value.email.toUpperCase() } }
           : { errors: [{ message: "Expected user payload" }], success: false },
-    });
+    }).runResult();
 
     assert.ok(result.isOk());
     assert.deepEqual(result.value, { email: "ELIZEU.DRUMMOND@TELERJ.BR", name: userSample.name });
   });
 
+  it("given decode throws or returns custom message, then produces validation RequestError", async () => {
+    const thrownCause = new Error("decoder crashed");
+    const thrownResult = await requestJson({
+      request: async () => createFetchResponse(userSample),
+      decode: () => {
+        throw thrownCause;
+      },
+    }).runResult();
+
+    assert.ok(thrownResult.isErr());
+    const thrownError = expectRequestError(thrownResult.error);
+    assert.equal(thrownError.message, "Invalid JSON response payload");
+    assert.equal(thrownError.statusCode, 500);
+
+    const customMessageResult = await requestJson({
+      request: async () => createFetchResponse(userSample),
+      decode: () => ({ message: "Custom decoder failure", success: false }),
+    }).runResult();
+
+    assert.ok(customMessageResult.isErr());
+    const customMessageError = expectRequestError(customMessageResult.error);
+    assert.equal(customMessageError.message, "Custom decoder failure");
+    assert.equal(customMessageError.statusCode, 500);
+  });
+
   it("given HTTP 400 without mapError, then returns RequestError with HTTP cause metadata", async () => {
+    assert.equal(HttpClientRequestErrorCause, HttpResponseErrorCauseError);
+
     const result = await requestJson({
       request: async () =>
         createFetchResponse("Bad Request", {
@@ -132,7 +195,7 @@ describe("requestJson", () => {
           status: 400,
         }),
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectRequestError(result.error);
@@ -148,7 +211,7 @@ describe("requestJson", () => {
     const result = await requestJson({
       request: async () => createUndiciResponse("Internal Server Error", { statusCode: 500 }),
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectRequestError(result.error);
@@ -161,7 +224,7 @@ describe("requestJson", () => {
     const result = await requestJson({
       request: async () => createFetchResponse(""),
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectRequestError(result.error);
@@ -178,7 +241,7 @@ describe("requestJson", () => {
         throw cause;
       },
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectRequestError(result.error);
@@ -192,7 +255,7 @@ describe("requestJson", () => {
     const result = await requestJson({
       request: () => rejectPlainRequestFailure<Response>(),
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectRequestError(result.error);
@@ -205,7 +268,7 @@ describe("requestJson", () => {
     const result = await requestJsonUnsafe({
       request: async () => createFetchResponse(userSample),
       validationError: "Missing validator",
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectRequestError(result.error);
@@ -214,11 +277,82 @@ describe("requestJson", () => {
     assert.equal(error.statusCode, 500);
   });
 
+  it("given non-function request source, then returns integration error without unhandledRejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      const rejectedPromise = new Promise<Response>((_resolve, reject) => {
+        setTimeout(() => {
+          reject(new Error("rejected pre-started promise"));
+        }, 5);
+      });
+
+      const unmapped = await requestJsonUnsafe({
+        request: rejectedPromise,
+        validator: isUserSample,
+      }).runResult();
+
+      assert.ok(unmapped.isErr());
+      const unmappedError = expectRequestError(unmapped.error);
+      assert.equal(unmappedError.statusCode, 500);
+      assert.equal(unmappedError.message, "JSON request requires a request factory");
+
+      const mapped = await requestJsonUnsafe({
+        mapError: createMapError(),
+        request: Promise.resolve(createFetchResponse(userSample)),
+        validator: isUserSample,
+      }).runResult();
+
+      assert.ok(mapped.isErr());
+      const mappedError = expectMappedError(mapped.error);
+      assert.equal(mappedError.kind, "request");
+      assert.equal(mappedError.message, "JSON request requires a request factory");
+
+      let thenableCaught = false;
+      const customThenable: Record<string, unknown> = {};
+      Reflect.set(
+        customThenable,
+        "then",
+        (_onFulfilled?: unknown, onRejected?: (reason: unknown) => unknown) => {
+          thenableCaught = typeof onRejected === "function";
+        },
+      );
+      const thenableResult = await requestJsonUnsafe({
+        request: customThenable,
+        validator: isUserSample,
+      }).runResult();
+      assert.ok(thenableResult.isErr());
+      assert.equal(thenableCaught, true);
+
+      const missingDecoderRejected = new Promise<Response>((_resolve, reject) => {
+        setTimeout(() => {
+          reject(new Error("rejected with missing decoder"));
+        }, 5);
+      });
+      const missingDecoderResult = await requestJsonUnsafe({
+        request: missingDecoderRejected,
+      }).runResult();
+      assert.ok(missingDecoderResult.isErr());
+
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 25);
+      });
+
+      assert.deepEqual(unhandled, []);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("given validation failure without validationError, then returns default validation message", async () => {
     const result = await requestJson({
       request: async () => createFetchResponse({ name: userSample.name }),
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectRequestError(result.error);
@@ -227,7 +361,16 @@ describe("requestJson", () => {
     assert.equal(error.statusCode, 500);
   });
 
-  it("given validationError function, then receives validation errors and raw value", async () => {
+  it("given validationError string or function, then formats validation message with context", async () => {
+    const staticResult = await requestJson({
+      request: async () => createFetchResponse({ name: userSample.name }),
+      validationError: "Expected valid user object",
+      validator: isUserSample,
+    }).runResult();
+
+    assert.ok(staticResult.isErr());
+    assert.equal(expectRequestError(staticResult.error).message, "Expected valid user object");
+
     const invalidPayload = { name: userSample.name };
     const received: { value?: unknown } = {};
     let receivedErrorCount = 0;
@@ -244,7 +387,7 @@ describe("requestJson", () => {
 
         return `User API returned ${errors.length} schema errors`;
       },
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectRequestError(result.error);
@@ -284,7 +427,7 @@ describe("requestJson", () => {
         times: 1,
       },
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isOk());
     assert.deepEqual(result.value, userSample);
@@ -305,7 +448,7 @@ describe("requestJson", () => {
       },
       retry: { delayMs: 0, times: 1 },
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectRequestError(result.error);
@@ -326,7 +469,7 @@ describe("requestJson", () => {
         return requestCalls === 1 ? createFetchResponse("") : createFetchResponse(userSample);
       },
       retry: {
-        delayMs: 0,
+        delayMs: ({ attempt }) => (attempt > 0 ? 1 : 0),
         onRetry: ({ reason }) => {
           retryReasons.push(reason);
         },
@@ -334,41 +477,49 @@ describe("requestJson", () => {
         when: ({ reason }) => reason === "invalidJson",
       },
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isOk());
     assert.deepEqual(result.value, userSample);
     assert.deepEqual(retryReasons, ["invalidJson"]);
   });
 
-  it("given retry with a promise request source, then returns an integration RequestError", async () => {
-    const result = await requestJson({
-      request: Promise.resolve(createFetchResponse(userSample)),
-      retry: { times: 1 },
+  it("given mapError and exact status handler, then exact handler wins over generic HTTP and infers union", async () => {
+    const mappedConfig = {
+      404: ({ body }: { readonly body: string }) => new NotFoundRequestError(body),
+      http: ({ statusCode }: { readonly statusCode: number }) =>
+        new MappedRequestJsonError("http", String(statusCode)),
+      invalidJson: ({ cause }: { readonly cause: Error }) =>
+        new MappedRequestJsonError("invalid-json", cause.message),
+      request: ({ cause }: { readonly cause: Error }) =>
+        new MappedRequestJsonError("request", cause.message),
+      validation: ({ message }: { readonly message: string }) =>
+        new MappedRequestJsonError("validation", message),
+    } satisfies RequestJsonMapError;
+
+    const notFoundTask = requestJson({
+      request: async () => createFetchResponse("Not Found", { status: 404 }),
+      mapError: mappedConfig,
       validator: isUserSample,
     });
 
-    assert.ok(result.isErr());
-    const error = expectRequestError(result.error);
+    expectType<ResultTask<UserSample, MappedRequestJsonError | NotFoundRequestError>>(notFoundTask);
 
-    assert.equal(error.statusCode, 500);
-    assert.equal(error.message, "JSON request retry requires a request factory");
-  });
+    const notFoundResult = await notFoundTask.runResult();
+    assert.ok(notFoundResult.isErr());
+    assert.ok(notFoundResult.error instanceof NotFoundRequestError);
+    assert.equal(notFoundResult.error.message, "Not Found");
 
-  it("given mapError and exact status handler, then exact handler wins over generic HTTP", async () => {
-    const result = await requestJson({
-      request: async () => createFetchResponse("Bad Request", { status: 400 }),
-      mapError: createMapError({
-        400: ({ body }) => new MappedRequestJsonError("bad-request", body),
-      }),
+    const genericHttpResult = await requestJson({
+      request: async () => createFetchResponse("Bad Gateway", { status: 502 }),
+      mapError: mappedConfig,
       validator: isUserSample,
-    });
+    }).runResult();
 
-    assert.ok(result.isErr());
-    const error = expectMappedError(result.error);
-
-    assert.equal(error.kind, "bad-request");
-    assert.equal(error.message, "Bad Request");
+    assert.ok(genericHttpResult.isErr());
+    const genericError = expectMappedError(genericHttpResult.error);
+    assert.equal(genericError.kind, "http");
+    assert.equal(genericError.message, "502");
   });
 
   it("given mapError and invalid JSON, then invalidJson handler is used", async () => {
@@ -376,7 +527,7 @@ describe("requestJson", () => {
       request: async () => createFetchResponse(""),
       mapError: createMapError(),
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectMappedError(result.error);
@@ -402,7 +553,7 @@ describe("requestJson", () => {
           }),
       }),
       validationError: ({ errors }) => `Schema failed with ${errors.length} errors`,
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectMappedError(result.error);
@@ -414,7 +565,7 @@ describe("requestJson", () => {
     assert.deepEqual(error.context.value, invalidPayload);
   });
 
-  it("given circular object or BigInt in exception, RequestError.exception serializes safely without throwing", () => {
+  it("given circular object, BigInt, symbol, or string in error helpers, serializes safely without throwing", () => {
     const circular: Record<string, unknown> = {};
     circular.self = circular;
 
@@ -425,6 +576,15 @@ describe("requestJson", () => {
     const bigintError = RequestError.exception(123n, 500);
     assert.equal(bigintError.statusCode, 500);
     assert.equal(bigintError.message, "123");
+
+    const symbolError = integrationErrorHandler(Symbol("boom"));
+    assert.equal(symbolError.statusCode, 500);
+    assert.equal(symbolError.message, "Symbol(boom)");
+
+    const missing: unknown = Reflect.get({}, "missing");
+    const undefinedError = baseRequestErrorHandler(missing);
+    assert.equal(undefinedError.statusCode, 500);
+    assert.equal(undefinedError.message, "undefined");
 
     const objectWithBigIntError = RequestError.exception({ count: 123n }, 500);
     assert.equal(objectWithBigIntError.statusCode, 500);
@@ -443,7 +603,7 @@ describe("requestJson", () => {
     const result = await requestJson({
       request: async () => responseWithFailingText,
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectRequestError(result.error);
@@ -466,7 +626,7 @@ describe("requestJson", () => {
     const result = await requestJson({
       request: async () => responseWithSyncThrowText,
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectRequestError(result.error);
@@ -487,7 +647,7 @@ describe("requestJson", () => {
     const result = await requestJson({
       request: async () => responseWithBodyTimeout,
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(result.isErr());
     const error = expectRequestError(result.error);
@@ -506,99 +666,13 @@ describe("requestJson", () => {
     const resultSignal = await requestJson({
       request: async () => responseWithSignalTimeout,
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(resultSignal.isErr());
     const errorSignal = expectRequestError(resultSignal.error);
     assert.equal(errorSignal.message, "signal timeout");
     assert.equal(errorSignal.statusCode, 408);
     assert.equal(errorSignal.cause, abortTimeoutError);
-  });
-
-  it("given pre-aborted signal, then skips request attempt and preserves custom abort reason", async () => {
-    const controller = new AbortController();
-    const customReason = new Error("caller cancelled before attempt");
-    controller.abort(customReason);
-    let attempts = 0;
-
-    const result = await requestJson({
-      request: async () => {
-        attempts += 1;
-
-        return createFetchResponse(userSample);
-      },
-      retry: { delayMs: 10, times: 2 },
-      signal: controller.signal,
-      validator: isUserSample,
-    });
-
-    assert.equal(attempts, 0);
-    assert.ok(result.isErr());
-    const error = expectRequestError(result.error);
-    assert.equal(error.message, "caller cancelled before attempt");
-    assert.equal(error.cause, customReason);
-  });
-
-  it("given signal aborts during retry delay, then cancels immediately without starting next attempt", async () => {
-    const controller = new AbortController();
-    const customReason = { code: "CANCELLED_IN_BACKOFF" };
-    let attempts = 0;
-
-    const pending = requestJson({
-      request: async () => {
-        attempts += 1;
-
-        return createFetchResponse("Service Unavailable", { status: 503 });
-      },
-      retry: {
-        backoff: 2,
-        delayMs: 10_000,
-        onRetry: () => {
-          setTimeout(() => {
-            controller.abort(customReason);
-          }, 5);
-        },
-        times: 3,
-      },
-      signal: controller.signal,
-      validator: isUserSample,
-    });
-
-    const result = await pending;
-
-    assert.equal(attempts, 1);
-    assert.ok(result.isErr());
-    const error = expectRequestError(result.error);
-    assert.equal(error.message, '{"code":"CANCELLED_IN_BACKOFF"}');
-    assert.equal(error.cause, customReason);
-  });
-
-  it("given signal aborts during attempt, then stops scheduling retries even when custom when returns true", async () => {
-    const controller = new AbortController();
-    let attempts = 0;
-
-    const result = await requestJson({
-      mapError: createMapError({
-        request: ({ cause, error }) =>
-          new MappedRequestJsonError("request", error.message, { cause }),
-      }),
-      request: (signal) => {
-        attempts += 1;
-        assert.equal(signal, controller.signal);
-        controller.abort(new Error("aborted in flight"));
-
-        return Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
-      },
-      retry: { delayMs: 0, times: 3, when: () => true },
-      signal: controller.signal,
-      validator: isUserSample,
-    });
-
-    assert.equal(attempts, 1);
-    assert.ok(result.isErr());
-    const error = expectMappedError(result.error);
-    assert.equal(error.kind, "request");
-    assert.equal(error.message, "aborted in flight");
   });
 
   it("given transport abort without external signal, then default retry policy does not retry", async () => {
@@ -611,7 +685,7 @@ describe("requestJson", () => {
       },
       retry: { delayMs: 0, times: 2 },
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.equal(attempts, 1);
     assert.ok(result.isErr());
@@ -633,7 +707,7 @@ describe("requestJson", () => {
       },
       retry: { delayMs: 0, times: 1 },
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.equal(attempts, 2);
     assert.ok(retried.isOk());
@@ -644,7 +718,7 @@ describe("requestJson", () => {
         throw new SyntaxError("Invalid header token");
       },
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(mapped.isErr());
     const mappedError = expectMappedError(mapped.error);
@@ -663,7 +737,7 @@ describe("requestJson", () => {
       },
       retry: { delayMs: 0, times: 2 },
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.equal(jsonParseAttempts, 1);
     assert.ok(parseFailure.isErr());
@@ -684,7 +758,7 @@ describe("requestJson", () => {
       },
       retry: { delayMs: 0, times: 1 },
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.equal(streamReadAttempts, 2);
     assert.ok(streamReadFailure.isErr());
@@ -712,7 +786,7 @@ describe("requestJson", () => {
           text: async () => "Service Unavailable",
         }),
         validator: isUserSample,
-      });
+      }).runResult();
 
       assert.ok(result.isErr());
       const error = expectRequestError(result.error);
@@ -729,283 +803,19 @@ describe("requestJson", () => {
       request: async () =>
         createFetchResponse("Bad Gateway", { headers: serializableHeaders, status: 502 }),
       validator: isUserSample,
-    });
+    }).runResult();
 
     assert.ok(ordinary.isErr());
     const ordinaryError = expectRequestError(ordinary.error);
     assert.ok(isHttpResponseError(ordinaryError));
+    assert.ok(ordinaryError.cause.headers instanceof Headers);
+    assert.equal(ordinaryError.cause.headers.get("x-request-id"), "req-1");
+    const expectedResponse = new Response("Bad Gateway", { headers: serializableHeaders });
+    const expectedHeaders = Object.fromEntries(expectedResponse.headers.entries());
     assert.equal(
       ordinaryError.cause.message,
-      JSON.stringify({
-        body: "Bad Gateway",
-        headers: new Response("", { headers: serializableHeaders }).headers,
-        statusCode: 502,
-      }),
+      JSON.stringify({ body: "Bad Gateway", headers: expectedHeaders, statusCode: 502 }),
     );
-  });
-
-  it("given pre-started rejecting Promise and cancelled or early-failing call, then never emits unhandledRejection", async () => {
-    const unhandled: unknown[] = [];
-    const onUnhandled = (reason: unknown) => {
-      unhandled.push(reason);
-    };
-    process.on("unhandledRejection", onUnhandled);
-
-    try {
-      const preAborted = new AbortController();
-      const abortReason = new Error("already cancelled");
-      preAborted.abort(abortReason);
-
-      const asyncRejectingPromise = new Promise<Response>((_resolve, reject) => {
-        setTimeout(() => {
-          reject(new Error("late transport failure"));
-        }, 5);
-      });
-      const preAbortedResult = await requestJson({
-        request: asyncRejectingPromise,
-        signal: preAborted.signal,
-        validator: isUserSample,
-      });
-
-      assert.ok(preAbortedResult.isErr());
-      assert.equal(expectRequestError(preAbortedResult.error).cause, abortReason);
-
-      const immediateRejected = Promise.reject<Response>(new Error("already rejected"));
-      const immediateResult = await requestJson({
-        request: immediateRejected,
-        signal: preAborted.signal,
-        validator: isUserSample,
-      });
-      assert.ok(immediateResult.isErr());
-
-      const syncAbortController = new AbortController();
-      const syncAbortPromise = new Promise<Response>((_resolve, reject) => {
-        setTimeout(() => {
-          reject(new Error("post-abort transport rejection"));
-        }, 5);
-      });
-      const syncAbortPending = requestJson({
-        request: syncAbortPromise,
-        signal: syncAbortController.signal,
-        validator: isUserSample,
-      });
-      syncAbortController.abort(new Error("aborted immediately after call"));
-      const syncAbortResult = await syncAbortPending;
-      assert.ok(syncAbortResult.isErr());
-
-      const retryRejected = new Promise<Response>((_resolve, reject) => {
-        setTimeout(() => {
-          reject(new Error("rejected with invalid retry config"));
-        }, 5);
-      });
-      const retryResult = await requestJson({
-        request: retryRejected,
-        retry: { times: 1 },
-        validator: isUserSample,
-      });
-      assert.ok(retryResult.isErr());
-
-      const missingDecoderRejected = new Promise<Response>((_resolve, reject) => {
-        setTimeout(() => {
-          reject(new Error("rejected with missing decoder"));
-        }, 5);
-      });
-      const missingDecoderResult = await requestJsonUnsafe({ request: missingDecoderRejected });
-      assert.ok(missingDecoderResult.isErr());
-
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 25);
-      });
-
-      assert.deepEqual(unhandled, []);
-    } finally {
-      process.off("unhandledRejection", onUnhandled);
-    }
-  });
-
-  it("given synchronous abort immediately after calling requestJson, then never invokes request factory", async () => {
-    const directController = new AbortController();
-    const directReason = new Error("cancelled before microtask");
-    let directCalls = 0;
-
-    const directPending = requestJson({
-      request: async () => {
-        directCalls += 1;
-
-        return createFetchResponse(userSample);
-      },
-      signal: directController.signal,
-      validator: isUserSample,
-    });
-    directController.abort(directReason);
-    const directResult = await directPending;
-
-    assert.equal(directCalls, 0);
-    assert.ok(directResult.isErr());
-    const directError = expectRequestError(directResult.error);
-    assert.equal(directError.message, "cancelled before microtask");
-    assert.equal(directError.cause, directReason);
-
-    const retryController = new AbortController();
-    const retryReason = new Error("cancelled retry before microtask");
-    let retryCalls = 0;
-
-    const retryPending = requestJson({
-      request: async () => {
-        retryCalls += 1;
-
-        return createFetchResponse(userSample);
-      },
-      retry: { backoff: 2, delayMs: 10, times: 2 },
-      signal: retryController.signal,
-      validator: isUserSample,
-    });
-    retryController.abort(retryReason);
-    const retryResult = await retryPending;
-
-    assert.equal(retryCalls, 0);
-    assert.ok(retryResult.isErr());
-    const retryError = expectRequestError(retryResult.error);
-    assert.equal(retryError.message, "cancelled retry before microtask");
-    assert.equal(retryError.cause, retryReason);
-  });
-
-  it("given signal aborts during retry.when or with null reason, then preserves exact abort cause instead of prior attempt error", async () => {
-    for (const decision of [false, true]) {
-      const controller = new AbortController();
-      const abortReason = new Error(`aborted inside retry.when (${String(decision)})`);
-      let attempts = 0;
-
-      // eslint-disable-next-line no-await-in-loop
-      const result = await requestJson({
-        request: async () => {
-          attempts += 1;
-          throw new Error("initial transport failure");
-        },
-        retry: {
-          delayMs: 0,
-          times: 2,
-          when: async () => {
-            await Promise.resolve();
-            controller.abort(abortReason);
-
-            return decision;
-          },
-        },
-        signal: controller.signal,
-        validator: isUserSample,
-      });
-
-      assert.equal(attempts, 1);
-      assert.ok(result.isErr());
-      const error = expectRequestError(result.error);
-      assert.equal(error.message, abortReason.message);
-      assert.equal(error.cause, abortReason);
-    }
-
-    const mappedController = new AbortController();
-    const mappedAbortCause = new Error("aborted after 503 during retry.when");
-    const mappedResult = await requestJson({
-      mapError: createMapError({
-        request: ({ cause, error }) =>
-          new MappedRequestJsonError("request", error.message, { cause }),
-      }),
-      request: async () => createFetchResponse("Service Unavailable", { status: 503 }),
-      retry: {
-        backoff: 2,
-        delayMs: 10,
-        times: 2,
-        when: () => {
-          mappedController.abort(mappedAbortCause);
-
-          return false;
-        },
-      },
-      signal: mappedController.signal,
-      validator: isUserSample,
-    });
-
-    assert.ok(mappedResult.isErr());
-    const mappedError = expectMappedError(mappedResult.error);
-    assert.equal(mappedError.kind, "request");
-    assert.equal(mappedError.message, "aborted after 503 during retry.when");
-    assert.equal(mappedError.context.cause, mappedAbortCause);
-
-    const nullReason: unknown = JSON.parse("null");
-    const preNullController = new AbortController();
-    preNullController.abort(nullReason);
-    const preNullResult = await requestJson({
-      request: async () => createFetchResponse(userSample),
-      signal: preNullController.signal,
-      validator: isUserSample,
-    });
-    assert.ok(preNullResult.isErr());
-    const preNullError = expectRequestError(preNullResult.error);
-    assert.equal(preNullError.message, "null");
-    assert.equal(Object.is(preNullError.cause, nullReason), true);
-
-    const inFlightNullController = new AbortController();
-    const inFlightNullResult = await requestJson({
-      request: () => {
-        inFlightNullController.abort(nullReason);
-
-        return Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
-      },
-      signal: inFlightNullController.signal,
-      validator: isUserSample,
-    });
-    assert.ok(inFlightNullResult.isErr());
-    const inFlightNullError = expectRequestError(inFlightNullResult.error);
-    assert.equal(inFlightNullError.message, "null");
-    assert.equal(Object.is(inFlightNullError.cause, nullReason), true);
-
-    const retryWhenNullController = new AbortController();
-    const retryWhenNullResult = await requestJson({
-      request: async () => createFetchResponse("Service Unavailable", { status: 503 }),
-      retry: {
-        delayMs: 10,
-        times: 2,
-        when: () => {
-          retryWhenNullController.abort(nullReason);
-
-          return true;
-        },
-      },
-      signal: retryWhenNullController.signal,
-      validator: isUserSample,
-    });
-    assert.ok(retryWhenNullResult.isErr());
-    const retryWhenNullError = expectRequestError(retryWhenNullResult.error);
-    assert.equal(retryWhenNullError.message, "null");
-    assert.equal(Object.is(retryWhenNullError.cause, nullReason), true);
-  });
-});
-
-describe("requestJsonTask", () => {
-  it("stays lazy at construction and executes fresh on every run", async () => {
-    let calls = 0;
-
-    const task = requestJsonTask({
-      request: async (signal) => {
-        assert.equal(signal.aborted, false);
-        calls += 1;
-
-        return createFetchResponse({ ...userSample, name: `User ${calls}` });
-      },
-      validator: isUserSample,
-    });
-
-    expectType<ResultTask<UserSample, RequestError>>(task);
-    assert.equal(calls, 0);
-
-    const first = await task.runResult();
-    const second = await task.runResult();
-
-    assert.equal(calls, 2);
-    assert.ok(first.isOk());
-    assert.ok(second.isOk());
-    assert.equal(first.value.name, "User 1");
-    assert.equal(second.value.name, "User 2");
   });
 
   it("reuses Task clock for retries and preserves domain error mapping", async () => {
@@ -1026,7 +836,7 @@ describe("requestJsonTask", () => {
       validation: ({ message }) => new MappedRequestJsonError("validation", message),
     } satisfies RequestJsonMapError;
 
-    const task = requestJsonTask({
+    const task = requestJson({
       mapError: mappedErrors,
       request: async () => {
         calls += 1;
@@ -1049,6 +859,140 @@ describe("requestJsonTask", () => {
     assert.deepEqual(delays, [25, 50]);
   });
 
+  it("given pre-aborted runner signal, then skips attempt and surfaces Task interruption", async () => {
+    const controller = new AbortController();
+    const customReason = new Error("caller cancelled before attempt");
+    controller.abort(customReason);
+    let attempts = 0;
+
+    const task = requestJson({
+      request: async () => {
+        attempts += 1;
+
+        return createFetchResponse(userSample);
+      },
+      retry: { delayMs: 10, times: 2 },
+      validator: isUserSample,
+    });
+
+    const exit = await task.runExit({ signal: controller.signal });
+    const interruptedWithCustomReason = Match.valueTags(exit, {
+      Failure: ({ cause }) =>
+        Match.valueTags(cause, {
+          Die: () => false,
+          Fail: () => false,
+          Interrupt: ({ reason }) => reason === customReason,
+          Parallel: () => false,
+          Sequential: () => false,
+        }),
+      Success: () => false,
+    });
+    assert.equal(attempts, 0);
+    assert.equal(interruptedWithCustomReason, true);
+
+    await assert.rejects(task.runResult({ signal: controller.signal }), (error: unknown) => {
+      assert.ok(error instanceof AbortError);
+      assert.ok(isAbortError(error));
+      assert.equal(error.cause, customReason);
+
+      return true;
+    });
+    assert.equal(attempts, 0);
+  });
+
+  it("given signal aborts during attempt, retry.when, or retry delay, then interrupts immediately without further attempts", async () => {
+    const inFlightController = new AbortController();
+    let inFlightAttempts = 0;
+
+    const inFlightTask = requestJson({
+      request: (signal) => {
+        inFlightAttempts += 1;
+        assert.equal(signal.aborted, false);
+        inFlightController.abort(new Error("aborted in flight"));
+        assert.equal(signal.aborted, true);
+
+        return Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
+      },
+      retry: { delayMs: 0, times: 3, when: () => true },
+      validator: isUserSample,
+    });
+
+    const inFlightExit = await inFlightTask.runExit({ signal: inFlightController.signal });
+    assert.equal(inFlightAttempts, 1);
+    assert.equal(
+      Match.valueTags(inFlightExit, {
+        Failure: ({ cause }) => Cause.hasInterrupts(cause),
+        Success: () => false,
+      }),
+      true,
+    );
+
+    const retryWhenController = new AbortController();
+    let retryWhenAttempts = 0;
+
+    const retryWhenTask = requestJson({
+      request: async () => {
+        retryWhenAttempts += 1;
+
+        return createFetchResponse("Service Unavailable", { status: 503 });
+      },
+      retry: {
+        delayMs: 10,
+        times: 2,
+        when: async () => {
+          await Promise.resolve();
+          retryWhenController.abort(new Error("aborted inside retry.when"));
+
+          return true;
+        },
+      },
+      validator: isUserSample,
+    });
+
+    const retryWhenExit = await retryWhenTask.runExit({ signal: retryWhenController.signal });
+    assert.equal(retryWhenAttempts, 1);
+    assert.equal(
+      Match.valueTags(retryWhenExit, {
+        Failure: ({ cause }) => Cause.hasInterrupts(cause),
+        Success: () => false,
+      }),
+      true,
+    );
+
+    const delayController = new AbortController();
+    let delayAttempts = 0;
+    const clock = Clock.virtual();
+
+    const delayTask = requestJson({
+      request: async () => {
+        delayAttempts += 1;
+
+        return createFetchResponse("Service Unavailable", { status: 503 });
+      },
+      retry: {
+        backoff: 2,
+        delayMs: 10_000,
+        onRetry: () => {
+          queueMicrotask(() => {
+            delayController.abort(new Error("cancelled in backoff"));
+          });
+        },
+        times: 3,
+      },
+      validator: isUserSample,
+    });
+
+    const delayExit = await delayTask.runExit({ clock, signal: delayController.signal });
+    assert.equal(delayAttempts, 1);
+    assert.equal(
+      Match.valueTags(delayExit, {
+        Failure: ({ cause }) => Cause.hasInterrupts(cause),
+        Success: () => false,
+      }),
+      true,
+    );
+  });
+
   it("propagates Task interruption and awaits scope cleanup on timeout or cancellation", async () => {
     const events: string[] = [];
     let observedAbort = false;
@@ -1067,7 +1011,7 @@ describe("requestJsonTask", () => {
             }),
         });
 
-        return yield* requestJsonTask({
+        return yield* requestJson({
           request: (signal) =>
             new Promise<Response>((_resolve, reject) => {
               signal.addEventListener(
@@ -1109,5 +1053,159 @@ describe("requestJsonTask", () => {
       Success: () => false,
     });
     assert.equal(wasInterrupted, true);
+  });
+
+  it("defers mapError.request lazily when request is not a function", async () => {
+    let mapCalls = 0;
+    const task = requestJsonUnsafe({
+      mapError: createMapError({
+        request: ({ cause }) => {
+          mapCalls += 1;
+          return new MappedRequestJsonError("request", cause.message);
+        },
+      }),
+      request: Promise.resolve(createFetchResponse(userSample)),
+      validator: isUserSample,
+    });
+
+    assert.equal(mapCalls, 0);
+
+    const outcome = await task.runResult();
+    assert.equal(mapCalls, 1);
+    assert.ok(outcome.isErr());
+    assert.equal(
+      expectMappedError(outcome.error).message,
+      "JSON request requires a request factory",
+    );
+  });
+
+  it("aborts and cancels stalled response bodies during json() and text() without hanging or unhandled rejections", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      // 1. Stalled Fetch 200 json() with cancelable body and timeout
+      let jsonCanceled = false;
+      const jsonDeferred = Promise.withResolvers<unknown>();
+      const stalledJsonTask = ResultTask.timeout(
+        requestJson({
+          request: async () => ({
+            body: {
+              cancel: () => {
+                jsonCanceled = true;
+                jsonDeferred.reject(new Error("late body cancel rejection"));
+                return Promise.reject(new Error("cancel promise rejection"));
+              },
+            },
+            headers: {},
+            json: () => jsonDeferred.promise,
+            status: 200,
+            text: async () => "",
+          }),
+          validator: isUserSample,
+        }),
+        25,
+        () => new MappedRequestJsonError("timeout", "JSON body timed out"),
+      );
+      const jsonOutcome = await stalledJsonTask.runResult();
+      assert.ok(jsonOutcome.isErr());
+      assert.equal(jsonOutcome.error.message, "JSON body timed out");
+      assert.equal(jsonCanceled, true);
+
+      // 2. Stalled Undici 500 text() with destroyable body and explicit AbortController
+      let textDestroyed = false;
+      const textDeferred = Promise.withResolvers<string>();
+      const textController = new AbortController();
+      const stalledTextTask = requestJson({
+        request: async () => ({
+          body: {
+            destroy: () => {
+              textDestroyed = true;
+              textDeferred.reject(new Error("late text destroy rejection"));
+            },
+            json: async () => ({}),
+            text: () => {
+              textController.abort(new Error("aborted while reading error text"));
+              return textDeferred.promise;
+            },
+          },
+          headers: {},
+          statusCode: 500,
+        }),
+        validator: isUserSample,
+      });
+      const textExit = await stalledTextTask.runExit({ signal: textController.signal });
+      assert.equal(textDestroyed, true);
+      assert.equal(
+        Match.valueTags(textExit, {
+          Failure: ({ cause }) => Cause.hasInterrupts(cause),
+          Success: () => false,
+        }),
+        true,
+      );
+
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 25);
+      });
+      assert.deepEqual(unhandled, []);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it.each([200, 500])(
+    "cancels and unlocks a stalled native Fetch body with status %i",
+    async (status) => {
+      const reading = Promise.withResolvers<void>();
+      const clock = Clock.virtual();
+      let canceled = false;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull() {
+            reading.resolve();
+          },
+          cancel() {
+            canceled = true;
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const response = new Response(body, { status });
+      const timed = ResultTask.timeout(
+        requestJson({ request: async () => response, validator: isUserSample }),
+        25,
+        () => new MappedRequestJsonError("timeout", "Fetch body timed out"),
+      ).runResult({ clock });
+
+      await reading.promise;
+      assert.equal(body.locked, true);
+      await clock.advanceBy(25);
+      const outcome = await timed;
+      assert.ok(outcome.isErr());
+      assert.equal(outcome.error.message, "Fetch body timed out");
+      assert.equal(canceled, true);
+      assert.equal(body.locked, false);
+    },
+  );
+
+  it("decodes split UTF-8 characters and a leading BOM in native Fetch JSON", async () => {
+    const value = { ...userSample, name: "José" };
+    const bytes = new TextEncoder().encode(`\uFEFF${JSON.stringify(value)}`);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+        controller.close();
+      },
+    });
+    const result = await requestJson({
+      request: async () => new Response(body),
+      validator: isUserSample,
+    }).runResult();
+
+    assert.ok(result.isOk());
+    assert.deepEqual(result.value, value);
   });
 });

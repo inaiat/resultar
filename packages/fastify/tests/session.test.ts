@@ -1,10 +1,10 @@
 import { getEventListeners } from "node:events";
 import { expect, expectTypeOf, test } from "vite-plus/test";
-import { ok, ResultAsync, ResultTask, ResultTaskCauseError, type Exit } from "resultar";
+import { ok, ResultTask, ResultTaskCauseError, type Exit, type Result } from "resultar";
 import { createModule, resource, service } from "resultar-di";
 import { startSession } from "../src/session.js";
 
-test("ResultAsync session consumers share eager acquisition and one completion", async () => {
+test("session consumers share eager acquisition and one completion", async () => {
   let acquired = 0;
   let released = 0;
   const Local = resource("local", {
@@ -20,13 +20,13 @@ test("ResultAsync session consumers share eager acquisition and one completion",
   const root = createModule().scoped(Local).scope();
   const session = startSession((hold) => root.use(["local"], hold));
   expectTypeOf(session.ready).toEqualTypeOf<
-    ResultAsync<Readonly<Record<string, unknown>>, ResultTaskCauseError>
+    Promise<Result<Readonly<Record<string, unknown>>, ResultTaskCauseError>>
   >();
-  expectTypeOf(session.completion).toEqualTypeOf<ResultAsync<Exit<void, unknown>, never>>();
-  expectTypeOf(session.finish).returns.toEqualTypeOf<ResultAsync<Exit<void, unknown>, never>>();
-  expect(session.ready).toBeInstanceOf(ResultAsync);
-  expect(session.completion).toBeInstanceOf(ResultAsync);
-  // Acquisition starts before the first consumer subscribes to ready.
+  expectTypeOf(session.completion).toEqualTypeOf<Promise<Exit<void, unknown>>>();
+  expectTypeOf(session.finish).returns.toEqualTypeOf<Promise<Exit<void, unknown>>>();
+  expect(session.ready).toBeInstanceOf(Promise);
+  expect(session.completion).toBeInstanceOf(Promise);
+  // Acquisition starts before the first consumer awaits ready.
   await expect.poll(() => acquired).toBe(1);
   const ready = await session.ready;
   expect(ready).toEqual(ok({ local: { id: 1 } }));
@@ -35,7 +35,7 @@ test("ResultAsync session consumers share eager acquisition and one completion",
   const completion = session.finish();
   expect(completion).toBe(session.completion);
   expect(session.finish()).toBe(completion);
-  expect(await completion).toEqual(ok({ _tag: "Success", value: undefined }));
+  expect(await completion).toEqual({ _tag: "Success", value: undefined });
   expect(acquired).toBe(1);
   expect(released).toBe(1);
   await ResultTask.runExit(root.close());
@@ -44,10 +44,10 @@ test("ResultAsync session consumers share eager acquisition and one completion",
 
 test("readiness failures remain Err values when observed after composite cleanup completes", async () => {
   const Local = resource("local", {
-    acquire: ResultTask.succeed(1),
-    release: () => ResultTask.fail("release failed"),
+    acquire: ResultTask.ok(1),
+    release: () => ResultTask.err("release failed"),
   });
-  const Failing = service("failing", ResultTask.fail("acquisition failed"));
+  const Failing = service("failing", ResultTask.err("acquisition failed"));
   const root = createModule().scoped(Local).scoped(Failing).scope();
   const session = startSession((hold) => root.use(["local", "failing"], hold));
   const cause = {
@@ -56,7 +56,7 @@ test("readiness failures remain Err values when observed after composite cleanup
     right: { _tag: "Fail", error: "release failed" },
   };
   // No rejected readiness promise is left unobserved while acquisition and rollback finish.
-  expect(await session.completion).toEqual(ok({ _tag: "Failure", cause }));
+  expect(await session.completion).toEqual({ _tag: "Failure", cause });
   const ready = await session.ready;
   expect(ready.isErr()).toBe(true);
   if (ready.isErr()) {
@@ -69,16 +69,17 @@ test("readiness failures remain Err values when observed after composite cleanup
 
 test("release failure stays in completion while successful readiness is preserved", async () => {
   const Local = resource("local", {
-    acquire: ResultTask.succeed(1),
-    release: () => ResultTask.fail("release failed"),
+    acquire: ResultTask.ok(1),
+    release: () => ResultTask.err("release failed"),
   });
   const root = createModule().scoped(Local).scope();
   const session = startSession((hold) => root.use(["local"], hold));
   const ready = await session.ready;
   expect(ready).toEqual(ok({ local: 1 }));
-  expect(await session.finish()).toEqual(
-    ok({ _tag: "Failure", cause: { _tag: "Fail", error: "release failed" } }),
-  );
+  expect(await session.finish()).toEqual({
+    _tag: "Failure",
+    cause: { _tag: "Fail", error: "release failed" },
+  });
   expect(await session.ready).toBe(ready);
   await ResultTask.runExit(root.close());
 });
@@ -107,9 +108,10 @@ test.each(["before acquisition", "after readiness"] as const)(
       expect(await session.ready).toEqual(ok({ local: 1 }));
       controller.abort(reason);
     }
-    expect(await session.completion).toEqual(
-      ok({ _tag: "Failure", cause: { _tag: "Interrupt", reason } }),
-    );
+    expect(await session.completion).toEqual({
+      _tag: "Failure",
+      cause: { _tag: "Interrupt", reason },
+    });
     if (when === "before acquisition") {
       const ready = await session.ready;
       expect(ready.isErr()).toBe(true);

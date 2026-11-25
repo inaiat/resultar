@@ -1,11 +1,10 @@
 # Resultar
 
-> Typed, composable error handling for TypeScript: start with explicit `Result` values,
-> use lazy `ResultTask` for new asynchronous workflows, use `ResultAsync` for in-flight
-> `Result` values, and retain eager compatibility helpers from `resultar` at existing
-> boundaries during migration. Add typed services, scopes, clocks, retry,
-> and fibers as needed. Tagged errors and
-> compiler-backed diagnostics. Node.js 24+, ESM-only.
+> Typed, composable error handling for TypeScript: start with synchronous `Result` values,
+> use lazy `ResultTask` for all asynchronous workflows (executing via `task.runResult()` ->
+> native `Promise<Result<T, E>>`), and optionally use the `@deprecated` `resultar/async` compatibility
+> subpath for legacy eager `ResultAsync` boundaries. Add typed services, scopes, clocks,
+> retry, and fibers as needed. Tagged errors and compiler-backed diagnostics. Node.js 24+, ESM-only.
 
 ## Installed version first
 
@@ -19,12 +18,13 @@ The links below follow development on `main`; they are not a substitute for vers
 - [Promise boundaries and application contracts](https://raw.githubusercontent.com/inaiat/resultar/main/DOCUMENTATION.md#promise-boundaries-and-application-contracts): raw driver Promise -> tryPromise; existing typed Async -> fromResultAsync; new application methods return Task.
 
 - [Agent skill (`SKILL.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/SKILL.md): execution contracts and progressive routing for coding agents.
-- [API semantics (`references/api.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/api.md): feature map and semantic constraints for `Result`, `ResultAsync`, `ResultTask`, `createTaggedError`, `taggedEnum`, `redact`, `Match`, `Cause`, `Fiber`, `Semaphore`, `Retry`, `Clock`, `Scheduler`, and `pipe`/`flow`.
-- [Anti-patterns & `resultar-check` guide (`references/anti-patterns.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/anti-patterns.md): configuration, repair guidance, and links to all 42 native diagnostics.
+- [API semantics (`references/api.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/api.md): feature map and semantic constraints for `Result`, `ResultTask`, opt-in `resultar/async` (`ResultAsync`), `createTaggedError`, `taggedEnum`, `redact`, `Match`, `Cause`, `Fiber`, `Semaphore`, `Deferred`, `Queue`, `Ref`, `TaskLocal`, `Tracer`, `Retry`, `Clock`, `Scheduler`, `pipe`/`flow`, and subpath exports (`resultar/result`, `resultar/task`, `resultar/match`, `resultar/tagged`, `resultar/retry`, `resultar/function`, `resultar/async`).
+- [Anti-patterns & `resultar-check` guide (`references/anti-patterns.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/anti-patterns.md): configuration, `--fix`, `migrate-v5`, multi-editor setup, repair guidance, and links to all 43 native diagnostics.
 - [Production workflow patterns (`references/patterns.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/patterns.md): rich domain errors, `ResultTask.memoize`, `onExit`, background worker loops with `runFork`, uncooperative Promise timeouts with `interruption: 'detach'`, bounded concurrency, and `VirtualClock` testing.
 - [Services, DI, HTTP adapters & outbound requests (`references/services.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/services.md): `serviceTag`, `resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, and `resultar-request` (`zod` and `typebox`).
 - [Boundary integrations (`references/integrations.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/integrations.md): HTTP route status mapping, database session ownership, and event consumer bridges.
 - [Code review checklist (`references/review-checklist.md`)](https://raw.githubusercontent.com/inaiat/resultar/main/skills/resultar/references/review-checklist.md): behavior and verification checklist.
+- [Coming from Effect](https://raw.githubusercontent.com/inaiat/resultar/main/docs/coming-from-effect.md): side-by-side concept and API map vs Effect core, plus deliberate omissions.
 - [Gradual adoption](https://raw.githubusercontent.com/inaiat/resultar/main/docs/gradual-adoption.md): start with Result, use ResultTask for new async work, bridge existing eager APIs explicitly, and add Clock, retry, and fibers when needed.
 - [Core package README](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): model, ResultTask, services, scopes, decision guide.
 - [Full guide](https://raw.githubusercontent.com/inaiat/resultar/main/DOCUMENTATION.md): complete API map and recipes.
@@ -34,30 +34,32 @@ tracks unresolved requirements in `R`. These models coexist: adopting tasks does
 rewriting existing Result helpers, eager adapters, or the whole application. Preserve existing
 execution contracts when bridging between them.
 
-`ResultAsync` and `StrictResultAsync` are the official in-flight `Result` types (returned by
-`task.runResult()`) and are exported from `resultar`,
-together with their eager factories and compatibility helpers.
-No additional package installation is needed. Task is non-thenable: use explicit
-`runResult`, `runExit`, `runPromise`, or `runFork` boundaries even when `R = never`.
-Task `map` is synchronous; compose Promise steps with `andThen` and `tryPromise`.
-`ResultTask.fromResultAsync(factory)` defers an eager adapter until each run;
-`ResultAsync.fromTask(task)` is a deprecated alias of `task.runResult()`.
-Core `Result.gen` and `Result.fn` accept sync and async generators with plain return
-values; legacy `safeTry` preserves the final Result. Existing Async imports
-remain supported in `resultar` when migrating eager consumers.
+`task.runResult()` (and `ResultTask.runResult(task)`) executes a lazy `ResultTask` and returns a
+native `Promise<Result<T, E | ScopeError<R>>>`. `@deprecated` eager `ResultAsync` and `StrictResultAsync`
+live in the `"resultar/async"` compatibility subpath (with `ResultAsync.gen` / `ResultAsync.fn`,
+`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`, `safeTry`,
+`DisposableResultAsync`, standalone `asyncMap` / `asyncAndThen`, and v4 eager compatibility helpers).
+Root `"resultar"` exports only `Result`, `ResultTask`, and shared primitives with zero `ResultAsync` imports.
+Task is non-thenable: use explicit `runResult`, `runExit`, `runPromise`, or `runFork` boundaries
+even when `R = never`. Task `map` is synchronous; compose Promise steps with `andThen` and
+`tryPromise`. `ResultTask.fromResultAsync(factory)` structurally accepts any `PromiseLike<Result<T, E>>`
+(including native `Promise<Result<T, E>>` or `ResultAsync` from `"resultar/async"`).
+Core `Result.gen` and `Result.fn` are synchronous-only with plain return values.
 
 ## Packages
 
 - [Public API inventory](https://raw.githubusercontent.com/inaiat/resultar/main/docs/api-inventory.md): generated from built declarations, including types and public members.
 - [Executable recipes](https://raw.githubusercontent.com/inaiat/resultar/main/docs/recipes.md): compiled and behavior-tested contracts.
 
-- [resultar](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): core `Result`, lazy `ResultTask`, in-flight `ResultAsync`, eager factories, generators, and deprecated orchestration APIs.
+- [resultar](https://raw.githubusercontent.com/inaiat/resultar/main/packages/resultar/README.md): core `Result`, lazy `ResultTask`, `Deferred`, `Queue`, `Ref`, `TaskLocal`, `Tracer`, subpath exports, and opt-in `resultar/async` compatibility.
+- [resultar-app](https://raw.githubusercontent.com/inaiat/resultar/main/packages/app/README.md): unified entry point re-exporting `resultar`, `resultar-di`, and `resultar-config`.
+- [resultar-config](https://raw.githubusercontent.com/inaiat/resultar/main/packages/config/README.md): lazy, typed Node environment configuration with TypeBox schemas, redaction, and DI startup ordering.
 - [resultar-di](https://raw.githubusercontent.com/inaiat/resultar/main/packages/di/README.md): services, typed composition, lifetimes, overrides, named registration and framework adapter APIs.
 - [resultar-hono](https://raw.githubusercontent.com/inaiat/resultar/main/packages/hono/README.md): Hono bindings, one scope per response, CloseError.
 - [resultar-fastify](https://raw.githubusercontent.com/inaiat/resultar/main/packages/fastify/README.md): native plugins, application/request services, cancellation and cleanup.
 - [resultar-nestjs](https://raw.githubusercontent.com/inaiat/resultar/main/packages/nestjs/README.md): native NestJS modules, `@Services()` decorator, application/request services, cancellation and cleanup.
-- [resultar-request](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request/README.md) with [TypeBox](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request-typebox/README.md) and [Zod](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request-zod/README.md) adapters.
-- [resultar-check](https://raw.githubusercontent.com/inaiat/resultar/main/packages/check/README.md): native diagnostics, including the no-discard rule.
+- [resultar-request](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request/README.md) with [resultar-request-typebox](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request-typebox/README.md) (TypeBox) and [resultar-request-zod](https://raw.githubusercontent.com/inaiat/resultar/main/packages/request-zod/README.md) (Zod) adapters (all returning `ResultTask`).
+- [resultar-check](https://raw.githubusercontent.com/inaiat/resultar/main/packages/check/README.md): 43 native TypeScript-Go diagnostics, `--fix`, `migrate-v5`, LSP server, and Zed/VS Code/Cursor setup.
 
 ## Examples
 
@@ -73,13 +75,6 @@ remain supported in `resultar` when migrating eager consumers.
 - [RFC 0002](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0002-di-lifetimes-scopes.md): DI lifetimes and request scopes (implemented).
 - [RFC 0003](https://raw.githubusercontent.com/inaiat/resultar/main/docs/rfcs/rfc-0003-phase-3-remainder-and-validation.md): remaining work tracker.
 
-## Freshness rule
-
-Package READMEs override `DOCUMENTATION.md`; both override the
-skill; RFCs are design history. The installed `node_modules` types always win over any document.
-
-- [v4 migration](https://raw.githubusercontent.com/inaiat/resultar/main/docs/migrations/v4.md): Task-first workflows, deprecated eager Async compatibility, Match contexts, structured concurrency and policy clocks.
-
 ## Promise defect boundaries
 
 `ResultTask.fromPromise(signal => operation(signal))` defers a raw Promise factory
@@ -93,3 +88,11 @@ Cancellation waits for settlement. Register resource ownership directly with
 `acquireRelease` before composing transformations so late acquisitions are released.
 The checker recognizes async factories as explicit defect boundaries for
 `no-unsafe-await`; `catchCause` remains meaningful even when `E = never`.
+
+## Freshness rule
+
+Package READMEs override `DOCUMENTATION.md`; both override the
+skill; RFCs are design history. The installed `node_modules` types always win over any document.
+
+- [v5 migration](https://raw.githubusercontent.com/inaiat/resultar/main/docs/migrations/v5.md): unified `Result` + `ResultTask` async model, native `Promise<Result>` from `runResult()`, opt-in `resultar/async` subpath, Task-native `resultar-request*`, and `resultar-check migrate-v5`.
+- [v4 migration](https://raw.githubusercontent.com/inaiat/resultar/main/docs/migrations/v4.md): historical v4 Task-first transition notes.

@@ -3,23 +3,20 @@
 Review the consumer's actual contracts and checker configuration. Optional rule
 preferences are not universal runtime requirements.
 
-- Is the chosen primitive correct? New async workflow: Task. Existing eager API:
-  preserve ResultAsync. Does a bridge create work inside its factory on each run?
+- Is the chosen primitive correct? Sync: `Result`. Async workflow: `ResultTask` (`task.runResult()` returns native `Promise<Result<T, E>>`). Legacy eager boundary: opt-in `"resultar/async"` (`ResultAsync`). Does a `fromResultAsync` bridge create work inside its factory on each run?
 - Does a Promise signature belong to a driver/SDK input or an explicit native
-  execution boundary? New application methods return Tasks without `async`; eager
-  Result boundaries return `ResultAsync` / `StrictResultAsync` without `async`
-  (never `Promise<ResultTask<...>>` or `Promise<Result<...>>`). Use `requestJsonTask` /
-  `requestJsonZodTask` / `requestJsonTypeBoxTask` for lazy HTTP calls, `tryPromise`
-  directly for raw Promise drivers, and `fromResultAsync` only for existing typed Async operations. Are negative checker fixtures labeled?
+  execution boundary (`task.runResult()`, `runExit()`, `runPromise()`)? Application methods return `ResultTask` without `async`
+  (never `Promise<ResultTask<...>>`, and never `await task` directly). Use `requestJson` /
+  `requestJsonZod` / `requestJsonTypeBox` directly for lazy HTTP calls, `tryPromise`
+  directly for raw Promise drivers, and `fromResultAsync` only for legacy typed Async operations. Are negative checker fixtures labeled?
 - Do calls exist in installed declarations with the correct static/instance form?
   Avoid copying similarly named APIs from other libraries.
 - Are expected failures concrete and tagged where appropriate? Are causes retained,
   sensitive fields redacted, and generated constructors left intact?
-- Are modern generator successes plain values, with `yield*` steps and explicit
-  `return yield*` on failing branches? Sync Results may be yielded inside Tasks.
-  Does legacy `safeTry` still return a final Result?
+- Are generator successes plain values, with `yield*` steps and explicit
+  `return yield*` on failing branches? `Result.gen` / `Result.fn` are sync-only; sync Results may be yielded inside `ResultTask.gen`. Legacy eager async generators use `ResultAsync.gen` / `ResultAsync.fn` from `"resultar/async"`.
 - Are child Tasks composed instead of run inside generators? Are Task `map`
-  callbacks synchronous? Do effectful taps and best-effort inspectors retain semantics?
+  callbacks synchronous? Is `inspect` / `inspectError` used for best-effort observation and Task `tap` / `tapError` for composable fallible effects?
 - Does the boundary distinguish typed failures from defects/interruption/composites?
   Use `runExit` when all causes must be handled as values.
 - Are services supplied by providers or runner options, without asserting away `R`?

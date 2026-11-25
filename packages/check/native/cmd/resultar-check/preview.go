@@ -18,9 +18,14 @@ func matchesFile(path, filter, directory string) bool {
 		return true
 	}
 	if !filepath.IsAbs(filter) {
-		filter = filepath.Join(directory, filter)
+		projectFile := filepath.Join(directory, filter)
+		if _, err := os.Stat(projectFile); err == nil {
+			filter = projectFile
+		} else if absolute, err := filepath.Abs(filter); err == nil {
+			filter = absolute
+		}
 	}
-	return filepath.Clean(path) == filepath.Clean(filter)
+	return sameFilePath(path, filter)
 }
 func printOverview(ctx context.Context, opened *project.Opened, options config.Options, filter string, format output.Format) int {
 	overview, err := analyzer.BuildOverview(ctx, opened.Program, opened.Directory, options)
@@ -81,7 +86,7 @@ func printQuickfixes(opened *project.Opened, findings []analyzer.Finding, filter
 				fmt.Fprintln(os.Stdout, fix.Description)
 			}
 			for _, file := range opened.Program.SourceFiles() {
-				if filepath.Clean(string(file.FileName())) != filepath.Clean(finding.File) {
+				if !sameFilePath(string(file.FileName()), finding.File) {
 					continue
 				}
 				for _, edit := range fix.Edits {

@@ -1,6 +1,7 @@
 // Checker fixture: the first two repository examples intentionally FAIL validation.
 // They test an optional eager-compatibility policy, not recommended application APIs.
-import { okAsync, ResultTask, type StrictResultAsync } from "resultar";
+import { ResultTask } from "resultar";
+import { okAsync, type StrictResultAsync } from "resultar/async";
 
 type User = { readonly id: string };
 

@@ -1,6 +1,6 @@
 import { ResultTask } from "resultar";
 import { expect, test } from "vite-plus/test";
-import { Service, createModule, resource } from "../src/index.js";
+import { Service, createModule, resource, service } from "../src/index.js";
 
 test("constructs synchronous services lazily after ordered dependency resolution", async () => {
   const events: string[] = [];
@@ -30,7 +30,7 @@ test("constructs synchronous services lazily after ordered dependency resolution
     .singleton(First)
     .scoped(Second)
     .scoped(Total)
-    .use(["total"], ({ total }) => ResultTask.succeed(total));
+    .use(["total"], ({ total }) => ResultTask.ok(total));
   expect(events).toEqual([]);
   expect(Total.make).toBeInstanceOf(ResultTask);
   expect(await ResultTask.runPromise(task)).toEqual({ value: 3 });
@@ -80,7 +80,7 @@ test("missing dependencies prevent a synchronous factory from running", async ()
   });
   const task = createModule()
     .scoped(Dependent)
-    .use(["dependent"], ({ dependent }) => ResultTask.succeed(dependent));
+    .use(["dependent"], ({ dependent }) => ResultTask.ok(dependent));
   expect(await ResultTask.runExit(task, { services: {} as never })).toMatchObject({
     _tag: "Failure",
     cause: { _tag: "Die", defect: { message: "Missing ResultTask service: missing" } },
@@ -114,7 +114,7 @@ test.each(["defect", "interrupt"] as const)(
     const task = createModule()
       .scoped(Connection)
       .scoped(Broken)
-      .use(["broken"], ({ broken }) => ResultTask.succeed(broken));
+      .use(["broken"], ({ broken }) => ResultTask.ok(broken));
     expect(events).toEqual([]);
     const exit = await ResultTask.runExit(task, { signal: controller.signal });
     expect(exit).toMatchObject({
@@ -145,10 +145,54 @@ test("accepts synchronous null, undefined, functions and non-callable then prope
     .scoped(Empty)
     .scoped(Callable)
     .scoped(Data)
-    .use(["nil", "empty", "callable", "data"], (values) => ResultTask.succeed(values));
+    .use(["nil", "empty", "callable", "data"], (values) => ResultTask.ok(values));
   const values = await ResultTask.runPromise(task);
   expect(values.nil).toBeNull();
   expect(values.empty).toBeUndefined();
   expect(values.callable()).toBe(42);
   expect(values.data.then).toBe("later");
+});
+
+test("service() accepts non-callable then properties and rejects function thenables in JIT and Tier 2", async () => {
+  // eslint-disable-next-line unicorn/no-thenable -- Non-callable then property is plain data.
+  const Data = service("data", {}, () => ({ then: "later" }));
+  const CallableThenable = service(
+    "callableThenable",
+    {},
+    () =>
+      // eslint-disable-next-line unicorn/no-thenable -- Testing runtime rejection of callable thenables.
+      Object.assign(() => 1, { then: () => undefined }) as unknown as () => number,
+  );
+
+  // Tier 2 (module.use via service.make)
+  const mod = createModule().scoped(Data).scoped(CallableThenable);
+  const okValues = await ResultTask.runPromise(
+    mod.use(["data"], ({ data }) => ResultTask.ok(data)),
+  );
+  expect(okValues.then).toBe("later");
+  await expect(
+    ResultTask.runPromise(
+      mod.use(["callableThenable"], ({ callableThenable }) => ResultTask.ok(callableThenable)),
+    ),
+  ).rejects.toThrow("Use service(name, task) for asynchronous initialization");
+
+  // JIT fast path (scope.fetch via assertTokenSync)
+  const scope = mod.scope();
+  const dataRes = await scope.fetch(
+    ["data"],
+    ({ data }) => new Response(data.then),
+  )(new Request("https://example.test/data"));
+  expect(await dataRes.text()).toBe("later");
+  await expect(
+    scope.fetch(
+      ["callableThenable"],
+      () => new Response("ok"),
+    )(new Request("https://example.test/thenable")),
+  ).rejects.toMatchObject({
+    cause: {
+      _tag: "Die",
+      defect: { message: "Use service(name, task) for asynchronous initialization" },
+    },
+  });
+  await ResultTask.runPromise(scope.close());
 });

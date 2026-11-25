@@ -5,17 +5,15 @@ import {
   err,
   Match,
   ok,
-  okAsync,
   pipe,
   Result,
-  ResultAsync,
   ResultTask,
   runSync,
-  safeTry,
   tryResult,
   type ResultTaskScope,
   type StrictResult,
 } from "resultar";
+import { okAsync, ResultAsync } from "resultar/async";
 import { createModule } from "resultar-di";
 
 interface User {
@@ -148,7 +146,7 @@ export const preferFirstSuccessOfExample = (): Result<User, SaveUserError> =>
 // resultar/prefer-result-for-each: avoid allocating an intermediate array of
 // Results before combining it.
 export const preferResultForEachExample = () =>
-  Result.combine(["first", "second"].map((id) => saveUser(id)));
+  Result.all(["first", "second"].map((id) => saveUser(id)));
 
 type ProviderReason = { readonly _tag: "Unavailable" };
 type ProviderFailure = { readonly _tag: "ProviderFailure"; readonly reason: ProviderReason };
@@ -238,35 +236,35 @@ export const nonIgnoredSourceNameExample = async (): Promise<void> => {
   await app.after();
 };
 
-// resultar/no-try-catch-in-safe-try: safeTry generators should compose Resultar
-// values. Use tryResult/tryResultAsync boundaries for throwing APIs.
+// resultar/no-try-catch-in-safe-try: Result.gen generators should compose Resultar
+// values. Use tryResult boundaries for throwing APIs.
 export const noTryCatchInSafeTryExample = (): Result<User, SaveUserError> =>
-  safeTry(function* () {
+  Result.gen(function* () {
     try {
       const user = yield* saveUser("safe-try");
 
-      return ok(user);
+      return user;
     } catch {
-      return SaveUserError.err({ id: "safe-try" });
+      return yield* SaveUserError.err({ id: "safe-try" });
     }
   });
 
-// resultar/no-await-in-safe-try: inside safeTry, compose Resultar values with
+// resultar/no-await-in-safe-try: inside ResultAsync.gen, compose Resultar values with
 // yield*. Awaiting a ResultAsync unwraps the channel into ordinary control flow.
 export const noAwaitInSafeTryExample = (): ResultAsync<User, SaveUserError> =>
-  safeTry(async function* () {
+  ResultAsync.gen(async function* () {
     const result = await saveUserAsync("await-in-safe-try");
 
-    return result;
+    return yield* result;
   });
 
 // resultar/yield-star-in-safe-try: yield* is what unwraps Resultar values inside
-// safeTry. A plain yield does not compose the Result channel correctly.
+// Result.gen. A plain yield does not compose the Result channel correctly.
 export const yieldStarInSafeTryExample = (): Result<User, SaveUserError> =>
-  safeTry(function* () {
+  Result.gen(function* () {
     yield err<never, SaveUserError>(new SaveUserError({ id: "yield-star" }));
 
-    return ok({ email: "unreachable@example.com", id: "unreachable" });
+    return { email: "unreachable@example.com", id: "unreachable" };
   });
 
 // resultar/unsafe-result-type-assertion: narrowing the error side with `as`
@@ -551,8 +549,8 @@ export const unnecessaryPipeExample = (): Result<User, SaveUserError> =>
 export const noRunInsideGenExample = () =>
   ResultTask.gen(function* () {
     const user = runSync(saveUser("run-inside-gen"));
-    const bridged = ResultAsync.fromTask(loadUserTask("bridge-inside-gen"));
-    return user.id + (yield* ResultTask.fromResultAsync(bridged)).id;
+    const running = ResultTask.runResult(loadUserTask("bridge-inside-gen"));
+    return user.id + (yield* ResultTask.fromResultAsync(running)).id;
   });
 
 // resultar/no-discard: MatchMatcher builders must be finalized with exhaustive/orElse/option/result.
@@ -646,12 +644,18 @@ export const curriedNoUselessRecoveryExample = () =>
     ResultTask.orElse(() => ResultTask.ok("unreachable")),
   );
 
-// resultar/no-promise-resultar: Promise<ResultTask<...>> and union Promise<Result<...> | undefined>
-// contracts must return ResultTask or ResultAsync directly without an async wrapper.
+// resultar/no-promise-resultar: Promise<ResultTask<...>> and union Promise<ResultTask<...> | undefined>
+// contracts must return ResultTask directly without an async wrapper.
 export interface PromiseTaskContract {
   readonly load: (id: string) => Promise<ResultTask<User, FetchUserError>>;
 }
 
 export const inferredPromiseTaskExample = async () => loadUserTask("promise-task");
 
-export type MixedPromiseResultContract = Promise<StrictResult<User, SaveUserError> | undefined>;
+export type MixedPromiseTaskContract = Promise<ResultTask<User, FetchUserError> | undefined>;
+
+// resultar/no-await-result-task: ResultTask is lazy and not a Promise; execute with .runResult() or .runPromise().
+export const awaitResultTaskExample = async (): Promise<void> => {
+  const res = await loadUserTask("await-task");
+  void res;
+};

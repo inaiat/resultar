@@ -101,6 +101,9 @@ func (a *Analyzer) analyzeFile(file *ast.SourceFile) []Finding {
 	if a.options.NoAwaitInSafeTry != config.SeverityOff {
 		findings = append(findings, a.noAwaitInSafeTry(file)...)
 	}
+	if a.options.NoAwaitResultTask != config.SeverityOff {
+		findings = append(findings, a.noAwaitResultTask(file)...)
+	}
 	if a.options.NoTryCatchInSafeTry != config.SeverityOff {
 		findings = append(findings, a.noTryCatchInSafeTry(file)...)
 	}

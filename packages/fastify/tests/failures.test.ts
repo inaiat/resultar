@@ -4,7 +4,7 @@ import { Writable, PassThrough } from "node:stream";
 import { request as httpRequest } from "node:http";
 import { getEventListeners } from "node:events";
 import { expect, test, vi } from "vite-plus/test";
-import { ResultTask, tryResultAsync } from "resultar";
+import { ResultTask } from "resultar";
 import { createModule, resource, service } from "resultar-di";
 import { createFastifyPlugin } from "../src/index.js";
 
@@ -55,7 +55,7 @@ test("a native registration failure waits for rollback and retains its identity"
   const release = Promise.withResolvers<void>();
   let releases = 0;
   const Shared = resource("shared", {
-    acquire: ResultTask.succeed(1),
+    acquire: ResultTask.ok(1),
     release: () =>
       ResultTask.tryPromise({
         try: async () => {
@@ -78,17 +78,17 @@ test("a native registration failure waits for rollback and retains its identity"
     }),
   );
   let settled = false;
-  const ready = tryResultAsync(async () => {
-    await app.ready();
-  }).match(
-    () => {
-      settled = true;
+  const ready = ResultTask.tryPromise({
+    try: async () => {
+      await app.ready();
     },
-    (error) => {
+    catch: (error) => error,
+  })
+    .runResult()
+    .then((result) => {
       settled = true;
-      return error;
-    },
-  );
+      return result.isErr() ? result.error : undefined;
+    });
   await releasing.promise;
   expect(settled).toBe(false);
   expect(releases).toBe(0);
@@ -109,8 +109,8 @@ test("request release failures are logged once after the native reply is sent", 
     },
   });
   const Local = resource("local", {
-    acquire: ResultTask.succeed(1),
-    release: () => ResultTask.fail("cleanup"),
+    acquire: ResultTask.ok(1),
+    release: () => ResultTask.err("cleanup"),
   });
   const app = Fastify({ logger: { stream } });
   await app.register(
@@ -127,13 +127,13 @@ test("request release failures are logged once after the native reply is sent", 
 test("root cleanup failure rejects close and preserves startup failure alongside rollback failure", async () => {
   let releases = 0;
   const Shared = resource("shared", {
-    acquire: ResultTask.succeed(1),
+    acquire: ResultTask.ok(1),
     release: () =>
       ResultTask.sync(() => {
         releases += 1;
-      }).flatMap(() => ResultTask.fail("release failed")),
+      }).andThen(() => ResultTask.err("release failed")),
   });
-  const Failing = service("failing", ResultTask.fail("startup failed"));
+  const Failing = service("failing", ResultTask.err("startup failed"));
   const app = Fastify();
   await app.register(
     createFastifyPlugin({
@@ -249,7 +249,7 @@ test("a client abort during acquisition waits for and releases the acquired reso
 test("stream transport errors release resources without relying on onResponse", async () => {
   let released = 0;
   const Local = resource("local", {
-    acquire: ResultTask.succeed(1),
+    acquire: ResultTask.ok(1),
     release: () =>
       ResultTask.sync(() => {
         released += 1;
@@ -308,4 +308,113 @@ test("transients are materialized per binding and values are not automatically o
   expect((await app.inject("/")).json()).toEqual({ id: 2 });
   await app.close();
   expect(disposed).toBe(0);
+});
+
+test.each(["reject-null", "throw-undefined", "mapped-null", "abort-null", "disconnect"] as const)(
+  "keeps the request handler out of a failed service hook (%s)",
+  async (mode) => {
+    // eslint-disable-next-line unicorn/no-null -- Fastify treats null as hook success.
+    const nullReason = null;
+    const app = Fastify();
+    const route = vi.fn(() => "unexpected");
+    if (mode === "abort-null") {
+      app.addHook("onRequest", async (request) => {
+        Object.defineProperty(request, "signal", { value: AbortSignal.abort(nullReason) });
+      });
+    }
+    await app.register(
+      createFastifyPlugin({
+        services: createModule().value("note", "hello"),
+        bindings: ["note"],
+        ...(mode === "abort-null"
+          ? {}
+          : {
+              locals: (request) => {
+                if (mode === "disconnect") {
+                  request.raw.destroy();
+                  return Promise.resolve({});
+                }
+                // eslint-disable-next-line no-throw-literal, typescript/only-throw-error -- JavaScript hooks can throw undefined.
+                if (mode === "throw-undefined") throw undefined;
+                return mode === "mapped-null"
+                  ? Promise.reject(new Error("locals"))
+                  : vi.fn<() => Promise<object>>().mockRejectedValue(nullReason)();
+              },
+            }),
+        ...(mode === "mapped-null" ? { mapError: () => nullReason } : {}),
+      }),
+    );
+    app.get("/", route);
+    try {
+      const reply = await app.inject("/");
+      expect(reply.statusCode).toBe(500);
+      expect(route).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test.each([false, 0, "", Number.NaN])(
+  "stops subsequent preHandlers on a mapped %s error",
+  async (reason) => {
+    const app = Fastify();
+    const nextHook = vi.fn(() => Promise.resolve());
+    const route = vi.fn(() => "unexpected");
+    const onError = vi.fn<(error: unknown) => void>();
+    await app.register(
+      createFastifyPlugin({
+        services: createModule().value("note", "hello"),
+        bindings: ["note"],
+        locals: () => Promise.reject(new Error("locals")),
+        mapError: () => reason,
+      }),
+    );
+    app.setErrorHandler((error, _request, reply) => {
+      onError(error);
+      return reply.code(500).send();
+    });
+    app.get("/", { preHandler: nextHook }, route);
+    try {
+      expect((await app.inject("/")).statusCode).toBe(500);
+      expect(nextHook).not.toHaveBeenCalled();
+      expect(route).not.toHaveBeenCalled();
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ cause: reason }));
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test("does not invoke locals on already-aborted requests in Tier 2 hooks", async () => {
+  const locals = vi.fn(() => ({ tenant: "acme" }));
+  const route = vi.fn(() => "unexpected");
+  const Local = resource("local", {
+    acquire: ResultTask.ok(1),
+    release: () =>
+      ResultTask.sync(() => {
+        /* Released. */
+      }),
+  });
+  const app = Fastify();
+  app.addHook("onRequest", async (request) => {
+    Object.defineProperty(request, "signal", { value: AbortSignal.abort(new Error("gone")) });
+  });
+  await app.register(
+    createFastifyPlugin({
+      services: createModule().scoped(Local),
+      bindings: ["local"],
+      locals: () => locals(),
+      exposeRequest: () => ({ ok: true }),
+    }),
+  );
+  app.get("/", route);
+  try {
+    const reply = await app.inject("/");
+    expect(reply.statusCode).toBe(500);
+    expect(locals).not.toHaveBeenCalled();
+    expect(route).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
 });

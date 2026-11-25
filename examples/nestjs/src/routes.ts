@@ -11,15 +11,13 @@ type StatusResponse = {
 @Controller("users")
 export class UsersController {
   @Get(":id")
-  // NestJS awaits the controller method after the Resultar channel has been matched.
-  // resultar-check-disable-next-line prefer-result-async
   async findById(
     @Param("id") id: string,
     @Services() services: RequestServices,
     @Req() request: NestRequest,
     @Res({ passthrough: true }) res: StatusResponse,
   ) {
-    const result = await services.users.findById(id);
+    const result = await services.users.findById(id).runResult({ signal: request.signal });
     return result.matchTags(
       (user) => {
         res.status(200);
@@ -43,13 +41,11 @@ export class UsersController {
 @Controller("health")
 export class HealthController {
   @Get()
-  // NestJS awaits the controller method after the Resultar channel has been matched.
-  // resultar-check-disable-next-line prefer-result-async
   async check(
     @Services() services: RequestServices,
     @Res({ passthrough: true }) res: StatusResponse,
   ) {
-    const result = await services.health.check();
+    const result = await services.health.check().runResult();
     return result.match(
       (health) => {
         res.status(200);

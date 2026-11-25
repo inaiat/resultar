@@ -107,7 +107,11 @@ export type External = Foreign.Promise<Result<number, Error>>`, nil},
 			if err != nil || len(diagnostics) != 0 {
 				t.Fatalf("open: %v, compiler diagnostics: %v", err, diagnostics)
 			}
+			if config.Defaults().PreferResultAsync != config.SeverityOff {
+				t.Fatalf("expected PreferResultAsync to default to off in v5, got %q", config.Defaults().PreferResultAsync)
+			}
 			options := config.Defaults()
+			options.PreferResultAsync = config.SeverityWarning
 			options.NoDiscard = config.SeverityOff
 			options.NoUnknownResultError = config.SeverityOff
 			options.NoPromiseResultar = config.SeverityOff
@@ -201,7 +205,11 @@ export type Callback = () => Promise<void> // resultar-check-disable-line prefer
 			if err != nil || len(diagnostics) != 0 {
 				t.Fatalf("open: %v, compiler diagnostics: %v", err, diagnostics)
 			}
+			if config.Defaults().PreferResultAsync != config.SeverityOff {
+				t.Fatalf("expected PreferResultAsync to default to off in v5, got %q", config.Defaults().PreferResultAsync)
+			}
 			options := config.Defaults()
+			options.PreferResultAsync = config.SeverityWarning
 			options.NoDiscard = config.SeverityOff
 			options.NoUnknownResultError = config.SeverityOff
 			options.NoPromiseResultar = config.SeverityOff
@@ -1349,15 +1357,12 @@ export interface UsersRepository {
 }`, []expected{
 			{"Promise<ResultTask<string, TypeError, ClockService>>", "ResultTask<string, TypeError, ClockService>"},
 		}},
-		{"explicit Result and StrictResult contracts", `import type {Result, StrictResult} from "resultar"
+		{"explicit Result and StrictResult execution boundaries are accepted", `import type {Result, StrictResult} from "resultar"
 export interface UsersService {
   readonly read: () => Promise<Result<number, string>>
   readonly find: () => Promise<StrictResult<string, Error>>
-}`, []expected{
-			{"Promise<Result<number, string>>", "ResultAsync<number, string>"},
-			{"Promise<StrictResult<string, Error>>", "StrictResultAsync<string, Error>"},
-		}},
-		{"inferred async wrappers over ok and okAsync", `import {ok, okAsync, ResultTask} from "resultar"
+}`, nil},
+		{"inferred async wrappers over ResultTask are flagged while Promise<Result> boundaries are accepted", `import {ok, okAsync, ResultTask} from "resultar"
 export const syncWrapped = async () => ok(42)
 export const asyncWrapped = async () => okAsync("ready")
 export class Service {
@@ -1366,8 +1371,6 @@ export class Service {
 export const literal = {
   async fetchTask() { return ResultTask.ok(1) },
 }`, []expected{
-			{"syncWrapped", "ResultAsync<number, never>"},
-			{"asyncWrapped", "ResultAsync<string, never>"},
 			{"loadTask", "ResultTask<boolean>"},
 			{"fetchTask", "ResultTask<number>"},
 		}},
@@ -1382,10 +1385,7 @@ export type PartialTask = Promise<ExternalTask<number>>
 export type UnionResult = Promise<Outcome<number, Error> | undefined>
 export type UnionTask = Promise<ResultTask<string, Error> | undefined>
 export type MaybePromiseTask = Promise<ResultTask<number, Error>> | undefined`, []expected{
-			{"Pending<Outcome<number, string>>", "ResultAsync<number, string>"},
-			{"Promise<DomainResult<string, TypeError>>", "StrictResultAsync<string, TypeError>"},
 			{"Promise<ExternalTask<number>>", "ResultTask<number, Error, DbService>"},
-			{"Promise<Outcome<number, Error> | undefined>", "ResultAsync<number | undefined, Error>"},
 			{"Promise<ResultTask<string, Error> | undefined>", "ResultTask<string | undefined, Error>"},
 			{"Promise<ResultTask<number, Error>>", "ResultTask<number, Error>"},
 		}},
@@ -1405,11 +1405,7 @@ export async function wrapChained<A extends Result<number, Error>, B extends A>(
 }
 export const inferredGenericResult = async <T extends Result<boolean, Error>>(value: T) => value
 export const inferredGenericTask = async <T extends ResultTask<number, Error>>(value: T) => value`, []expected{
-			{"Promise<T>", "ResultAsync<number, Error>"},
-			{"Promise<T>", "StrictResultAsync<string, TypeError>"},
 			{"Promise<T>", "ResultTask<string, TypeError, ClockService>"},
-			{"Promise<B>", "ResultAsync<number, Error>"},
-			{"inferredGenericResult", "ResultAsync<boolean, Error>"},
 			{"inferredGenericTask", "ResultTask<number, Error>"},
 		}},
 		{"heterogeneous Result and ResultTask union contracts preserve all channels", `import {ok, ResultTask, type Result} from "resultar"
@@ -1417,12 +1413,11 @@ export interface ClockService { readonly now: () => number }
 export type MixedContract = Promise<Result<number, Error> | ResultTask<string>>
 export type MixedWithRequirements = Promise<Result<number, Error> | ResultTask<string, TypeError, ClockService>>
 export const mixedInferred = async (useTask: boolean) => (useTask ? ResultTask.ok("ready") : ok(42))`, []expected{
-			{"Promise<Result<number, Error> | ResultTask<string>>", "ResultTask<number | string, Error> (or ResultAsync<number | string, Error> for eager boundaries)"},
+			{"Promise<Result<number, Error> | ResultTask<string>>", "ResultTask<number | string, Error>"},
 			{"Promise<Result<number, Error> | ResultTask<string, TypeError, ClockService>>", "ResultTask<number | string, Error | TypeError, ClockService>"},
-			{"mixedInferred", "ResultTask<number | string, never> (or ResultAsync<number | string, never> for eager boundaries)"},
+			{"mixedInferred", "ResultTask<number | string, never>"},
 		}},
 		{"line suppression", `import {ResultTask, type Result} from "resultar"
-// resultar-check-disable-next-line no-promise-resultar
 export type BoundaryResult = Promise<Result<number, Error>>
 // resultar-check-disable-next-line resultar/no-promise-resultar
 export const boundaryTask = async () => ResultTask.ok(1)`, nil},
@@ -1512,8 +1507,8 @@ export type StrictContract = Promise<StrictResult<string, Error>>
 export type TaskContract = Promise<ResultTask<number, Error>>
 export const inferredSync = async () => ok(1)
 export const inferredTask = async () => ResultTask.ok(2)
-// resultar-check-disable-next-line no-promise-resultar prefer-result-async
-export type SuppressedBoth = Promise<Result<number, Error>>
+// resultar-check-disable-next-line prefer-result-async
+export type SuppressedSync = Promise<Result<number, Error>>
 `
 	directory := writeResultAsyncFixture(t, source)
 	opened, diagnostics, err := project.Open(filepath.Join(directory, "tsconfig.json"))
@@ -1521,17 +1516,18 @@ export type SuppressedBoth = Promise<Result<number, Error>>
 		t.Fatalf("open: %v, compiler diagnostics: %v", err, diagnostics)
 	}
 
-	// Default error severity takes precedence over the legacy warning without duplicate findings.
+	// Default v5 config: PreferResultAsync is off, so only Promise<ResultTask> contracts are flagged.
 	options := config.Defaults()
 	options.NoDiscard = config.SeverityOff
 	options.NoUnknownResultError = config.SeverityOff
 	options.NoUnsafeAwait = config.SeverityOff
+	options.UnusedSuppression = config.SeverityOff
 	findings, err := Run(context.Background(), opened.Program, opened.Directory, options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(findings) != 5 {
-		t.Fatalf("expected 5 deduplicated findings (no unused-suppression or duplicates), got %d: %#v", len(findings), findings)
+	if len(findings) != 2 {
+		t.Fatalf("expected 2 Task contract findings in default v5 mode, got %d: %#v", len(findings), findings)
 	}
 	for _, finding := range findings {
 		if finding.Rule != "no-promise-resultar" || finding.Severity != config.SeverityError {
@@ -1539,7 +1535,8 @@ export type SuppressedBoth = Promise<Result<number, Error>>
 		}
 	}
 
-	// Even with preferResultAsyncMode = "all", Task contracts still emit no-promise-resultar recommending ResultTask.
+	// With preferResultAsync explicitly enabled in "all" mode, Task contracts emit no-promise-resultar
+	// recommending ResultTask, while Promise<Result> contracts emit prefer-result-async.
 	options.PreferResultAsync = config.SeverityError
 	options.PreferResultAsyncMode = "all"
 	options.NoPromiseResultar = config.SeverityError
@@ -1548,7 +1545,7 @@ export type SuppressedBoth = Promise<Result<number, Error>>
 		t.Fatal(err)
 	}
 	if len(findings) != 5 {
-		t.Fatalf("expected 5 deduplicated findings in all mode, got %d: %#v", len(findings), findings)
+		t.Fatalf("expected 5 deduplicated findings in opt-in preferResultAsync all mode, got %d: %#v", len(findings), findings)
 	}
 	taskFindings := 0
 	for _, finding := range findings {

@@ -196,6 +196,10 @@ class NativeFiberHandle<A, E> implements FiberHandle<A, E>, FiberMeta {
     return joinFiber(this, joinOptions)
   }
 
+  public await(): ResultTask<Exit<A, E>> {
+    return awaitFiber(this)
+  }
+
   public interrupt(reason: unknown = 'ResultTask fiber interrupted'): ResultTask<Exit<A, E>> {
     return createTask<Exit<A, E>, never>(() => {
       this.backing.observe()
@@ -369,10 +373,14 @@ class ManagedFiber implements RuntimeFiber, ScopeChild {
   private finalize(exit: Exit<unknown, unknown>): Exit<unknown, unknown> {
     this.fiberSignal.dispose()
     this.settled = true
-    if (this.observed) {
+    const completed = this.completeFn === undefined ? exit : this.completeFn(exit)
+    if (
+      this.observed ||
+      completed._tag === 'Success' ||
+      withoutInterruptions(completed.cause) === undefined
+    ) {
       this.owner?.unregisterChild(this)
     }
-    const completed = this.completeFn === undefined ? exit : this.completeFn(exit)
     this.nativeHandle?.complete(completed)
     this.onSettled?.(completed)
     return completed

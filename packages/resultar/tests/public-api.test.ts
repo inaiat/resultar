@@ -4,20 +4,15 @@ import { describe, expectTypeOf, it } from 'vite-plus/test'
 
 import type {
   DisposableResult,
-  DisposableResultAsync,
   Result,
-  ResultAsync,
-  ResultAsyncAbortSignal,
-  ResultAsyncConcurrency,
-  ResultAsyncRaceHandle,
-  ResultAsyncRetryContext,
-  ResultAsyncRetryOptions,
-  ResultAsyncRetryOrElseOptions,
-  ResultAsyncRetryTask,
   ResultOperations,
+  ResultTask,
+  StrictResultTask,
   TaggedEnumFactory,
 } from '../src/index.js'
+import type { ResultAsync, StrictResultAsync } from '../src/entries/async.js'
 
+import * as resultarAsync from '../src/entries/async.js'
 import * as resultar from '../src/index.js'
 
 describe('public API', () => {
@@ -29,18 +24,19 @@ describe('public API', () => {
     }
   })
 
-  it('exports the intended runtime entrypoint surface', () => {
+  it('exports the intended v5 root runtime entrypoint surface', () => {
     deepEqual(Object.keys(resultar).toSorted(), [
       'AbortError',
       'Cause',
       'Clock',
+      'Deferred',
       'DisposableResult',
-      'DisposableResultAsync',
       'Fiber',
       'Match',
       'MissingServiceError',
+      'Queue',
+      'Ref',
       'Result',
-      'ResultAsync',
       'ResultTask',
       'ResultTaskCauseError',
       'ResultTaskTypeId',
@@ -49,19 +45,15 @@ describe('public API', () => {
       'Scheduler',
       'Semaphore',
       'ServiceTagTypeId',
+      'TaskLocal',
+      'Tracer',
       'VirtualClock',
       'constant',
       'createTaggedError',
-      'default',
       'err',
-      'errAsync',
       'findCause',
       'flow',
-      'fromCallback',
-      'fromPromise',
-      'fromSafePromise',
       'fromThrowable',
-      'fromThrowableAsync',
       'identity',
       'isAbortError',
       'isError',
@@ -71,27 +63,39 @@ describe('public API', () => {
       'matchError',
       'matchErrorPartial',
       'ok',
-      'okAsync',
       'pipe',
       'redact',
       'revealRedacted',
-      'runPromise',
       'runSync',
-      'safeTry',
       'serviceTag',
       'taggedEnum',
-      'try',
-      'tryAsync',
-      'tryCatch',
-      'tryCatchAsync',
       'tryResult',
-      'tryResultAsync',
       'unit',
+    ])
+  })
+
+  it('exports the intended v5 opt-in async subpath surface', () => {
+    deepEqual(Object.keys(resultarAsync).toSorted(), [
+      'DisposableResultAsync',
+      'ResultAsync',
+      'asyncAndThen',
+      'asyncMap',
+      'errAsync',
+      'fromCallback',
+      'fromPromise',
+      'fromSafePromise',
+      'fromThrowableAsync',
+      'okAsync',
+      'runPromise',
+      'safeTry',
+      'tryAsync',
+      'tryCatchAsync',
+      'tryResultAsync',
       'unitAsync',
     ])
   })
 
-  it('keeps Result disposable APIs and omits removed cleanup methods', () => {
+  it('keeps Result disposable APIs and omits removed methods', () => {
     const result = resultar.ok<number, Error>(1)
     const disposable = result.toDisposable(() => undefined)
 
@@ -103,52 +107,67 @@ describe('public API', () => {
     if (false) {
       // @ts-expect-error Result#finally is not part of the current API.
       void result.finally
+      // @ts-expect-error Result#tap was removed in v5 in favor of inspect.
+      void result.tap
+      // @ts-expect-error Result#tapError was removed in v5 in favor of inspectError.
+      void result.tapError
+      // @ts-expect-error Result#asyncMap moved to resultar/async.
+      void result.asyncMap
+      // @ts-expect-error Result#asyncAndThen moved to resultar/async.
+      void result.asyncAndThen
     }
   })
 
-  it('keeps ResultAsync disposable APIs and omits removed deprecated methods', async () => {
-    const result = resultar.okAsync<number, Error>(1)
-    const disposable = result.toAsyncDisposable(() => undefined)
+  it('preserves full v4 ResultAsync compatibility APIs on resultar/async', async () => {
+    const result = resultarAsync.okAsync<number, Error>(1)
+    const strictAsync: StrictResultAsync<number, Error> = result
 
     expectTypeOf(result).toExtend<ResultAsync<number, Error>>()
-    expectTypeOf(disposable).toExtend<DisposableResultAsync<number, Error>>()
-    expectTypeOf(disposable).toExtend<AsyncDisposable>()
-    equal((await disposable)._unsafeUnwrap(), 1)
+    expectTypeOf(strictAsync).toExtend<ResultAsync<number, Error>>()
+    equal((await result)._unsafeUnwrap(), 1)
+
+    const fromTaskResult = await resultarAsync.ResultAsync.fromTask(resultar.ResultTask.ok(42))
+    equal(fromTaskResult._unsafeUnwrap(), 42)
+
+    const tappedValues: number[] = []
+    const tapped = await resultarAsync
+      .okAsync<number, string>(7)
+      .tap((value) => {
+        tappedValues.push(value)
+      })
+      .tapError(() => {
+        tappedValues.push(-1)
+      })
+    equal(tapped._unsafeUnwrap(), 7)
+    deepEqual(tappedValues, [7])
+
+    const legacyMatched = await resultarAsync
+      .errAsync<number, string>('boom')
+      .match({ ok: (n) => `ok:${n}`, error: (e) => `err:${e}` })
+    equal(legacyMatched, 'err:boom')
+
+    equal(typeof resultarAsync.ResultAsync.retry, 'function')
+    equal(typeof resultarAsync.ResultAsync.withResource, 'function')
+    equal(typeof resultarAsync.ResultAsync.fromCallback, 'function')
+    equal(typeof resultarAsync.ResultAsync.forEach, 'function')
+    equal(typeof resultarAsync.ResultAsync.timeout, 'function')
+    equal(typeof resultarAsync.ResultAsync.all, 'function')
+    equal(typeof resultarAsync.ResultAsync.gen, 'function')
+    equal(typeof resultarAsync.ResultAsync.fn, 'function')
+    equal(typeof result.toAsyncDisposable, 'function')
 
     if (false) {
       // @ts-expect-error ResultAsync#finally is not part of the current API.
       void result.finally
       // @ts-expect-error ResultAsync#safeUnwrap is not part of the current API.
       void result.safeUnwrap
-      // @ts-expect-error safeTryAsync is not part of the current API.
-      void resultar.safeTryAsync
     }
   })
 
-  it('exports ResultAsync concurrency option types', () => {
-    const concurrencyValues: readonly ResultAsyncConcurrency[] = [2, 'unbounded']
+  it('exports StrictResultTask type from root', () => {
+    const strictTask: StrictResultTask<number, Error> = resultar.ResultTask.ok(1)
 
-    deepEqual(concurrencyValues, [2, 'unbounded'])
-
-    if (false) {
-      // @ts-expect-error inherited concurrency sentinel is not part of Resultar.
-      const invalid: ResultAsyncConcurrency = 'inherit'
-
-      equal(invalid, undefined)
-    }
-  })
-
-  it('exports ResultAsync retry option types', () => {
-    const task: ResultAsyncRetryTask<number, 'retry-error'> = () => resultar.errAsync('retry-error')
-    const context: ResultAsyncRetryContext = { attempt: 0, nextAttempt: 1, retriesRemaining: 1 }
-    const options: ResultAsyncRetryOptions<'retry-error'> = { jittered: 0.2, times: 1 }
-    const fallbackOptions: ResultAsyncRetryOrElseOptions<'retry-error', 'fallback-error', string> =
-      { orElse: () => resultar.err('fallback-error'), times: 1 }
-
-    equal(typeof task, 'function')
-    deepEqual(context, { attempt: 0, nextAttempt: 1, retriesRemaining: 1 })
-    deepEqual(options, { jittered: 0.2, times: 1 })
-    equal(typeof fallbackOptions.orElse, 'function')
+    expectTypeOf(strictTask).toExtend<ResultTask<number, Error>>()
   })
 
   it('accepts method-shaped implementations for public method-like interfaces', () => {
@@ -158,26 +177,6 @@ describe('public API', () => {
       },
       unwrapOr(defaultValue) {
         return resultar.ok<number, string>(1).unwrapOr(defaultValue)
-      },
-    }
-
-    const methodShapedSignal: ResultAsyncAbortSignal = {
-      aborted: false,
-      addEventListener() {
-        return undefined
-      },
-      removeEventListener() {
-        return undefined
-      },
-    }
-
-    const methodShapedHandle: ResultAsyncRaceHandle<number, string> = {
-      abort() {
-        return undefined
-      },
-      signal: methodShapedSignal,
-      wait() {
-        return resultar.okAsync<number, string>(1)
       },
     }
 
@@ -192,8 +191,6 @@ describe('public API', () => {
     expectTypeOf(methodShapedResult).toExtend<
       Pick<ResultOperations<number, string>, 'map' | 'unwrapOr'>
     >()
-    expectTypeOf(methodShapedSignal).toExtend<ResultAsyncAbortSignal>()
-    expectTypeOf(methodShapedHandle).toExtend<ResultAsyncRaceHandle<number, string>>()
     expectTypeOf(methodShapedEnumMatch).toExtend<Pick<TaggedEnumFactory<ReasonMembers>, '$match'>>()
   })
 
@@ -202,10 +199,6 @@ describe('public API', () => {
       const result = resultar.ok<number, string>(1)
       const map = result.map
       result.map = map
-
-      const signal: ResultAsyncAbortSignal = new AbortController().signal
-      const addEventListener = signal.addEventListener
-      signal.addEventListener = addEventListener
 
       const TestError = resultar.createTaggedError({ message: 'failed', name: 'TestError' })
       const err = TestError.err

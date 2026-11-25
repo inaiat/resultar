@@ -1,4 +1,4 @@
-import { createTaggedError, ResultAsync, runPromise } from "resultar";
+import { createTaggedError, ResultTask } from "resultar";
 import { requestJson as requestJsonTypeBox, t } from "resultar-request-typebox";
 
 import { closeServer, startAccountExampleServer } from "./account-server.js";
@@ -65,13 +65,15 @@ const runTypeBoxExample = (baseUrl: string) =>
   });
 
 const runTypeBoxExampleCli = () =>
-  ResultAsync.withResource({
-    acquire: () => startAccountExampleServer(),
-    release: ({ server }) => closeServer(server),
-    use: ({ baseUrl }) => {
+  ResultTask.scoped(
+    ResultTask.gen(function* () {
+      const { baseUrl } = yield* ResultTask.acquireRelease({
+        acquire: startAccountExampleServer(),
+        release: ({ server }) => closeServer(server),
+      });
       process.stdout.write(`Started local account API at ${baseUrl}\n`);
-      return runTypeBoxExample(baseUrl);
-    },
-  });
+      return yield* runTypeBoxExample(baseUrl);
+    }),
+  );
 
-await runPromise(runTypeBoxExampleCli());
+await runTypeBoxExampleCli().runPromise();

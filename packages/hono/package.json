@@ -1,6 +1,6 @@
 {
   "name": "resultar-hono",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Typed Hono bindings and request resource scopes for Resultar DI.",
   "keywords": [
     "dependency-injection",
@@ -24,6 +24,7 @@
     "README.md"
   ],
   "type": "module",
+  "sideEffects": false,
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
@@ -32,7 +33,7 @@
     }
   },
   "scripts": {
-    "analyze": "fallow",
+    "check:fallow": "fallow",
     "build": "vp pack",
     "check": "vp check",
     "check:full": "pnpm run build && pnpm run check && pnpm run test:cov",

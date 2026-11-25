@@ -1,13 +1,13 @@
-// Lifecycle sessions retain their eager ResultAsync compatibility boundary.
-/* eslint-disable typescript/no-deprecated */
 import {
-  fromSafePromise,
-  ResultAsync,
+  Deferred,
+  err,
+  ok,
   ResultTask,
   ResultTaskCauseError,
+  unit,
   type Cause,
   type Exit,
-  type ResultAsyncCallbackContext,
+  type Result,
 } from "resultar";
 
 // Native lifecycle hooks erase provider error types while preserving every cause at runtime.
@@ -15,54 +15,35 @@ import {
 export type RuntimeTask = ResultTask<void, unknown>;
 
 export interface ServiceSession {
-  readonly ready: ResultAsync<Readonly<Record<string, unknown>>, ResultTaskCauseError>;
-  readonly completion: ResultAsync<Exit<void, unknown>, never>;
-  readonly finish: () => ResultAsync<Exit<void, unknown>, never>;
+  readonly ready: Promise<Result<Readonly<Record<string, unknown>>, ResultTaskCauseError>>;
+  readonly completion: Promise<Exit<void, unknown>>;
+  readonly finish: () => Promise<Exit<void, unknown>>;
 }
-
-const sessionError = (cause: unknown): ResultTaskCauseError =>
-  cause instanceof ResultTaskCauseError
-    ? cause
-    : new ResultTaskCauseError({ _tag: "Die", defect: cause });
 
 /** Bridges native lifecycle events to one live DI callback, without owning a second container. */
 export function startSession(
   use: (hold: (services: Readonly<Record<string, unknown>>) => RuntimeTask) => RuntimeTask,
   signal?: AbortSignal,
 ): ServiceSession {
-  // fromCallback subscribes immediately; neither signal owns a separate execution or scope.
-  // eslint-disable-next-line init-declarations
-  let readiness!: ResultAsyncCallbackContext<Readonly<Record<string, unknown>>>;
-  const ready = ResultAsync.fromCallback({
-    subscribe: (context: typeof readiness) => {
-      readiness = context;
-    },
-    catch: sessionError,
-  }).mapErr(sessionError);
-  // Initialized synchronously by the subscription below.
-  // eslint-disable-next-line init-declarations
-  let finish!: () => void;
-  const finished = ResultAsync.fromCallback<void, ResultTaskCauseError>({
-    subscribe: ({ resolve }) => {
-      finish = () => resolve();
-    },
-    catch: sessionError,
-  }).mapErr(sessionError);
+  const { promise: ready, resolve: resolveReady } =
+    Promise.withResolvers<Result<Readonly<Record<string, unknown>>, ResultTaskCauseError>>();
+  const done = Deferred.make<void>();
+  const finish = (): void => {
+    done.complete(ResultTask.fromResult(unit())).runSync();
+  };
   const task = use((services) =>
-    ResultTask.sync(() => readiness.resolve(services)).andThen(() =>
-      ResultTask.fromResultAsync(() => finished),
-    ),
+    ResultTask.sync(() => {
+      resolveReady(ok(services));
+    }).andThen(() => done.await()),
   );
   signal?.addEventListener("abort", finish, { once: true });
   if (signal?.aborted === true) finish();
   // runExit always fulfills with the complete outcome, including interruption and release failures.
-  const completion = fromSafePromise(
-    ResultTask.runExit(task, { signal }).then((exit) => {
-      signal?.removeEventListener("abort", finish);
-      if (exit._tag === "Failure") readiness.reject(new ResultTaskCauseError(exit.cause));
-      return exit;
-    }),
-  );
+  const completion = ResultTask.runExit(task, { signal }).then((exit) => {
+    signal?.removeEventListener("abort", finish);
+    if (exit._tag === "Failure") resolveReady(err(new ResultTaskCauseError(exit.cause)));
+    return exit;
+  });
   return {
     ready,
     completion,

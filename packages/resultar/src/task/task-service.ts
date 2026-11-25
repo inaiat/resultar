@@ -1,4 +1,4 @@
-import { success } from './exit.js'
+import { died, success } from './exit.js'
 import { NEVER_ABORTED_SIGNAL } from './promise-interruption.js'
 import type { Exit, ResultTask } from './result-task.js'
 import type { TaskScope } from './scope.js'
@@ -7,6 +7,7 @@ import type { TaskClock } from './task-clock.js'
 import { isObjectLike } from './task-helpers.js'
 import { createScheduling, forkScheduling } from './task-scheduler.js'
 import type { TaskScheduling } from './task-scheduler.js'
+import type { SpanStackNode, TaskTracer } from './tracer.js'
 
 /** Type identifier symbol for nominal `ServiceTag` branding. */
 export const ServiceTagTypeId: unique symbol = Symbol.for('resultar/ServiceTag')
@@ -113,6 +114,13 @@ export interface ResultTaskCleanupScheduling {
   schedulerFailure: Exit<unknown, unknown>
 }
 
+/** Per-fiber cell holding lazily allocated `TaskLocal` bindings. */
+export interface TaskLocalsCell {
+  map?: Map<symbol, unknown> | undefined
+}
+
+export const createTaskLocalsCell = (): TaskLocalsCell => ({})
+
 export interface ResultTaskRuntimeContext {
   readonly namedServices: ReadonlyMap<string, unknown>
   readonly services: ResultTaskRuntimeServices
@@ -122,13 +130,19 @@ export interface ResultTaskRuntimeContext {
   readonly clock: TaskClock
   readonly scheduling: TaskScheduling
   readonly cleanup: ResultTaskCleanupScheduling | undefined
+  readonly locals?: TaskLocalsCell | undefined
+  readonly tracer?: TaskTracer | undefined
+  readonly spanStack?: SpanStackNode | undefined
+  readonly acquiring?: boolean | undefined
 }
 
 /** Supplies runtime defaults when an internal executor receives a context without time policies. */
 export const normalizeRuntimeContext = (
   context: ResultTaskRuntimeContext,
 ): ResultTaskRuntimeContext => {
-  if (context.clock !== undefined && context.scheduling !== undefined) return context
+  if (context.clock !== undefined && context.scheduling !== undefined) {
+    return context
+  }
   const clock = context.clock ?? Clock.live
   return {
     namedServices: context.namedServices,
@@ -139,6 +153,9 @@ export const normalizeRuntimeContext = (
     clock,
     scheduling: context.scheduling ?? createScheduling(clock),
     cleanup: context.cleanup,
+    locals: context.locals ?? createTaskLocalsCell(),
+    tracer: context.tracer,
+    spanStack: context.spanStack,
   }
 }
 
@@ -223,7 +240,25 @@ class ServiceTagValue<Identifier extends string, Service> implements ServiceTag<
   }
 }
 
-/** Creates a service tag that can be requested with `yield*` inside `ResultTask.gen`. */
+/**
+ * Creates a nominal service tag that can be requested with `yield*` inside `ResultTask.gen`
+ * and satisfied via `ResultTask.provideService` or `ResultTask.provide`.
+ *
+ * @example
+ * ```ts
+ * import { ResultTask, serviceTag } from 'resultar'
+ *
+ * interface ClockService { readonly now: () => number }
+ * const Clock = serviceTag<ClockService>('Clock')
+ *
+ * const timestamp = ResultTask.gen(function* () {
+ *   const clock = yield* Clock
+ *   return clock.now()
+ * })
+ *
+ * await timestamp.provideService(Clock, { now: () => Date.now() }).runPromise()
+ * ```
+ */
 export const serviceTag = <Service, const Identifier extends string = string>(
   identifier: Identifier,
 ): ServiceTag<Identifier, Service> => new ServiceTagValue<Identifier, Service>(identifier)
@@ -246,14 +281,11 @@ export const isServiceYield = (value: unknown): value is ResultTaskServiceYield<
     (value as { readonly _tag?: unknown })._tag === 'Service' &&
     isServiceTag((value as { readonly tag?: unknown }).tag))
 
-export type ServiceLookup =
+type ServiceLookup =
   | { readonly _tag: 'Found'; readonly value: unknown }
   | { readonly _tag: 'Missing' }
 
-export const lookupService = (
-  tag: AnyServiceTag,
-  context: ResultTaskRuntimeContext,
-): ServiceLookup => {
+const lookupService = (tag: AnyServiceTag, context: ResultTaskRuntimeContext): ServiceLookup => {
   if (context.services.has(tag.key)) {
     return { _tag: 'Found', value: context.services.get(tag.key) }
   }
@@ -266,12 +298,6 @@ export const lookupService = (
   return { _tag: 'Missing' }
 }
 
-export type ServiceResolution =
-  | { readonly _tag: 'Found'; readonly value: unknown }
-  | { readonly _tag: 'Missing' }
-  | { readonly _tag: 'Failure'; readonly exit: Exit<unknown, unknown> }
-  | { readonly _tag: 'Error'; readonly error: unknown }
-
 export const executeTaskSafely = async (
   task: ResultTask<unknown, unknown, unknown>,
   executeTask: ResultTaskNestedExecutor,
@@ -283,40 +309,39 @@ export const executeTaskSafely = async (
   }
 }
 
-export const resolveService = async (
+export const resolveService = (
   tag: AnyServiceTag,
   context: ResultTaskRuntimeContext,
   executeTask: ResultTaskNestedExecutor,
-): Promise<ServiceResolution> => {
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
   const supplied = lookupService(tag, context)
-  if (supplied._tag === 'Found') return supplied
-  if (context.serviceResolver === undefined) return supplied
-
-  let task: ResultTask<unknown, unknown, unknown> | undefined = undefined
+  if (supplied._tag === 'Found') return success(supplied.value)
   try {
-    task = context.serviceResolver(tag)
+    const task = context.serviceResolver?.(tag)
+    if (task === undefined) return died(new MissingServiceError(tag.identifier))
+    const outcome = executeTask(task)
+    return outcome instanceof Promise ? outcome.catch(died<unknown, never>) : outcome
   } catch (error) {
-    return { _tag: 'Error', error }
+    return died(error)
   }
-  if (task === undefined) return supplied
-  const outcome = await executeTaskSafely(task, executeTask)
-  if ('error' in outcome) return { _tag: 'Error', error: outcome.error }
-  if (outcome._tag === 'Failure') return { _tag: 'Failure', exit: outcome }
-  return { _tag: 'Found', value: outcome.value }
 }
 
 export const withServices = (
   context: ResultTaskRuntimeContext,
   services: ReadonlyMap<symbol, unknown>,
 ): ResultTaskRuntimeContext => ({
-  scope: context.scope,
   namedServices: context.namedServices,
   services,
   serviceResolver: context.serviceResolver,
   signal: context.signal,
+  scope: context.scope,
   clock: context.clock,
   scheduling: context.scheduling,
   cleanup: context.cleanup,
+  locals: context.locals,
+  tracer: context.tracer,
+  spanStack: context.spanStack,
+  acquiring: context.acquiring,
 })
 
 export const withScope = (
@@ -332,6 +357,9 @@ export const withScope = (
   clock: context.clock,
   scheduling: context.scheduling,
   cleanup: context.cleanup,
+  locals: context.locals,
+  tracer: context.tracer,
+  spanStack: context.spanStack,
 })
 
 export const withChildScope = (
@@ -347,6 +375,10 @@ export const withChildScope = (
   clock: context.clock,
   scheduling: forkScheduling(context.scheduling),
   cleanup: context.cleanup === undefined ? undefined : { schedulerFailure: success(undefined) },
+  // Stryker disable next-line ConditionalExpression,OptionalChaining: avoids allocating an empty Map when no TaskLocals are bound; new Map(undefined) behaves identically on reads.
+  locals: context.locals?.map === undefined ? {} : { map: new Map(context.locals.map) },
+  tracer: context.tracer,
+  spanStack: context.spanStack,
 })
 
 export const withCleanupScope = (
@@ -361,20 +393,27 @@ export const withCleanupScope = (
   clock: context.clock,
   scheduling: context.scheduling,
   cleanup: { schedulerFailure: success(undefined) },
+  locals: context.locals,
+  tracer: context.tracer,
+  spanStack: context.spanStack,
 })
 
 export const withNamedServices = (
   context: ResultTaskRuntimeContext,
   namedServices: ReadonlyMap<string, unknown>,
 ): ResultTaskRuntimeContext => ({
-  scope: context.scope,
   namedServices,
   services: context.services,
   serviceResolver: context.serviceResolver,
   signal: context.signal,
+  scope: context.scope,
   clock: context.clock,
   scheduling: context.scheduling,
   cleanup: context.cleanup,
+  locals: context.locals,
+  tracer: context.tracer,
+  spanStack: context.spanStack,
+  acquiring: context.acquiring,
 })
 
 export const withServiceResolver = (
@@ -389,6 +428,61 @@ export const withServiceResolver = (
   clock: context.clock,
   scheduling: context.scheduling,
   cleanup: context.cleanup,
+  locals: context.locals,
+  tracer: context.tracer,
+  spanStack: context.spanStack,
+  acquiring: context.acquiring,
+})
+
+export const withLocals = (
+  context: ResultTaskRuntimeContext,
+  locals: TaskLocalsCell,
+): ResultTaskRuntimeContext => ({
+  namedServices: context.namedServices,
+  services: context.services,
+  serviceResolver: context.serviceResolver,
+  signal: context.signal,
+  scope: context.scope,
+  clock: context.clock,
+  scheduling: context.scheduling,
+  cleanup: context.cleanup,
+  locals,
+  tracer: context.tracer,
+  spanStack: context.spanStack,
+  acquiring: context.acquiring,
+})
+
+export const withSpanStack = (
+  context: ResultTaskRuntimeContext,
+  spanStack: SpanStackNode | undefined,
+): ResultTaskRuntimeContext => ({
+  namedServices: context.namedServices,
+  services: context.services,
+  serviceResolver: context.serviceResolver,
+  signal: context.signal,
+  scope: context.scope,
+  clock: context.clock,
+  scheduling: context.scheduling,
+  cleanup: context.cleanup,
+  locals: context.locals,
+  tracer: context.tracer,
+  spanStack,
+  acquiring: context.acquiring,
+})
+
+export const withAcquiring = (context: ResultTaskRuntimeContext): ResultTaskRuntimeContext => ({
+  namedServices: context.namedServices,
+  services: context.services,
+  serviceResolver: context.serviceResolver,
+  signal: context.signal,
+  scope: context.scope,
+  clock: context.clock,
+  scheduling: context.scheduling,
+  cleanup: context.cleanup,
+  locals: context.locals,
+  tracer: context.tracer,
+  spanStack: context.spanStack,
+  acquiring: true,
 })
 
 export const EMPTY_NAMED_SERVICES: ReadonlyMap<string, unknown> = new Map()

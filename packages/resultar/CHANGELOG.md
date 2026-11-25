@@ -1,5 +1,264 @@
 # resultar
 
+## 5.0.0
+
+### Major Changes
+
+- ba1b381: Implement RFC 0012 — v5 unified async model (`Result` + `ResultTask`):
+
+  - **Core `resultar`:**
+    - `task.runResult()` and `ResultTask.runResult(task)` now return a native `Promise<Result<A, E | ScopeError<R>>>` instead of `ResultAsync`, eliminating the global `registerResultAsyncFactory` side-effect registry and making `resultar/task` and `resultar/result` genuinely tree-shakeable with zero transitive `result-async/` JS or `.d.ts` imports.
+    - Root `"resultar"` exports only `Result` (pure sync) + `ResultTask` / `StrictResultTask` (lazy async) + shared primitives (`Match`, tagged errors, concurrency, observability, retry, function helpers). All v4 deprecated aliases (`safeTry`, `tryCatch`, `succeed`/`fail`, `mapError`, `flatMap`, `catchAll`, `toResultAsync`, `TaggedError.errAsync`, `Result#tap`/`tapError`, `Result#asyncMap`/`asyncAndThen`, async `Result.gen`/`Result.fn`, legacy Match/Retry option shapes) are removed from root `"resultar"`.
+    - Opt-in `@deprecated` `"resultar/async"` compatibility subpath retains the full v4 eager `ResultAsync` surface throughout v5.x (`ResultAsync`, `StrictResultAsync`, `DisposableResultAsync`, `okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`, `fromCallback`, `fromThrowableAsync`, `runPromise`, `tryAsync` / `tryCatchAsync`, `safeTry`, `ResultAsync.gen` / `ResultAsync.fn`, standalone `asyncMap` / `asyncAndThen`, and `@deprecated` v4 `ResultAsync` helpers such as `fromTask`, `retry`, `withResource`, `fromCallback`, `all`, `race`, `timeout`, `tap`, `tapError`, and `toAsyncDisposable`) for incremental migration, per `docs/migrations/v5.md`.
+  - **HTTP request adapters (`resultar-request`, `resultar-request-zod`, `resultar-request-typebox`):**
+    - `requestJson`, `requestJsonZod`, and `requestJsonTypeBox` now return `ResultTask` directly; `*Task` duplicates and `ResultAsync` coupling are removed.
+  - **DI & framework adapters (`resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, `resultar-app`, `resultar-config`):**
+    - Removed all `ResultAsync` imports and internal `ResultAsync.fromCallback` usage; imperative lifecycle boundaries (`ready()`, `close()`, session completions) return native `Promise<Result<...>>` / `Promise<Exit<...>>` directly.
+  - **Static analyzer (`resultar-check`):**
+    - Added `no-await-result-task` (default `"error"`, 43 rules total) with safe `.runResult()` autofix only when narrowed, requirement-free, and the surrounding context positively expects a `Result` (preserving inferred `Promise<ResultTask<...>>` returns and removing redundant `await` when the surrounding contract expects a `ResultTask`).
+    - Updated `no-promise-resultar` to flag `Promise<ResultTask>` / `Promise<StrictResultTask>` / mixed Task unions while allowing `Promise<Result>` / `Promise<StrictResult>` execution boundaries.
+    - Changed `prefer-result-async` default from `"warning"` to `"off"`, and scoped `prefer-tap` / `prefer-tap-error` to `tap`/`tapError` on `ResultTask` and `inspect`/`inspectError` on `Result`/`ResultAsync`.
+    - Added the `resultar-check migrate-v5` CLI subcommand (`preview`, `--fix`, `--json`, `--file`) with symbol-resolved rewrites, alias preservation when `requestJson*` would collide with local bindings, safe computed-key and legacy `{ ok, error }` handler preservation in `match`, and the [v5 Migration Guide](docs/migrations/v5.md).
+
+### Minor Changes
+
+- cacb729: Add DX, observability, concurrency, tree-shaking, tooling, and documentation upgrades:
+
+  - **`resultar` (and re-exported via `resultar-app`)**:
+    - Core ergonomics & asymmetries: `ResultTask.suspend`, `task.scoped()`, `task.forkChild()`, `FiberHandle.await()`, `ResultTask.raceAll`, `ResultTask.raceFirstAll`, `ResultTask.runSync` / `runSyncExit`, `task.repeat()` / `ResultTask.repeat()`, `Cause` constructors (`fail`, `die`, `interrupt`, `sequential`, `parallel`, `isInterruptedOnly`, `spans`), enriched `ResultTaskCauseError` formatting (`prettyCause` and custom Node inspect), `VirtualClock.advanceToNext()` and `VirtualClock.runToCompletion()`, and `Retry.policy` `maxDelayMs`, `maxElapsedMs`, and error-aware `delayMs(context, error)`.
+    - Lean concurrency primitives: `Ref`, `Deferred`, and bounded/unbounded `Queue` with FIFO backpressure and lossless shutdown draining.
+    - Opt-in zero-overhead observability: `TaskLocal` (fiber-inherited ambient state), `Tracer` (`Tracer.noop`, `Tracer.memory()`, custom `TaskTracer`), `task.withSpan()` / `ResultTask.withSpan()`, named `ResultTask.fn(spanName, body, ...pipes)`, and automatic failure span traces on `Cause`.
+    - Fine-grained tree-shaking: `"sideEffects": false` across library packages plus dedicated `resultar/result`, `resultar/task`, `resultar/match`, `resultar/tagged`, `resultar/retry`, and `resultar/function` subpath exports.
+  - **`resultar-check`**:
+    - Add `--fix` and `--fix-dry-run` flags to apply only safe `kind: "correction"` edits (never `intentional-discard`) and re-verify diagnostics.
+    - Extend `init` and `doctor` with `--editor zed|vscode|cursor|all` (generating `.vscode/tasks.json` with a `resultar-check` problemMatcher, `.vscode/extensions.json` recommending `inaiat.resultar-check`, and `.cursor/rules/resultar-check.mdc` alongside `.zed/settings.json`).
+  - **Editors, docs portal & agent guides**:
+    - Add the official zero-dependency VS Code & Cursor LSP extension (`editors/vscode/`) exposing live `resultar-check lsp` diagnostics, `T / E / R` channel hover, inline quickfixes, and `--fix`/`overview` commands.
+    - Add the searchable documentation site and interactive browser playground (`website/`, generated directly from CI-verified Markdown with Cmd+K search, 6 live presets, shareable URLs, and span waterfall visualization).
+    - Add `docs/coming-from-effect.md` and `docs/rfcs/rfc-0010-dx-observability-concurrency-and-tooling.md`, eliminate doc drifts across `README.md`, `DOCUMENTATION.md`, `llms.txt`, package READMEs, and `skills/resultar/`, enrich core JSDoc + `@example` blocks, and add automated drift and snippet compilation assertions to `scripts/test-documentation.mjs`.
+
+### Patch Changes
+
+- 8cd6a0c: Resolve all 12 final-review findings across RFC 0010 and RFC 0011:
+
+  - **`resultar`**:
+    - Interrupt and clean up asynchronous steps (detaching waiters and suppressing pending continuations such as `.map()`) when `runSync` / `runSyncExit` encounters an asynchronous boundary.
+    - Preserve explicit `null` abort reasons in `FiberSignal.abort` (only synthesizing default `DOMException('AbortError')` when `reason === undefined`), matching `runExit` in `runSyncExit` across JIT modes.
+    - Isolate `TaskLocal` bindings per item in `ResultTask.all` / `forEach` / `validateAll` while preserving the worker's `scheduling.remaining` yield budget across items.
+    - Preserve the `this` receiver for `try` and `catch` methods in JIT-compiled `ResultTask.try` chains.
+    - Replace the growing array in `Queue.bounded` with a fixed-capacity circular ring buffer (and periodic compaction in `Queue.unbounded`) so long-running non-empty queues stay O(capacity) in memory.
+    - Keep driving `VirtualClock.runToCompletion` automatically when virtual sleeps are scheduled after external Promises during normal execution (success or domain failure) as well as during post-`maxSteps` cleanup (including delayed timers and >10,000 finite sleeps), aborting and draining finalizers before throwing `RangeError`.
+    - Clone failure `Cause` values per observer in `Deferred` while preserving origin span traces via `copyCauseSpans`, preventing cross-consumer span contamination.
+    - Snapshot input iterables eagerly in `ResultTask.raceAll` and `ResultTask.raceFirstAll` (with an empty-list runtime guard) so post-construction array mutations cannot yield `Success(undefined)`.
+    - Interrupt blocked producers waiting in `Queue.shutdown()` (matching RFC 0010 §4) while continuing to resolve subsequent `offer()` calls after shutdown with `Success(false)`.
+    - Handle numeric `NaN` tags identically to the interpreter in compiled `Match.discriminator` for both `<= 4` and `> 4` tag lists.
+  - **`resultar-di`**:
+    - Propagate `request.signal` aborts after `scope.fetch` delivers a sync or async `Response` on the Tier 0 / Tier 1 fast path, coordinating overlapping or re-entrant `reader.cancel()` and `request.signal` aborts onto a single shared cancellation promise published synchronously before invoking the producer's `cancel()` (across both fast-path and resource-scoped `fetch`), keeping scopes open until producer cleanup finishes, and rejecting already-locked response bodies consistently while releasing the scope once.
+    - Preserve services named `"__proto__"` as own enumerable properties across compiled plans, interpreted fallbacks, and service resolvers without prototype mutation.
+  - **`resultar-config` & `resultar-app`**:
+    - Remove the top-level `env-schema` dependency whose module initialization invoked `new Function` via AJV on import, so all workspace packages import and construct lazy definitions cleanly under `node --disallow-code-generation-from-strings`, and document that AJV compilation still applies lazily at `appConfig` / `load()` resolution time.
+- 8cd6a0c: Fix second-review RFC 0010 / RFC 0011 follow-up regressions:
+
+  - **`resultar`**: Restore `_tag`, `fingerprint`, `messageTemplate`, and `name` as own enumerable instance properties on `createTaggedError` instances (matching `cacb729` descriptors so `Object.keys(error)` and `{ ...error }` preserve discriminator and metadata) while keeping the shared frozen `fingerprint` tuple and 1-argument `super(message)` fast path when `cause` is omitted.
+  - **`resultar-fastify`**: Observe `reply.raw` `close` alongside `onResponse` and `onRequestAbort` via a single idempotent finalizer on Tier 0 / Tier 1 fast request hooks (both static bindings and per-request `locals`), removing the listener on settlement and calling `endChild()` exactly once so `app.close()` never hangs after client disconnects during streamed replies.
+  - **`resultar-nestjs`**: Apply the same idempotent `rawResponse` `close` finalizer to the Fastify-backed Tier 0 / Tier 1 fast request tracker so streamed client disconnects release child tracking cleanly without double-decrementing active requests.
+- 7348f02: Fix RFC 0010 and RFC 0011 runtime, concurrency, observability, and DI regressions:
+
+  - **`resultar`**:
+    - Add a browser-compatible macrotask scheduler fallback (`setTimeout(..., 0)` / `clearTimeout` when `setImmediate` is unavailable) in `VirtualClock.flush()` and `Scheduler.live.yield()`, preserving FIFO wake order and abort cancellation across Node, browsers, and edge runtimes.
+    - Allocate a distinct `Interrupt` `Cause` per operation on `Queue.shutdown()` and closed-queue `take()`, preventing span trace cross-contamination across queues and concurrent consumers.
+    - Switch `Queue` waiter storage to FIFO `Set`s and immediately unlink and clear payload, callback, and signal references upon offer/take cancellation.
+    - Remove consumer-exposed pooling from `OkResultIterator` and `ResultTaskIterator` so retained `.next()` results and simultaneous iterators never alias or mutate each other.
+    - Ensure `Match` JIT evaluates property and array element getters strictly once in interpreter-identical order (fixing multi-read predicates such as `Match.nonEmptyString`, `Match.record`, `Match.defined`, zero-read `Match.any`, and `NaN` literals).
+  - **`resultar-di` & `resultar-hono`**:
+    - Replace delimiter-joined sync plan cache keys in `RuntimeScope.getSyncPlan` with structural JSON tuple keys so service names containing NUL or control characters cannot collide.
+    - Cache frozen middleware key selections and avoid unnecessary async microtask hops for synchronous `locals` factories in `createHonoServices().middleware()`.
+- 7ac4799: Preserve late acquisition cleanup through service and tracing wrappers. Handle synchronous aborts while reading HTTP responses and cancel stalled native Fetch streams through their readers.
+
+  Harden core `ResultTask`, JIT, companion adapters, `resultar-check`, VS Code extension, and docs playground:
+
+  - **Core (`resultar`)**: preserve all finalizer defects across multi-finalizer `TaskScope` drains in `race`/`timeout`; run synchronous `ResultTask.gen` `try/finally` blocks synchronously in `runSync()`/`runSyncExit()`, mark generator cleanup failures, and preserve external `Interrupt`; fix `RESULTAR_JIT=1` vs `RESULTAR_JIT=0` last-step `resumeSync` and `tryPromise` interruption parity; trap throwing `_tag` getters across all `catchTag`/`catchTags` tiers and guard `Cause.pretty` against throwing `Error.stack` getters, `BigInt`/circular span attributes, and shared non-circular references; fix `acquireDisposable` fallback when `[Symbol.asyncDispose]` is `undefined`; collapse pure external `race`/`raceAll` interruptions to `AbortError`; keep synchronous `tapCause` callbacks sync; isolate `ResultTask.memoize` cancellation, timeouts, and span traces per caller; compact `Semaphore` waiters and release aborted waiter references; unregister completed unjoined `Success` `forkChild` fibers; propagate `makeScope().close()` runtime context to finalizers and guard sync-abort-then-suspend in `scope.use()`; bail out before JIT codegen when `canUseJit()` is false; protect `Result.all`/`Result.validateAll`/`Tracer.memory()`/`createTaggedError` from `__proto__`, prototype interpolation, and `then`/`toJSON`/`findCause` overwrites; handle rejections in `ResultAsync.race*` and preserve `this` in `ResultAsync.fromThrowable`.
+  - **Companion packages (`resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, `resultar-request`, `resultar-request-zod`, `resultar-request-typebox`, `resultar-config`)**: detect `transient` circular dependencies in `resultar-di`, enforce `useSingletons()` lifetime checks on overridden services, fix sync thenable detection, and allow `ServiceAccess.get()` during shutdown drain; cancel orphaned Hono wrapped responses when outer middleware throws or replaces `c.res`; fix NestJS Tier 2 pre-interceptor disconnect leaks, `handlerTimeout` `request.signal` propagation on FastifyAdapter, `initTimeout` cancellation/rollback, `@Inject(APP_SERVICES)` prototype preservation, and `createNestApp().close()` hook ordering; skip `locals()` on already-aborted requests in NestJS and Fastify Tier 2; defer `requestJson` `mapError` lazily, cancel stalled response bodies on abort/timeout, and serialize Fetch `Headers` in `HttpResponseErrorCauseError`; remove dangling `.d.ts.map` comments from companion type declarations.
+  - **Checker & Editor (`resultar-check`, VS Code extension)**: fix Unicode byte-offset panic in `parseSuppressions` and support `-- reason` justifications; prevent destructive autofixes in `prefer-as-void`, `prefer-map`, `prefer-map-err`, `prefer-or-else-succeed`, `unnecessary-pipe`, `no-await-result-task`, and generator rules; analyze named `ResultTask.fn("span", ...)` overloads and RFC 0010 consumers/runners; preserve `!`/`as` receivers in `migrate-v5`; fix LSP `(0,0)` range matching, Windows case-insensitive paths, debounce handling, and `ResultTask.fn` refactor guards; fix absolute `tsconfig` `extends` and string-safe JSONC trailing-comma stripping; support hoisted monorepo binaries in `doctor`, split VS Code problem matchers, and harden VS Code LSP `EPIPE`/crash/multi-root handling.
+- 2e08b70: Fix duplicate execution in `ResultTask.runResult()`, native Promise adoption, tagged error formatting, and parity between compiled and interpreted Tasks. Synchronous runners now handle pure workflows through collection, recovery, and cleanup operators. Preserve cancellation and failure spans across scopes and deferred observers.
+
+  Align request error causes and cancellation signals across HTTP adapters, defer TypeBox compilation until decoding, and synchronize dependency mappings in the JSR manifests.
+
+  Keep Resultar quick fixes available alongside TypeScript semantic diagnostics, preserve callback semantics in tap suggestions, and apply nested v5 migrations to convergence. Editor setup supports JSONC.
+
+  Preserve the original rejection reason from a failing `tryPromise` error mapper. Apply synchronous retry and repeat hooks without introducing a Promise. Honor deadline order across concurrent virtual clock drivers, retain nested composite span frames, and support tagged enum variants named after Object prototype properties.
+
+  Exclude default and rest parameters from tap and tapError suggestions to preserve callback return values when applying fixes.
+
+  Keep callback exceptions observable by withholding inspect autofixes for property access and destructuring, and skip tap suggestions for generator callbacks.
+
+  Observe interruption between `ResultTask.iterate` steps that return synchronous Results. Honor custom clock sleeps when repeating with zero delay, including during `runSync()`.
+
+  Preserve the original rejection reason when migrating to `runPromise()`, and honor scheduler budgets for synchronous `loop` and `firstSuccessOf` steps. Limit automatic `inspect` conversions to simple local writes. Migrate nested chains to convergence and generate fresh callback parameter names without shadowing handler bindings.
+
+  Preserve composite failure typing, span outcomes, finalizer defects, and scheduler yields across Task execution modes. Support synchronous service resolution and disposal, and preserve object receivers in synchronous Result callbacks. Keep tagged enum factories compatible with Promise resolution and retain own metadata during serialization.
+
+  Stop Fastify routes and subsequent hooks when a service hook fails with a falsy value or the request disconnects while resolving locals. Align locked response stream failures across DI execution paths. Skip schema compilation when TypeBox acceleration is unavailable. Preserve explicit eager types, optional execution, import bindings, and nested getters in migration and editor fixes.
+
+  Report an invalid `catchReason` or `catchReasons` handler return as a defect when the reason matches.
+
+  Check cancellation before computing a repeat delay when the clock aborts while reading the elapsed budget.
+  Recognize Promise-like values returned by Task inspectors consistently with the retry and repeat hooks.
+- cacb729: Implement transparent CSP-safe JIT compilation, static DI graph specialization, and V8 runtime performance optimizations (RFC 0011) with zero public API changes and automatic `RESULTAR_JIT=0` / strict-CSP fallback:
+
+  - **`resultar`**:
+    - Unify `ResultTaskRuntimeContext` hidden-class property ordering, replace object instruction tags with V8 Smi numeric opcodes plus dedicated `OP_CATCH_TAG`/`OP_CATCH_TAGS`, specialize `pipe`/`flow`/`dual` by arity, pool `OkResultIterator` and continuation stacks, and remove boxing allocations in `tagged-match`.
+    - Compile `$variable` message templates in `createTaggedError` once at class-creation time with shared frozen fingerprints and zero-tuple metadata copying, and cache `taggedEnum` constructors.
+    - Add a lazy decision-tree JIT compiler for reusable `Match` matchers (`switch (v._tag)`, inlined built-in guards and nested object/array checks) plus a zero-allocation `Match.valueTags` fast path.
+    - Add an unboxed `runTaskLoop` and tiered lazy JIT compilation for hot reusable `ResultTask` chains (`map`, `andThen`, `mapErr`, `catchAll`, `catchTag`, `catchTags`) with cooperative scheduler checkpoints, mid-chain async bailout, and `AbortSignal` preservation.
+  - **`resultar-di` & `resultar-hono`**:
+    - Add static dependency subgraph specialization (Tier 0 pure singleton/value, Tier 1 scoped/transient sync JIT, Tier 2 full `TaskScope` for resources/streams), replace per-request `children` `Set` allocations with counter-based draining, skip empty `Map` cloning and `defaultResolvers` recomputation, and skip empty `withServices({})` wrapping in `createHonoServices`.
+  - **`resultar-request-typebox` & `resultar-config`**:
+    - Cache compiled `TypeBox` `Compile(schema)` validators per schema in a `WeakMap` (with automatic `Value.Check` fallback under `RESULTAR_JIT=0` or uncompilable schemas) and lazily compile and cache Ajv validators once per `defineAppConfig` instance.
+- ba1b381: Reduce worker startup overhead in `ResultTask.all`, `forEach`, and `validateAll` by filling the worker array directly before awaiting completion.
+
+  Resolve immediate successes directly in `ResultTask.runPromise` when called without run options.
+- 46c28fa: Share a single memoized task execution with callers that reenter during startup.
+  Copy tagged enum fields as own data properties even when the prototype has a
+  setter with the same key.
+
+## 5.0.0-beta.3
+
+### Patch Changes
+
+- 46c28fa: Share a single memoized task execution with callers that reenter during startup.
+  Copy tagged enum fields as own data properties even when the prototype has a
+  setter with the same key.
+
+## 5.0.0-beta.2
+
+### Patch Changes
+
+- 7ac4799: Preserve late acquisition cleanup through service and tracing wrappers. Handle synchronous aborts while reading HTTP responses and cancel stalled native Fetch streams through their readers.
+  
+  Harden core `ResultTask`, JIT, companion adapters, `resultar-check`, VS Code extension, and docs playground:
+  
+  - **Core (`resultar`)**: preserve all finalizer defects across multi-finalizer `TaskScope` drains in `race`/`timeout`; run synchronous `ResultTask.gen` `try/finally` blocks synchronously in `runSync()`/`runSyncExit()`, mark generator cleanup failures, and preserve external `Interrupt`; fix `RESULTAR_JIT=1` vs `RESULTAR_JIT=0` last-step `resumeSync` and `tryPromise` interruption parity; trap throwing `_tag` getters across all `catchTag`/`catchTags` tiers and guard `Cause.pretty` against throwing `Error.stack` getters, `BigInt`/circular span attributes, and shared non-circular references; fix `acquireDisposable` fallback when `[Symbol.asyncDispose]` is `undefined`; collapse pure external `race`/`raceAll` interruptions to `AbortError`; keep synchronous `tapCause` callbacks sync; isolate `ResultTask.memoize` cancellation, timeouts, and span traces per caller; compact `Semaphore` waiters and release aborted waiter references; unregister completed unjoined `Success` `forkChild` fibers; propagate `makeScope().close()` runtime context to finalizers and guard sync-abort-then-suspend in `scope.use()`; bail out before JIT codegen when `canUseJit()` is false; protect `Result.all`/`Result.validateAll`/`Tracer.memory()`/`createTaggedError` from `__proto__`, prototype interpolation, and `then`/`toJSON`/`findCause` overwrites; handle rejections in `ResultAsync.race*` and preserve `this` in `ResultAsync.fromThrowable`.
+  - **Companion packages (`resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, `resultar-request`, `resultar-request-zod`, `resultar-request-typebox`, `resultar-config`)**: detect `transient` circular dependencies in `resultar-di`, enforce `useSingletons()` lifetime checks on overridden services, fix sync thenable detection, and allow `ServiceAccess.get()` during shutdown drain; cancel orphaned Hono wrapped responses when outer middleware throws or replaces `c.res`; fix NestJS Tier 2 pre-interceptor disconnect leaks, `handlerTimeout` `request.signal` propagation on FastifyAdapter, `initTimeout` cancellation/rollback, `@Inject(APP_SERVICES)` prototype preservation, and `createNestApp().close()` hook ordering; skip `locals()` on already-aborted requests in NestJS and Fastify Tier 2; defer `requestJson` `mapError` lazily, cancel stalled response bodies on abort/timeout, and serialize Fetch `Headers` in `HttpResponseErrorCauseError`; remove dangling `.d.ts.map` comments from companion type declarations.
+  - **Checker & Editor (`resultar-check`, VS Code extension)**: fix Unicode byte-offset panic in `parseSuppressions` and support `-- reason` justifications; prevent destructive autofixes in `prefer-as-void`, `prefer-map`, `prefer-map-err`, `prefer-or-else-succeed`, `unnecessary-pipe`, `no-await-result-task`, and generator rules; analyze named `ResultTask.fn("span", ...)` overloads and RFC 0010 consumers/runners; preserve `!`/`as` receivers in `migrate-v5`; fix LSP `(0,0)` range matching, Windows case-insensitive paths, debounce handling, and `ResultTask.fn` refactor guards; fix absolute `tsconfig` `extends` and string-safe JSONC trailing-comma stripping; support hoisted monorepo binaries in `doctor`, split VS Code problem matchers, and harden VS Code LSP `EPIPE`/crash/multi-root handling.
+
+## 5.0.0-beta.1
+
+### Patch Changes
+
+- 2e08b70: Fix duplicate execution in `ResultTask.runResult()`, native Promise adoption, tagged error formatting, and parity between compiled and interpreted Tasks. Synchronous runners now handle pure workflows through collection, recovery, and cleanup operators. Preserve cancellation and failure spans across scopes and deferred observers.
+  
+  Align request error causes and cancellation signals across HTTP adapters, defer TypeBox compilation until decoding, and synchronize dependency mappings in the JSR manifests.
+  
+  Keep Resultar quick fixes available alongside TypeScript semantic diagnostics, preserve callback semantics in tap suggestions, and apply nested v5 migrations to convergence. Editor setup supports JSONC.
+  
+  Preserve the original rejection reason from a failing `tryPromise` error mapper. Apply synchronous retry and repeat hooks without introducing a Promise. Honor deadline order across concurrent virtual clock drivers, retain nested composite span frames, and support tagged enum variants named after Object prototype properties.
+  
+  Exclude default and rest parameters from tap and tapError suggestions to preserve callback return values when applying fixes.
+  
+  Keep callback exceptions observable by withholding inspect autofixes for property access and destructuring, and skip tap suggestions for generator callbacks.
+  
+  Observe interruption between `ResultTask.iterate` steps that return synchronous Results. Honor custom clock sleeps when repeating with zero delay, including during `runSync()`.
+  
+  Preserve the original rejection reason when migrating to `runPromise()`, and honor scheduler budgets for synchronous `loop` and `firstSuccessOf` steps. Limit automatic `inspect` conversions to simple local writes. Migrate nested chains to convergence and generate fresh callback parameter names without shadowing handler bindings.
+  
+  Preserve composite failure typing, span outcomes, finalizer defects, and scheduler yields across Task execution modes. Support synchronous service resolution and disposal, and preserve object receivers in synchronous Result callbacks. Keep tagged enum factories compatible with Promise resolution and retain own metadata during serialization.
+  
+  Stop Fastify routes and subsequent hooks when a service hook fails with a falsy value or the request disconnects while resolving locals. Align locked response stream failures across DI execution paths. Skip schema compilation when TypeBox acceleration is unavailable. Preserve explicit eager types, optional execution, import bindings, and nested getters in migration and editor fixes.
+  
+  Report an invalid `catchReason` or `catchReasons` handler return as a defect when the reason matches.
+  
+  Check cancellation before computing a repeat delay when the clock aborts while reading the elapsed budget.
+  Recognize Promise-like values returned by Task inspectors consistently with the retry and repeat hooks.
+
+## 5.0.0-beta.0
+
+### Major Changes
+
+- ba1b381: Implement RFC 0012 — v5 unified async model (`Result` + `ResultTask`):
+  
+  - **Core `resultar`:**
+    - `task.runResult()` and `ResultTask.runResult(task)` now return a native `Promise<Result<A, E | ScopeError<R>>>` instead of `ResultAsync`, eliminating the global `registerResultAsyncFactory` side-effect registry and making `resultar/task` and `resultar/result` genuinely tree-shakeable with zero transitive `result-async/` JS or `.d.ts` imports.
+    - Root `"resultar"` exports only `Result` (pure sync) + `ResultTask` / `StrictResultTask` (lazy async) + shared primitives (`Match`, tagged errors, concurrency, observability, retry, function helpers). All v4 deprecated aliases (`safeTry`, `tryCatch`, `succeed`/`fail`, `mapError`, `flatMap`, `catchAll`, `toResultAsync`, `TaggedError.errAsync`, `Result#tap`/`tapError`, `Result#asyncMap`/`asyncAndThen`, async `Result.gen`/`Result.fn`, legacy Match/Retry option shapes) are removed from root `"resultar"`.
+    - Opt-in `@deprecated` `"resultar/async"` compatibility subpath retains the full v4 eager `ResultAsync` surface throughout v5.x (`ResultAsync`, `StrictResultAsync`, `DisposableResultAsync`, `okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`, `fromCallback`, `fromThrowableAsync`, `runPromise`, `tryAsync` / `tryCatchAsync`, `safeTry`, `ResultAsync.gen` / `ResultAsync.fn`, standalone `asyncMap` / `asyncAndThen`, and `@deprecated` v4 `ResultAsync` helpers such as `fromTask`, `retry`, `withResource`, `fromCallback`, `all`, `race`, `timeout`, `tap`, `tapError`, and `toAsyncDisposable`) for incremental migration, per `docs/migrations/v5.md`.
+  - **HTTP request adapters (`resultar-request`, `resultar-request-zod`, `resultar-request-typebox`):**
+    - `requestJson`, `requestJsonZod`, and `requestJsonTypeBox` now return `ResultTask` directly; `*Task` duplicates and `ResultAsync` coupling are removed.
+  - **DI & framework adapters (`resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, `resultar-app`, `resultar-config`):**
+    - Removed all `ResultAsync` imports and internal `ResultAsync.fromCallback` usage; imperative lifecycle boundaries (`ready()`, `close()`, session completions) return native `Promise<Result<...>>` / `Promise<Exit<...>>` directly.
+  - **Static analyzer (`resultar-check`):**
+    - Added `no-await-result-task` (default `"error"`, 43 rules total) with safe `.runResult()` autofix only when narrowed, requirement-free, and the surrounding context positively expects a `Result` (preserving inferred `Promise<ResultTask<...>>` returns and removing redundant `await` when the surrounding contract expects a `ResultTask`).
+    - Updated `no-promise-resultar` to flag `Promise<ResultTask>` / `Promise<StrictResultTask>` / mixed Task unions while allowing `Promise<Result>` / `Promise<StrictResult>` execution boundaries.
+    - Changed `prefer-result-async` default from `"warning"` to `"off"`, and scoped `prefer-tap` / `prefer-tap-error` to `tap`/`tapError` on `ResultTask` and `inspect`/`inspectError` on `Result`/`ResultAsync`.
+    - Added the `resultar-check migrate-v5` CLI subcommand (`preview`, `--fix`, `--json`, `--file`) with symbol-resolved rewrites, alias preservation when `requestJson*` would collide with local bindings, safe computed-key and legacy `{ ok, error }` handler preservation in `match`, and the [v5 Migration Guide](docs/migrations/v5.md).
+
+### Minor Changes
+
+- cacb729: Add DX, observability, concurrency, tree-shaking, tooling, and documentation upgrades:
+  
+  - **`resultar` (and re-exported via `resultar-app`)**:
+    - Core ergonomics & asymmetries: `ResultTask.suspend`, `task.scoped()`, `task.forkChild()`, `FiberHandle.await()`, `ResultTask.raceAll`, `ResultTask.raceFirstAll`, `ResultTask.runSync` / `runSyncExit`, `task.repeat()` / `ResultTask.repeat()`, `Cause` constructors (`fail`, `die`, `interrupt`, `sequential`, `parallel`, `isInterruptedOnly`, `spans`), enriched `ResultTaskCauseError` formatting (`prettyCause` and custom Node inspect), `VirtualClock.advanceToNext()` and `VirtualClock.runToCompletion()`, and `Retry.policy` `maxDelayMs`, `maxElapsedMs`, and error-aware `delayMs(context, error)`.
+    - Lean concurrency primitives: `Ref`, `Deferred`, and bounded/unbounded `Queue` with FIFO backpressure and lossless shutdown draining.
+    - Opt-in zero-overhead observability: `TaskLocal` (fiber-inherited ambient state), `Tracer` (`Tracer.noop`, `Tracer.memory()`, custom `TaskTracer`), `task.withSpan()` / `ResultTask.withSpan()`, named `ResultTask.fn(spanName, body, ...pipes)`, and automatic failure span traces on `Cause`.
+    - Fine-grained tree-shaking: `"sideEffects": false` across library packages plus dedicated `resultar/result`, `resultar/task`, `resultar/match`, `resultar/tagged`, `resultar/retry`, and `resultar/function` subpath exports.
+  - **`resultar-check`**:
+    - Add `--fix` and `--fix-dry-run` flags to apply only safe `kind: "correction"` edits (never `intentional-discard`) and re-verify diagnostics.
+    - Extend `init` and `doctor` with `--editor zed|vscode|cursor|all` (generating `.vscode/tasks.json` with a `resultar-check` problemMatcher, `.vscode/extensions.json` recommending `inaiat.resultar-check`, and `.cursor/rules/resultar-check.mdc` alongside `.zed/settings.json`).
+  - **Editors, docs portal & agent guides**:
+    - Add the official zero-dependency VS Code & Cursor LSP extension (`editors/vscode/`) exposing live `resultar-check lsp` diagnostics, `T / E / R` channel hover, inline quickfixes, and `--fix`/`overview` commands.
+    - Add the searchable documentation site and interactive browser playground (`website/`, generated directly from CI-verified Markdown with Cmd+K search, 6 live presets, shareable URLs, and span waterfall visualization).
+    - Add `docs/coming-from-effect.md` and `docs/rfcs/rfc-0010-dx-observability-concurrency-and-tooling.md`, eliminate doc drifts across `README.md`, `DOCUMENTATION.md`, `llms.txt`, package READMEs, and `skills/resultar/`, enrich core JSDoc + `@example` blocks, and add automated drift and snippet compilation assertions to `scripts/test-documentation.mjs`.
+
+### Patch Changes
+
+- 8cd6a0c: Resolve all 12 final-review findings across RFC 0010 and RFC 0011:
+  
+  - **`resultar`**:
+    - Interrupt and clean up asynchronous steps (detaching waiters and suppressing pending continuations such as `.map()`) when `runSync` / `runSyncExit` encounters an asynchronous boundary.
+    - Preserve explicit `null` abort reasons in `FiberSignal.abort` (only synthesizing default `DOMException('AbortError')` when `reason === undefined`), matching `runExit` in `runSyncExit` across JIT modes.
+    - Isolate `TaskLocal` bindings per item in `ResultTask.all` / `forEach` / `validateAll` while preserving the worker's `scheduling.remaining` yield budget across items.
+    - Preserve the `this` receiver for `try` and `catch` methods in JIT-compiled `ResultTask.try` chains.
+    - Replace the growing array in `Queue.bounded` with a fixed-capacity circular ring buffer (and periodic compaction in `Queue.unbounded`) so long-running non-empty queues stay O(capacity) in memory.
+    - Keep driving `VirtualClock.runToCompletion` automatically when virtual sleeps are scheduled after external Promises during normal execution (success or domain failure) as well as during post-`maxSteps` cleanup (including delayed timers and >10,000 finite sleeps), aborting and draining finalizers before throwing `RangeError`.
+    - Clone failure `Cause` values per observer in `Deferred` while preserving origin span traces via `copyCauseSpans`, preventing cross-consumer span contamination.
+    - Snapshot input iterables eagerly in `ResultTask.raceAll` and `ResultTask.raceFirstAll` (with an empty-list runtime guard) so post-construction array mutations cannot yield `Success(undefined)`.
+    - Interrupt blocked producers waiting in `Queue.shutdown()` (matching RFC 0010 §4) while continuing to resolve subsequent `offer()` calls after shutdown with `Success(false)`.
+    - Handle numeric `NaN` tags identically to the interpreter in compiled `Match.discriminator` for both `<= 4` and `> 4` tag lists.
+  - **`resultar-di`**:
+    - Propagate `request.signal` aborts after `scope.fetch` delivers a sync or async `Response` on the Tier 0 / Tier 1 fast path, coordinating overlapping or re-entrant `reader.cancel()` and `request.signal` aborts onto a single shared cancellation promise published synchronously before invoking the producer's `cancel()` (across both fast-path and resource-scoped `fetch`), keeping scopes open until producer cleanup finishes, and rejecting already-locked response bodies consistently while releasing the scope once.
+    - Preserve services named `"__proto__"` as own enumerable properties across compiled plans, interpreted fallbacks, and service resolvers without prototype mutation.
+  - **`resultar-config` & `resultar-app`**:
+    - Remove the top-level `env-schema` dependency whose module initialization invoked `new Function` via AJV on import, so all workspace packages import and construct lazy definitions cleanly under `node --disallow-code-generation-from-strings`, and document that AJV compilation still applies lazily at `appConfig` / `load()` resolution time.
+- 8cd6a0c: Fix second-review RFC 0010 / RFC 0011 follow-up regressions:
+  
+  - **`resultar`**: Restore `_tag`, `fingerprint`, `messageTemplate`, and `name` as own enumerable instance properties on `createTaggedError` instances (matching `cacb729` descriptors so `Object.keys(error)` and `{ ...error }` preserve discriminator and metadata) while keeping the shared frozen `fingerprint` tuple and 1-argument `super(message)` fast path when `cause` is omitted.
+  - **`resultar-fastify`**: Observe `reply.raw` `close` alongside `onResponse` and `onRequestAbort` via a single idempotent finalizer on Tier 0 / Tier 1 fast request hooks (both static bindings and per-request `locals`), removing the listener on settlement and calling `endChild()` exactly once so `app.close()` never hangs after client disconnects during streamed replies.
+  - **`resultar-nestjs`**: Apply the same idempotent `rawResponse` `close` finalizer to the Fastify-backed Tier 0 / Tier 1 fast request tracker so streamed client disconnects release child tracking cleanly without double-decrementing active requests.
+- 7348f02: Fix RFC 0010 and RFC 0011 runtime, concurrency, observability, and DI regressions:
+  
+  - **`resultar`**:
+    - Add a browser-compatible macrotask scheduler fallback (`setTimeout(..., 0)` / `clearTimeout` when `setImmediate` is unavailable) in `VirtualClock.flush()` and `Scheduler.live.yield()`, preserving FIFO wake order and abort cancellation across Node, browsers, and edge runtimes.
+    - Allocate a distinct `Interrupt` `Cause` per operation on `Queue.shutdown()` and closed-queue `take()`, preventing span trace cross-contamination across queues and concurrent consumers.
+    - Switch `Queue` waiter storage to FIFO `Set`s and immediately unlink and clear payload, callback, and signal references upon offer/take cancellation.
+    - Remove consumer-exposed pooling from `OkResultIterator` and `ResultTaskIterator` so retained `.next()` results and simultaneous iterators never alias or mutate each other.
+    - Ensure `Match` JIT evaluates property and array element getters strictly once in interpreter-identical order (fixing multi-read predicates such as `Match.nonEmptyString`, `Match.record`, `Match.defined`, zero-read `Match.any`, and `NaN` literals).
+  - **`resultar-di` & `resultar-hono`**:
+    - Replace delimiter-joined sync plan cache keys in `RuntimeScope.getSyncPlan` with structural JSON tuple keys so service names containing NUL or control characters cannot collide.
+    - Cache frozen middleware key selections and avoid unnecessary async microtask hops for synchronous `locals` factories in `createHonoServices().middleware()`.
+- cacb729: Implement transparent CSP-safe JIT compilation, static DI graph specialization, and V8 runtime performance optimizations (RFC 0011) with zero public API changes and automatic `RESULTAR_JIT=0` / strict-CSP fallback:
+  
+  - **`resultar`**:
+    - Unify `ResultTaskRuntimeContext` hidden-class property ordering, replace object instruction tags with V8 Smi numeric opcodes plus dedicated `OP_CATCH_TAG`/`OP_CATCH_TAGS`, specialize `pipe`/`flow`/`dual` by arity, pool `OkResultIterator` and continuation stacks, and remove boxing allocations in `tagged-match`.
+    - Compile `$variable` message templates in `createTaggedError` once at class-creation time with shared frozen fingerprints and zero-tuple metadata copying, and cache `taggedEnum` constructors.
+    - Add a lazy decision-tree JIT compiler for reusable `Match` matchers (`switch (v._tag)`, inlined built-in guards and nested object/array checks) plus a zero-allocation `Match.valueTags` fast path.
+    - Add an unboxed `runTaskLoop` and tiered lazy JIT compilation for hot reusable `ResultTask` chains (`map`, `andThen`, `mapErr`, `catchAll`, `catchTag`, `catchTags`) with cooperative scheduler checkpoints, mid-chain async bailout, and `AbortSignal` preservation.
+  - **`resultar-di` & `resultar-hono`**:
+    - Add static dependency subgraph specialization (Tier 0 pure singleton/value, Tier 1 scoped/transient sync JIT, Tier 2 full `TaskScope` for resources/streams), replace per-request `children` `Set` allocations with counter-based draining, skip empty `Map` cloning and `defaultResolvers` recomputation, and skip empty `withServices({})` wrapping in `createHonoServices`.
+  - **`resultar-request-typebox` & `resultar-config`**:
+    - Cache compiled `TypeBox` `Compile(schema)` validators per schema in a `WeakMap` (with automatic `Value.Check` fallback under `RESULTAR_JIT=0` or uncompilable schemas) and lazily compile and cache Ajv validators once per `defineAppConfig` instance.
+- ba1b381: Reduce worker startup overhead in `ResultTask.all`, `forEach`, and `validateAll` by filling the worker array directly before awaiting completion.
+  
+  Resolve immediate successes directly in `ResultTask.runPromise` when called without run options.
+
 ## 4.1.1
 
 ### Patch Changes
@@ -85,23 +344,24 @@
   Add best-effort task observation with inspect/inspectError. Retain unrelated
   deprecated synchronous method names with equivalent replacements. Result/ResultAsync tap remains
   best-effort observation; inspect provides the same behavior under the new name.
-  
+
   Add scope-owned child fibers, structured races and timeouts, bounded task
   collections, per-attempt scoped retries, live/virtual clocks, and parallel causes.
   Preserve eager ResultAsync and lazy, repeatable ResultTask execution.
-  
+
   Keep new static asynchronous matching compositional while preserving legacy instance terminals,
   retain errors for optional tagged recovery handlers and preserve union-table outputs,
   add typed Match contexts, and improve finite object-pattern exhaustiveness.
   Preserve native Hono response unions and Fastify response contracts.
-  
+
   Recognize yielded Results and task collection/fiber consumers in the checker,
   and expose Match coverage in hover. Update companion cause inspection for
   parallel failures. Preserve existing `resultar` exports and Async-producing methods; exhaustive Cause consumers
   must handle the new Parallel branch, and corrected tagged recovery types retain
   errors that optional handlers do not guarantee to recover.
+
 - 37e8a0f: Unify `ok` and `err` across core `Result`, `ResultTask`, and `ResultAsync`, generator workflows, and `.match` object handlers:
-  
+
   - Change `Result.gen` to return plain success values (wrapping in `Ok` automatically) and require `yield*` for fallible steps, matching `ResultTask.gen`. Result supports sync and eager async bodies; separate legacy `safeTry` preserves final-Result returns in both modes.
   - Add `ResultTask.ok` and `ResultTask.err` as the task constructors and `ResultAsync.ok` and `ResultAsync.err` static constructors alongside `okAsync` and `errAsync`.
   - Support `{ ok, err }` object handlers throughout while retaining the existing matching forms.
@@ -111,8 +371,9 @@
   - Add `.taskErr(...)` alongside `.err(...)` and the retained `.errAsync(...)` on tagged-error classes. Eager errors can also use `errAsync(new TaggedError(props))` from `resultar`.
   - Add `Result.all` and `ResultAsync.all` as collection combinators matching `ResultTask.all` and `Promise.all` (alongside `Result.combine` and `ResultAsync.combine`).
   - Update `resultar-check` to recognize `Result.fn`, `ResultTask.fn(..., ResultTask.scoped)`, `Result.all`, `ResultAsync.all`, and the new instance and static `Result` / `ResultAsync` / `ResultTask` consumer, control-flow, and recovery methods.
+
 - f8458ae: Make `ResultTask` the preferred asynchronous workflow API and unify `ResultAsync` as the in-flight `Result` returned by `task.runResult()` in `resultar`.
-  
+
   - Keep tasks lazy and repeatable, with explicit `runResult`, `runExit`, `runPromise`, and `runFork` boundaries. Tasks are not thenable; `map` remains synchronous.
   - Export `ResultAsync`, `StrictResultAsync`, and eager helpers from `resultar`. Preserve shared single execution, awaited callbacks, native Promise terminals and best-effort observation.
   - Preserve Async-producing compatibility methods on Result and tagged errors, plus explicit Task bridges.
@@ -139,26 +400,31 @@
   Fastify reply schemas with runnable examples and runtime/type regression tests.
 - 37e8a0f: Add lazy Fiber.await to observe a child's complete Exit after cleanup without
   interrupting it, while preserving existing structural Fiber handles.
-  
+
   Add opt-in interruption: "detach" to object-form ResultTask.tryPromise so abort
   can stop waiting for foreign promises. The default still waits for settlement.
   Detached waits observe late rejection, stop continuations, and retain normal
   owned finalization; underlying work can continue if it ignores the signal.
+
 - 37e8a0f: Add `Retry.policy` for immutable, reusable retry options shared by ResultAsync and ResultTask. Canonical policies use the same zero-based context, exponential backoff, numeric symmetric jitter, asynchronous predicates, and best-effort retry observers in both models. Task closes each attempt scope before retrying. Existing Task and eager Async options retain their callback signatures and jitter behavior.
-  
+
   ResultTask can interrupt its wait for canonical asynchronous retry hooks after closing the attempt scope. Late hook completion or rejection is consumed without scheduling another attempt; the foreign Promise's underlying work can continue.
+
 - 37e8a0f: Add ResultTask.runFork for immediate root execution with a native fiber handle. Root fibers preserve typed requirements and release errors, own cancellation, and publish their complete Exit only after child and resource cleanup.
-  
+
   Prevent run options from widening a task's declared service requirements to accept incompatible service values.
+
 - 37e8a0f: Yield the ResultTask interpreter cooperatively after an operation budget, allowing timers and other event-loop work to proceed during long task chains and generators. Add an injectable TaskScheduler and yieldEvery run option; child fibers have independent budgets, and callers can use Infinity to disable automatic yields.
-  
+
   A failed dispatcher records a defect and switches its fiber to Scheduler.live so owned cleanup still runs, including after a dispatcher failure during cleanup. Release failures remain preserved as sequential causes.
+
 - 37e8a0f: Add `createTaggedError(...).withProps<Props>()` for precise template fields and structured error metadata while preserving existing inference defaults. Each specialization creates a distinct constructor so nominal guards cannot confuse incompatible metadata views.
-  
+
   Specialized constructors preserve readonly string metadata from getters, inherited properties, and non-enumerable fields. The original factory keeps its existing own-enumerable copy behavior. Error fields and helpers are protected; cause remains in the existing constructor channel, preserving any cause type declared by a custom base.
+
 - 37e8a0f: Expose native fiber IDs, synchronous polling after cleanup, and removable best-effort
   exit observers. These diagnostics preserve owned child failure reporting.
-  
+
   Add opt-in `interruption: "detach"` to native and namespace fiber joins. Default
   joins retain their existing waiting behavior; detached cancellation stops only the
   waiter and leaves undelivered child failures owned by their parent scope.
@@ -180,9 +446,10 @@
   as compatibility exports with shared identities. Existing Result and Task Async
   methods delegate to the legacy implementation without changing execution,
   callback, matching or generator contracts.
-  
+
   Mark exported eager factories such as `okAsync`, `errAsync` and `tryResultAsync`
   deprecated, directing new workflows to the corresponding ResultTask APIs.
+
 - 40b76f2: - Expose `string | number | Redacted<unknown>` on unspecialized `TaggedError` instance template properties so passing `Redacted` values without `.withProps<...>()` preserves sound property types.
   - Recognize `+0`/`-0` unary numeric literals, literal-typed index expressions, passthrough `.then()` calls, named/curried/flow/identity wrapper callbacks, recursive callbacks, and nested `Promise.resolve(results)` tuple forwarding in `resultar-check` `no-discard` handling while guarding against mutated callback aliases, overridden class methods, non-Resultar shadowed symbols, non-`.then` zero-arg method calls (e.g. `.toString()`), and shadowed `undefined` identifiers.
   - Align JSDoc and guide documentation with current `resultar` exports, `ResultTask.forkChild` static usage, `ResultTask` constructors, and `ResultTask.forEach` options.
@@ -199,28 +466,30 @@
 - bfe38b4: Preserve existing Async root exports and module paths while keeping the eager
   implementation organized under `src/resultar-async`. Restore asynchronous Result
   composition, generator support, tagged-error helpers and explicit Task bridges.
-  
+
   Retain Task composition aliases, supported matching and retry forms, and internal
   execution contracts. Handle interruption after captured Result promises resolve.
   Prevent execution options from widening the task's declared service requirements.
   Keep checker recognition aligned with the supported API without treating a Task
   as awaitable unless its type actually exposes a `then` method.
+
 - bfe38b4: Preserve eager shared execution, awaited mapping and validation callbacks, best-effort
   observation, and Promise-returning boundary matching in `resultar`, along with explicit Task bridges.
-  
+
   Keep tasks lazy and non-thenable, with explicit runners and a structural incoming bridge.
   Preserve the concurrent runtime and create complete clock and scheduler contexts at
   the public execution boundaries.
-  
+
   Preserve the legacy fluent partial-match fallback type. Avoid generator diagnostics when
   the inferred success channel does not contain a nested Result or async workflow.
   Recognize `ResultTask.fromResultAsync` as consuming its eager async input in the checker.
+
 - bfe38b4: Avoid scheduling a live-clock timer for ResultTask retries whose computed delay is zero.
   Skip asynchronous retry-hook handling when no predicate or observer is configured.
   Preserve attempt cleanup, retry hooks, cooperative scheduling, cancellation, positive delays,
   and custom or virtual clock sleep behavior.
 - c6aed8b: Return `ResultAsync<A, E | ScopeError<R>>` from `ResultTask.runResult` and `task.runResult` as the official in-flight `Result` representation (`PromiseLike<Result<T, E>>`).
-  
+
   - Un-deprecate `ResultAsync` and `StrictResultAsync` for consuming and transforming in-flight `Result` values before `await`, as well as in-flight value/Promise constructors (`ResultAsync.ok`, `ResultAsync.err`, `ResultAsync.unit`, `ResultAsync.fromPromise`, `ResultAsync.fromSafePromise`, `ResultAsync.try`, `okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, and `tryResultAsync`).
   - Unify `.try` across namespaces (`Result.try`, `ResultAsync.try`, `ResultTask.try`, `ResultTask.tryPromise`) supporting both positional `(fn, catchFn)` and object `{ try, catch }` signatures, while marking `*tryCatch*` (`Result.tryCatch`, `ResultAsync.tryCatch`, `tryCatch`, `tryCatchAsync`, `tryAsync`) as `@deprecated`.
   - Make `task.toResultAsync()`, `ResultTask.toResultAsync(task)`, and `ResultAsync.fromTask(task)` deprecated aliases of `runResult()`.
@@ -235,13 +504,13 @@
 ### Minor Changes
 
 - 631fea2: Add root pipe, flow, identity, and constant helpers; share private direct/curried dispatch and pipeline execution. Add lazy ResultTask.fn, typed catchTag/catchTags recovery, and scoped acquireDisposable with awaited cleanup.
-  
+
   Protect task requirements from unknown/any types and unsafe assertions, and report unused suppression entries (both new rules default to suggestion). Analyze unsaved editor buffers with versioned UTF-16 fixes, channel/service hover, and conservative recovery/generator refactors. Add read-only overview and quickfixes CLI previews.
-  
+
   Preserve eager ResultAsync, repeatable lazy ResultTask, runners, and existing cause/cleanup policies. Fibers and task concurrency remain deferred.
-  
+
   Expand the executable checker examples to all 30 rules, covering requirement erasure, obsolete suppressions, parameterized generators, and native disposable scopes alongside zero-diagnostic corrected patterns. Compile all three fixture projects with the installed TypeScript compiler before the native CLI checks in smoke tests and CI.
-  
+
   Compose the checker configuration schema with the standard tsconfig schema, preserving editor completion and validation for TypeScript options alongside Resultar rules. Add JSON language-service tests to the checker validation suite.
 
 ## 3.9.1
@@ -250,7 +519,7 @@
 
 - 9f5fa1f: Allow class services with `requires` to return synchronous service values directly from `make`,
   without wrapping ordinary object construction in `ResultTask.sync`.
-  
+
   Keep task-returning factories and generator-based definitions compatible. Normalize construction
   to a lazy `ResultTask`, preserving dependency inference, explicit contracts, lifetimes and cleanup.
   Reject Promise and callable-then factory returns, including unions with synchronous values.
@@ -262,7 +531,7 @@
   initialization and cleanup failures. Hono close cancels pending startup and blocks waiting requests.
   Expose `startServiceTask`, `ServiceTaskSession` and `ServiceTaskRequirements` from DI for adapters
   that need the same task lifecycle and dependency validation.
-  
+
   Consolidate the DI documentation into its README, removing the separate advanced guide and updating
   package contents and agent documentation links.
 
@@ -271,11 +540,11 @@
 ### Minor Changes
 
 - 2fc19dd: Infer literal service identifiers with `ResultTask.service<Contract>()("name")` while retaining the direct overload.
-  
+
   Add `Service.require<Contract>()("name")` and optional `Service` dependency maps through `requires`. Construction factories receive inferred readonly dependencies and return a lazy ResultTask. Existing generator-only definitions, token identity, typed requirements and scope lifetimes remain supported.
-  
+
   Require Resultar 3.9 or newer in the DI package's JSR import map so the curried service primitive is available.
-  
+
   Make the Fastify and Hono examples self-contained, with class services using explicit `requires` maps, a repository, cache and function-based health service. Import the primary DI API through each framework integration and keep matching file layouts for services, routes and server startup. Omit optional bindings in both examples to expose all registered services.
 
 ## 3.8.0
@@ -300,6 +569,7 @@
   Keep ResultTask continuation helpers private and bundle versioned coding-agent guidance with
   a compiled workflow example. Clarify eager/lazy execution, generator returns, tap failures,
   resource ownership, and runResult rejection semantics.
+
 - c823e56: Add prefer-result-async diagnostics for Promise<Result> and Promise<StrictResult> type contracts
   and inferred function returns. Support configurable severity, aliases and line suppressions;
   provide migration guidance without applying unsafe annotation-only edits. Add the opt-in
@@ -337,24 +607,24 @@
   and `no-unsafe-await`, plus ResultTask-aware diagnostics including
   `yield-star-in-result-task-gen`, full tsconfig option parity, tests, development
   commands, and a comparative benchmark.
-  
+
   Add the lazy `ResultTask<A, E, R>` core with explicit execution boundaries,
   typed services, generator composition, and `Result.gen` as an exact alias for
   `safeTry`.
-  
+
   Make the native TypeScript-Go executable the public `resultar-check` CLI with
   platform-specific optional npm packages for macOS, Linux, and Windows.
-  
+
   Remove the legacy JavaScript checker, editor plugin implementation,
   programmatic API, and syntax-only host adapters. The Go
   analyzer is now the single implementation of Resultar diagnostics, and the npm
   package exposes only the native CLI launcher and configuration schema. The
   package no longer has a TypeScript peer dependency or JSR release.
-  
+
   Replace the former lint-adapter example with a native `examples/check` fixture
   that asserts exact counts for all 22 Resultar rules and verifies a separate
   clean project produces no diagnostics.
-  
+
   Add shared diagnostic output formats (JSON Lines, SARIF, and JUnit), stable
   severity maps with file overrides and CI `failOn` policy, local line
   suppression comments, and a stdio LSP surface with inline diagnostics and

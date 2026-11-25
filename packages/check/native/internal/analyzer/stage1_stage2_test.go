@@ -23,8 +23,8 @@ export interface Result<A, E = never> {
   orElse<B, E2>(fn: (error: E) => Result<B, E2>): Result<A | B, E2>
   catchAll<B, E2>(fn: (error: E) => Result<B, E2>): Result<A | B, E2>
   orElseSucceed<B>(fn: () => B): Result<A | B, never>
-  tap(fn: (value: A) => void): Result<A, E>
-  tapError(fn: (error: E) => void): Result<A, E>
+  inspect(fn: (value: A) => void): Result<A, E>
+  inspectError(fn: (error: E) => void): Result<A, E>
   asVoid(): Result<void, E>
   filterOrElse<E2>(predicate: (value: A) => boolean, onFalse: (value: A) => E2): Result<A, E | E2>
   unwrapOr<B>(fallback: B): A | B
@@ -113,8 +113,8 @@ export declare const Result: {
   orElse<E, B, E2>(fn: (e: E) => Result<B, E2>): <A>(self: Result<A, E>) => Result<A | B, E2>
   orElse<A, E, B, E2>(self: Result<A, E>, fn: (e: E) => Result<B, E2>): Result<A | B, E2>
   orElseSucceed<A, E, B>(self: Result<A, E>, fn: () => B): Result<A | B, never>
-  tap<A, E>(self: Result<A, E>, fn: (a: A) => void): Result<A, E>
-  tapError<A, E>(self: Result<A, E>, fn: (e: E) => void): Result<A, E>
+  inspect<A, E>(self: Result<A, E>, fn: (a: A) => void): Result<A, E>
+  inspectError<A, E>(self: Result<A, E>, fn: (e: E) => void): Result<A, E>
 }
 export declare class AppError extends Error {
   readonly _tag = 'AppError'
@@ -244,7 +244,8 @@ export const tapErrOrElse = task.orElse((e) => {
 
 // 4. prefer-as-void
 export const asVoidUndef = res.map(() => undefined)
-export const asVoidExpr = task.map((x) => void sideEffect(x))
+export const asVoidExpr = task.map(() => void 0)
+export const asVoidSideEffectKept = task.map((x) => void sideEffect(x))
 
 // 5. prefer-filter-or-else
 export const filterTernary = res.andThen((x) => (x > 0 ? ok(x) : err('neg')))

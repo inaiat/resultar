@@ -37,8 +37,11 @@ jobs:
       - name: Install dependencies
         run: vp install --frozen-lockfile
 
-      - name: Check and coverage
-        run: vp run check:full
+      - name: Check and coverage (JIT enabled)
+        run: RESULTAR_JIT=1 vp run check:full
+
+      - name: Test suite with JIT disabled (CSP/Edge fallback)
+        run: RESULTAR_JIT=0 vp run test
 
       - name: Build
         run: vp run build
@@ -55,8 +58,15 @@ jobs:
       - name: Agent evaluation graders
         run: vp run test:agents
 
+      - name: VS Code & Cursor extension checks and live LSP tests
+        run: vp run check:vscode && vp run build:vscode && vp run test:vscode
+
+      - name: Docs website & playground checks and tests
+        timeout-minutes: 5
+        run: vp run test:website
+
   release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next')
     needs: validate
     runs-on: ubuntu-latest
 
@@ -88,16 +98,19 @@ jobs:
       - name: Install dependencies
         run: vp install --frozen-lockfile
 
+      - name: Check Changesets prerelease mode
+        if: github.ref == 'refs/heads/next'
+        run: |
+          node -e 'if (require("./.changeset/pre.json").mode !== "pre") throw new Error("Enter Changesets prerelease mode on next before releasing.")'
+
       - name: Version packages or publish
-        uses: changesets/action@v1
+        uses: changesets/action@v2.1.2
         with:
-          version: vp run version:packages
-          publish: vp run release:publish
-          commit: "Version packages"
-          title: "Version packages"
-          createGithubReleases: false
-          commitMode: github-api
+          version-script: vp run version:packages
+          publish-script: ${{ github.ref == 'refs/heads/next' && 'vp run release:next' || 'vp run release:publish' }}
+          commit-message: "Version packages"
+          pr-title: "Version packages"
+          create-github-releases: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true

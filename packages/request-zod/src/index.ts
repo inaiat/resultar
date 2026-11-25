@@ -5,17 +5,9 @@
  */
 
 export * from "resultar-request";
-export { requestJsonZod, requestJsonZodTask } from "./request-json-zod.js";
+export { requestJsonZod } from "./request-json-zod.js";
 
-/** Package-local aliases for `requestJsonZod` and `requestJsonZodTask`. */
-export {
-  requestJsonZod as requestJson,
-  requestJsonZodTask as requestJsonTask,
-} from "./request-json-zod.js";
+/** Package-local alias for `requestJsonZod`. */
+export { requestJsonZod as requestJson } from "./request-json-zod.js";
 
-export type {
-  RequestJsonZodInput,
-  RequestJsonZodMappedInput,
-  RequestJsonZodTaskInput,
-  RequestJsonZodTaskMappedInput,
-} from "./request-json-zod.js";
+export type { RequestJsonZodInput, RequestJsonZodMappedInput } from "./request-json-zod.js";

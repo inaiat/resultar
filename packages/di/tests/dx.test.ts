@@ -19,19 +19,19 @@ test("overrides prune provider initialization, external requirements, and cleanu
     acquire: ResultTask.gen(function* connect() {
       started = true;
       yield* Credentials;
-      return yield* ResultTask.fail("offline" as const).map(() => ({ read: (): string => "live" }));
+      return yield* ResultTask.err("offline" as const).map(() => ({ read: (): string => "live" }));
     }),
-    release: () => ResultTask.fail("release failed" as const),
+    release: () => ResultTask.err("release failed" as const),
   });
   const Query = service("query", { database: Database }, ({ database }) => database.read());
   const original = createModule().singleton(Database).scoped(Query);
   const testing = original.override("database", { read: () => "fake" });
-  const task = testing.use(["query"], ({ query }) => ResultTask.succeed(query));
+  const task = testing.use(["query"], ({ query }) => ResultTask.ok(query));
   expectTypeOf(task).toEqualTypeOf<ResultTask<string, never, never>>();
   expectTypeOf(testing.scope().close()).toEqualTypeOf<ResultTask<void, never, never>>();
   expect(await ResultTask.runPromise(task)).toBe("fake");
   expect(started).toBe(false);
-  const live = original.use(["query"], ({ query }) => ResultTask.succeed(query));
+  const live = original.use(["query"], ({ query }) => ResultTask.ok(query));
   expectTypeOf(live).toEqualTypeOf<
     ResultTask<string, "offline" | "release failed", typeof Credentials>
   >();
@@ -65,7 +65,7 @@ test("http owns its root while reusing one handler across isolated requests", as
     });
   expect(singletonAcquisitions).toBe(0);
   const program = ResultTask.scoped(
-    application.flatMap((app) =>
+    application.andThen((app) =>
       ResultTask.tryPromise({
         try: async () => {
           const [a, b] = await Promise.all([app.request("/a"), app.request("/b")]);
@@ -91,11 +91,11 @@ test("selection retains only reachable errors and requirements, including callba
     "remote",
     ResultTask.gen(function* remote() {
       yield* External;
-      return yield* ResultTask.fail("offline" as const).map(() => "unreachable");
+      return yield* ResultTask.err("offline" as const).map(() => "unreachable");
     }),
   );
   const module = createModule().value("health", "ok").scoped(Remote);
-  const healthTask = module.use(["health"], ({ health }) => ResultTask.succeed(health));
+  const healthTask = module.use(["health"], ({ health }) => ResultTask.ok(health));
   expectTypeOf(healthTask).toEqualTypeOf<ResultTask<string, never, never>>();
   expect(await ResultTask.runPromise(healthTask)).toBe("ok");
   const remote = module.use([], () =>
@@ -117,7 +117,7 @@ test("small factories infer dependencies and request locals remain isolated", as
   const root = createModule().singleton(Cache).scoped(Users).scope();
   const read = (tenant: string) =>
     ResultTask.runPromise(
-      root.withServices({ tenant }).use(["users"], ({ users }) => ResultTask.succeed(users)),
+      root.withServices({ tenant }).use(["users"], ({ users }) => ResultTask.ok(users)),
     );
   const [a, b] = await Promise.all([read("a"), read("b")]);
   expect(a.tenant).toBe("a");
@@ -134,9 +134,7 @@ test("small factories infer dependencies and request locals remain isolated", as
 test("singletons cannot capture a request-local token", async () => {
   const root = createModule().singleton(Cache).singleton(Users).scope();
   const exit = await ResultTask.runExit(
-    root
-      .withServices({ tenant: "secret" })
-      .use(["users"], ({ users }) => ResultTask.succeed(users)),
+    root.withServices({ tenant: "secret" }).use(["users"], ({ users }) => ResultTask.ok(users)),
   );
   expect(exit).toMatchObject({ _tag: "Failure", cause: { _tag: "Die" } });
   await ResultTask.runPromise(root.close());
@@ -148,9 +146,7 @@ test("merges immutable modules and rejects duplicate registrations", async () =>
   const root = first.merge(second).scope();
   expect(
     await ResultTask.runPromise(
-      root
-        .withServices({ tenant: "a" })
-        .use(["users"], ({ users }) => ResultTask.succeed(users.tenant)),
+      root.withServices({ tenant: "a" }).use(["users"], ({ users }) => ResultTask.ok(users.tenant)),
     ),
   ).toBe("a");
   expect(() => {
@@ -162,14 +158,12 @@ test("merges immutable modules and rejects duplicate registrations", async () =>
 
 test("resource tokens use lifetime methods and preserve close error types", async () => {
   const Database = resource("database", {
-    acquire: ResultTask.succeed(1),
-    release: () => ResultTask.fail("close failed" as const),
+    acquire: ResultTask.ok(1),
+    release: () => ResultTask.err("close failed" as const),
   });
   const root = createModule().singleton(Database).scope();
   expectTypeOf(root.close()).toEqualTypeOf<ResultTask<void, "close failed", never>>();
-  await ResultTask.runPromise(
-    root.use(["database"], ({ database }) => ResultTask.succeed(database)),
-  );
+  await ResultTask.runPromise(root.use(["database"], ({ database }) => ResultTask.ok(database)));
   expect(await ResultTask.runExit(root.close())).toEqual({
     _tag: "Failure",
     cause: { _tag: "Fail", error: "close failed" },
@@ -179,7 +173,7 @@ test("resource tokens use lifetime methods and preserve close error types", asyn
 test("fetch keeps scoped resources open through streaming and drains before root close", async () => {
   let releases = 0;
   const Connection = resource("connection", {
-    acquire: ResultTask.succeed(1),
+    acquire: ResultTask.ok(1),
     release: () =>
       ResultTask.sync(() => {
         releases += 1;
@@ -210,7 +204,7 @@ test("body cancellation propagates and releases the request scope", async () => 
   let canceled = false;
   let released = false;
   const Connection = resource("connection", {
-    acquire: ResultTask.succeed(1),
+    acquire: ResultTask.ok(1),
     release: () =>
       ResultTask.sync(() => {
         released = true;
@@ -237,7 +231,7 @@ test("body cancellation propagates and releases the request scope", async () => 
 test("stream errors release resources and aborted startup cancels late response bodies", async () => {
   let releases = 0;
   const Connection = resource("connection", {
-    acquire: ResultTask.succeed(1),
+    acquire: ResultTask.ok(1),
     release: () =>
       ResultTask.sync(() => {
         releases += 1;
@@ -285,11 +279,11 @@ test("stream errors release resources and aborted startup cancels late response 
 test("request abort cancels streaming and cleanup failure reaches the body consumer", async () => {
   let releases = 0;
   const Connection = resource("connection", {
-    acquire: ResultTask.succeed(1),
+    acquire: ResultTask.ok(1),
     release: () =>
       ResultTask.sync(() => {
         releases += 1;
-      }).flatMap(() => ResultTask.fail("cleanup")),
+      }).andThen(() => ResultTask.err("cleanup")),
   });
   const root = createModule().scoped(Connection).scope();
   const controller = new AbortController();
@@ -307,7 +301,7 @@ test("request abort cancels streaming and cleanup failure reaches the body consu
 test("empty responses finish cleanup before fetch resolves, and handler failures close scopes", async () => {
   let releases = 0;
   const Connection = resource("connection", {
-    acquire: ResultTask.succeed(1),
+    acquire: ResultTask.ok(1),
     release: () =>
       ResultTask.sync(() => {
         releases += 1;
@@ -353,7 +347,7 @@ test("the unified module preserves named and token registration throughout fluen
     .task(
       "computed",
       ["namedTransient"],
-      ({ namedTransient }) => ResultTask.succeed(namedTransient + 1),
+      ({ namedTransient }) => ResultTask.ok(namedTransient + 1),
       { lifetime: "transient" },
     )
     .resource("lease", ["computed"], {
@@ -369,7 +363,7 @@ test("the unified module preserves named and token registration throughout fluen
         }),
     });
   expect(events).toEqual([]);
-  const task = mixed.use(["lease"], ({ lease }) => ResultTask.succeed(lease));
+  const task = mixed.use(["lease"], ({ lease }) => ResultTask.ok(lease));
   expectTypeOf(task).toEqualTypeOf<ResultTask<number, never, never>>();
   expect(await ResultTask.runPromise(task)).toBe(5);
   expect(events).toEqual(["open", "close"]);

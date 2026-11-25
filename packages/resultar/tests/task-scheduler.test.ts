@@ -503,4 +503,374 @@ describe('cooperative task scheduling', () => {
     )
     equal(yields, 0)
   })
+
+  it('works without setImmediate in browser-like runtimes, preserving wake order and cancellation', async () => {
+    const host = globalThis as {
+      setImmediate: typeof globalThis.setImmediate | undefined
+      clearImmediate: typeof globalThis.clearImmediate | undefined
+    }
+    const savedSetImmediate = host.setImmediate
+    const savedClearImmediate = host.clearImmediate
+    host.setImmediate = undefined
+    host.clearImmediate = undefined
+
+    try {
+      // 1. VirtualClock.flush / advanceBy / runToCompletion without setImmediate
+      const clock = Clock.virtual(0)
+      const order: string[] = []
+      const retryLike = ResultTask.gen(function* () {
+        order.push('start')
+        yield* ResultTask.sleep(250)
+        order.push('step-1')
+        yield* ResultTask.sleep(500)
+        order.push('step-2')
+        yield* ResultTask.sleep(600)
+        order.push('done')
+        return clock.now()
+      })
+      const exit = await clock.runToCompletion(retryLike)
+      deepEqual(exit, { _tag: 'Success', value: 1350 })
+      equal(clock.now(), 1350)
+      deepEqual(order, ['start', 'step-1', 'step-2', 'done'])
+
+      // 2. Scheduler.live.yield preserves FIFO wake order without setImmediate
+      const wakeOrder: number[] = []
+      const c1 = new AbortController()
+      const c2 = new AbortController()
+      const c3 = new AbortController()
+      const y1 = Promise.resolve(Scheduler.live.yield(c1.signal)).then(() => {
+        wakeOrder.push(1)
+      })
+      const y2 = Promise.resolve(Scheduler.live.yield(c2.signal)).then(() => {
+        wakeOrder.push(2)
+      })
+      const y3 = Promise.resolve(Scheduler.live.yield(c3.signal)).then(() => {
+        wakeOrder.push(3)
+      })
+      // Cancel middle yield before macrotask fires
+      c2.abort('cancelled-middle')
+      await rejects(y2, { name: 'AbortError' })
+      await Promise.all([y1, y3])
+      deepEqual(wakeOrder, [1, 3])
+
+      // 3. Long runnable task yields cooperatively via fallback macrotask scheduler
+      const sum = await ResultTask.runPromise(mapped(5000), { yieldEvery: 1000 })
+      equal(sum, 5000)
+    } finally {
+      host.setImmediate = savedSetImmediate
+      host.clearImmediate = savedClearImmediate
+    }
+  })
+
+  it('interrupts task and releases scoped resources when VirtualClock.runToCompletion hits maxSteps', async () => {
+    const clock = Clock.virtual(0)
+    let releases = 0
+
+    const program = ResultTask.scoped(
+      ResultTask.gen(function* () {
+        yield* ResultTask.acquireRelease({
+          acquire: ResultTask.ok('handle'),
+          release: () =>
+            ResultTask.sync(() => {
+              releases += 1
+            }),
+        })
+        yield* ResultTask.sleep(100)
+        return 'never'
+      }),
+    )
+
+    await rejects(clock.runToCompletion(program, { maxSteps: 0 }), RangeError)
+    equal(clock.pending, 0)
+    equal(releases, 1)
+
+    // Also verify partial progress (maxSteps: 1) interrupts the second timer and still releases once.
+    const clock2 = Clock.virtual(0)
+    let releases2 = 0
+    const twoSteps = ResultTask.scoped(
+      ResultTask.gen(function* () {
+        yield* ResultTask.acquireRelease({
+          acquire: ResultTask.ok('handle-2'),
+          release: () =>
+            ResultTask.sync(() => {
+              releases2 += 1
+            }),
+        })
+        yield* ResultTask.sleep(50)
+        yield* ResultTask.sleep(50)
+        return 'never'
+      }),
+    )
+
+    await rejects(clock2.runToCompletion(twoSteps, { maxSteps: 1 }), RangeError)
+    equal(clock2.now(), 50)
+    equal(clock2.pending, 0)
+    equal(releases2, 1)
+
+    // Finite virtual-clock sleeps inside a resource release must complete cleanly under maxSteps: 0.
+    const clock3 = Clock.virtual(0)
+    let releases3 = 0
+    const asyncRelease = ResultTask.scoped(
+      ResultTask.gen(function* () {
+        yield* ResultTask.acquireRelease({
+          acquire: ResultTask.ok('handle-3'),
+          release: () =>
+            ResultTask.gen(function* () {
+              yield* ResultTask.sleep(1)
+              releases3 += 1
+            }),
+        })
+        yield* ResultTask.sleep(100)
+        return 'never'
+      }),
+    )
+
+    await rejects(clock3.runToCompletion(asyncRelease, { maxSteps: 0 }), RangeError)
+    equal(clock3.now(), 1)
+    equal(clock3.pending, 0)
+    equal(releases3, 1)
+  })
+
+  it('completes virtual-clock finalizers with delayed sleeps and >10,000 finite sleeps under maxSteps: 0', async () => {
+    // 1. Finalizer awaiting an external Promise before registering a virtual sleep(1) finishes without manual advanceBy.
+    const clockDelayed = Clock.virtual(0)
+    let delayedReleases = 0
+    const releaseEntered = Promise.withResolvers<void>()
+    const externalGate = Promise.withResolvers<void>()
+    const delayedSleepRelease = ResultTask.scoped(
+      ResultTask.gen(function* () {
+        yield* ResultTask.acquireRelease({
+          acquire: ResultTask.ok('handle-delayed'),
+          release: () =>
+            ResultTask.gen(function* () {
+              releaseEntered.resolve()
+              yield* ResultTask.tryPromise({
+                try: () => externalGate.promise,
+                catch: (error) => error,
+              })
+              yield* ResultTask.sleep(1)
+              delayedReleases += 1
+            }),
+        })
+        yield* ResultTask.sleep(100)
+        return 'never'
+      }),
+    )
+
+    const delayedFailure = rejects(
+      clockDelayed.runToCompletion(delayedSleepRelease, { maxSteps: 0 }),
+      RangeError,
+    )
+    await releaseEntered.promise
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10)
+    })
+    equal(delayedReleases, 0)
+    externalGate.resolve()
+    await delayedFailure
+    equal(clockDelayed.now(), 1)
+    equal(clockDelayed.pending, 0)
+    equal(delayedReleases, 1)
+
+    // 2. Finalizer with 10,001 finite virtual sleeps does not truncate at 10,000 steps.
+    const clockMany = Clock.virtual(0)
+    let manyReleases = 0
+    const manySleepsRelease = ResultTask.scoped(
+      ResultTask.gen(function* () {
+        yield* ResultTask.acquireRelease({
+          acquire: ResultTask.ok('handle-many'),
+          release: () =>
+            ResultTask.gen(function* () {
+              for (let step = 0; step < 10_001; step += 1) {
+                yield* ResultTask.sleep(1)
+              }
+              manyReleases += 1
+            }),
+        })
+        yield* ResultTask.sleep(100)
+        return 'never'
+      }),
+    )
+
+    await rejects(clockMany.runToCompletion(manySleepsRelease, { maxSteps: 0 }), RangeError)
+    equal(clockMany.now(), 10_001)
+    equal(clockMany.pending, 0)
+    equal(manyReleases, 1)
+  }, 20_000)
+
+  it('automatically advances finalizer sleeps scheduled after external promises during normal runToCompletion', async () => {
+    const runScenario = async (outcome: 'success' | 'failure'): Promise<void> => {
+      const clock = Clock.virtual(0)
+      let releases = 0
+      const releaseEntered = Promise.withResolvers<void>()
+      const externalGate = Promise.withResolvers<void>()
+
+      const program = ResultTask.scoped(
+        ResultTask.gen(function* () {
+          yield* ResultTask.acquireRelease({
+            acquire: ResultTask.ok(`handle-${outcome}`),
+            release: () =>
+              ResultTask.gen(function* () {
+                releaseEntered.resolve()
+                yield* ResultTask.tryPromise({
+                  try: () => externalGate.promise,
+                  catch: (error) => error,
+                })
+                yield* ResultTask.sleep(1)
+                releases += 1
+              }),
+          })
+          for (let tick = 0; tick < 5; tick += 1) {
+            yield* ResultTask.sleep(1)
+          }
+          if (outcome === 'failure') {
+            return yield* ResultTask.err('domain-failure')
+          }
+          return 42
+        }),
+      )
+
+      const pendingExit = clock.runToCompletion(program)
+      await releaseEntered.promise
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10)
+      })
+      equal(clock.now(), 5)
+      equal(releases, 0)
+
+      externalGate.resolve()
+      const exit = await pendingExit
+      equal(clock.now(), 6)
+      equal(clock.pending, 0)
+      equal(releases, 1)
+      if (outcome === 'success') {
+        deepEqual(exit, { _tag: 'Success', value: 42 })
+      } else {
+        equal(exit._tag, 'Failure')
+        if (exit._tag === 'Failure') {
+          equal(exit.cause._tag, 'Fail')
+          if (exit.cause._tag === 'Fail') {
+            equal(exit.cause.error, 'domain-failure')
+          }
+        }
+      }
+    }
+
+    await runScenario('success')
+    await runScenario('failure')
+
+    // A task that awaits only an external promise (0 virtual clock steps) succeeds under maxSteps: 0.
+    const zeroClock = Clock.virtual(0)
+    const zeroGate = Promise.withResolvers<number>()
+    const zeroExit = zeroClock.runToCompletion(
+      ResultTask.tryPromise({ try: () => zeroGate.promise, catch: (error) => error }),
+      { maxSteps: 0 },
+    )
+    setTimeout(() => {
+      zeroGate.resolve(7)
+    }, 5)
+    deepEqual(await zeroExit, { _tag: 'Success', value: 7 })
+    equal(zeroClock.now(), 0)
+    equal(zeroClock.pending, 0)
+  })
+
+  it('guards scheduleMacrotask callbacks after cancellation and validates VirtualClock options', async () => {
+    const { scheduleMacrotask } = await import('../src/task/task-scheduler.js')
+    const host = globalThis as unknown as {
+      setImmediate?: ((cb: () => void) => unknown) | undefined
+      clearImmediate?: ((h: unknown) => void) | undefined
+    }
+    const origSetImmediate = host.setImmediate
+    const origClearImmediate = host.clearImmediate
+    try {
+      let captured: (() => void) | undefined = undefined
+      host.setImmediate = (cb) => {
+        captured = cb
+        return 1
+      }
+      host.clearImmediate = () => undefined
+      let ran = false
+      const cancel = scheduleMacrotask(() => {
+        ran = true
+      })
+      cancel()
+      ;(captured as (() => void) | undefined)?.()
+      equal(ran, false)
+    } finally {
+      host.setImmediate = origSetImmediate
+      host.clearImmediate = origClearImmediate
+    }
+
+    const clock = Clock.virtual(0)
+    await rejects(
+      () => clock.runToCompletion(ResultTask.ok(1), { maxCleanupSteps: -1 }),
+      /maxCleanupSteps/u,
+    )
+    await rejects(() => clock.runToCompletion(ResultTask.ok(1), { maxSteps: -1 }), /maxSteps/u)
+
+    const extController = new AbortController()
+    const extPending = clock.runToCompletion(ResultTask.sleep(100), {
+      signal: extController.signal,
+    })
+    extController.abort('external-stop')
+    equal((await extPending)._tag, 'Failure')
+  })
+
+  it('covers VirtualClock runExit rejections, cleanup step limits, and advanceBy stagnant step limit', async () => {
+    const clock = Clock.virtual(0)
+    await rejects(
+      () =>
+        clock.runToCompletion({ runExit: () => Promise.reject(new Error('run-exit-rejected')) }),
+      /run-exit-rejected/u,
+    )
+    const abortRejectClock = Clock.virtual(0)
+    await rejects(
+      () =>
+        abortRejectClock.runToCompletion(
+          {
+            runExit: ({ clock: taskClock, signal }) =>
+              taskClock.sleep(10, signal) as unknown as Promise<Exit<void, never>>,
+          },
+          { maxSteps: 0 },
+        ),
+      /exceeded 0 virtual clock steps/u,
+    )
+
+    const cleanupClock = Clock.virtual(0)
+    const infiniteWithSlowCleanup = ResultTask.sleep(10)
+      .andThen(() => ResultTask.sleep(10))
+      .ensuring(() => ResultTask.sleep(5).andThen(() => ResultTask.sleep(5)))
+    await rejects(
+      () =>
+        cleanupClock.runToCompletion(infiniteWithSlowCleanup, { maxSteps: 1, maxCleanupSteps: 1 }),
+      /exceeded 1 virtual clock steps/u,
+    )
+
+    const { NEVER_ABORTED_SIGNAL } = await import('../src/task/exit.js')
+    const host = globalThis as unknown as {
+      setImmediate?: ((cb: () => void) => unknown) | undefined
+      clearImmediate?: ((h: unknown) => void) | undefined
+    }
+    const origSetImmediate = host.setImmediate
+    const origClearImmediate = host.clearImmediate
+    const stagnantClock = Clock.virtual(0)
+    let keepLooping = true
+    const loopSleep = (): void => {
+      if (!keepLooping) return
+      void stagnantClock.sleep(0, NEVER_ABORTED_SIGNAL).then(loopSleep)
+    }
+    loopSleep()
+    try {
+      host.setImmediate = (cb) => {
+        queueMicrotask(cb)
+        return 1
+      }
+      host.clearImmediate = () => undefined
+      await rejects(() => stagnantClock.advanceBy(10), /exceeded zero-duration step limit/u)
+    } finally {
+      keepLooping = false
+      host.setImmediate = origSetImmediate
+      host.clearImmediate = origClearImmediate
+    }
+  })
 })

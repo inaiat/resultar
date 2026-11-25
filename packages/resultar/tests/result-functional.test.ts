@@ -2,16 +2,8 @@ import { deepEqual, equal, rejects, throws } from 'node:assert/strict'
 
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import {
-  Result,
-  ResultAsync,
-  createTaggedError,
-  err,
-  errAsync,
-  ok,
-  okAsync,
-  pipe,
-} from '../src/index.js'
+import { ResultAsync, asyncAndThen, asyncMap, errAsync, okAsync } from '../src/entries/async.js'
+import { Result, createTaggedError, err, ok, pipe } from '../src/index.js'
 
 describe('Result functional operators', () => {
   it('infers direct and curried inline success pipelines and combines errors', () => {
@@ -151,19 +143,19 @@ describe('Result functional operators', () => {
         bothSeen.push(`ok:${v}`)
         throw new Error('ignored')
       },
-      error: (e: 'source') => {
+      err: (e: 'source') => {
         bothSeen.push(`err:${e}`)
         throw new Error('ignored')
       },
     }
     equal(success.inspectBoth(handlers), success)
     equal(failure.inspectBoth(handlers), failure)
-    equal(success.inspectBoth(handlers.ok, handlers.error), success)
-    equal(failure.inspectBoth(handlers.ok, handlers.error), failure)
+    equal(success.inspectBoth(handlers.ok, handlers.err), success)
+    equal(failure.inspectBoth(handlers.ok, handlers.err), failure)
     equal(Result.inspectBoth(success, handlers), success)
-    equal(Result.inspectBoth(failure, handlers.ok, handlers.error), failure)
+    equal(Result.inspectBoth(failure, handlers.ok, handlers.err), failure)
     equal(pipe(success, Result.inspectBoth(handlers)), success)
-    equal(pipe(failure, Result.inspectBoth(handlers.ok, handlers.error)), failure)
+    equal(pipe(failure, Result.inspectBoth(handlers.ok, handlers.err)), failure)
     deepEqual(bothSeen, [
       'ok:2',
       'err:source',
@@ -200,12 +192,9 @@ describe('Result functional operators', () => {
   it('matches both branches with direct and curried object or callback handlers', () => {
     const success: Result<number, 'source'> = ok(2)
     const failure: Result<number, 'source'> = err('source')
-    const handlers = { ok: (value: number) => value + 1, error: (error: 'source') => error }
-    const direct = Result.match(success, { ok: (value) => value + 1, error: (error) => error })
-    const curried = pipe(
-      failure,
-      Result.match({ ok: (value) => value + 1, error: (error) => error }),
-    )
+    const handlers = { ok: (value: number) => value + 1, err: (error: 'source') => error }
+    const direct = Result.match(success, { ok: (value) => value + 1, err: (error) => error })
+    const curried = pipe(failure, Result.match({ ok: (value) => value + 1, err: (error) => error }))
     const callbacks = pipe(
       success,
       Result.match(
@@ -219,9 +208,9 @@ describe('Result functional operators', () => {
     equal(direct, 3)
     equal(curried, 'source')
     equal(callbacks, 3)
-    equal(Result.match(failure, handlers.ok, handlers.error), 'source')
+    equal(Result.match(failure, handlers.ok, handlers.err), 'source')
     equal(Result.match(handlers)(success), 3)
-    equal(Result.match(handlers.ok, handlers.error)(failure), 'source')
+    equal(Result.match(handlers.ok, handlers.err)(failure), 'source')
   })
 
   it('supports static catchTag, catchTags, matchTags, and matchTagsPartial in direct and pipe forms', () => {
@@ -340,7 +329,7 @@ describe('Result functional operators', () => {
       () => Result.orElse(fail)(err('source')),
       () => Result.filterOrElse(ok(1), fail, () => 'validation'),
       () => Result.filterOrElse(() => false, fail)(ok(1)),
-      () => Result.match(ok(1), { ok: fail, error: fail }),
+      () => Result.match(ok(1), { ok: fail, err: fail }),
       () => Result.match(fail, fail)(err('source')),
     ]
 
@@ -354,17 +343,17 @@ describe('Result functional operators', () => {
     const input: Result<number, 'source'> = ok(2)
     const chained = pipe(
       input,
-      Result.asyncAndThen((value) => {
+      asyncAndThen((value) => {
         calls += 1
         return ResultAsync.fromSafePromise(Promise.resolve(String(value)))
       }),
     )
-    const mapped = Result.asyncMap(input, (value) => {
+    const mapped = asyncMap(input, (value) => {
       calls += 1
       return Promise.resolve(value + 1)
     })
-    const curriedMap = input.pipe(Result.asyncMap((value) => Promise.resolve(value + 1)))
-    const directChain = Result.asyncAndThen(input, () => errAsync<never, 'async'>('async'))
+    const curriedMap = input.pipe(asyncMap((value) => Promise.resolve(value + 1)))
+    const directChain = asyncAndThen(input, () => errAsync<never, 'async'>('async'))
 
     equal(calls, 2)
     expectTypeOf(chained).toEqualTypeOf<ResultAsync<string, 'source'>>()
@@ -380,11 +369,11 @@ describe('Result functional operators', () => {
   it('skips async callbacks on Err and keeps synchronous throws or Promise rejections', async () => {
     let calls = 0
     const input: Result<number, 'source'> = err('source')
-    const mapped = Result.asyncMap(input, (value) => {
+    const mapped = asyncMap(input, (value) => {
       calls += 1
       return Promise.resolve(value + 1)
     })
-    const chained = Result.asyncAndThen((value: number) => {
+    const chained = asyncAndThen((value: number) => {
       calls += 1
       return okAsync(value + 1)
     })(input)
@@ -397,15 +386,15 @@ describe('Result functional operators', () => {
     equal((await mapped)._unsafeUnwrapErr(), 'source')
     equal((await chained)._unsafeUnwrapErr(), 'source')
     throws(
-      () => Result.asyncMap(ok(1), fail),
+      () => asyncMap(ok(1), fail),
       (error) => error === defect,
     )
     throws(
-      () => Result.asyncAndThen(fail)(ok(1)),
+      () => asyncAndThen(fail)(ok(1)),
       (error) => error === defect,
     )
     await rejects(
-      Promise.resolve(Result.asyncMap(() => Promise.reject(defect))(ok(1))),
+      Promise.resolve(asyncMap(() => Promise.reject(defect))(ok(1))),
       (error) => error === defect,
     )
   })

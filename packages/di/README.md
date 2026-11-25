@@ -10,9 +10,9 @@ Define services once, select the part of the application you need, and keep its 
 through a `use` callback. The package handles dependency selection, lifetimes, and ownership;
 Resultar handles execution, interruption, failure causes, and cleanup.
 
-Use `ResultTask` for new async service methods as well as initialization. Tasks are lazy and
-repeatable, have no `.then`, and execute through explicit runners (`task.runResult()` returns an in-flight `ResultAsync`). `ResultAsync` and
-`StrictResultAsync` in `resultar` retain eager, single-execution compatibility for existing methods.
+Use `ResultTask` for async service methods as well as initialization. Tasks are lazy and
+repeatable, have no `.then`, and execute through explicit runners (`task.runResult()` returns a native `Promise<Result<T, E>>`). Opt-in eager `ResultAsync` and
+`StrictResultAsync` compatibility lives in `resultar/async`.
 
 ## Contents
 
@@ -37,30 +37,35 @@ ESM; Node.js 24+. The implementation has no Node-specific imports or global cont
 
 ## Recommended API
 
+> **Choosing a style:** Default to **`service(...)` + `resource(...)` + `createModule()`** for new applications (shortest syntax, zero boilerplate). Use **`class X extends Service(...)`** when you want nominal class tags that workflows request via `yield* X` across modules. Use named string registration only for dynamic or migration boundaries.
+
 Define a token with `service`, then choose its lifetime when composing the module. Dependencies
 are a typed object of tokens; ordinary synchronous factories need no class or generator wrapper.
 Use `service(name, task)` for task initialization and `resource(name, { acquire, release })` for
 resources. All three register with the same `.singleton`, `.scoped`, or `.transient` methods.
 
 ```ts
-import { ResultTask } from 'resultar'
-import { createModule, service, Service } from 'resultar-di'
+import { ResultTask } from "resultar";
+import { createModule, service, Service } from "resultar-di";
 
-const Cache = service('cache', ResultTask.sync(() => new Map<string, string>()))
-const Tenant = Service.require<string>()('tenant')
-const Users = service('users', { cache: Cache, tenant: Tenant }, ({ cache, tenant }) => ({
+const Cache = service(
+  "cache",
+  ResultTask.sync(() => new Map<string, string>()),
+);
+const Tenant = Service.require<string>()("tenant");
+const Users = service("users", { cache: Cache, tenant: Tenant }, ({ cache, tenant }) => ({
   find: (id: string) => cache.get(`${tenant}:${id}`),
-}))
+}));
 
-const storage = createModule().singleton(Cache)
-const features = createModule().scoped(Users)
-const application = storage.merge(features).scope()
+const storage = createModule().singleton(Cache);
+const features = createModule().scoped(Users);
+const application = storage.merge(features).scope();
 
 const result = await application
-  .withServices({ tenant: 'acme' })
-  .use(['users'], ({ users }) => ResultTask.sync(() => users.find('1')))
-  .runResult()
-await application.close().runPromise()
+  .withServices({ tenant: "acme" })
+  .use(["users"], ({ users }) => ResultTask.sync(() => users.find("1")))
+  .runResult();
+await application.close().runPromise();
 ```
 
 `merge` preserves types and rejects duplicate names. `withServices` returns a facade over the same
@@ -81,12 +86,12 @@ Use `Service` when you prefer class-shaped tokens. `requires` injects a readonly
 properties are inferred from the declared tokens. Its `make` factory can return the service object directly:
 
 ```ts
-import { ResultTask } from 'resultar'
-import { createModule, Service } from 'resultar-di'
+import { ResultTask } from "resultar";
+import { createModule, Service } from "resultar-di";
 
-const Storage = Service.require<ReadonlyMap<string, string>>()('storage')
+const Storage = Service.require<ReadonlyMap<string, string>>()("storage");
 
-class Users extends Service('users', {
+class Users extends Service("users", {
   requires: { cache: Storage },
   make: ({ cache }) => ({
     find: (id: string) => cache.get(id),
@@ -94,8 +99,8 @@ class Users extends Service('users', {
 }) {}
 
 const services = createModule()
-  .value('storage', new Map([['1', 'Ada']]))
-  .scoped(Users)
+  .value("storage", new Map([["1", "Ada"]]))
+  .scoped(Users);
 ```
 
 `cache` is the injected alias; `storage` is the provider identifier. A requirement does not register
@@ -106,17 +111,17 @@ With `requires`, `make` returns a synchronous value or a `ResultTask`. Prefer re
 directly for ordinary service construction; keep `ResultTask.gen` for initialization with typed
 failures, additional requirements or owned resources. Existing `ResultTask.sync` factories remain
 supported. Promises and thenables are rejected: wrap asynchronous initialization in
-`ResultTask.tryPromise` or another task. Prefer `ResultTask` for new async methods on the returned
-service. Existing methods can preserve eager `ResultAsync` or `StrictResultAsync` contracts;
-adapt each call with `ResultTask.fromResultAsync(() => legacyMethod())` inside a new Task workflow.
+`ResultTask.tryPromise` or another task. Use `ResultTask` for async methods on the returned
+service. Legacy eager `ResultAsync` methods from `resultar/async` can be adapted into Task workflows
+with `ResultTask.fromResultAsync(() => legacyMethod())`.
 Without `requires`, `make` accepts a task or a zero-argument factory returning a synchronous value or ResultTask. The generator form
 also supports inline requirements:
 
 ```ts
-class Users extends Service('users', {
+class Users extends Service("users", {
   make: ResultTask.gen(function* () {
-    const cache = yield* Service.require<ReadonlyMap<string, string>>()('storage')
-    return { find: (id: string) => cache.get(id) }
+    const cache = yield* Service.require<ReadonlyMap<string, string>>()("storage");
+    return { find: (id: string) => cache.get(id) };
   }),
 }) {}
 ```
@@ -145,15 +150,16 @@ The Fetch adapter needs no Hono dependency. Select a request-scoped Hono router 
 its `fetch` method:
 
 ```ts
-const RequestInfo = ResultTask.service<Request>()('request')
-const Router = service('router', { users: Users, request: RequestInfo }, createHttpApp)
-const application = storage.merge(features).scoped(Router).scope()
+const RequestInfo = ResultTask.service<Request>()("request");
+const Router = service("router", { users: Users, request: RequestInfo }, createHttpApp);
+const application = storage.merge(features).scoped(Router).scope();
 
-const fetch = (request: Request) => application
-  .withServices({ request, tenant: 'acme' })
-  .fetch(['router'], ({ router }, incoming) => router.fetch(incoming))(request)
+const fetch = (request: Request) =>
+  application
+    .withServices({ request, tenant: "acme" })
+    .fetch(["router"], ({ router }, incoming) => router.fetch(incoming))(request);
 
-export default { fetch }
+export default { fetch };
 ```
 
 The caller supplies authenticated tenant data in real applications. Routes receive ordinary
@@ -190,17 +196,15 @@ application root in the surrounding ResultTask scope, opens a child for each res
 the root automatically during shutdown:
 
 ```ts
-import { createModule, service } from 'resultar-di'
+import { createModule, service } from "resultar-di";
 
-const services = createModule()
-  .singleton(Cache)
-  .scoped(Users)
-  .value('tenant', 'acme')
-const router = createHttpApp() // Hono router, built once
-const App = service('app', services.http(['users'], (bindings, request) =>
-  router.fetch(request, bindings),
-))
-const application = createModule().singleton(App)
+const services = createModule().singleton(Cache).scoped(Users).value("tenant", "acme");
+const router = createHttpApp(); // Hono router, built once
+const App = service(
+  "app",
+  services.http(["users"], (bindings, request) => router.fetch(request, bindings)),
+);
+const application = createModule().singleton(App);
 ```
 
 Routes read their request's services from `context.env`; new async domain methods return Tasks

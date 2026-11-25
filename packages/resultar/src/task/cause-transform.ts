@@ -1,10 +1,14 @@
+import { copyCauseSpans } from './tracer.js'
 import type { Cause } from './cause.js'
 import { isCleanupCause, markCleanupCause } from './cleanup-cause.js'
+import type { Exit } from './result-task.js'
+import { failure } from './exit.js'
 
 const inheritCleanupCause = (
   original: Cause<unknown>,
   transformed: Cause<unknown> | undefined,
 ): Cause<unknown> | undefined => {
+  if (transformed !== undefined && original !== transformed) copyCauseSpans(original, transformed)
   if (isCleanupCause(original)) markCleanupCause(transformed)
   return transformed
 }
@@ -66,3 +70,10 @@ export function transformCause(
 /** Internal sibling cancellation is not an additional failure, but cleanup failures are. */
 export const withoutInterruptions = (cause: Cause<unknown>): Cause<unknown> | undefined =>
   transformCause(cause, (leaf) => (leaf._tag === 'Interrupt' ? undefined : leaf))
+
+/** Clones failure cause nodes so observer-scoped span traces never leak across shared callers. */
+export const isolateExitForObserver = <A, E>(exit: Exit<A, E>): Exit<A, E> => {
+  if (exit._tag === 'Success') return exit
+  // eslint-disable-next-line prefer-object-spread -- Keep the public failure payload by identity.
+  return failure(transformCause(exit.cause, (leaf) => Object.assign({}, leaf)) as Cause<E>)
+}

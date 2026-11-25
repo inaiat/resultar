@@ -2,14 +2,15 @@ import { deepEqual, equal, ok as isTrue, rejects } from 'node:assert'
 
 import { describe, expectTypeOf, it, vi } from 'vite-plus/test'
 
+import type { AbortError } from '../src/index.js'
 import type {
   ResultAsyncAbortSignal,
   ResultAsyncRetryContext,
   ResultAsyncRetryTask,
-  AbortError,
-} from '../src/index.js'
+} from '../src/entries/async.js'
 
-import { Result, ResultAsync, isAbortError } from '../src/index.js'
+import { Result, isAbortError } from '../src/index.js'
+import { ResultAsync } from '../src/entries/async.js'
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {

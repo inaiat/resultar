@@ -19,7 +19,16 @@ export default defineConfig({
     clean: true,
     dts: { sourcemap: false },
     deps: { onlyBundle: false },
-    entry: { index: 'src/index.ts' },
+    entry: {
+      index: 'src/index.ts',
+      result: 'src/entries/result.ts',
+      task: 'src/entries/task.ts',
+      match: 'src/entries/match.ts',
+      tagged: 'src/entries/tagged.ts',
+      retry: 'src/entries/retry.ts',
+      function: 'src/entries/function.ts',
+      async: 'src/entries/async.ts',
+    },
     format: ['esm'],
     outExtensions: () => ({ dts: '.d.ts', js: '.js' }),
     sourcemap: false,
@@ -90,7 +99,7 @@ export default defineConfig({
     },
     overrides: [
       {
-        files: ['src/result-async/**/*.ts'],
+        files: ['src/result-async/**/*.ts', 'src/entries/async.ts', 'scripts/smoke-package.ts'],
         rules: {
           '@typescript-eslint/no-explicit-any': 'allow',
           '@typescript-eslint/no-deprecated': 'allow',
@@ -152,7 +161,7 @@ export default defineConfig({
   },
   test: {
     coverage: {
-      exclude: ['node_modules/', 'dist/', 'tests/', 'src/index.ts'],
+      exclude: ['node_modules/', 'dist/', 'tests/', 'src/index.ts', 'src/entries/**'],
       reporter: ['text', 'json', 'html', 'lcov'],
     },
     globals: true,

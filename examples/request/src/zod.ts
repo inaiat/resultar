@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { createTaggedError, ResultAsync, runPromise } from "resultar";
+import { createTaggedError, ResultTask } from "resultar";
 import { type RequestJsonMapError } from "resultar-request";
 import { requestJson as requestJsonZod } from "resultar-request-zod";
 
@@ -73,13 +73,15 @@ const runZodExample = (baseUrl: string) =>
   });
 
 const runZodExampleCli = () =>
-  ResultAsync.withResource({
-    acquire: () => startAccountExampleServer(),
-    release: ({ server }) => closeServer(server),
-    use: ({ baseUrl }) => {
+  ResultTask.scoped(
+    ResultTask.gen(function* () {
+      const { baseUrl } = yield* ResultTask.acquireRelease({
+        acquire: startAccountExampleServer(),
+        release: ({ server }) => closeServer(server),
+      });
       process.stdout.write(`Started local account API at ${baseUrl}\n`);
-      return runZodExample(baseUrl);
-    },
-  });
+      return yield* runZodExample(baseUrl);
+    }),
+  );
 
-await runPromise(runZodExampleCli());
+await runZodExampleCli().runPromise();

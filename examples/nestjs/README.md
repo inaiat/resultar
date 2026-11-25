@@ -1,8 +1,7 @@
 # Native NestJS services
 
-For new async code, return lazy `ResultTask` workflows and run them explicitly in native controller
-methods. This runnable fixture retains eager `ResultAsync` / `StrictResultAsync` service methods
-from `resultar` for compatibility coverage. Both types represent one shared in-flight execution.
+Return lazy `ResultTask` workflows (`StrictResultTask`) from services and run them explicitly
+with `.runResult()` in native NestJS controller methods.
 
 ```sh
 cd examples/nestjs
@@ -31,7 +30,7 @@ application factory.
 
 The file layout matches the [Fastify example](../fastify/README.md) and [Hono example](../hono/README.md):
 
-- [Services](src/services.ts): `Cache`, `UsersRepository`, `Users`, function-based `Health` and DI registration. Repository and service methods retain eager `StrictResultAsync` contracts.
+- [Services](src/services.ts): `Cache`, `UsersRepository`, `Users`, function-based `Health` and DI registration. Repository and service methods return `StrictResultTask`.
 - [Controllers](src/routes.ts): native NestJS `@Controller` classes with `@Services()` parameter injection and exhaustive result-to-response mapping.
 - [Application](src/main.ts): `createApplication()`, optional `bindings`, controller registration and server startup with `PORT`.
 
@@ -65,9 +64,9 @@ if (import.meta.main) {
 }
 ```
 
-## Existing eager service contracts
+## Request-scoped services
 
-The compatibility services in `services.ts` match the Fastify and Hono examples:
+The NestJS example registers the cache and repository as singletons. Each request receives its own users and health services.
 
 ```ts
 export const createServices = () =>

@@ -1,8 +1,10 @@
 import { equal } from 'node:assert'
 import { describe, expectTypeOf, it } from 'vite-plus/test'
 
-import type { ResultAsync, ResultAsyncGenerator, ResultGenerator } from '../src/index.js'
-import { Result, err, ok, okAsync } from '../src/index.js'
+import type { ResultAsyncGenerator } from '../src/entries/async.js'
+import { ResultAsync, okAsync } from '../src/entries/async.js'
+import type { ResultGenerator } from '../src/index.js'
+import { Result, err, ok } from '../src/index.js'
 
 describe('Result type narrowing', () => {
   it('exposes only value after isOk', () => {
@@ -26,7 +28,8 @@ describe('Result type narrowing', () => {
   })
 
   it('does not expose value in an Err branch from fromThrowable', () => {
-    const resultarJsonParse = Result.fromThrowable(JSON.parse, () => 'JSON parse error')
+    const parseJson: (text: string) => unknown = JSON.parse
+    const resultarJsonParse = Result.fromThrowable(parseJson, () => 'JSON parse error')
     const result = resultarJsonParse('boom')
 
     if (result.isErr()) {
@@ -55,7 +58,7 @@ describe('Result type narrowing', () => {
       return value * 2
     })
 
-    const asyncFn = Result.fn(async function* (
+    const asyncFn = ResultAsync.fn(async function* (
       input: string,
     ): ResultAsyncGenerator<number, 'nan' | 'non-positive' | 'remote'> {
       const local = yield* parsePositive(input)

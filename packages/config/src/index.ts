@@ -1,5 +1,4 @@
-import envSchema from "env-schema";
-import { Ajv, type ErrorObject } from "ajv";
+import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
 import { Type, type Static, type TObject, type TProperties } from "typebox";
 import { createTaggedError, ResultTask, type TaggedErrorClass } from "resultar";
 import { createModule, type ServiceModule } from "resultar-di";
@@ -66,55 +65,48 @@ const configError = (errors: readonly ErrorObject[]): ConfigError =>
     ),
   });
 
+interface CompiledConfigValidators<P extends TProperties> {
+  readonly normalize: ValidateFunction;
+  readonly validate: ValidateFunction<Static<TObject<P>>>;
+}
+
 /** Defines a lazy singleton configuration provider; explicit sources completely replace process.env. */
 export function defineAppConfig<P extends TProperties>(options: {
   readonly properties: P;
   readonly source?: Readonly<Record<string, string | undefined>>;
 }): AppConfigModule<P> {
+  let compiled: CompiledConfigValidators<P> | undefined = undefined;
   const module = createModule().task(
     "appConfig",
     [],
     () =>
       ResultTask.sync(() => {
-        const schema = Type.Object(options.properties, { additionalProperties: false });
-        const coercing = new Ajv({
-          allErrors: true,
-          coerceTypes: true,
-          useDefaults: true,
-          removeAdditional: true,
-          strictNumbers: true,
-          allowUnionTypes: true,
-        });
-        // Schema compilation failures are defects, not invalid environment input.
-        const normalize = coercing.compile(schema);
-        // Revalidate the normalized copy even when coercion reports other errors:
-        // this aggregates overflow and unrelated invalid fields in one failure.
-        const ajv = new Ajv({ allErrors: true, strictNumbers: true, allowUnionTypes: true });
-        ajv.compile(schema);
-        const data = { ...(options.source ?? process.env) };
-        normalize(data);
-        try {
-          const value = envSchema<Static<TObject<P>>>({
-            schema,
-            data,
-            env: false,
-            dotenv: false,
-            expandEnv: false,
-            ajv,
+        if (compiled === undefined) {
+          const schema = Type.Object(options.properties, { additionalProperties: false });
+          const coercing = new Ajv({
+            allErrors: true,
+            coerceTypes: true,
+            useDefaults: true,
+            removeAdditional: true,
+            strictNumbers: true,
+            allowUnionTypes: true,
           });
-          return ResultTask.ok(value);
-        } catch (error) {
-          if (
-            error instanceof Error &&
-            "errors" in error &&
-            ajv.errors !== null &&
-            ajv.errors !== undefined &&
-            error.errors === ajv.errors
-          ) {
-            return ResultTask.err(configError(ajv.errors));
-          }
-          throw error;
+          // Schema compilation failures (including EvalError under --disallow-code-generation-from-strings)
+          // are runtime defects, not invalid environment input.
+          const normalize = coercing.compile(schema);
+          // Revalidate the normalized copy even when coercion reports other errors:
+          // this aggregates overflow and unrelated invalid fields in one failure.
+          const ajv = new Ajv({ allErrors: true, strictNumbers: true, allowUnionTypes: true });
+          const validate = ajv.compile<Static<TObject<P>>>(schema);
+          compiled = { normalize, validate };
         }
+        const { normalize, validate } = compiled;
+        const data: Record<string, unknown> = { ...(options.source ?? process.env) };
+        normalize(data);
+        if (!validate(data)) {
+          return ResultTask.err(configError(validate.errors ?? []));
+        }
+        return ResultTask.ok(data);
       }).andThen((task) => task),
     { lifetime: "singleton" },
   );

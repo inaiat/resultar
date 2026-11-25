@@ -10,10 +10,8 @@ APIs from it. The Hono adapter remains an explicit dependency. To import directl
 from `resultar`, `resultar-di` or `resultar-config`, first add that component as a
 direct dependency. See [import choices](../../packages/app/README.md#unified-and-direct-imports).
 
-Prefer lazy `ResultTask` workflows and explicit runners for new async code. This runnable fixture
-retains eager `ResultAsync` / `StrictResultAsync` service methods from `resultar-app`
-for compatibility coverage.
-Both types represent one shared in-flight execution.
+Service methods return lazy `ResultTask` (`StrictResultTask`) workflows and are executed
+explicitly with `.runResult()` in native Hono route handlers.
 
 The example keeps the services/routes/application split used by the
 [Fastify example](../fastify/README.md) and adds configuration:
@@ -115,32 +113,23 @@ import { Service, service, createModule } from "resultar-app";
 ```
 
 `Users` declares `requires: { repository: UsersRepository }`; the repository declares
-`requires: { cache: Cache }`. Their existing methods return eager `StrictResultAsync`,
-and the user service composes lookup and removal through `Result.gen` from `resultar-app`. `Health` uses the
-function-based `service` API and reads the same cache. For new methods, return `ResultTask`, use
-`ResultTask.tryPromise` for drivers and `ResultTask.gen` for composition.
+`requires: { cache: Cache }`. Their methods return lazy `StrictResultTask`,
+and the user service composes lookup and removal through `ResultTask.gen` from `resultar-app`. `Health` uses the
+function-based `service` API and reads the same cache.
 
-To compose the existing service inside a new Task workflow, defer its call until execution:
+Inside a native Hono route handler for `/users/:id`, run the task explicitly with `.runResult()`:
 
 ```ts
-import { ResultTask } from "resultar-app";
-
 // Inside a native Hono route handler for /users/:id:
-const task = ResultTask.fromResultAsync(() => c.env.users.findById(c.req.param("id")));
-const result = await task.runResult();
-return result.matchTags(
-  (user) => c.json(user),
-  {
-    UserNotFoundError: (error) => c.json({ error: error.message }, 404),
-    UserReadError: (error) => c.json({ error: error.message }, 503),
-  },
-);
+const result = await c.env.users.findById(c.req.param("id")).runResult();
+return result.matchTags((user) => c.json(user), {
+  UserNotFoundError: (error) => c.json({ error: error.message }, 404),
+  UserReadError: (error) => c.json({ error: error.message }, 503),
+});
 ```
 
-The factory starts a fresh eager call on each run; passing an existing Async value would reuse
-its execution. Task has no `.then`, `map` is synchronous, and `match` returns a Task to run. The
-example above matches the `Result` after execution. Pass new Task-returning methods directly to
-`runResult`, without a bridge.
+Task has no `.then`, `map` is synchronous, and `match` returns a Task to run. The
+example above executes the task with `.runResult()` (returning a native `Promise<Result<...>>`) and matches the resolved `Result`.
 
 ## Application and route types
 
@@ -189,7 +178,7 @@ The import is erased at runtime and does not start the server.
   preloaded with user `1` / `Ada`).
 - `UsersRepository` is a **singleton** backed by that cache.
 - `Users` and `Health` are **scoped** (a fresh instance resolved for each HTTP request).
-  `Users.findById` and `Users.remove` retain eager `StrictResultAsync`; `Health.check` returns the
+  `Users.findById` and `Users.remove` return `StrictResultTask`; `Health.check` returns the
   current user count. Each application owns its cache, independently of other applications.
 - `createHonoApp` keeps one DI root and opens a child scope per request, holding scoped
   resources until the response body is fully consumed or canceled.
@@ -231,5 +220,4 @@ health, repository override and application isolation checks alongside adapter t
 
 With `requires`, class service factories return their method objects directly. The DI module
 constructs them lazily within the registered lifetime. Return a `ResultTask` from the factory when
-initialization needs task composition. Separately, prefer Task-returning async service methods in
-new code; this fixture's eager `StrictResultAsync` methods retain their original contract.
+initialization needs task composition.

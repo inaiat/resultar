@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -22,9 +22,7 @@ const expectedExports = [
   "integrationErrorHandler",
   "isHttpResponseError",
   "requestJson",
-  "requestJsonTask",
   "requestJsonZod",
-  "requestJsonZodTask",
 ] as const;
 
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>
@@ -77,6 +75,14 @@ if (JSON.stringify(actualExports) !== JSON.stringify(expectedExports)) {
   throw new Error(
     `Unexpected public exports:\nactual: ${actualExports.join(", ")}\nexpected: ${expectedExports.join(", ")}`,
   );
+}
+
+for (const file of ["dist/index.js", "dist/index.d.ts"] as const) {
+  const contents = readFileSync(join(rootDir, file), "utf8");
+
+  if (contents.includes("ResultAsync") || contents.includes("resultar/async")) {
+    throw new Error(`Built file ${file} must not reference ResultAsync or resultar/async`);
+  }
 }
 
 const packOutput = execFileSync("npm", ["pack", "--dry-run", "--json"], {
