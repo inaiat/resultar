@@ -19,6 +19,7 @@ export { HttpResponseErrorCauseError as HttpClientRequestErrorCause } from "./re
 
 export type {
   FetchJsonResponseData,
+  HttpErrorStatusByTag,
   RequestHeaders,
   RequestJsonBaseInput,
   RequestJsonDecodeFailure,

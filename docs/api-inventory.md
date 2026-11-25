@@ -288,6 +288,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `baseRequestErrorHandler` | Value | — |
 | `FetchJsonResponseData` | Type | — |
 | `HttpClientRequestErrorCause` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `body`, `cause`, `headers`, `message`, `name`, `stack`, `statusCode` |
+| `HttpErrorStatusByTag` | Type | — |
 | `HttpResponseErrorCauseError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `body`, `cause`, `headers`, `message`, `name`, `stack`, `statusCode` |
 | `integrationErrorHandler` | Value | — |
 | `isHttpResponseError` | Value | — |
@@ -331,6 +332,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `baseRequestErrorHandler` | Value | — |
 | `FetchJsonResponseData` | Type | — |
 | `HttpClientRequestErrorCause` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `body`, `cause`, `headers`, `message`, `name`, `stack`, `statusCode` |
+| `HttpErrorStatusByTag` | Type | — |
 | `HttpResponseErrorCauseError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `body`, `cause`, `headers`, `message`, `name`, `stack`, `statusCode` |
 | `integrationErrorHandler` | Value | — |
 | `isHttpResponseError` | Value | — |
@@ -378,6 +380,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `baseRequestErrorHandler` | Value | — |
 | `FetchJsonResponseData` | Type | — |
 | `HttpClientRequestErrorCause` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `body`, `cause`, `headers`, `message`, `name`, `stack`, `statusCode` |
+| `HttpErrorStatusByTag` | Type | — |
 | `HttpResponseErrorCauseError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `body`, `cause`, `headers`, `message`, `name`, `stack`, `statusCode` |
 | `integrationErrorHandler` | Value | — |
 | `isHttpResponseError` | Value | — |

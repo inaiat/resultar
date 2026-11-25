@@ -2,6 +2,11 @@ import type { RetryContext } from "resultar";
 
 import type { RequestError } from "./request-json.js";
 
+/** Exhaustive map from tagged errors to HTTP response status codes. */
+export type HttpErrorStatusByTag<Error extends { readonly _tag: string }> = Readonly<
+  Record<Error["_tag"], number>
+>;
+
 /** Header collection carried by a Fetch-compatible or Undici-compatible response. */
 export type RequestHeaders = unknown;
 

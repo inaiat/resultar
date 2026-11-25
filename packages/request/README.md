@@ -216,6 +216,20 @@ one carrying that structured cause, so callers can inspect response metadata.
 These helpers support custom integrations; `requestJson` already applies the
 normal request/error pipeline.
 
+Use `HttpErrorStatusByTag<Error>` to check that an HTTP status map has an entry
+for every tag in an error union. The type works in any HTTP framework.
+
+```ts
+import type { HttpErrorStatusByTag } from "resultar-request";
+
+type UserError = { readonly _tag: "UserNotFound" } | { readonly _tag: "UserConflict" };
+
+const statusByTag = {
+  UserNotFound: 404,
+  UserConflict: 409,
+} satisfies HttpErrorStatusByTag<UserError>;
+```
+
 Public type families include `RequestJsonInput` and its validator/decode/mapped
 variants, `RequestJsonFactory`, `RequestJsonResponseData`, `FetchJsonResponseData`,
 `UndiciJsonResponseData`, `RequestHeaders`, `RequestJsonValidator`,
