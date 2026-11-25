@@ -1,5 +1,9 @@
 # resultar-check-darwin-arm64
 
+## 6.0.0
+
+No changes in this release.
+
 ## 6.0.0-beta.2
 
 No changes in this release.
