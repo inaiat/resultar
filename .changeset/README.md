@@ -27,8 +27,9 @@ Use the permanent `next` branch for npm previews. Enter Changesets prerelease mo
 preview into `next`. After validation, the workflow opens or updates a version PR targeting
 `next`. Merging the version PR publishes the prerelease packages to npm under the `next` tag.
 
-For example, consumers install `resultar@5.0.0-beta.0` with `pnpm add resultar@next` while that
-version is tagged. Each package follows its own version series. The publication checks that every
+Consumers can install the preview tagged `next` with `pnpm add resultar@next`.
+Use `pnpm add resultar@latest` to install the current stable release.
+Each package follows its own version series. The publication checks that every
 package has a prerelease version before contacting the registry.
 
 For the stable release, create a branch from the preview, run `pnpm exec changeset pre exit` and
