@@ -96,6 +96,75 @@ test("keeps separate application roots and releases their singletons on close", 
   expect(released).toBe(2);
 });
 
+test("maps tagged errors to HTTP statuses and hides server error details", async () => {
+  const app = createFastifyApp(
+    {
+      services: createModule(),
+      httpErrors: { statusByTag: { "": 400, Conflict: 409, Offline: 503, InvalidStatus: 200 } },
+    },
+    (router) => {
+      router.get("/conflict", () => {
+        throw Object.assign(new Error("Already exists"), { _tag: "Conflict", statusCode: 400 });
+      });
+      router.get("/offline", () => {
+        throw Object.assign(new Error("Private details"), { _tag: "Offline" });
+      });
+      router.get("/invalid-status", () => {
+        throw Object.assign(new Error("Private details"), { _tag: "InvalidStatus" });
+      });
+      router.get("/native", () => {
+        throw Object.assign(new Error("Try again later"), {
+          _tag: "constructor",
+          statusCode: 429,
+          headers: { "retry-after": "30" },
+        });
+      });
+      router.get("/unexpected", () => {
+        throw new Error("Private details");
+      });
+    },
+  );
+  try {
+    const conflict = await app.inject("/conflict");
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json()).toEqual({ error: "Already exists" });
+
+    const native = await app.inject("/native");
+    expect(native.statusCode).toBe(429);
+    expect(native.headers["retry-after"]).toBe("30");
+    expect(native.json()).toEqual({ error: "Try again later" });
+
+    const responses = await Promise.all(
+      ["/offline", "/invalid-status", "/unexpected"].map((url) => app.inject(url)),
+    );
+    expect(responses.map((response) => response.statusCode)).toEqual([503, 500, 500]);
+    for (const response of responses) {
+      expect(response.json()).toEqual({ error: "Internal Server Error" });
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+test("uses Fastify's native error handler when httpErrors is omitted", async () => {
+  const app = createFastifyApp({ services: createModule() }, (router) => {
+    router.get("/", () => {
+      throw Object.assign(new Error("Already exists"), { statusCode: 409 });
+    });
+  });
+  try {
+    const response = await app.inject("/");
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      statusCode: 409,
+      error: "Conflict",
+      message: "Already exists",
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test("retains native startup failure and rollback", async () => {
   let released = 0;
   const Connection = resource("connection", {
