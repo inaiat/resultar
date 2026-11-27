@@ -565,7 +565,7 @@ void test("the home page links to the full benchmark report", async (context) =>
   }
 
   for (const [tab, metric, values] of [
-    ["ecosystem", "1.92×", ["35,630", "18,551"]],
+    ["ecosystem", "1.25×", ["22,407", "17,964"]],
     ["adapters", "94.8%", ["43,554", "45,919"]],
     ["core", "3.67×", ["360,620", "98,243"]],
   ] as const) {

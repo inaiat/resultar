@@ -57,14 +57,14 @@ const BENCH_DATASETS: Readonly<Record<BenchTab, BenchDataset>> = {
     title: "Cached URL redirects",
     takeaway: "the redirect throughput of the Effect stack",
     description:
-      "Both URL shorteners read from Redis, return a 302 and enqueue a BullMQ job. The Fastify + Resultar stack recorded a p99 of 2.83 ms, compared with 3.66 ms for Effect.",
-    setup: "50 keep-alive connections · 1.5 s warmup · 5 s sample · 0 errors",
+      "Both URL shorteners read from Redis, return a 302 and enqueue a BullMQ job. In the equalized ABBA run, Fastify + Resultar reached 22,407 req/s (p50 2.08 ms, p99 4.06 ms), compared with 17,964 req/s (p50 2.64 ms, p99 4.74 ms) for Effect.",
+    setup: "50 keep-alive connections · 2 s warmup · 8 s sample · ABBA mean · 0 errors",
     source:
       "#/docs/coming-from-effect#real-world-http-service-url-shortener-mongodb-7-redis-8-bullmq",
     unit: "Requests per second",
-    axisMax: 40_000,
-    result: { label: "Fastify 5 + Resultar", value: 35_630 },
-    baseline: { label: "Effect HTTP", value: 18_551 },
+    axisMax: 30_000,
+    result: { label: "Fastify 5 + Resultar", value: 22_407 },
+    baseline: { label: "Effect HTTP", value: 17_964 },
   },
   adapters: {
     title: "Eight services on a Fastify route",

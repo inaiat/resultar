@@ -49,3 +49,4 @@ Ambas oferecem `POST /api/v1`, `GET /api/v1/:shortCode`,
 `POST /api/v1/:shortCode/delete`, `GET /api/v1/stats` e `/health`.
 Use o mesmo conjunto de dados, índices, portas de infraestrutura e carga ao comparar desempenho.
 Os testes validam o contrato; nenhuma medição de throughput é produzida automaticamente.
+Os resultados mais recentes da execução ABBA equalizada (2026-11-27, commit `9dd623e`) estão registrados em [../results/2026-11-27-url-shortener.md](../results/2026-11-27-url-shortener.md).
