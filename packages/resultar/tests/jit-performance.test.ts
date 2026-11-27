@@ -1159,3 +1159,257 @@ it('preserves fused catchAll (orElse) and mapped catchAll semantics over tryProm
     .runPromise()
   expect(genMatchedErr).toBe('err:missing')
 })
+
+it('preserves fused flatMap (andThen), mapErr, and catchAll (orElse) over tryPromise and multi-step async gen', async () => {
+  // 1. tryPromise().andThen(syncResult) — Ok and Err
+  const directOk = await ResultTask.tryPromise({
+    try: () => Promise.resolve('42'),
+    catch: () => 'io',
+  })
+    .andThen((raw) => ok(Number(raw) * 2))
+    .runResult()
+  expect(directOk).toEqual(ok(84))
+
+  const directErr = await ResultTask.tryPromise({
+    try: () => Promise.resolve('bad'),
+    catch: () => 'io',
+  })
+    .andThen(() => err('parse-error'))
+    .runResult()
+  expect(directErr).toEqual(err('parse-error'))
+
+  // 2. tryPromise().mapErr().andThen(syncResult | asyncTask) — repository/cache pattern
+  const mappedOk = await ResultTask.tryPromise({
+    try: () => Promise.resolve(21),
+    catch: () => 'raw',
+  })
+    .mapErr((e) => `mapped:${e}`)
+    .andThen((n) => ok(n * 2))
+    .runResult()
+  expect(mappedOk).toEqual(ok(42))
+
+  const mappedReject = await ResultTask.tryPromise({
+    try: () => Promise.reject(new Error('boom')),
+    catch: () => 'raw',
+  })
+    .mapErr((e) => `mapped:${e}`)
+    .andThen(() => ok('unreachable'))
+    .runResult()
+  expect(mappedReject).toEqual(err('mapped:raw'))
+
+  const mappedAsyncChain = await ResultTask.tryPromise({
+    try: () => Promise.resolve(10),
+    catch: () => 'raw',
+  })
+    .mapErr((e) => `mapped:${e}`)
+    .andThen((n) =>
+      ResultTask.tryPromise({ try: () => Promise.resolve(n + 5), catch: () => 'second' }),
+    )
+    .runResult()
+  expect(mappedAsyncChain).toEqual(ok(15))
+
+  // 3. tryPromise().mapErr().andThen().orElse() — best-effort cache get pattern
+  const recoveredParseErr = await ResultTask.tryPromise({
+    try: () => Promise.resolve('invalid'),
+    catch: () => 'redis',
+  })
+    .mapErr((e) => `cache:${e}`)
+    .andThen(() => err('cache:corrupt'))
+    .orElse((e) => ResultTask.ok(`fallback:${e}`))
+    .runResult()
+  expect(recoveredParseErr).toEqual(ok('fallback:cache:corrupt'))
+
+  const recoveredRedisErr = await ResultTask.tryPromise({
+    try: () => Promise.reject(new Error('down')),
+    catch: () => 'redis',
+  })
+    .mapErr((e) => `cache:${e}`)
+    .andThen(() => ok('hit'))
+    .orElse((e) => ResultTask.ok(`fallback:${e}`))
+    .runResult()
+  expect(recoveredRedisErr).toEqual(ok('fallback:cache:redis'))
+
+  const recoveredAsyncFail = await ResultTask.tryPromise({
+    try: () => Promise.resolve('step1'),
+    catch: () => 'e1',
+  })
+    .mapErr((e) => `m:${e}`)
+    .andThen(() =>
+      ResultTask.tryPromise({ try: () => Promise.reject(new Error('x')), catch: () => 'e2' }),
+    )
+    .orElse((e) => ResultTask.ok(`recovered:${e}`))
+    .as('done')
+    .runResult()
+  expect(recoveredAsyncFail).toEqual(ok('done'))
+
+  // 4. tryPromise().asVoid().mapErr().orElse().as(undefined) — best-effort cache set pattern
+  const bestEffortSetOk = await ResultTask.tryPromise({
+    try: () => Promise.resolve('OK'),
+    catch: () => 'redis',
+  })
+    .asVoid()
+    .mapErr((e) => `cache:${e}`)
+    .orElse(() => ResultTask.ok(undefined))
+    .as(undefined)
+    .runResult()
+  expect(bestEffortSetOk).toEqual(ok(undefined))
+
+  const bestEffortSetFail = await ResultTask.tryPromise({
+    try: () => Promise.reject(new Error('down')),
+    catch: () => 'redis',
+  })
+    .asVoid()
+    .mapErr((e) => `cache:${e}`)
+    .orElse((e) => ResultTask.ok(`ignored:${e}`))
+    .as('settled')
+    .runResult()
+  expect(bestEffortSetFail).toEqual(ok('settled'))
+
+  // 5. Multi-step async ResultTask.gen stays on fast loop across OP_SUCCESS, async yields, and sync Err
+  const multiStepOk = await ResultTask.gen(function* () {
+    const a = yield* ResultTask.tryPromise({ try: () => Promise.resolve(10), catch: () => 'e1' })
+    const b = yield* ResultTask.ok(20)
+    const c = yield* ResultTask.tryPromise({ try: () => Promise.resolve(12), catch: () => 'e2' })
+    return a + b + c
+  }).runResult()
+  expect(multiStepOk).toEqual(ok(42))
+
+  const multiStepSyncErr = await ResultTask.gen(function* () {
+    const a = yield* ResultTask.tryPromise({ try: () => Promise.resolve(10), catch: () => 'e1' })
+    if (a === 10) {
+      return yield* err('domain-not-found')
+    }
+    return a
+  }).runResult()
+  expect(multiStepSyncErr).toEqual(err('domain-not-found'))
+
+  // 6. Defect thrown in fused flatMap propagates as Die even under orElse, and outerMap runs on Ok
+  const flatMapDefect = await ResultTask.tryPromise({
+    try: () => Promise.resolve(1),
+    catch: () => 'e',
+  })
+    .andThen((): Result<number, string> => {
+      throw new Error('flatmap-defect')
+    })
+    .orElse(() => ResultTask.ok(0))
+    .runExit()
+  expect(flatMapDefect).toEqual({
+    _tag: 'Failure',
+    cause: { _tag: 'Die', defect: new Error('flatmap-defect') },
+  })
+
+  const flatMapOuterMapped = await ResultTask.tryPromise({
+    try: () => Promise.resolve(5),
+    catch: () => 'e',
+  })
+    .andThen((n) => ok(n + 1))
+    .orElse(() => ResultTask.ok(0))
+    .map((n) => n * 10)
+    .runResult()
+  expect(flatMapOuterMapped).toEqual(ok(60))
+})
+
+it('preserves scopes, sync throws, tail async chains, and defects in fused runResult() chains', async () => {
+  const lifecycle: string[] = []
+  const scopedChain = await ResultTask.tryPromise({
+    try: () => Promise.resolve('seed'),
+    catch: () => 'e',
+  })
+    .andThen((seed) =>
+      ResultTask.acquireRelease({
+        acquire: ResultTask.sync(() => {
+          lifecycle.push(`acquire:${seed}`)
+          return `${seed}:res`
+        }),
+        release: (resource) =>
+          ResultTask.sync(() => {
+            lifecycle.push(`release:${resource}`)
+          }),
+      }),
+    )
+    .map((resource) => {
+      lifecycle.push(`use:${resource}`)
+      return resource.toUpperCase()
+    })
+    .runResult()
+  expect(scopedChain).toEqual(ok('SEED:RES'))
+  expect(lifecycle).toEqual(['acquire:seed', 'use:seed:res', 'release:seed:res'])
+
+  const syncThrowRecovered = await ResultTask.tryPromise({
+    try: (): Promise<number> => {
+      throw new Error('sync-boom')
+    },
+    catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
+  })
+    .mapErr((e) => `wrapped:${e}`)
+    .orElse((e) => ResultTask.ok(`recovered:${e}`))
+    .runResult()
+  expect(syncThrowRecovered).toEqual(ok('recovered:wrapped:sync-boom'))
+
+  const tailAsyncChain = await ResultTask.tryPromise({
+    try: () => Promise.resolve<string | undefined>(undefined),
+    catch: () => 'cache-err',
+  })
+    .orElse(() => ResultTask.ok(undefined))
+    .andThen((cached) =>
+      cached === undefined
+        ? ResultTask.tryPromise({
+            try: () => Promise.resolve('from-db'),
+            catch: () => 'db-err',
+          }).andThen((row) => ok(`resolved:${row}`))
+        : ResultTask.ok(cached),
+    )
+    .runResult()
+  expect(tailAsyncChain).toEqual(ok('resolved:from-db'))
+
+  await expect(
+    ResultTask.tryPromise({ try: () => Promise.resolve(1), catch: () => 'e' })
+      .map(() => {
+        throw new Error('map-defect')
+      })
+      .orElse(() => ResultTask.ok(0))
+      .runResult(),
+  ).rejects.toThrow('map-defect')
+
+  // Exercise fused flatMap sync Result paths under runExit() (including signal-tracked runs)
+  const controller = new AbortController()
+  const fusedExitOk = await ResultTask.tryPromise({
+    try: () => Promise.resolve(5),
+    catch: () => 'e',
+  })
+    .mapErr((e) => `m:${e}`)
+    .andThen((n) => ok(n + 1))
+    .orElse(() => ResultTask.ok(0))
+    .map((n) => n * 10)
+    .runExit({ signal: controller.signal })
+  expect(fusedExitOk).toEqual({ _tag: 'Success', value: 60 })
+
+  const fusedExitErrRecovered = await ResultTask.tryPromise({
+    try: () => Promise.resolve('bad'),
+    catch: () => 'e',
+  })
+    .mapErr((e) => `m:${e}`)
+    .andThen(() => err('parse'))
+    .orElse((e) => ResultTask.ok(`recovered:${e}`))
+    .runExit({ signal: controller.signal })
+  expect(fusedExitErrRecovered).toEqual({ _tag: 'Success', value: 'recovered:parse' })
+
+  const fusedExitPlainSync = await ResultTask.tryPromise({
+    try: () => Promise.resolve(21),
+    catch: () => 'e',
+  })
+    .andThen((n) => ok(n * 2))
+    .runExit()
+  expect(fusedExitPlainSync).toEqual({ _tag: 'Success', value: 42 })
+
+  const fusedExitPlainErr = await ResultTask.tryPromise({
+    try: () => Promise.resolve('x'),
+    catch: () => 'e',
+  })
+    .andThen(() => err('fail-sync'))
+    .runExit()
+  expect(fusedExitPlainErr).toEqual({
+    _tag: 'Failure',
+    cause: { _tag: 'Fail', error: 'fail-sync' },
+  })
+})

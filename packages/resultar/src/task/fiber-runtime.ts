@@ -139,27 +139,43 @@ const notifyObserver = <A, E>(observer: FiberObserver<A, E>, exit: Exit<A, E>): 
 
 class NativeFiberHandle<A, E> implements FiberHandle<A, E>, FiberMeta {
   public readonly id: number
-  public readonly outcome: Promise<Exit<A, E>>
   public readonly [FIBER_META]: FiberMeta
+  private outcomePromise: Promise<Exit<A, E>> | undefined
   private snapshot: Exit<A, E> | undefined = undefined
   private observers: Set<FiberObserver<A, E>> | undefined = undefined
   private waitJoinTask: ResultTask<A, E> | undefined = undefined
-  private readonly backing: ManagedFiber | CreateFiberHandleOptions<A, E>
+  private readonly backing: ManagedFiber | CreateFiberHandleOptions<A, E> | FiberSignal | undefined
+  private readonly mode: 0 | 1 | 2
 
-  public constructor(backing: ManagedFiber | CreateFiberHandleOptions<A, E>, isManaged: boolean) {
+  public constructor(
+    backing: ManagedFiber | CreateFiberHandleOptions<A, E> | FiberSignal | undefined,
+    mode: 0 | 1 | 2,
+  ) {
     this.id = nextFiberId
     nextFiberId += 1
     this.backing = backing
+    this.mode = mode
     this[FIBER_META] = this
-    if (isManaged) {
-      this.outcome = (backing as ManagedFiber).outcome as Promise<Exit<A, E>>
-    } else {
+    if (mode === 1) {
+      this.outcomePromise = (backing as ManagedFiber).outcome as Promise<Exit<A, E>>
+    } else if (mode === 0) {
       const options = backing as CreateFiberHandleOptions<A, E>
-      this.outcome = options.outcome.then(
+      this.outcomePromise = options.outcome.then(
         (exit) => this.complete(exit),
         (error: unknown) => this.complete(died(error)),
       )
+    } else {
+      this.outcomePromise = undefined
     }
+  }
+
+  public get outcome(): Promise<Exit<A, E>> {
+    this.outcomePromise ??= Promise.resolve(this.snapshot ?? (SUCCESS_UNDEFINED as Exit<A, E>))
+    return this.outcomePromise
+  }
+
+  public attachOutcome(outcome: Promise<Exit<A, E>>): void {
+    this.outcomePromise = outcome
   }
 
   public complete(exit: Exit<A, E>): Exit<A, E> {
@@ -175,7 +191,16 @@ class NativeFiberHandle<A, E> implements FiberHandle<A, E>, FiberMeta {
   }
 
   public observe(): void {
-    this.backing.observe()
+    if (this.mode === 2) return
+    ;(this.backing as ManagedFiber | CreateFiberHandleOptions<A, E>).observe()
+  }
+
+  private abortBacking(reason: unknown): void {
+    if (this.mode === 2) {
+      ;(this.backing as FiberSignal | undefined)?.abort(reason)
+      return
+    }
+    ;(this.backing as ManagedFiber | CreateFiberHandleOptions<A, E>).interrupt(reason)
   }
 
   public poll(): Exit<A, E> | undefined {
@@ -184,7 +209,7 @@ class NativeFiberHandle<A, E> implements FiberHandle<A, E>, FiberMeta {
 
   public getWaitJoinTask(): ResultTask<A, E> {
     this.waitJoinTask ??= createTask(() => {
-      this.backing.observe()
+      this.observe()
       if (this.snapshot !== undefined) return this.snapshot
       return this.outcome
     })
@@ -202,8 +227,8 @@ class NativeFiberHandle<A, E> implements FiberHandle<A, E>, FiberMeta {
 
   public interrupt(reason: unknown = 'ResultTask fiber interrupted'): ResultTask<Exit<A, E>> {
     return createTask<Exit<A, E>, never>(() => {
-      this.backing.observe()
-      this.backing.interrupt(reason)
+      this.observe()
+      this.abortBacking(reason)
       if (this.snapshot !== undefined) return success<Exit<A, E>, never>(this.snapshot)
       return this.outcome.then((exit) => success<Exit<A, E>, never>(exit))
     })
@@ -223,10 +248,20 @@ class NativeFiberHandle<A, E> implements FiberHandle<A, E>, FiberMeta {
   }
 }
 
+export interface RootFiberHandle<A, E> extends FiberHandle<A, E> {
+  readonly complete: (exit: Exit<A, E>) => Exit<A, E>
+  readonly attachOutcome: (outcome: Promise<Exit<A, E>>) => void
+}
+
 /** Shared native handle construction for root and owned child fibers. */
 export const createFiberHandle = <A, E>(
   options: CreateFiberHandleOptions<A, E>,
-): FiberHandle<A, E> => new NativeFiberHandle<A, E>(options, false)
+): FiberHandle<A, E> => new NativeFiberHandle<A, E>(options, 0)
+
+/** Direct native handle for `ResultTask.runFork` without extra promise or closure wrappers. */
+export const createRootFiberHandle = <A, E>(
+  signal: FiberSignal | undefined,
+): RootFiberHandle<A, E> => new NativeFiberHandle<A, E>(signal, 2)
 
 /** Waiter cancellation does not interrupt the observed child or consume its failure. */
 export const awaitFiber = <A, E>(fiber: Fiber<A, E>): ResultTask<Exit<A, E>> =>
@@ -312,7 +347,7 @@ class ManagedFiber implements RuntimeFiber, ScopeChild {
     parentScope.registerChild(this)
     this.outcome = RESOLVED_PROMISE.then(() => this.run())
     if (withHandle) {
-      const handle = new NativeFiberHandle<unknown, unknown>(this, true)
+      const handle = new NativeFiberHandle<unknown, unknown>(this, 1)
       this.nativeHandle = handle
       this.handle = handle
     } else {

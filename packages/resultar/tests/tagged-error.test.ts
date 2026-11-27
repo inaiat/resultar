@@ -493,6 +493,63 @@ describe('tagged errors', async () => {
       statusCode: 403,
     })
   })
+
+  it('supports opting out of stack trace capture while preserving error metadata and stackTraceLimit', () => {
+    class LightweightNotFoundError extends createTaggedError({
+      name: 'LightweightNotFoundError',
+      message: 'Missing item $code',
+      captureStackTrace: false,
+    }) {}
+    const DefaultStackNotFoundError = createTaggedError({
+      name: 'DefaultStackNotFoundError',
+      message: 'Missing item $code',
+    })
+    const ExplicitStackNotFoundError = createTaggedError({
+      name: 'ExplicitStackNotFoundError',
+      message: 'Missing item $code',
+      captureStackTrace: true,
+    })
+    class LightweightWithPropsError extends createTaggedError({
+      name: 'LightweightWithPropsError',
+      message: 'Missing item $code',
+      captureStackTrace: false,
+    }).withProps<{ readonly reason?: string }>() {}
+
+    const originalLimit = Error.stackTraceLimit
+    Error.stackTraceLimit = 7
+    try {
+      const cause = new Error('upstream')
+      const error = new LightweightNotFoundError({ code: 'abc123', cause })
+      equal(Error.stackTraceLimit, 7)
+      equal(error.stack?.includes('\n    at '), false)
+
+      const defaultError = new DefaultStackNotFoundError({ code: 'def' })
+      equal(Error.stackTraceLimit, 7)
+      equal(defaultError.stack?.includes('\n    at '), true)
+
+      const explicitError = new ExplicitStackNotFoundError({ code: 'ghi' })
+      equal(Error.stackTraceLimit, 7)
+      equal(explicitError.stack?.includes('\n    at '), true)
+
+      const withProps = new LightweightWithPropsError({ code: 'xyz', reason: 'expired' })
+      equal(Error.stackTraceLimit, 7)
+      equal(withProps.stack?.includes('\n    at '), false)
+
+      equal(error instanceof Error, true)
+      equal(error instanceof LightweightNotFoundError, true)
+      equal(error._tag, 'LightweightNotFoundError')
+      equal(error.name, 'LightweightNotFoundError')
+      equal(error.message, 'Missing item abc123')
+      equal(error.code, 'abc123')
+      equal(error.cause, cause)
+      equal(Object.getOwnPropertyDescriptor(error, 'code')?.writable, false)
+      equal(withProps._tag, 'LightweightWithPropsError')
+      equal(withProps.reason, 'expired')
+      equal(Object.getOwnPropertyDescriptor(withProps, 'reason')?.writable, false)
+    } finally {
+      Error.stackTraceLimit = originalLimit
+    }
+  })
 })
 
 describe('tagged error types', async () => {

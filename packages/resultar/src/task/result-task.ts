@@ -35,8 +35,12 @@ import { createScheduling, recoverScheduling, schedulerCheckpoint } from './task
 import type { TaskScheduler } from './task-scheduler.js'
 import { markCleanupCause } from './cleanup-cause.js'
 import type { FiberHandle } from './fiber.js'
-import { createFiberHandle, registerFiberTaskFactory, startDirectFiber } from './fiber-runtime.js'
-import type { FiberTaskContext, RuntimeFiber } from './fiber-runtime.js'
+import {
+  createRootFiberHandle,
+  registerFiberTaskFactory,
+  startDirectFiber,
+} from './fiber-runtime.js'
+import type { FiberTaskContext, RootFiberHandle, RuntimeFiber } from './fiber-runtime.js'
 import { registerSemaphoreTaskFactory, Semaphore } from './semaphore.js'
 import type { SemaphoreAcquire } from './semaphore.js'
 import {
@@ -1017,20 +1021,45 @@ export class ResultTask<out A, out E = never, out R = never> {
     const source = catchTask.value as ResultTask<unknown, unknown, unknown>
     let leaf: ResultTask<unknown, unknown, unknown> | undefined = undefined
     let mapOk: ((value: unknown) => unknown) | undefined = undefined
+    let flatMapOk:
+      | ((value: unknown) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>)
+      | undefined = undefined
     let mapErr: ((error: unknown) => unknown) | undefined = undefined
     let cost = outerMapTask === undefined ? 3 : 5
 
     if (source.op === OP_TRY_PROMISE) {
       leaf = source
-    } else if (source.op === OP_MAP || source.op === OP_MAP_ERROR) {
+    } else if (source.op === OP_MAP || source.op === OP_MAP_ERROR || source.op === OP_FLAT_MAP) {
       const inner = source.value as ResultTask<unknown, unknown, unknown>
       if (inner.op === OP_TRY_PROMISE) {
         leaf = inner
         cost += 2
         if (source.op === OP_MAP) {
           mapOk = source.continuation as (value: unknown) => unknown
+        } else if (source.op === OP_FLAT_MAP) {
+          flatMapOk = source.continuation as (
+            value: unknown,
+          ) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>
         } else {
           mapErr = source.continuation as (error: unknown) => unknown
+        }
+      } else if (source.op === OP_MAP_ERROR && inner.op === OP_MAP) {
+        const deepLeaf = inner.value as ResultTask<unknown, unknown, unknown>
+        if (deepLeaf.op === OP_TRY_PROMISE) {
+          leaf = deepLeaf
+          cost += 4
+          mapOk = inner.continuation as (value: unknown) => unknown
+          mapErr = source.continuation as (error: unknown) => unknown
+        }
+      } else if (source.op === OP_FLAT_MAP && inner.op === OP_MAP_ERROR) {
+        const deepLeaf = inner.value as ResultTask<unknown, unknown, unknown>
+        if (deepLeaf.op === OP_TRY_PROMISE) {
+          leaf = deepLeaf
+          cost += 4
+          mapErr = inner.continuation as (error: unknown) => unknown
+          flatMapOk = source.continuation as (
+            value: unknown,
+          ) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>
         }
       }
     }
@@ -1053,6 +1082,7 @@ export class ResultTask<out A, out E = never, out R = never> {
         trySource: leaf.value as TryPromiseSource,
         catchFn: leaf.continuation as ((error: unknown) => unknown) | undefined,
         mapOk,
+        flatMapOk,
         mapErr,
         outerMapOk,
         recover,
@@ -1189,7 +1219,7 @@ export class ResultTask<out A, out E = never, out R = never> {
     rootOp: number,
     context: ResultTaskRuntimeContext,
   ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> | undefined {
-    if (rootOp !== OP_MAP_ERROR && rootOp !== OP_MAP) return undefined
+    if (rootOp !== OP_MAP_ERROR && rootOp !== OP_MAP && rootOp !== OP_FLAT_MAP) return undefined
     const inner = task.value as ResultTask<unknown, unknown, unknown>
     if (inner.op === OP_TRY_PROMISE) {
       if (context.scheduling.remaining <= 4) return undefined
@@ -1199,6 +1229,12 @@ export class ResultTask<out A, out E = never, out R = never> {
           trySource: inner.value as TryPromiseSource,
           catchFn: inner.continuation as ((error: unknown) => unknown) | undefined,
           mapOk: rootOp === OP_MAP ? (task.continuation as (value: unknown) => unknown) : undefined,
+          flatMapOk:
+            rootOp === OP_FLAT_MAP
+              ? (task.continuation as (
+                  value: unknown,
+                ) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>)
+              : undefined,
           mapErr:
             rootOp === OP_MAP_ERROR
               ? (task.continuation as (error: unknown) => unknown)
@@ -1217,6 +1253,23 @@ export class ResultTask<out A, out E = never, out R = never> {
             catchFn: leaf.continuation as ((error: unknown) => unknown) | undefined,
             mapOk: inner.continuation as (value: unknown) => unknown,
             mapErr: task.continuation as (error: unknown) => unknown,
+          },
+          context,
+        )
+      }
+    }
+    if (rootOp === OP_FLAT_MAP && inner.op === OP_MAP_ERROR) {
+      const leaf = inner.value as ResultTask<unknown, unknown, unknown>
+      if (leaf.op === OP_TRY_PROMISE && context.scheduling.remaining > 6) {
+        context.scheduling.remaining -= 5
+        return executeFusedTryPromise(
+          {
+            trySource: leaf.value as TryPromiseSource,
+            catchFn: leaf.continuation as ((error: unknown) => unknown) | undefined,
+            flatMapOk: task.continuation as (
+              value: unknown,
+            ) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>,
+            mapErr: inner.continuation as (error: unknown) => unknown,
           },
           context,
         )
@@ -2529,17 +2582,27 @@ export class ResultTask<out A, out E = never, out R = never> {
     iterator: Generator<Yield, Return, Next>,
     context: ResultTaskRuntimeContext,
   ): Exit<Return, GeneratorError<Yield>> | Promise<Exit<Return, GeneratorError<Yield>>> {
-    // Stryker disable next-line ConditionalExpression: forcing signal tracking only adds checks for the never-aborted signal.
-    const trackSignal = context.signal !== NEVER_ABORTED_SIGNAL
     let step: IteratorResult<Yield, Return>
     try {
       step = iterator.next()
     } catch (error) {
       return died<Return, GeneratorError<Yield>>(error)
     }
+    return ResultTask.#runGenFastLoop(iterator, step, context)
+  }
+
+  // fallow-ignore-next-line complexity
+  static #runGenFastLoop<Yield extends ResultTaskYieldable, Return, Next>(
+    iterator: Generator<Yield, Return, Next>,
+    initialStep: IteratorResult<Yield, Return>,
+    context: ResultTaskRuntimeContext,
+  ): Exit<Return, GeneratorError<Yield>> | Promise<Exit<Return, GeneratorError<Yield>>> {
+    // Stryker disable next-line ConditionalExpression: forcing signal tracking only adds checks for the never-aborted signal.
+    const trackSignal = context.signal !== NEVER_ABORTED_SIGNAL
+    let step = initialStep
 
     while (step.done === false) {
-      /* Stryker disable all: fast-path for standard ResultTaskIterator yields is equivalent to #runGenSlow. */
+      /* Stryker disable all: fast-path for standard ResultTaskIterator and Err yields is equivalent to #runGenSlow. */
       const yielded = step.value
       if (yielded instanceof ResultTaskIterator) {
         const innerTask = yielded.task
@@ -2585,6 +2648,12 @@ export class ResultTask<out A, out E = never, out R = never> {
             return died<Return, GeneratorError<Yield>>(error)
           }
         }
+      } else if (isErrResult(yielded)) {
+        return ResultTask.#closeGenerator(
+          iterator,
+          failed<Return, GeneratorError<Yield>>(yielded.error as GeneratorError<Yield>),
+          context,
+        )
       } else {
         /* Stryker restore all */
         return ResultTask.#runGenSlow(iterator, step, context)
@@ -2702,11 +2771,11 @@ export class ResultTask<out A, out E = never, out R = never> {
         } catch (error) {
           return died<Return, GeneratorError<Yield>>(error)
         }
-        // Stryker disable next-line ConditionalExpression,BlockStatement: the slow loop returns the same success for a completed step.
+        // Stryker disable next-line ConditionalExpression,BlockStatement: the fast loop returns the same success for a completed step.
         if (step.done === true) {
           return success<Return, GeneratorError<Yield>>(step.value as Return)
         }
-        return ResultTask.#runGenSlow(iterator, step, context)
+        return ResultTask.#runGenFastLoop(iterator, step, context)
       },
       (error: unknown) =>
         ResultTask.#closeGenerator(iterator, died<Return, GeneratorError<Yield>>(error), context),
@@ -2738,11 +2807,11 @@ export class ResultTask<out A, out E = never, out R = never> {
         } catch (error) {
           return died<Return, GeneratorError<Yield>>(error)
         }
-        // Stryker disable next-line ConditionalExpression,BlockStatement: the slow loop returns the same success for a completed step.
+        // Stryker disable next-line ConditionalExpression,BlockStatement: the fast loop returns the same success for a completed step.
         if (step.done === true) {
           return success<Return, GeneratorError<Yield>>(step.value as Return)
         }
-        return ResultTask.#runGenSlow(iterator, step, context)
+        return ResultTask.#runGenFastLoop(iterator, step, context)
       },
       (error: unknown) =>
         ResultTask.#closeGenerator(iterator, died<Return, GeneratorError<Yield>>(error), context),
@@ -3138,8 +3207,49 @@ export class ResultTask<out A, out E = never, out R = never> {
 
   /** Observes any failure cause without changing the outcome. */
   public inspectCause(f: (cause: Cause<E>) => unknown): ResultTask<A, E, R> {
-    return this.#observe((exit) =>
-      exit._tag === 'Failure' ? f(exit.cause as Cause<E>) : undefined,
+    /* Stryker disable all: tryPromise inspectCause fast-path is behaviorally equivalent to #observe. */
+    if (this.op === OP_TRY_PROMISE) {
+      const spec: FusedInspectCauseTryPromiseSpec<E> = {
+        trySource: this.value as TryPromiseSource,
+        catchFn: this.continuation as ((error: unknown) => unknown) | undefined,
+        mapOk: undefined,
+        onCause: f,
+      }
+      return new ResultTask((context) => {
+        if (context.scheduling.remaining > 4) {
+          context.scheduling.remaining -= 2
+          return executeFusedInspectCauseTryPromise(spec, context)
+        }
+        return continueWith(this.execute(context), (outcome) =>
+          observeCauseExit(outcome, context.signal, f),
+        )
+      })
+    }
+    if (this.op === OP_MAP) {
+      const inner = this.value as ResultTask<unknown, unknown, unknown>
+      if (inner.op === OP_TRY_PROMISE) {
+        const spec: FusedInspectCauseTryPromiseSpec<E> = {
+          trySource: inner.value as TryPromiseSource,
+          catchFn: inner.continuation as ((error: unknown) => unknown) | undefined,
+          mapOk: this.continuation as (value: unknown) => unknown,
+          onCause: f,
+        }
+        return new ResultTask((context) => {
+          if (context.scheduling.remaining > 5) {
+            context.scheduling.remaining -= 3
+            return executeFusedInspectCauseTryPromise(spec, context)
+          }
+          return continueWith(this.execute(context), (outcome) =>
+            observeCauseExit(outcome, context.signal, f),
+          )
+        })
+      }
+    }
+    /* Stryker restore all */
+    return new ResultTask((context) =>
+      continueWith(this.execute(context), (outcome) =>
+        observeCauseExit(outcome, context.signal, f),
+      ),
     )
   }
 
@@ -3362,7 +3472,7 @@ export class ResultTask<out A, out E = never, out R = never> {
 
   /** Replaces the success value with `undefined` (`void`). */
   public asVoid(): ResultTask<void, E, R> {
-    return this.as(undefined)
+    return this.map(RETURN_UNDEFINED)
   }
 
   /**
@@ -6622,22 +6732,195 @@ export class ResultTask<out A, out E = never, out R = never> {
   }
 
   /* Stryker disable all: options === undefined fast-path is behaviorally equivalent to runExitSyncOrAsync + exitToResult. */
+  static #collectFastTryPromiseChain(
+    root: ResultTask<unknown, unknown, unknown>,
+  ):
+    | {
+        readonly leaf: ResultTask<unknown, unknown, unknown>
+        readonly steps: readonly ResultTask<unknown, unknown, unknown>[]
+      }
+    | undefined {
+    let depth = 0
+    let cursor = root
+    while (isFastResultCombinatorOp(cursor.op) && depth < 8) {
+      depth += 1
+      cursor = cursor.value as ResultTask<unknown, unknown, unknown>
+    }
+    if (cursor.op !== OP_TRY_PROMISE) {
+      return undefined
+    }
+    const steps: ResultTask<unknown, unknown, unknown>[] = []
+    let current = root
+    for (let index = 0; index < depth; index += 1) {
+      steps.push(current)
+      current = current.value as ResultTask<unknown, unknown, unknown>
+    }
+    return { leaf: cursor, steps }
+  }
+
   static #runResultFastPath<A, E>(
     activeTask: ResultTask<unknown, unknown, unknown>,
   ): Promise<Result<A, E>> | undefined {
-    if (activeTask.op === OP_SUCCESS) {
+    const op = activeTask.op
+    if (op === OP_SUCCESS) {
       return Promise.resolve(ok(activeTask.value as A))
     }
-    if (activeTask.op === OP_FAIL) {
+    if (op === OP_FAIL) {
       return Promise.resolve(err(activeTask.value as E))
     }
-    if (activeTask.op === OP_TRY_PROMISE) {
+    if (op === OP_TRY_PROMISE) {
       return runTryPromiseResult<A, E>(
         activeTask.value as TryPromiseSource,
         activeTask.continuation as ((error: unknown) => E) | undefined,
       )
     }
+    if (isFastResultCombinatorOp(op)) {
+      const chain = ResultTask.#collectFastTryPromiseChain(activeTask)
+      if (chain !== undefined) {
+        return ResultTask.#runFusedTryPromiseChainResult<A, E>(chain.leaf, chain.steps)
+      }
+    }
     return undefined
+  }
+
+  static #runResultFromTaskAndSteps<A, E>(
+    next: ResultTask<unknown, unknown, unknown>,
+    steps: readonly ResultTask<unknown, unknown, unknown>[],
+    remainingCount: number,
+  ): Promise<Result<A, E>> {
+    const context = ResultTask.#acquireRunContext()
+    const scope = context.scope
+    const remaining = steps.slice(0, remainingCount)
+    const outcome = ResultTask.runTaskLoop(next, context, undefined, remaining)
+    if (isPromiseExit(outcome)) {
+      return outcome.then((resolvedExit) => {
+        if (scope.isClean()) {
+          ResultTask.#releaseRunContext(context)
+          return ResultTask.exitToResult(resolvedExit as Exit<A, E>)
+        }
+        const closed = scope.closeSyncOrAsync(resolvedExit)
+        return isPromiseExit(closed)
+          ? closed.then(ResultTask.exitToResult as (exit: Exit<unknown, unknown>) => Result<A, E>)
+          : ResultTask.exitToResult(closed as Exit<A, E>)
+      })
+    }
+    return ResultTask.#finishResultSync<A, E>(outcome, context, undefined)
+  }
+
+  static #runFastResultSteps<A, E>(
+    initialOk: boolean,
+    initialValue: unknown,
+    steps: readonly ResultTask<unknown, unknown, unknown>[],
+  ): Result<A, E> | Promise<Result<A, E>> {
+    fastContinuationOk = initialOk
+    fastContinuationValue = initialValue
+    for (let index = steps.length - 1; index >= 0; index -= 1) {
+      const pending = ResultTask.#applyFastResultStep<A, E>(steps, index)
+      if (pending !== undefined) return pending
+    }
+    const finalOk = fastContinuationOk
+    const finalValue = fastContinuationValue
+    fastContinuationValue = undefined
+    return finalOk ? ok(finalValue as A) : err(finalValue as E)
+  }
+
+  static #applyFastResultStep<A, E>(
+    steps: readonly ResultTask<unknown, unknown, unknown>[],
+    index: number,
+  ): Promise<Result<A, E>> | undefined {
+    const step = steps[index]
+    if (step === undefined) return undefined
+    const isOk = fastContinuationOk
+    const value = fastContinuationValue
+    fastContinuationValue = undefined
+    const op = step.op
+    if (isOk) {
+      if (op === OP_MAP) {
+        fastContinuationOk = true
+        fastContinuationValue = (step.continuation as (input: unknown) => unknown)(value)
+        return undefined
+      }
+      if (op === OP_FLAT_MAP) {
+        const next = (
+          step.continuation as (
+            input: unknown,
+          ) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>
+        )(value)
+        return ResultTask.#advanceFastContinuation<A, E>(next, steps, index)
+      }
+    } else if (op === OP_MAP_ERROR) {
+      fastContinuationOk = false
+      fastContinuationValue = (step.continuation as (input: unknown) => unknown)(value)
+      return undefined
+    } else if (op === OP_CATCH_ALL) {
+      const next = (
+        step.continuation as (
+          input: unknown,
+        ) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>
+      )(value)
+      return ResultTask.#advanceFastContinuation<A, E>(next, steps, index)
+    }
+    fastContinuationOk = isOk
+    fastContinuationValue = value
+    return undefined
+  }
+
+  static #advanceFastContinuation<A, E>(
+    next: ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>,
+    steps: readonly ResultTask<unknown, unknown, unknown>[],
+    index: number,
+  ): Promise<Result<A, E>> | undefined {
+    if (!isResultTask(next)) {
+      if (next.isOk()) {
+        fastContinuationOk = true
+        fastContinuationValue = next.value
+      } else {
+        fastContinuationOk = false
+        fastContinuationValue = next.error
+      }
+      return undefined
+    }
+    if (next.op === OP_SUCCESS) {
+      fastContinuationOk = true
+      fastContinuationValue = next.value
+      return undefined
+    }
+    if (next.op === OP_FAIL) {
+      fastContinuationOk = false
+      fastContinuationValue = next.value
+      return undefined
+    }
+    return index === 0
+      ? ResultTask.#runResultNoOptions<A, E>(next)
+      : ResultTask.#runResultFromTaskAndSteps<A, E>(next, steps, index)
+  }
+
+  static #runFusedTryPromiseChainResult<A, E>(
+    leaf: ResultTask<unknown, unknown, unknown>,
+    steps: readonly ResultTask<unknown, unknown, unknown>[],
+  ): Promise<Result<A, E>> {
+    const trySource = leaf.value as TryPromiseSource
+    const catchFn = leaf.continuation as ((error: unknown) => unknown) | undefined
+    const onResolve = (value: unknown): Result<A, E> | Promise<Result<A, E>> =>
+      ResultTask.#runFastResultSteps<A, E>(true, value, steps)
+    const onReject = (error: unknown): Result<A, E> | Promise<Result<A, E>> =>
+      ResultTask.#runFastResultSteps<A, E>(false, catchTryPromise(trySource, catchFn, error), steps)
+    try {
+      return Promise.resolve(invokeTryPromise(trySource, NEVER_ABORTED_SIGNAL)).then(
+        onResolve,
+        onReject,
+      )
+    } catch (error) {
+      try {
+        const failValue = catchTryPromise(trySource, catchFn, error)
+        return Promise.resolve().then(() =>
+          ResultTask.#runFastResultSteps<A, E>(false, failValue, steps),
+        )
+      } catch (error_) {
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Preserve the original defect just as the asynchronous exit does.
+        return Promise.reject(error_)
+      }
+    }
   }
   /* Stryker restore all */
 
@@ -6942,46 +7225,192 @@ export class ResultTask<out A, out E = never, out R = never> {
     return ResultTask.runForkInternal(task, args[0])
   }
 
+  static #settleRootForkScope<A, E>(
+    checked: Exit<unknown, unknown>,
+    state: RootForkFinishState<A, E>,
+  ): Exit<A, E> | Promise<Exit<A, E>> {
+    const { context, fiberSignal, handle } = state
+    const signal = fiberSignal.asAbortSignal()
+    const scope = context.scope
+    const closed = scope.closeSyncOrAsync(checked)
+    if (isPromiseExit(closed)) {
+      return closed.then(
+        (closedExit) => {
+          fiberSignal.dispose()
+          return handle.complete(interruptSuccess(closedExit, signal) as Exit<A, E>)
+        },
+        /* Stryker disable all: scope.closeSyncOrAsync catches finalizer defects into Exit; defensive against host rejections. */
+        (error: unknown) => {
+          fiberSignal.dispose()
+          return handle.complete(died(error))
+        },
+        /* Stryker restore all */
+      )
+    }
+    fiberSignal.dispose()
+    return handle.complete(interruptSuccess(closed, signal) as Exit<A, E>)
+  }
+
+  static #finishRootFork<A, E>(
+    outcome: Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>,
+    context: ResultTaskRuntimeContext,
+    fiberSignal: FiberSignal,
+  ): FiberHandle<A, E> {
+    const signal = fiberSignal.asAbortSignal()
+    if (isPromiseExit(outcome)) {
+      const handle = createRootFiberHandle<A, E>(fiberSignal)
+      const state: RootForkFinishState<A, E> = { context, fiberSignal, handle }
+      const settle = (resolvedExit: Exit<unknown, unknown>): Exit<A, E> | Promise<Exit<A, E>> =>
+        ResultTask.#settleRootForkScope(interruptSuccess(resolvedExit, signal), state)
+      handle.attachOutcome(
+        outcome.then(
+          settle,
+          // Stryker disable next-line all: task.run catches defects into Exit; defensive against unexpected host promise rejections.
+          (error: unknown) => settle(died(error)),
+        ),
+      )
+      return handle
+    }
+    const checked = interruptSuccess(outcome, signal)
+    const closed = context.scope.closeSyncOrAsync(checked)
+    if (isPromiseExit(closed)) {
+      const handle = createRootFiberHandle<A, E>(fiberSignal)
+      handle.attachOutcome(
+        closed.then(
+          (closedExit) => {
+            fiberSignal.dispose()
+            return handle.complete(interruptSuccess(closedExit, signal) as Exit<A, E>)
+          },
+          /* Stryker disable all: scope.closeSyncOrAsync catches finalizer defects into Exit; defensive against host rejections. */
+          (error: unknown) => {
+            fiberSignal.dispose()
+            return handle.complete(died(error))
+          },
+          /* Stryker restore all */
+        ),
+      )
+      return handle
+    }
+    fiberSignal.dispose()
+    const handle = createRootFiberHandle<A, E>(undefined)
+    handle.complete(interruptSuccess(closed, signal) as Exit<A, E>)
+    return handle
+  }
+
+  /* Stryker disable all: options === undefined pooled root fork fast-path is equivalent to runForkWithOptions. */
+  static #runForkPooled<A, E, R>(task: ResultTask<A, E, R>): FiberHandle<A, E | ScopeError<R>> {
+    const context = ResultTask.#acquireRunContext()
+    const fiberSignal = new FiberSignal()
+    const signal = fiberSignal.asAbortSignal()
+    ;(context as { signal: AbortSignal }).signal = signal
+    let outcome: Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> = SUCCESS_UNDEFINED
+    try {
+      outcome = task.run(context)
+    } catch (error) {
+      outcome = died(error)
+    }
+    const scope = context.scope
+    if (isPromiseExit(outcome)) {
+      const handle = createRootFiberHandle<A, E | ScopeError<R>>(fiberSignal)
+      const settle = (
+        resolvedExit: Exit<unknown, unknown>,
+      ): Exit<A, E | ScopeError<R>> | Promise<Exit<A, E | ScopeError<R>>> => {
+        const checked = interruptSuccess(resolvedExit, signal)
+        if (scope.isClean()) {
+          ;(context as { signal: AbortSignal }).signal = NEVER_ABORTED_SIGNAL
+          ResultTask.#releaseRunContext(context)
+          return handle.complete(checked as Exit<A, E | ScopeError<R>>)
+        }
+        const closed = scope.closeSyncOrAsync(checked)
+        if (isPromiseExit(closed)) {
+          return closed.then(
+            (closedExit) =>
+              handle.complete(interruptSuccess(closedExit, signal) as Exit<A, E | ScopeError<R>>),
+            (error: unknown) => handle.complete(died(error)),
+          )
+        }
+        return handle.complete(interruptSuccess(closed, signal) as Exit<A, E | ScopeError<R>>)
+      }
+      handle.attachOutcome(outcome.then(settle, (error: unknown) => settle(died(error))))
+      return handle
+    }
+    const checked = interruptSuccess(outcome, signal)
+    if (scope.isClean()) {
+      ;(context as { signal: AbortSignal }).signal = NEVER_ABORTED_SIGNAL
+      ResultTask.#releaseRunContext(context)
+      const handle = createRootFiberHandle<A, E | ScopeError<R>>(undefined)
+      handle.complete(checked as Exit<A, E | ScopeError<R>>)
+      return handle
+    }
+    const closed = scope.closeSyncOrAsync(checked)
+    if (isPromiseExit(closed)) {
+      const handle = createRootFiberHandle<A, E | ScopeError<R>>(fiberSignal)
+      handle.attachOutcome(
+        closed.then(
+          (closedExit) =>
+            handle.complete(interruptSuccess(closedExit, signal) as Exit<A, E | ScopeError<R>>),
+          (error: unknown) => handle.complete(died(error)),
+        ),
+      )
+      return handle
+    }
+    const handle = createRootFiberHandle<A, E | ScopeError<R>>(undefined)
+    handle.complete(interruptSuccess(closed, signal) as Exit<A, E | ScopeError<R>>)
+    return handle
+  }
+  /* Stryker restore all */
+
   private static runForkInternal<A, E, R>(
     task: ResultTask<A, E, R>,
     runOptionsInput?: ResultTaskRunOptions<R>,
   ): FiberHandle<A, E | ScopeError<R>> {
+    /* Stryker disable all: options === undefined pooled root fork fast-path is equivalent to runForkWithOptions. */
+    if (runOptionsInput === undefined) {
+      return ResultTask.#runForkPooled(task)
+    }
+    /* Stryker restore all */
     const options: Partial<ResultTaskRunOptions<R>> = {}
     try {
       Object.assign(options, runOptionsInput)
     } catch (error) {
-      return createFiberHandle({
-        outcome: Promise.resolve(died(error)),
-        interrupt: () => undefined,
-        observe: () => undefined,
-      })
+      const handle = createRootFiberHandle<A, E | ScopeError<R>>(undefined)
+      handle.complete(died(error))
+      return handle
     }
-    const externalSignal = options.signal
-    const controller = new AbortController()
-    const onAbort = (): void => {
-      controller.abort((externalSignal as unknown as AbortSignal).reason)
+    const fiberSignal = new FiberSignal(options.signal ?? NEVER_ABORTED_SIGNAL)
+    const signal = fiberSignal.asAbortSignal()
+    const suppliedServices = 'services' in options ? options.services : undefined
+    const namedServices =
+      suppliedServices === undefined
+        ? EMPTY_NAMED_SERVICES
+        : new Map(Object.entries(suppliedServices))
+    const scope = new TaskScope()
+    const clock = options.clock ?? Clock.live
+    // eslint-disable-next-line init-declarations
+    let context: ResultTaskRuntimeContext
+    let outcome: Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> = SUCCESS_UNDEFINED
+    try {
+      context = {
+        namedServices,
+        services: EMPTY_SERVICES,
+        serviceResolver: undefined,
+        signal,
+        scope,
+        clock,
+        scheduling: createScheduling(clock, options as ResultTaskRunOptions<R>),
+        cleanup: undefined,
+        locals: createTaskLocalsCell(),
+        tracer: options.tracer,
+        spanStack: undefined,
+      }
+      outcome = task.run(context)
+    } catch (error) {
+      fiberSignal.dispose()
+      const handle = createRootFiberHandle<A, E | ScopeError<R>>(undefined)
+      handle.complete(died(error))
+      return handle
     }
-    // Stryker disable next-line all: abort fires at most once and the listener is removed in finally; once:true is listener hygiene.
-    externalSignal?.addEventListener('abort', onAbort, { once: true })
-    if (externalSignal?.aborted === true) onAbort()
-    // Replacing only the signal preserves the required service environment from the caller.
-    const runOptions = Object.assign(options, {
-      signal: controller.signal,
-    }) as ResultTaskRunOptions<R>
-    const outcome = ResultTask.runExitInternal(task, runOptions)
-      // Stryker disable next-line all: runExitInternal catches defects into Exit; this catch is defensive against unexpected host promise rejections.
-      .catch((error: unknown) => died(error) as Exit<A, E | ScopeError<R>>)
-      .finally(() => {
-        // Stryker disable next-line all: abort fires at most once; removing the listener after settlement is memory hygiene.
-        externalSignal?.removeEventListener('abort', onAbort)
-      })
-    return createFiberHandle({
-      outcome,
-      interrupt: (reason) => {
-        controller.abort(reason)
-      },
-      observe: () => undefined,
-    })
+    return ResultTask.#finishRootFork(outcome, context, fiberSignal)
   }
 
   /**
@@ -7430,6 +7859,9 @@ interface FusedTryPromiseSpec {
   readonly trySource: TryPromiseSource
   readonly catchFn: ((error: unknown) => unknown) | undefined
   readonly mapOk?: ((value: unknown) => unknown) | undefined
+  readonly flatMapOk?:
+    | ((value: unknown) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>)
+    | undefined
   readonly mapErr?: ((error: unknown) => unknown) | undefined
   readonly outerMapOk?: ((value: unknown) => unknown) | undefined
   readonly recover?:
@@ -7461,10 +7893,104 @@ const mapTryPromiseFailure = (
   }
 }
 
-const createFusedTryPromiseResolve = (
-  spec: Pick<FusedTryPromiseSpec, 'mapOk' | 'outerMapOk' | 'recover'>,
+const finishFusedFlatMapExit = (
+  exit: Exit<unknown, unknown>,
+  spec: Pick<FusedTryPromiseSpec, 'outerMapOk' | 'recover'>,
+  signal: AbortSignal,
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+  if (exit._tag === 'Failure') {
+    return spec.recover === undefined ? exit : spec.recover(exit)
+  }
+  const trackSignal = signal !== NEVER_ABORTED_SIGNAL
+  if (trackSignal && signal.aborted) {
+    return interrupted(signal)
+  }
+  if (spec.outerMapOk === undefined) {
+    return exit
+  }
+  try {
+    const mapped = spec.outerMapOk(exit.value)
+    return trackSignal && signal.aborted ? interrupted(signal) : success(mapped)
+  } catch (error) {
+    return died(error)
+  }
+}
+
+const runFusedFlatMapTask = (
+  next: ResultTask<unknown, unknown, unknown>,
+  spec: Pick<FusedTryPromiseSpec, 'outerMapOk' | 'recover'>,
   context: ResultTaskRuntimeContext,
-): ((value: unknown) => Exit<unknown, unknown>) => {
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+  const signal = context.signal
+  const trackSignal = signal !== NEVER_ABORTED_SIGNAL
+  if (trackSignal && signal.aborted) {
+    return interrupted(signal)
+  }
+  const executed = (
+    next as unknown as {
+      run: (
+        ctx: ResultTaskRuntimeContext,
+      ) => Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>
+    }
+  ).run(context)
+  if (spec.recover === undefined && spec.outerMapOk === undefined && !trackSignal) {
+    return executed
+  }
+  return isPromiseExit(executed)
+    ? executed.then((exit) => finishFusedFlatMapExit(exit, spec, signal), died)
+    : finishFusedFlatMapExit(executed, spec, signal)
+}
+
+const finishFusedFlatMapSyncResult = (
+  next: Result<unknown, unknown>,
+  spec: Pick<FusedTryPromiseSpec, 'outerMapOk' | 'recover'>,
+  signal: AbortSignal,
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+  if (next.isErr()) {
+    const failedExit = failed(next.error) as Exit<unknown, unknown> & { readonly _tag: 'Failure' }
+    return spec.recover === undefined ? failedExit : spec.recover(failedExit)
+  }
+  const trackSignal = signal !== NEVER_ABORTED_SIGNAL
+  if (trackSignal && signal.aborted) {
+    return interrupted(signal)
+  }
+  if (spec.outerMapOk === undefined) {
+    return success(next.value)
+  }
+  const mapped = spec.outerMapOk(next.value)
+  return trackSignal && signal.aborted ? interrupted(signal) : success(mapped)
+}
+
+const createFusedFlatMapResolve = (
+  flatMapOk: NonNullable<FusedTryPromiseSpec['flatMapOk']>,
+  spec: Pick<FusedTryPromiseSpec, 'outerMapOk' | 'recover'>,
+  context: ResultTaskRuntimeContext,
+): ((value: unknown) => Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>) => {
+  const signal = context.signal
+  const trackSignal = signal !== NEVER_ABORTED_SIGNAL
+  return (value: unknown): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+    if (trackSignal && signal.aborted) {
+      return interrupted(signal)
+    }
+    try {
+      const next = flatMapOk(value)
+      return isResultTask(next)
+        ? runFusedFlatMapTask(next, spec, context)
+        : finishFusedFlatMapSyncResult(next, spec, signal)
+    } catch (error) {
+      const diedExit = died(error) as Exit<unknown, unknown> & { readonly _tag: 'Failure' }
+      return spec.recover === undefined ? diedExit : spec.recover(diedExit)
+    }
+  }
+}
+
+const createFusedTryPromiseResolve = (
+  spec: Pick<FusedTryPromiseSpec, 'mapOk' | 'flatMapOk' | 'outerMapOk' | 'recover'>,
+  context: ResultTaskRuntimeContext,
+): ((value: unknown) => Exit<unknown, unknown> | Promise<Exit<unknown, unknown>>) => {
+  if (spec.flatMapOk !== undefined) {
+    return createFusedFlatMapResolve(spec.flatMapOk, spec, context)
+  }
   const { mapOk, outerMapOk, recover } = spec
   const signal = context.signal
   const trackSignal = signal !== NEVER_ABORTED_SIGNAL
@@ -7572,15 +8098,142 @@ const executeTryPromise = (
   }
 }
 
+interface RootForkFinishState<A, E> {
+  readonly context: ResultTaskRuntimeContext
+  readonly fiberSignal: FiberSignal
+  readonly handle: RootFiberHandle<A, E>
+}
+
+interface FusedInspectCauseTryPromiseSpec<E> {
+  readonly trySource: TryPromiseSource
+  readonly catchFn: ((error: unknown) => unknown) | undefined
+  readonly mapOk: ((value: unknown) => unknown) | undefined
+  readonly onCause: (cause: Cause<E>) => unknown
+}
+
+const observeFailureCause = <E>(
+  exit: Exit<unknown, unknown> & { readonly _tag: 'Failure' },
+  f: (cause: Cause<E>) => unknown,
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+  try {
+    const observed = f(exit.cause as Cause<E>)
+    if (!isResultTask(observed) && isPromiseLike(observed)) {
+      return Promise.resolve(observed).then(
+        () => exit,
+        () => exit,
+      )
+    }
+  } catch {
+    // Observation cannot change the workflow outcome.
+  }
+  return exit
+}
+
+const observeCauseExit = <E>(
+  outcome: Exit<unknown, unknown>,
+  signal: AbortSignal,
+  f: (cause: Cause<E>) => unknown,
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+  const exit = interruptSuccess(outcome, signal)
+  if (exit._tag === 'Success') return exit
+  return observeFailureCause(exit, f)
+}
+
+/* Stryker disable all: fused inspectCause tryPromise fast-path is behaviorally equivalent to #observe. */
+const executeFusedInspectCauseTryPromise = <E>(
+  spec: FusedInspectCauseTryPromiseSpec<E>,
+  context: ResultTaskRuntimeContext,
+): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+  const signal = context.signal
+  const trackSignal = signal !== NEVER_ABORTED_SIGNAL
+  if (trackSignal && signal.aborted) {
+    return observeFailureCause(
+      interrupted(signal) as Exit<unknown, unknown> & { readonly _tag: 'Failure' },
+      spec.onCause,
+    )
+  }
+  const { mapOk, onCause } = spec
+  const nativeSignal = toNativeAbortSignal(signal)
+  const onResolve = (value: unknown): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+    if (trackSignal && signal.aborted) {
+      return observeFailureCause(
+        interrupted(signal) as Exit<unknown, unknown> & { readonly _tag: 'Failure' },
+        onCause,
+      )
+    }
+    if (mapOk === undefined) {
+      return success(value)
+    }
+    try {
+      const mapped = mapOk(value)
+      if (trackSignal && signal.aborted) {
+        return observeFailureCause(
+          interrupted(signal) as Exit<unknown, unknown> & { readonly _tag: 'Failure' },
+          onCause,
+        )
+      }
+      return success(mapped)
+    } catch (error) {
+      return observeFailureCause(
+        died(error) as Exit<unknown, unknown> & { readonly _tag: 'Failure' },
+        onCause,
+      )
+    }
+  }
+  const onReject = (error: unknown): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> => {
+    if (trackSignal && signal.aborted) {
+      return observeFailureCause(
+        interrupted(signal) as Exit<unknown, unknown> & { readonly _tag: 'Failure' },
+        onCause,
+      )
+    }
+    try {
+      return observeFailureCause(
+        failed(catchTryPromise(spec.trySource, spec.catchFn, error)) as Exit<unknown, unknown> & {
+          readonly _tag: 'Failure'
+        },
+        onCause,
+      )
+    } catch (catchError) {
+      return observeFailureCause(
+        died(catchError) as Exit<unknown, unknown> & { readonly _tag: 'Failure' },
+        onCause,
+      )
+    }
+  }
+  try {
+    return Promise.resolve(invokeTryPromise(spec.trySource, nativeSignal)).then(onResolve, onReject)
+  } catch (error) {
+    return onReject(error)
+  }
+}
+/* Stryker restore all */
+
 /* Stryker disable all: options === undefined fast-path is behaviorally equivalent to runExitSyncOrAsync + exitToResult. */
-const runTryPromiseResult = async <A, E>(
+let fastContinuationOk = false
+let fastContinuationValue: unknown = undefined
+
+const RETURN_UNDEFINED = (): undefined => undefined
+
+const isFastResultCombinatorOp = (op: number): boolean =>
+  op === OP_MAP || op === OP_MAP_ERROR || op === OP_FLAT_MAP || op === OP_CATCH_ALL
+
+const runTryPromiseResult = <A, E>(
   trySource: TryPromiseSource,
   catchFn: ((error: unknown) => E) | undefined,
 ): Promise<Result<A, E>> => {
   try {
-    return ok((await invokeTryPromise(trySource, NEVER_ABORTED_SIGNAL)) as A)
+    return Promise.resolve(invokeTryPromise(trySource, NEVER_ABORTED_SIGNAL)).then(
+      ok as (value: unknown) => Result<A, E>,
+      (error: unknown) => err(catchTryPromise(trySource, catchFn, error) as E),
+    )
   } catch (error) {
-    return err(catchTryPromise(trySource, catchFn, error) as E)
+    try {
+      return Promise.resolve(err(catchTryPromise(trySource, catchFn, error) as E))
+    } catch (error_) {
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Preserve the original defect just as the asynchronous exit does.
+      return Promise.reject(error_)
+    }
   }
 }
 /* Stryker restore all */

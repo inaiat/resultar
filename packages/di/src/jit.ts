@@ -51,6 +51,117 @@ const MAX_DI_PLAN_NODES = 128;
 const EMPTY_FROZEN: Readonly<Record<string, unknown>> = Object.freeze({});
 const lifetimeRank: Record<ServiceLifetime, number> = { transient: 0, scoped: 1, singleton: 2 };
 
+type CompiledStepFn = (
+  rootCache: Map<string, unknown>,
+  locals: Readonly<Record<string, unknown>>,
+) => unknown;
+
+const compileDirectStep = (step: PlanStep, stepFns: readonly CompiledStepFn[]): CompiledStepFn => {
+  if (step.tag === STEP_CONSTANT) {
+    const { value } = step;
+    return () => value;
+  }
+  if (step.tag === STEP_LOCAL) {
+    const { name } = step;
+    return (_rootCache, locals) => locals[name];
+  }
+  const { deps, factory, assertSync } = step;
+  const resolveDeps: CompiledStepFn = compileDepsRecord(deps, stepFns);
+  if (step.tag === STEP_SINGLETON) {
+    const { name } = step;
+    return (rootCache, locals) => {
+      const existing = rootCache.get(name);
+      if (existing !== undefined || rootCache.has(name)) {
+        return existing;
+      }
+      const created = factory(resolveDeps(rootCache, locals) as Readonly<Record<string, unknown>>);
+      assertSync(created);
+      rootCache.set(name, created);
+      return created;
+    };
+  }
+  return (rootCache, locals) => {
+    const created = factory(resolveDeps(rootCache, locals) as Readonly<Record<string, unknown>>);
+    assertSync(created);
+    return created;
+  };
+};
+
+const compileDepsRecord = (
+  spec: RecordSpec,
+  stepFns: readonly CompiledStepFn[],
+): CompiledStepFn => {
+  const { count } = spec;
+  if (count === 0) return () => EMPTY_FROZEN;
+  if (count === 1) {
+    const { k0 } = spec;
+    const f0 = stepFns[spec.i0];
+    return (rc, locals) => Object.freeze({ [k0]: f0?.(rc, locals) });
+  }
+  if (count === 2) {
+    const { k0, k1 } = spec;
+    const f0 = stepFns[spec.i0];
+    const f1 = stepFns[spec.i1];
+    return (rc, locals) => Object.freeze({ [k0]: f0?.(rc, locals), [k1]: f1?.(rc, locals) });
+  }
+  if (count === 3) {
+    const { k0, k1, k2 } = spec;
+    const f0 = stepFns[spec.i0];
+    const f1 = stepFns[spec.i1];
+    const f2 = stepFns[spec.i2];
+    return (rc, locals) =>
+      Object.freeze({ [k0]: f0?.(rc, locals), [k1]: f1?.(rc, locals), [k2]: f2?.(rc, locals) });
+  }
+  const compiledEntries = spec.entries.map(([key, idx]) => [key, stepFns[idx]] as const);
+  return (rc, locals) => {
+    const record: Record<string, unknown> = {};
+    for (const [key, fn] of compiledEntries) {
+      defineDataProperty(record, key, fn?.(rc, locals));
+    }
+    return Object.freeze(record);
+  };
+};
+
+const isTreeShapedPlan = (
+  steps: readonly PlanStep[],
+  outputRefs: readonly (readonly [string, number])[],
+): boolean => {
+  // Pure tree (each non-leaf/dynamic step referenced at most once) can execute directly without a values[] table.
+  const refCounts = Array.from({ length: steps.length }, () => 0);
+  for (const step of steps) {
+    if (step.tag === STEP_SINGLETON || step.tag === STEP_DYNAMIC) {
+      for (const [, idx] of step.deps.entries) {
+        refCounts[idx] = (refCounts[idx] ?? 0) + 1;
+      }
+    }
+  }
+  for (const [, idx] of outputRefs) {
+    refCounts[idx] = (refCounts[idx] ?? 0) + 1;
+  }
+  for (const [i, step] of steps.entries()) {
+    if (step.tag === STEP_DYNAMIC && (refCounts[i] ?? 0) > 1) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const compilePureClosureTier1 = (
+  steps: readonly PlanStep[],
+  outputSpec: RecordSpec,
+): CompiledSyncPlan["resolve"] | undefined => {
+  if (!isTreeShapedPlan(steps, outputSpec.entries)) {
+    return undefined;
+  }
+  const stepFns: CompiledStepFn[] = [];
+  for (const step of steps) {
+    stepFns.push(compileDirectStep(step, stepFns));
+  }
+  const resolveOutput = compileDepsRecord(outputSpec, stepFns);
+  return (rootCache, locals) =>
+    resolveOutput(rootCache, locals) as Readonly<Record<string, unknown>>;
+};
+
 const defineDataProperty = (target: Record<string, unknown>, key: string, value: unknown): void => {
   if (key in target) {
     Object.defineProperty(target, key, {
@@ -158,6 +269,10 @@ const buildSyncPlan = (
         return cached;
       },
     };
+  }
+  const compiled = compilePureClosureTier1(steps, outputSpec);
+  if (compiled !== undefined) {
+    return { tier: 1, resolve: compiled };
   }
   return {
     tier: 1,

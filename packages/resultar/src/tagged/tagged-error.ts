@@ -197,6 +197,12 @@ export interface TaggedErrorOptions<
    * Stable runtime tag and Error name.
    */
   readonly name: Tag
+  /**
+   * Captures a V8 stack trace on instantiation when `true` (default).
+   * Set to `false` for high-frequency expected domain errors (such as 404 or validation failures)
+   * where stack capture overhead is unnecessary.
+   */
+  readonly captureStackTrace?: boolean
 }
 
 /**
@@ -488,7 +494,7 @@ const buildJitInterpolator = (
   const lines = [`let output = ${serializeStringLiteral(prefix)};`]
   for (const { key, tail } of segments) {
     const keyLit = serializeStringLiteral(key)
-    lines.push(`{ const value = hasValue(p, ${keyLit}) ? ${formatPropertyAccess('p', key)} : undefined;
+    lines.push(`{ const value = Object.hasOwn(p, ${keyLit}) || hasValue(p, ${keyLit}) ? ${formatPropertyAccess('p', key)} : undefined;
       output += typeof value === "string" || typeof value === "number" ? value :
         value === undefined ? ${serializeStringLiteral(`$${key}`)} : format(value);
       ${tail === '' ? '' : `output += ${serializeStringLiteral(tail)};`} }`)
@@ -558,30 +564,49 @@ const readonlyDescriptor: PropertyDescriptor = {
 
 const assignReadonly = (target: object, key: PropertyKey, value: unknown): void => {
   readonlyDescriptor.value = value
-  /* Stryker disable BlockStatement: clears cached descriptor reference in finally to prevent GC retention. */
-  try {
-    Object.defineProperty(target, key, readonlyDescriptor)
-  } finally {
-    readonlyDescriptor.value = undefined
-  }
-  /* Stryker restore BlockStatement */
+  /* Stryker disable all: clears cached descriptor reference immediately after defineProperty to prevent GC retention. */
+  Object.defineProperty(target, key, readonlyDescriptor)
+  readonlyDescriptor.value = undefined
+  /* Stryker restore all */
 }
 
-const reservedMetadataProperties = new Set(['err', 'is', 'tag', 'withProps', 'prototype', 'then'])
+const allReservedMetadataProperties = new Set<string>([
+  ...reservedTemplateVariables,
+  'err',
+  'is',
+  'tag',
+  'withProps',
+  'prototype',
+  'then',
+])
 
 const shouldCopyMetadata = (target: object, owner: object, key: string): boolean =>
-  !reservedTemplateVariables.has(key as ReservedTemplateVariable) &&
-  !reservedMetadataProperties.has(key) &&
-  owner !== Function.prototype &&
-  !(key in target)
+  !allReservedMetadataProperties.has(key) && owner !== Function.prototype && !(key in target)
 
 const copyOwnMetadata = (target: object, props: Record<string, unknown>): void => {
   for (const key in props) {
-    if (Object.hasOwn(props, key) && shouldCopyMetadata(target, props, key)) {
+    if (Object.hasOwn(props, key) && !allReservedMetadataProperties.has(key) && !(key in target)) {
       assignReadonly(target, key, props[key])
     }
   }
 }
+
+/* Stryker disable all: single-key fast-path is behaviorally equivalent to copyOwnMetadata. */
+const copyOwnMetadataWithFastKey = (
+  target: object,
+  props: Record<string, unknown>,
+  safeKey: string,
+): void => {
+  for (const key in props) {
+    if (
+      Object.hasOwn(props, key) &&
+      (key === safeKey || (!allReservedMetadataProperties.has(key) && !(key in target)))
+    ) {
+      assignReadonly(target, key, props[key])
+    }
+  }
+}
+/* Stryker restore all */
 
 const copyVisibleMetadata = (target: object, props: object): void => {
   /* Stryker disable all: plain-object fast path is equivalent to the prototype-walk loop below. */
@@ -712,9 +737,24 @@ const createTaggedErrorClass = <
 ): TaggedErrorClass<Tag, MessageTemplate, Base> => {
   const BaseError = options.extends ?? defaultBaseError
   const messageTemplate = options.message ?? (defaultMessageTemplate as MessageTemplate)
+  const skipStackTrace = options.captureStackTrace === false
   assertNoReservedTemplateVariables(options.name, messageTemplate)
   const interpolate = compileMessageInterpolator(messageTemplate)
   const sharedFingerprint = Object.freeze([options.name, messageTemplate] as const)
+  /* Stryker disable all: single-key fast-path is behaviorally equivalent to copyOwnMetadata. */
+  const templateVariables =
+    messageTemplate === defaultMessageTemplate ? [] : getTemplateVariableNames(messageTemplate)
+  const firstTemplateVariable = templateVariables[0]
+  const singleSafeTemplateKey =
+    !explicitProps &&
+    BaseError === defaultBaseError &&
+    templateVariables.length === 1 &&
+    firstTemplateVariable !== undefined &&
+    !allReservedMetadataProperties.has(firstTemplateVariable) &&
+    !(firstTemplateVariable in defaultBaseError.prototype)
+      ? firstTemplateVariable
+      : undefined
+  /* Stryker restore all */
 
   class GeneratedTaggedError extends BaseError {
     public static readonly tag = options.name
@@ -726,10 +766,18 @@ const createTaggedErrorClass = <
     public constructor(props?: ConstructorProps<MessageTemplate>) {
       const message = interpolate(props)
       const cause = props?.cause
+      let previousLimit: number | undefined = undefined
+      if (skipStackTrace) {
+        previousLimit = Error.stackTraceLimit
+        Error.stackTraceLimit = 0
+      }
       if (cause === undefined) {
         super(message)
       } else {
         super(message, { cause })
+      }
+      if (previousLimit !== undefined) {
+        Error.stackTraceLimit = previousLimit
       }
       this.name = options.name
 
@@ -737,7 +785,14 @@ const createTaggedErrorClass = <
         if (explicitProps) {
           copyVisibleMetadata(this, props)
         } else {
-          copyOwnMetadata(this, props as Record<string, unknown>)
+          /* Stryker disable all: single-key fast-path is behaviorally equivalent to copyOwnMetadata. */
+          const record = props as Record<string, unknown>
+          if (singleSafeTemplateKey === undefined) {
+            copyOwnMetadata(this, record)
+          } else {
+            copyOwnMetadataWithFastKey(this, record, singleSafeTemplateKey)
+          }
+          /* Stryker restore all */
         }
       }
     }
