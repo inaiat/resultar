@@ -58,3 +58,10 @@ coverage/
 !.vscode/extensions.json
 .history
 .yarn
+
+# URL shortener benchmarks
+/benchmarks/comparison/*/node_modules
+/benchmarks/comparison/*/dist
+/benchmarks/comparison/*/.fallow
+/benchmarks/comparison/*/.env
+/benchmarks/comparison/*/report

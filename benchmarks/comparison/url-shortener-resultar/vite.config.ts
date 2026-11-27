@@ -1,0 +1,121 @@
+import { defineConfig } from 'vite-plus'
+
+const ignorePatterns = [
+  'node_modules',
+  'dist',
+  'report',
+  'coverage',
+  '**/*.d.ts',
+  'test-endpoints',
+  '.local-flashify',
+  '.pnpmfile.mjs',
+]
+
+export default defineConfig({
+  pack: {
+    entry: ['src/index.ts', 'src/app.ts', 'src/application/routes/**/*.route.ts'],
+    target: 'node24',
+    format: 'esm',
+    outExtensions: () => ({ js: '.js' }),
+    dts: false,
+    sourcemap: true,
+    clean: true,
+  },
+  run: {
+    tasks: {
+      'dev-server': {
+        command:
+          'node --enable-source-maps --env-file-if-exists=.env --import=vite-plus/register --watch src/index.ts',
+        cache: false,
+      },
+    },
+  },
+  fmt: {
+    semi: false,
+    singleQuote: true,
+    objectWrap: 'collapse',
+    ignorePatterns: ['dist', 'coverage', 'report'],
+  },
+  lint: {
+    categories: {
+      correctness: 'error',
+      suspicious: 'error',
+      perf: 'error',
+      restriction: 'error',
+      style: 'error',
+      pedantic: 'error',
+      nursery: 'off',
+    },
+    options: { typeAware: true, typeCheck: true },
+    ignorePatterns,
+    rules: {
+      'explicit-member-accessibility': 'allow',
+      'prefer-readonly-parameter-types': 'allow',
+      'explicit-module-boundary-types': 'allow',
+      'no-array-method-this-argument': 'allow',
+      'require-await': 'allow',
+      'id-length': 'allow',
+      'explicit-function-return-type': 'allow',
+      'no-rest-spread-properties': 'allow',
+      'no-optional-chaining': 'allow',
+      'no-async-await': 'allow',
+      'no-undefined': 'allow',
+      'no-magic-numbers': 'allow',
+      'new-cap': 'allow',
+      'sort-keys': 'allow',
+      'no-ternary': 'allow',
+      'func-names': 'allow',
+      'consistent-type-definitions': 'allow',
+      'sort-imports': 'allow',
+      'unicorn/no-useless-undefined': 'allow',
+      'unicorn/no-array-callback-reference': 'allow',
+      'no-underscore-dangle': 'allow',
+      'no-redeclare': 'allow',
+      'one-var': 'allow',
+      'consistent-type-imports': 'error',
+      'no-empty-interface': ['error', { allowSingleExtends: true }],
+      'no-empty-object-type': ['error', { allowInterfaces: 'with-single-extends' }],
+      'unicorn/filename-case': ['error', { case: 'kebabCase' }],
+      'eslint/max-lines-per-function': [
+        'error',
+        { max: 200, skipBlankLines: false, skipComments: false, IIFEs: false },
+      ],
+      'eslint/max-classes-per-file': ['error', { max: 10 }],
+      'eslint/max-statements': ['error', { max: 25 }],
+      'eslint/capitalized-comments': [
+        'error',
+        'always',
+        { ignorePattern: '^(?:flash|resultar)-check-disable' },
+      ],
+    },
+    overrides: [
+      {
+        files: ['**/tests/**', '**/test/**'],
+        rules: {
+          'max-lines': ['error', { max: 500, skipBlankLines: true, skipComments: true }],
+          'max-lines-per-function': 'allow',
+          'init-declarations': 'allow',
+          'oxc/no-async-endpoint-handlers': 'allow',
+          'eslint/no-await-in-loop': 'allow',
+          '@typescript-eslint/no-unsafe-assignment': 'allow',
+          '@typescript-eslint/no-unsafe-member-access': 'allow',
+          '@typescript-eslint/no-unsafe-type-assertion': 'allow',
+          '@typescript-eslint/promise-function-async': 'allow',
+          '@typescript-eslint/require-await': 'allow',
+          'unicorn/no-await-expression-member': 'allow',
+          'unicorn/no-array-sort': 'allow',
+          'unicorn/consistent-function-scoping': 'allow',
+        },
+      },
+    ],
+  },
+  test: {
+    include: ['tests/**/*.test.ts'],
+    server: { deps: { inline: [/@fastify\/autoload/u] } },
+    coverage: {
+      reporter: ['text', 'json', 'html', 'lcov'],
+      include: ['src/**/*.ts'],
+      exclude: ['src/index.ts'],
+    },
+  },
+})

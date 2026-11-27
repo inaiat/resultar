@@ -1,6 +1,7 @@
 packages:
   - .
   - benchmarks
+  - benchmarks/comparison/*
   - examples/*
   - packages/*
   - packages/check/native-packages/*
@@ -29,12 +30,14 @@ catalog:
 
 allowBuilds:
   esbuild: true
+  msgpackr-extract: false # BullMQ can use the portable JavaScript implementation.
 
 # Align the Vitest runner with coverage, UI, and Vite+'s browser integrations.
 # https://viteplus.dev/guide/migrate#manual-installation-migration
 overrides:
   vite@*: 'catalog:'
   vitest@*: 'catalog:'
+  '@voidzero-dev/vite-plus-core>tsx': '-'
 
 # The Vite+ alias uses its own version instead of the bundled Vite version.
 peerDependencyRules:
@@ -58,6 +61,13 @@ trustPolicyExclude:
 blockExoticSubdeps: true
 minimumReleaseAge: 10080 # 1 week
 minimumReleaseAgeExclude:
+  # Versions copied from the URL shortener benchmark templates.
+  - "@effect/platform-node@4.1.5"
+  - "@effect/platform-node-shared@4.1.5"
+  - effect@4.1.5
+  - bullmq@6.7.9
+  - ioredis@6.1.0
+  - mongodb@7.9.1
   # Align the Fastify peer used by locally linked integration consumers.
   - fastify
   - "@hono/*"

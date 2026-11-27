@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "verbatimModuleSyntax": true,
+    "noUncheckedIndexedAccess": true,
+    "moduleDetection": "force",
+    "target": "ESNext",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["esnext"],
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "paths": { "src/*": ["./src"] },
+    "skipLibCheck": true,
+    "strict": true
+  },
+  "exclude": ["node_modules", "tests", "vite.config.ts"]
+}

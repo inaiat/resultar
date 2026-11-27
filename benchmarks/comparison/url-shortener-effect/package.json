@@ -1,0 +1,45 @@
+{
+  "name": "url-shortener-effect",
+  "version": "1.0.0",
+  "private": true,
+  "description": "URL shortening service with Effect Platform, MongoDB, and Redis",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "scripts": {
+    "build": "vp pack",
+    "check": "vp check",
+    "dev": "vp pack --watch --on-success 'node --enable-source-maps --env-file-if-exists=.env dist/index.js'",
+    "lint": "vp lint --deny-warnings",
+    "lint:fix": "vp lint --fix",
+    "typecheck": "tsc -p . --noEmit",
+    "start": "node --env-file-if-exists=.env dist/index.js",
+    "quality": "pnpm run check",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "validate": "pnpm typecheck && pnpm check && pnpm coverage",
+    "test": "vp test",
+    "test:watch": "vp test watch",
+    "test:ui": "vp test --ui --watch",
+    "coverage": "vp test run --coverage"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.1.5",
+    "bullmq": "6.7.9",
+    "effect": "4.1.5",
+    "ioredis": "6.1.0",
+    "mongodb": "7.9.1",
+    "nanoid": "^6.0.2",
+    "papr": "17.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "@vitest/ui": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
