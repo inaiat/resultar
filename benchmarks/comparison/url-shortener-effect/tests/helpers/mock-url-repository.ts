@@ -3,6 +3,7 @@ import { ObjectId } from 'mongodb'
 
 import type { UrlDocument } from '../../src/domain/model/url.model.js'
 
+import { DatabaseError } from '../../src/domain/errors/url.errors.js'
 import {
   UrlRepository,
   type UrlRepositoryService,
@@ -42,12 +43,19 @@ export const createMockUrlRepository = (): UrlRepositoryService => {
       ),
 
     create: (data) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
+        const hasActiveIdentifier = [...store.values()].some(
+          (doc) => doc.isActive && doc.shortCode === data.shortCode,
+        )
+        if (hasActiveIdentifier) {
+          return Effect.fail(DatabaseError.constraint('Duplicate entry'))
+        }
+
         const id = new ObjectId()
         const now = new Date()
         const doc: UrlDocument = { ...data, _id: id, createdAt: now, updatedAt: now }
         store.set(id.toString(), doc)
-        return doc
+        return Effect.succeed(doc)
       }),
 
     markInactive: (id, deletedAt) =>

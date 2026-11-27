@@ -56,7 +56,7 @@ export const createUrlAccessQueueModule = (
           return { queue, worker, connection }
         }),
       release: ({ worker, queue, connection }) =>
-        ResultTask.fromPromise(async () => worker.close(true))
+        ResultTask.fromPromise(async () => worker.close())
           .ensuring(() => ResultTask.fromPromise(async () => queue.close()))
           .ensuring(() =>
             ResultTask.sync(() => {

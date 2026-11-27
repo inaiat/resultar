@@ -98,6 +98,55 @@ describe('API Contract Tests', () => {
       expect(typeof result.error === 'string').toBeTruthy()
       expect(result.error).toEqual(expect.stringContaining('Invalid URL'))
     })
+
+    it.each([
+      ['malformed URL', { originalUrl: 'not-a-url' }],
+      ['JavaScript URL', { originalUrl: ['javascript', 'alert(1)'].join(':') }],
+      ['FTP URL', { originalUrl: 'ftp://files.example/archive' }],
+      ['reserved alias', { originalUrl: 'https://example.com', customAlias: 'stats' }],
+      ['reserved uppercase alias', { originalUrl: 'https://example.com', customAlias: 'STATS' }],
+      ['invalid expiration', { originalUrl: 'https://example.com', expiresAt: 'not-a-date' }],
+    ])('rejects a %s', async (_label, payload) => {
+      const response = await app.request({ method: 'POST', url: '/api/v1', payload })
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({ success: false, statusCode: 400 })
+    })
+
+    it('keeps /api/v1/stats working and redirects a valid HTTPS custom alias', async () => {
+      const statsRes = await app.request({ method: 'GET', url: '/api/v1/stats' })
+      expect(statsRes.status).toBe(200)
+
+      const customAlias = `https-alias-${Math.random().toString(36).slice(2, 10)}`
+      const createRes = await app.request({
+        method: 'POST',
+        url: '/api/v1',
+        payload: { originalUrl: 'https://secure.example/target', customAlias },
+      })
+      expect(createRes.status).toBe(201)
+
+      const redirectRes = await app.request({ method: 'GET', url: `/api/v1/${customAlias}` })
+      expect(redirectRes.status).toBe(302)
+      expect(redirectRes.headers.get('location')).toBe('https://secure.example/target')
+    })
+
+    it('returns one 201 and one 409 for simultaneous requests with the same custom alias', async () => {
+      const customAlias = `race-alias-${Math.random().toString(36).slice(2, 10)}`
+      const [first, second] = await Promise.all([
+        app.request({
+          method: 'POST',
+          url: '/api/v1',
+          payload: { originalUrl: 'https://race-one.example', customAlias },
+        }),
+        app.request({
+          method: 'POST',
+          url: '/api/v1',
+          payload: { originalUrl: 'https://race-two.example', customAlias },
+        }),
+      ])
+
+      expect([first.status, second.status].sort((a, b) => a - b)).toEqual([201, 409])
+    })
   })
 
   describe('GET /api/v1/:shortCode - Redirect to Original URL', () => {

@@ -6,18 +6,31 @@ import { describe, expect, it } from 'vite-plus/test'
 import {
   documentToCached,
   documentToResponse,
+  validateCustomAlias,
   validateUrl,
 } from '../src/domain/usecase/url.mapper.js'
 
 describe('url.mapper', () => {
-  it('validates a URL', async () => {
+  it('validates HTTP and HTTPS URLs and rejects unsupported protocols', async () => {
     const result = await Effect.runPromise(validateUrl('https://example.com'))
     expect(result.href).toBe('https://example.com/')
+
+    for (const invalid of [
+      'not-a-url',
+      'ftp://files.example/archive',
+      ['javascript', 'alert(1)'].join(':'),
+    ]) {
+      const exit = await Effect.runPromiseExit(validateUrl(invalid))
+      expect(exit._tag).toBe('Failure')
+    }
   })
 
-  it('fails for invalid URLs', async () => {
-    const exit = await Effect.runPromiseExit(validateUrl('not-a-url'))
-    expect(exit._tag).toBe('Failure')
+  it('rejects reserved and invalid custom aliases', async () => {
+    expect((await Effect.runPromiseExit(validateCustomAlias(undefined)))._tag).toBe('Success')
+    expect((await Effect.runPromiseExit(validateCustomAlias('valid_alias-1')))._tag).toBe('Success')
+    for (const invalid of ['stats', 'STATS', '', 'has space']) {
+      expect((await Effect.runPromiseExit(validateCustomAlias(invalid)))._tag).toBe('Failure')
+    }
   })
 
   it('maps document to response without optional fields', () => {

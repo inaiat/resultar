@@ -85,7 +85,46 @@ describe('URL access queue resources', () => {
     } finally {
       await scope.close().runPromise()
     }
-    expect(state.closeWorker).toHaveBeenCalledOnce()
+    expect(state.closeWorker).toHaveBeenCalledExactlyOnceWith()
+    expect(state.closeQueue).toHaveBeenCalledOnce()
+    expect(state.disconnect).toHaveBeenCalledOnce()
+    expect(state.closeWorker).toHaveBeenCalledBefore(state.closeQueue)
+    expect(state.closeQueue).toHaveBeenCalledBefore(state.disconnect)
+  })
+
+  it('waits for active jobs before closing the queue and disconnecting Redis', async () => {
+    const gate: { release?: () => void } = {}
+    const writePending = new Promise<undefined>((resolve) => {
+      gate.release = () => {
+        resolve(undefined)
+      }
+    })
+    let activeJob: Promise<undefined> | undefined = undefined
+    state.closeWorker.mockImplementationOnce(async (force?: boolean) => {
+      if (force === true) {
+        return
+      }
+      await activeJob
+    })
+
+    const scope = createUrlAccessQueueModule(options, logger, () =>
+      ResultTask.fromPromise(() => writePending),
+    ).scope()
+    await scope.useSingletons(['urlAccessRecorder'], () => ResultTask.ok(undefined)).runPromise()
+
+    activeJob = state.processor?.({
+      data: { urlId: 'url-in-flight', accessedAt: '2026-01-01T00:00:00.000Z' },
+    })
+    const closing = scope.close().runPromise()
+    await setTimeout(10)
+
+    expect(state.closeWorker).toHaveBeenCalledExactlyOnceWith()
+    expect(state.closeQueue).not.toHaveBeenCalled()
+    expect(state.disconnect).not.toHaveBeenCalled()
+
+    gate.release?.()
+    await Promise.all([activeJob, closing])
+
     expect(state.closeQueue).toHaveBeenCalledOnce()
     expect(state.disconnect).toHaveBeenCalledOnce()
     expect(state.closeWorker).toHaveBeenCalledBefore(state.closeQueue)

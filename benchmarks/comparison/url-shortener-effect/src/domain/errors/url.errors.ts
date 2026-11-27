@@ -37,6 +37,16 @@ export class InvalidUrlError extends Data.TaggedError('InvalidUrlError')<{ url: 
   }
 }
 
+export class InvalidCustomAliasError extends Data.TaggedError('InvalidCustomAliasError')<{
+  alias: string
+}> {
+  readonly statusCode = 400
+
+  get message(): string {
+    return `Invalid custom alias: ${this.alias}`
+  }
+}
+
 export class UrlCreationError extends Data.TaggedError('UrlCreationError')<{ detail: string }> {
   readonly statusCode = 500
 
@@ -68,6 +78,10 @@ export class DatabaseError extends Data.TaggedError('DatabaseError')<{
     return this.message
   }
 
+  static isConstraint(error: unknown): error is DatabaseError {
+    return error instanceof DatabaseError && error.operation === 'constraint'
+  }
+
   static query(error: unknown): DatabaseError {
     return new DatabaseError({
       operation: 'query',
@@ -78,8 +92,13 @@ export class DatabaseError extends Data.TaggedError('DatabaseError')<{
 
   static create(error: unknown): DatabaseError {
     const errorMessage = error instanceof Error ? error.message : 'Error on create operation'
+    const duplicateCode =
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { readonly code?: unknown }).code === 11_000
 
-    if (errorMessage.includes('duplicate') || errorMessage.includes('E11000')) {
+    if (duplicateCode || errorMessage.includes('duplicate') || errorMessage.includes('E11000')) {
       return DatabaseError.constraint('Duplicate entry', error)
     }
 
@@ -133,6 +152,7 @@ export type UrlError =
   | UrlNotFoundError
   | UrlExpiredError
   | CustomAliasExistsError
+  | InvalidCustomAliasError
   | InvalidUrlError
   | UrlCreationError
   | CacheError

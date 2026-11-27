@@ -96,12 +96,45 @@ describe('URL API contract', () => {
     ['JavaScript URL', { originalUrl: javaScriptUrl }],
     ['FTP URL', { originalUrl: 'ftp://files.example/archive' }],
     ['reserved alias', { originalUrl: 'https://example.com', customAlias: 'stats' }],
+    ['reserved uppercase alias', { originalUrl: 'https://example.com', customAlias: 'STATS' }],
     ['invalid expiration', { originalUrl: 'https://example.com', expiresAt: 'not-a-date' }],
   ])('rejects a %s', async (_label, payload) => {
     const response = await app.inject({ method: 'POST', url: '/api/v1', payload })
 
     expect(response.statusCode).toBe(400)
     expect(response.json()).toHaveProperty('error')
+  })
+
+  it('keeps /api/v1/stats working, redirects a valid HTTPS alias, and handles concurrent alias collisions', async () => {
+    const statsResponse = await app.inject({ method: 'GET', url: '/api/v1/stats' })
+    expect(statsResponse.statusCode).toBe(200)
+
+    const validAlias = 'https-redirect-alias'
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1',
+      payload: { originalUrl: 'https://secure.example/target', customAlias: validAlias },
+    })
+    expect(created.statusCode).toBe(201)
+
+    const redirected = await app.inject({ method: 'GET', url: `/api/v1/${validAlias}` })
+    expect(redirected.statusCode).toBe(302)
+    expect(redirected.headers.location).toBe('https://secure.example/target')
+
+    const raceAlias = 'concurrent-race-alias'
+    const [first, second] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: '/api/v1',
+        payload: { originalUrl: 'https://race-one.example', customAlias: raceAlias },
+      }),
+      app.inject({
+        method: 'POST',
+        url: '/api/v1',
+        payload: { originalUrl: 'https://race-two.example', customAlias: raceAlias },
+      }),
+    ])
+    expect([first.statusCode, second.statusCode].sort((a, b) => a - b)).toEqual([201, 409])
   })
 
   it('normalizes malformed request errors', async () => {
