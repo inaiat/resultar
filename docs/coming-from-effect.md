@@ -29,13 +29,12 @@ Measured on Node.js 26.13.1 (Apple M4, `arm64`, 0 errors). Even with strict CSP 
 
 ### Real-world HTTP service (URL shortener · MongoDB 7 + Redis 8 + BullMQ)
 
-Identical REST contract, strict MongoDB JSON Schema validator + 7 indexes, 50 concurrent keep-alive connections, 1.5s warmup + 5s window, 0 errors — comparing **Fastify 5 + `resultar-fastify` + `resultar-di`** against **Effect**:
+The November 22, 2026 benchmark used a shared REST contract, strict MongoDB JSON Schema validation, 7 indexes, 50 concurrent keep-alive connections, a 1.5s warmup, and a 5s sample window. Both stacks completed the run with zero errors. The table covers the endpoints available in the current comparison apps.
 
 | Endpoint / Footprint | Fastify + Resultar v5 | Effect | Delta |
 | :--- | ---: | ---: | ---: |
 | `GET /health` (`requestScope: false`) | `66,376 req/s` (`p99 1.47ms`) | `42,520 req/s` (`p99 2.30ms`) | **1.56× (+56%)** |
 | `GET /api/v1/:code` (302 + Redis + BullMQ) | `35,630 req/s` (`p99 2.83ms`) | `18,551 req/s` (`p99 3.66ms`) | **1.92× (+92%)** |
-| `GET /ready` (MongoDB ping) | `23,994 req/s` (`p99 3.73ms`) | `14,806 req/s` (`p99 6.72ms`) | **1.62× (+62%)** |
 | `POST /api/v1` (MongoDB insert + Redis) | `14,350 req/s` (`p99 6.99ms`) | `11,941 req/s` (`p99 7.29ms`) | **1.20× (+20%)** |
 | `GET /api/v1/stats` (MongoDB query) | `11,410 req/s` (`p99 7.74ms`) | `9,534 req/s` (`p99 8.34ms`) | **1.20× (+20%)** |
 | Built `dist/` bundle / Idle RSS | `79.5 KB` / `175.1 MB` | `115.2 KB` / `224.2 MB` | **-31% bundle · -22% RSS** |
@@ -71,9 +70,9 @@ See the full methodology and all 12 reproducible benchmark suites in the [Benchm
 | `Queue.bounded` / `Queue.unbounded`                                      | `Queue.bounded<A>(capacity)` / `Queue.unbounded<A>()`                                                                                        | FIFO backpressure, interruption-safe waiters, lossless shutdown draining                                                                    |
 | `FiberRef` / `ServiceMap.Reference`                                      | `TaskLocal.make(defaultValue, name?)`                                                                                                        | Fiber-inherited ambient context (`get()`, `set(v)`, `update(fn)`, `locally`, `locallyWith`)                                                 |
 | `TestClock`                                                              | `Clock.virtual()`                                                                                                                            | `advanceBy(ms)`, `advanceToNext()`, `runToCompletion(task, { maxSteps })`                                                                   |
-| `Context.Tag` / `Layer`                                                  | `serviceTag` + `resultar-di` (`service`, `resource`, `Service`, `createModule`)                                                              | Composable typed DI with singleton/scoped/transient lifetimes (`module.use`, `module.scope`, `provideService`)                              |
+| `Context.Tag` / `Layer`                                                  | `serviceTag` + `resultar-di` (`service`, `service.require`, `resource`, `Service`, `createModule`)                                           | Composable typed DI with singleton/scoped/transient lifetimes (`{ requires, make }`, `module.use`, `module.scope`, `provideService`)        |
 | `Config`                                                                 | `resultar-config`                                                                                                                            | Declarative env/config loading with redaction and typed errors                                                                              |
-| `Data.TaggedError`                                                       | `createTaggedError`                                                                                                                          | Real `Error` subclasses with `$var` interpolation, `.fingerprint` tuple, `.findCause`, `redact()`                                           |
+| `Data.TaggedError`                                                       | `createTaggedError`                                                                                                                          | Real `Error` subclasses with `$var` interpolation, `.fingerprint` tuple, `.findCause`, `redact()`, and opt-out `captureStackTrace: false`   |
 | `Match`                                                                  | `Match` (`resultar/match`)                                                                                                                   | Exhaustive pattern matching (`Match.value`, `Match.type`, `Match.valueTags`, `Match.typeTags`, `Match.fn`)                                  |
 | `Redacted`                                                               | `redact` / `isRedacted` / `revealRedacted`                                                                                                   | Safe `<redacted>` / `<redacted:label>` formatting in errors and JSON                                                                        |
 

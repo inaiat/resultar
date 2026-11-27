@@ -1,5 +1,7 @@
 # Resultar Check
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/resultar-check)
+
 Native, type-aware Resultar diagnostics powered by TypeScript-Go.
 
 `resultar-check` opens a TypeScript project once, reports compiler errors, and runs all enabled

@@ -1,5 +1,7 @@
 # resultar-config
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/config)
+
 For applications combining workflows, services and configuration, use
 [`resultar-app`](../app/README.md) as the unified installation and import entry point.
 This package is also available independently.

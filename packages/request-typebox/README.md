@@ -1,5 +1,7 @@
 # resultar-request-typebox
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/request-typebox)
+
 TypeBox adapter for `resultar-request`.
 
 Use this package when a request response should be validated with TypeBox while the transport and

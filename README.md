@@ -7,7 +7,7 @@
 [![TypeScript 7 Native Checks](https://img.shields.io/badge/resultar--check-TypeScript--Go-3178c6?logo=typescript&logoColor=white)](packages/check/README.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-[Core Package](packages/resultar/README.md) · [Gradual Adoption Guide](docs/gradual-adoption.md) · [Full Reference (`DOCUMENTATION.md`)](DOCUMENTATION.md) · [`resultar-check` Compiler CLI/LSP](packages/check/README.md) · [Benchmarks](benchmarks/README.md) · [AI / Agent Skill (`llms.txt`)](llms.txt)
+[Documentation](https://inaiat.github.io/resultar/) · [Quickstart](https://inaiat.github.io/resultar/#/docs/quickstart) · [Playground](https://inaiat.github.io/resultar/#/playground) · [Complete Guide](https://inaiat.github.io/resultar/#/docs/full-reference) · [API Inventory](https://inaiat.github.io/resultar/#/docs/api-inventory) · [Benchmarks](https://inaiat.github.io/resultar/#/docs/benchmarks) · [AI / Agent Skill (llms.txt)](llms.txt)
 
 ---
 
@@ -127,19 +127,19 @@ flowchart LR
 - **Stage 1 — `Result<T, E>`**: Use in pure parsing, validation, and domain functions.
 - **Stage 2 — `ResultTask<T, E>`**: Use for all async operations, retries, timeouts, and HTTP requests. Build work lazily and execute it with `runResult`, `runExit`, `runPromise`, or `runFork`.
 - **Stage 3 — `ResultTask<T, E, R>`**: Add typed service dependencies or owned resources when needed. Providing requirements leaves a Task that still needs an explicit runner.
-- **Opt-in eager compatibility (`resultar/async`)**: Legacy `@deprecated` eager `ResultAsync` and `StrictResultAsync` compatibility exports live in the isolated `resultar/async` subpath for gradual migration throughout v5.x; see the [v5 migration guide](docs/migrations/v5.md).
+- **Opt-in eager compatibility (`resultar/async`)**: Legacy `@deprecated` eager `ResultAsync` and `StrictResultAsync` compatibility exports live in the isolated `resultar/async` subpath for gradual migration throughout v5.x; see the [v5 migration guide](https://inaiat.github.io/resultar/#/docs/v5-migration).
 
 New async repositories and use cases return `ResultTask`, without declaring their factories
 `async`. Wrap external `Promise<T>` drivers directly with `ResultTask.tryPromise`; reserve
 `fromResultAsync` for existing typed Async adapters. Framework callbacks and runners retain
-their native Promise contracts. See [Promise boundaries](DOCUMENTATION.md#promise-boundaries-and-application-contracts).
+their native Promise contracts. See [Promise boundaries](https://inaiat.github.io/resultar/#/docs/full-reference#promise-boundaries-and-application-contracts).
 
 Prefer `task.runResult()`, `task.runPromise()`, `task.runExit()`, and `task.runFork()` at execution boundaries.
 The static forms, such as `ResultTask.runResult(task, options)`, remain equivalent and supported.
 Both forms enforce service requirements and accept the same execution options. `runResult` returns a native `Promise<Result<T, E>>`
 that resolves typed errors as `Err` (and rejects defects, interruption, and composite causes); `runPromise` resolves
 the value or rejects, `runExit` preserves every outcome as a value, and `runFork` starts a root fiber
-immediately. Each call starts a new execution. See the [runner reference](packages/resultar/README.md#lazy-workflows-with-resulttask).
+immediately. Each call starts a new execution. See the [runner reference](https://inaiat.github.io/resultar/#/docs/core-guide#lazy-workflows-with-resulttask).
 
 ```ts
 import { createTaggedError, ok, Result, ResultTask, Retry } from "resultar";
@@ -188,7 +188,7 @@ Resultar's runtime is engineered so that gradual adoption is also **pay-as-you-g
 - **Services and owned fibers are optional**: Ordinary tasks can run with `R = never`; introduce `service()`, `acquireRelease()`, and `forkChild()` when the workflow needs them.
 - **Bounded concurrency by construction**: Collection operators like `ResultTask.forEach(items, fn, { concurrency: 8 })` use a fixed worker-loop pool without per-item fiber scheduling overhead.
 
-> For the cost of `await task.runResult()` and of migrating an eager workflow, see [v5 versus published v4](benchmarks/README.md#v5-versus-published-v4). The [benchmark guide](benchmarks/README.md) also covers `neverthrow` and `effect`.
+> For the cost of `await task.runResult()` and of migrating an eager workflow, see [v5 versus published v4](benchmarks/README.md#v5-versus-published-v4). The [benchmark guide](https://inaiat.github.io/resultar/#/docs/benchmarks) also covers `neverthrow` and `effect`.
 
 ---
 
@@ -196,7 +196,7 @@ Resultar's runtime is engineered so that gradual adoption is also **pay-as-you-g
 
 ### Production Tagged Errors & Secret Redaction
 
-`createTaggedError` creates real `Error` subclasses (`instanceof Error === true`) with a literal `_tag`, `$variable` message interpolation, stable log `.fingerprint` tuples (`[tag, template]`), `.findCause(ErrorClass)` traversal, and first-class secret redaction:
+`createTaggedError` creates real `Error` subclasses (`instanceof Error === true`) with a literal `_tag`, `$variable` message interpolation, stable log `.fingerprint` tuples (`[tag, template]`), `.findCause(ErrorClass)` traversal, opt-out `captureStackTrace: false` for hot-path expected errors, and first-class secret redaction:
 
 ```ts
 import { createTaggedError, isRedacted, redact, revealRedacted } from "resultar";
@@ -277,7 +277,7 @@ const formatEvent = Match.type<BillingEvent>().tagsExhaustive({
 
 ## Compiler-Enforced Safety (`resultar-check`)
 
-A `Result` only protects your application if callers actually handle it. [`resultar-check`](packages/check/README.md) is a native **TypeScript-Go** CLI and LSP server that runs full TypeScript typechecking and Resultar-specific static analysis in a single native pass:
+A `Result` only protects your application if callers actually handle it. [`resultar-check`](https://inaiat.github.io/resultar/#/docs/resultar-check) is a native **TypeScript-Go** CLI and LSP server that runs full TypeScript typechecking and Resultar-specific static analysis in a single native pass:
 
 ```sh
 pnpm add -D resultar-check
@@ -302,13 +302,13 @@ pnpm add -D resultar-check
 ```
 
 - **43 native static analysis rules (`RESULTAR001`–`RESULTAR043`)**: Forbids accidental `await task` (`noAwaitResultTask`), ignored `Result` / `ResultAsync` / `ResultTask` / `MatchMatcher` / `Fiber` values (`noDiscard`), `unknown` / `any` error or service channels (`noUnknownResultError`, `noUnknownTaskRequirements`), `Promise<ResultTask<...>>` leaks (`noPromiseResultar`), generator mistakes (`yieldStarInResultTaskGen`, `noAwaitInResultTaskGen`, `requireReturnYieldStar`, `noResultInTaskGen`, `noRunInsideGen`), unscoped resources (`noUnscopedAcquireRelease`), invalid DI lifetimes (`noInvalidLifetime`), and non-idiomatic combinator chains.
-- **Auto-fix, `migrate-v5`, CI, Multi-Editor & AI Agent ready**: Apply safe semantic corrections automatically with `resultar-check --fix` (or preview via `--fix-dry-run` / `quickfixes --json`), automate v4 -> v5 upgrades with `resultar-check migrate-v5`, inspect codebase topology with `overview --json`, emit human/JSON/SARIF/JUnit reports, run `resultar-check lsp`, use the official [VS Code & Cursor LSP extension](editors/vscode/README.md) (inline `T / E / R` hover and quickfixes), and scaffold editor setup with `resultar-check init --editor zed|vscode|cursor|all`. See the [Anti-Patterns & `resultar-check` Guide](skills/resultar/references/anti-patterns.md) for repair guidance and the complete diagnostic reference.
+- **Auto-fix, `migrate-v5`, CI, Multi-Editor & AI Agent ready**: Apply safe semantic corrections automatically with `resultar-check --fix` (or preview via `--fix-dry-run` / `quickfixes --json`), automate v4 -> v5 upgrades with `resultar-check migrate-v5`, inspect codebase topology with `overview --json`, emit human/JSON/SARIF/JUnit reports, run `resultar-check lsp`, use the official [VS Code & Cursor LSP extension](https://inaiat.github.io/resultar/#/docs/vscode-extension) (inline `T / E / R` hover and quickfixes), and scaffold editor setup with `resultar-check init --editor zed|vscode|cursor|all`. See the [Anti-Patterns & `resultar-check` Guide](https://inaiat.github.io/resultar/#/docs/agents/anti-patterns) for repair guidance and the complete diagnostic reference.
 
 ---
 
 ## Ecosystem Packages
 
-Use [`resultar-app`](packages/app/README.md) for a unified installation and import
+Use [`resultar-app`](https://inaiat.github.io/resultar/#/docs/packages/app) for a unified installation and import
 entry point covering workflows, DI and configuration. The component packages also
 support independent use: install `resultar` for `import { Result } from 'resultar'`,
 or install only `resultar-app` and import `Result` from `'resultar-app'`. Declare each
@@ -317,21 +317,21 @@ package you import directly as an application dependency.
 The Resultar monorepo ships companion packages for DI, configuration, HTTP clients,
 schema validation, and web frameworks:
 
-| Package                                                          | Description                                                                                                                                                                                                                                                                                                                                                      | Docs                                                              |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| [`resultar`](packages/resultar/README.md)                        | Core `Result<T, E>`, `ResultTask<T, E, R>`, `Match`, `Cause`, `Retry`, `Clock`, `Fiber`, `Semaphore`, `Deferred`, `Queue`, `Ref`, `TaskLocal`, `Tracer`, opt-in `resultar/async` compat, plus tree-shakeable subpath exports (`resultar/result`, `resultar/task`, `resultar/match`, `resultar/tagged`, `resultar/retry`, `resultar/function`, `resultar/async`). | [README](packages/resultar/README.md) · [Guide](DOCUMENTATION.md) |
-| [`resultar-check`](packages/check/README.md)                     | Native TypeScript-Go compiler + 43 Resultar diagnostics, `--fix`, `migrate-v5`, LSP server, and Zed/VS Code/Cursor setup.                                                                                                                                                                                                                                        | [README](packages/check/README.md)                                |
-| [`resultar-app`](packages/app/README.md)                         | Unified entry point for workflows, dependency injection and validated configuration.                                                                                                                                                                                                                                                                             | [README](packages/app/README.md)                                  |
-| [`resultar-config`](packages/config/README.md)                   | Lazy, typed Node environment configuration with TypeBox schemas, secret sanitization, and DI startup ordering.                                                                                                                                                                                                                                                   | [README](packages/config/README.md)                               |
-| [`resultar-di`](packages/di/README.md)                           | Typed dependency injection, class/function services, request scopes, and test overrides for `ResultTask`.                                                                                                                                                                                                                                                        | [README](packages/di/README.md)                                   |
-| [`resultar-hono`](packages/hono/README.md)                       | Typed Hono middleware & bindings with one DI resource scope per HTTP response and graceful shutdown.                                                                                                                                                                                                                                                             | [README](packages/hono/README.md)                                 |
-| [`resultar-fastify`](packages/fastify/README.md)                 | Native Fastify plugin providing application & request-scoped DI services, cancellation, and cleanup.                                                                                                                                                                                                                                                             | [README](packages/fastify/README.md)                              |
-| [`resultar-nestjs`](packages/nestjs/README.md)                   | Native NestJS module & `@Services()` decorator providing application & request-scoped DI services, cancellation, and cleanup.                                                                                                                                                                                                                                    | [README](packages/nestjs/README.md)                               |
-| [`resultar-request`](packages/request/README.md)                 | Fetch-first JSON HTTP client returning lazy, cancelable `ResultTask` workflows.                                                                                                                                                                                                                                                                                  | [README](packages/request/README.md)                              |
-| [`resultar-request-zod`](packages/request-zod/README.md)         | Zod schema validation adapter for `resultar-request`.                                                                                                                                                                                                                                                                                                            | [README](packages/request-zod/README.md)                          |
-| [`resultar-request-typebox`](packages/request-typebox/README.md) | TypeBox schema validation adapter for `resultar-request`.                                                                                                                                                                                                                                                                                                        | [README](packages/request-typebox/README.md)                      |
+| Package                    | Description                                                                                                                                                                                                                                                                                                                                                      | Docs                                                                                                                           |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `resultar`                 | Core `Result<T, E>`, `ResultTask<T, E, R>`, `Match`, `Cause`, `Retry`, `Clock`, `Fiber`, `Semaphore`, `Deferred`, `Queue`, `Ref`, `TaskLocal`, `Tracer`, opt-in `resultar/async` compat, plus tree-shakeable subpath exports (`resultar/result`, `resultar/task`, `resultar/match`, `resultar/tagged`, `resultar/retry`, `resultar/function`, `resultar/async`). | [Docs](https://inaiat.github.io/resultar/#/docs/core-guide) · [Guide](https://inaiat.github.io/resultar/#/docs/full-reference) |
+| `resultar-check`           | Native TypeScript-Go compiler + 43 Resultar diagnostics, `--fix`, `migrate-v5`, LSP server, and Zed/VS Code/Cursor setup.                                                                                                                                                                                                                                        | [Docs](https://inaiat.github.io/resultar/#/docs/resultar-check)                                                                |
+| `resultar-app`             | Unified entry point for workflows, dependency injection and validated configuration.                                                                                                                                                                                                                                                                             | [Docs](https://inaiat.github.io/resultar/#/docs/packages/app)                                                                  |
+| `resultar-config`          | Lazy, typed Node environment configuration with TypeBox schemas, secret sanitization, and DI startup ordering.                                                                                                                                                                                                                                                   | [Docs](https://inaiat.github.io/resultar/#/docs/packages/config)                                                               |
+| `resultar-di`              | Typed dependency injection, class/function services, request scopes, and test overrides for `ResultTask`.                                                                                                                                                                                                                                                        | [Docs](https://inaiat.github.io/resultar/#/docs/packages/di)                                                                   |
+| `resultar-hono`            | Typed Hono middleware & bindings with one DI resource scope per HTTP response and graceful shutdown.                                                                                                                                                                                                                                                             | [Docs](https://inaiat.github.io/resultar/#/docs/packages/hono)                                                                 |
+| `resultar-fastify`         | Native Fastify plugin providing application & request-scoped DI services, cancellation, and cleanup.                                                                                                                                                                                                                                                             | [Docs](https://inaiat.github.io/resultar/#/docs/packages/fastify)                                                              |
+| `resultar-nestjs`          | Native NestJS module & `@Services()` decorator providing application & request-scoped DI services, cancellation, and cleanup.                                                                                                                                                                                                                                    | [Docs](https://inaiat.github.io/resultar/#/docs/packages/nestjs)                                                               |
+| `resultar-request`         | Fetch-first JSON HTTP client returning lazy, cancelable `ResultTask` workflows.                                                                                                                                                                                                                                                                                  | [Docs](https://inaiat.github.io/resultar/#/docs/packages/request)                                                              |
+| `resultar-request-zod`     | Zod schema validation adapter for `resultar-request`.                                                                                                                                                                                                                                                                                                            | [Docs](https://inaiat.github.io/resultar/#/docs/packages/request-zod)                                                          |
+| `resultar-request-typebox` | TypeBox schema validation adapter for `resultar-request`.                                                                                                                                                                                                                                                                                                        | [Docs](https://inaiat.github.io/resultar/#/docs/packages/request-typebox)                                                      |
 
-For Node process startup, signal handling, and HTTP draining with typed configuration, see [`resultar-config`](packages/config/README.md) and the [Node lifecycle recipe](examples/cookbook/src/node-lifecycle.ts).
+For Node process startup, signal handling, and HTTP draining with typed configuration, see [`resultar-config`](https://inaiat.github.io/resultar/#/docs/packages/config) and the [Node lifecycle recipe](examples/cookbook/src/node-lifecycle.ts).
 
 ### End-to-End Web Service Example (`resultar-di` + `resultar-hono` / `resultar-fastify` / `resultar-nestjs`)
 
@@ -369,15 +369,15 @@ export const app = createHonoApp({ services }, (router) => {
 
 ## First-Class Coding Agent Support
 
-Every release of `resultar` bundles version-matched coding-agent instructions directly inside `node_modules/resultar/dist/agent/` (built from [`skills/resultar/`](skills/resultar/SKILL.md)):
+Every release of `resultar` bundles version-matched coding-agent instructions directly inside `node_modules/resultar/dist/agent/` (built from [`skills/resultar/`](https://inaiat.github.io/resultar/#/docs/agents/skill)):
 
-- **[`SKILL.md`](skills/resultar/SKILL.md)**: Execution contracts and routing to the relevant manual for Claude Code, Cursor, Codex, and Antigravity.
-- **[`references/api.md`](skills/resultar/references/api.md)**: Feature map and semantic constraints across `Result`, `ResultAsync`, `ResultTask`, `createTaggedError`, `taggedEnum`, `redact`, `Match`, `Cause`, `Fiber`, `Semaphore`, `Retry`, `Clock`, and `Scheduler`.
-- **[`references/anti-patterns.md`](skills/resultar/references/anti-patterns.md)**: Native checker configuration, repair patterns, and links to all 43 rules and their verified defaults.
-- **[`references/patterns.md`](skills/resultar/references/patterns.md)**: Production recipes (`ResultTask.memoize`, `onExit`, background workers with `runFork`, uncooperative Promise timeouts with `interruption: 'detach'`, bounded concurrency, and `VirtualClock` testing).
-- **[`references/services.md`](skills/resultar/references/services.md)**: `serviceTag`, `resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, and `resultar-request` (`zod` and `typebox`).
-- **[`references/integrations.md`](skills/resultar/references/integrations.md)** & **[`references/review-checklist.md`](skills/resultar/references/review-checklist.md)**: Boundary adapters and pre-commit review checklist.
-- **[Public API inventory](docs/api-inventory.md) and [executable recipes](docs/recipes.md)**: Generated from declarations and compiled recipe sources; checked by `vp run test:docs`. The full guide and companion READMEs are also bundled under `dist/agent/manual/`.
+- **[`SKILL.md`](https://inaiat.github.io/resultar/#/docs/agents/skill)**: Execution contracts and routing to the relevant manual for Claude Code, Cursor, Codex, and Antigravity.
+- **[`references/api.md`](https://inaiat.github.io/resultar/#/docs/agents/api)**: Feature map and semantic constraints across `Result`, `ResultAsync`, `ResultTask`, `createTaggedError`, `taggedEnum`, `redact`, `Match`, `Cause`, `Fiber`, `Semaphore`, `Retry`, `Clock`, and `Scheduler`.
+- **[`references/anti-patterns.md`](https://inaiat.github.io/resultar/#/docs/agents/anti-patterns)**: Native checker configuration, repair patterns, and links to all 43 rules and their verified defaults.
+- **[`references/patterns.md`](https://inaiat.github.io/resultar/#/docs/agents/patterns)**: Production recipes (`ResultTask.memoize`, `onExit`, background workers with `runFork`, uncooperative Promise timeouts with `interruption: 'detach'`, bounded concurrency, and `VirtualClock` testing).
+- **[`references/services.md`](https://inaiat.github.io/resultar/#/docs/agents/services)**: `serviceTag`, `resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, and `resultar-request` (`zod` and `typebox`).
+- **[`references/integrations.md`](https://inaiat.github.io/resultar/#/docs/agents/integrations)** & **[`references/review-checklist.md`](https://inaiat.github.io/resultar/#/docs/agents/review-checklist)**: Boundary adapters and pre-commit review checklist.
+- **[Public API inventory](https://inaiat.github.io/resultar/#/docs/api-inventory) and [executable recipes](https://inaiat.github.io/resultar/#/docs/recipes)**: Generated from declarations and compiled recipe sources; checked by `vp run test:docs`. The full guide and companion READMEs are also bundled under `dist/agent/manual/`.
 - **`node_modules/resultar/dist/llms.txt`**: Structured index of the public surface and bundled reference guides.
 - **Executable agent evaluation suite**: Run `pnpm test:agents` in this workspace to verify coding-agent contracts and grading harnesses (see [`skills/resultar/evals/README.md`](skills/resultar/evals/README.md)).
 
@@ -400,24 +400,26 @@ Explore complete, runnable projects in [`examples/`](examples):
 
 ## Documentation Map
 
-| Topic                                                                       | Guide                                                                                                                                      |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Coming from Effect**                                                      | [`docs/coming-from-effect.md`](docs/coming-from-effect.md)                                                                                 |
-| **Gradual Adoption (`Result` → `ResultTask`; eager compatibility bridges)** | [`docs/gradual-adoption.md`](docs/gradual-adoption.md)                                                                                     |
-| **Core Package Quickstart & Cookbook**                                      | [`packages/resultar/README.md`](packages/resultar/README.md)                                                                               |
-| **The Core Model (`Ok`, `Err`, `ResultTask`)**                              | [`DOCUMENTATION.md#the-model`](DOCUMENTATION.md#the-model)                                                                                 |
-| **Tagged Errors, `.withProps()`, & Redaction**                              | [`DOCUMENTATION.md#tagged-errors`](DOCUMENTATION.md#tagged-errors)                                                                         |
-| **Linear Generators (`Result.gen`, `Result.fn`, `ResultTask.fn`)**          | [`DOCUMENTATION.md#result-generators`](DOCUMENTATION.md#result-generators)                                                                 |
-| **Lazy Tasks, Services (`R`), & Resource Scopes**                           | [`DOCUMENTATION.md#lazy-tasks-and-service-requirements`](DOCUMENTATION.md#lazy-tasks-and-service-requirements)                             |
-| **Structured Concurrency (`Fiber`, `Semaphore`, `Scheduler`)**              | [`DOCUMENTATION.md#structured-task-concurrency-fibers-and-semaphores`](DOCUMENTATION.md#structured-task-concurrency-fibers-and-semaphores) |
-| **Racing, Timeouts, & Deterministic `Clock.virtual`**                       | [`DOCUMENTATION.md#task-racing-timeouts-timing-and-virtual-clock`](DOCUMENTATION.md#task-racing-timeouts-timing-and-virtual-clock)         |
-| **Portable Retry Policies (`Retry.policy`)**                                | [`DOCUMENTATION.md#portable-retry-policies-and-resulttask-retry`](DOCUMENTATION.md#portable-retry-policies-and-resulttask-retry)           |
-| **Pattern Matching (`Match`)**                                              | [`DOCUMENTATION.md#pattern-matching`](DOCUMENTATION.md#pattern-matching)                                                                   |
-| **Compiler Diagnostics (`resultar-check`)**                                 | [`packages/check/README.md`](packages/check/README.md)                                                                                     |
-| **Performance Benchmarks (`resultar` vs `effect` vs `neverthrow`)**         | [`benchmarks/README.md`](benchmarks/README.md)                                                                                             |
-| **v5 Migration Guide (`Result` + `ResultTask` Unification)**                | [`docs/migrations/v5.md`](docs/migrations/v5.md)                                                                                           |
-| **v4 Migration & Compatibility Notes (Historical)**                         | [`docs/migrations/v4.md`](docs/migrations/v4.md)                                                                                           |
-| **Complete Public API Map**                                                 | [`DOCUMENTATION.md#api-map`](DOCUMENTATION.md#api-map)                                                                                     |
+The [documentation website](https://inaiat.github.io/resultar/) includes these guides and the interactive playground. The [Markdown reference](DOCUMENTATION.md) is available in the repository and bundled with the core package.
+
+| Topic                                                                       | Guide                                                                                                                                |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Coming from Effect**                                                      | [Coming from Effect](https://inaiat.github.io/resultar/#/docs/coming-from-effect)                                                    |
+| **Gradual Adoption (`Result` → `ResultTask`; eager compatibility bridges)** | [Gradual adoption](https://inaiat.github.io/resultar/#/docs/gradual-adoption)                                                        |
+| **Core Package Quickstart & Cookbook**                                      | [Core package guide](https://inaiat.github.io/resultar/#/docs/core-guide)                                                            |
+| **The Core Model (`Ok`, `Err`, `ResultTask`)**                              | [The model](https://inaiat.github.io/resultar/#/docs/full-reference#the-model)                                                       |
+| **Tagged Errors, `.withProps()`, & Redaction**                              | [Tagged errors](https://inaiat.github.io/resultar/#/docs/full-reference#tagged-errors)                                               |
+| **Linear Generators (`Result.gen`, `Result.fn`, `ResultTask.fn`)**          | [Generators](https://inaiat.github.io/resultar/#/docs/full-reference#result-generators)                                              |
+| **Lazy Tasks, Services (`R`), & Resource Scopes**                           | [Tasks and services](https://inaiat.github.io/resultar/#/docs/full-reference#lazy-tasks-and-service-requirements)                    |
+| **Structured Concurrency (`Fiber`, `Semaphore`, `Scheduler`)**              | [Structured concurrency](https://inaiat.github.io/resultar/#/docs/full-reference#structured-task-concurrency-fibers-and-semaphores)  |
+| **Racing, Timeouts, & Deterministic `Clock.virtual`**                       | [Racing, timeouts and clocks](https://inaiat.github.io/resultar/#/docs/full-reference#task-racing-timeouts-timing-and-virtual-clock) |
+| **Portable Retry Policies (`Retry.policy`)**                                | [Retry policies](https://inaiat.github.io/resultar/#/docs/full-reference#portable-retry-policies-and-resulttask-retry)               |
+| **Pattern Matching (`Match`)**                                              | [Pattern matching](https://inaiat.github.io/resultar/#/docs/full-reference#pattern-matching)                                         |
+| **Compiler Diagnostics (`resultar-check`)**                                 | [Native checker](https://inaiat.github.io/resultar/#/docs/resultar-check)                                                            |
+| **Performance Benchmarks (`resultar` vs `effect` vs `neverthrow`)**         | [Benchmark results](https://inaiat.github.io/resultar/#/docs/benchmarks)                                                             |
+| **v5 Migration Guide (`Result` + `ResultTask` Unification)**                | [v5 migration](https://inaiat.github.io/resultar/#/docs/v5-migration)                                                                |
+| **v4 Migration & Compatibility Notes (Historical)**                         | [v4 migration](https://inaiat.github.io/resultar/#/docs/v4-migration)                                                                |
+| **Complete Public API Map**                                                 | [Complete API map](https://inaiat.github.io/resultar/#/docs/full-reference#api-map)                                                  |
 
 ---
 
@@ -437,7 +439,7 @@ pnpm docs:dev         # Launch the searchable docs portal & live browser playgro
 pnpm test:website     # Build and test the docs portal, search index, and playground presets
 ```
 
-Reproducible benchmarks live in [`benchmarks/`](benchmarks/README.md) (`pnpm --filter resultar-benchmarks run bench:effect`, `bench:neverthrow`, `bench:task`). Releases are managed with Changesets (`pnpm changeset`).
+Reproducible benchmarks live in [`benchmarks/`](https://inaiat.github.io/resultar/#/docs/benchmarks) (`pnpm --filter resultar-benchmarks run bench:effect`, `bench:neverthrow`, `bench:task`). Releases are managed with Changesets (`pnpm changeset`).
 
 ## License
 

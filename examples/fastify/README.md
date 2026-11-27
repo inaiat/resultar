@@ -1,5 +1,7 @@
 # Native Fastify services
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/fastify)
+
 Return lazy `ResultTask` workflows (`StrictResultTask`) from services and run them explicitly
 with `.runResult()` in native Fastify route handlers.
 

@@ -14,7 +14,7 @@ import {
   renderBottomCta,
   renderInteroperabilityShowcase,
   type BenchTab,
-  type CompareTab,
+  type Framework,
 } from "./home-sections.js";
 import type { PlaygroundRunResult } from "./playground-runner.js";
 import { PLAYGROUND_PRESETS } from "./presets.js";
@@ -38,7 +38,7 @@ const INSTALL_COMMANDS: Readonly<Record<"pnpm" | "npm" | "jsr", string>> = {
 const state = {
   installTab: "pnpm" as "pnpm" | "npm" | "jsr",
   benchTab: "ecosystem" as BenchTab,
-  compareTab: "http" as CompareTab,
+  framework: "Fastify" as Framework,
   theme: "dark" as "dark" | "light",
   sidebarOpen: false,
   searchOpen: false,
@@ -260,7 +260,7 @@ console.log(order.match({
         </a>
       </section>
 
-      ${renderInteroperabilityShowcase(state.compareTab)}
+      ${renderInteroperabilityShowcase(state.framework)}
 
       ${renderBenchmarkShowcase(state.benchTab)}
 
@@ -763,13 +763,13 @@ document.addEventListener("click", (event: MouseEvent) => {
     return;
   }
 
-  const compareBtn = target.closest<HTMLElement>("[data-compare-tab]");
-  if (compareBtn?.dataset.compareTab !== undefined) {
-    const tab = compareBtn.dataset.compareTab;
-    if (tab === "http" || tab === "schemas" || tab === "progressive") {
-      state.compareTab = tab;
-      render();
-    }
+  const framework = target.closest<HTMLElement>("[data-framework]")?.dataset.framework;
+  if (framework === "Fastify" || framework === "Hono" || framework === "NestJS") {
+    state.framework = framework;
+    render();
+    document
+      .querySelector<HTMLButtonElement>(`[data-framework="${framework}"]`)
+      ?.focus({ preventScroll: true });
     return;
   }
 

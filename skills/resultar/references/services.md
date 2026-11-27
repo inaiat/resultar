@@ -13,7 +13,7 @@ before calling a runner that receives the required services.
 
 The [DI manual](../../../packages/di/README.md) covers:
 
-- `Service`, `Service.require`, `service`, `resource`, and `createModule`;
+- `service` (including `service.require`, `{ requires?, make }`, and curried `service<Contract>()(...)`), `Service`, `Service.require`, `resource`, and `createModule`;
 - named/token registration: `value`, `singleton`, `scoped`, `transient`, `task`, `resource`;
 - immutable `merge` and type-checked `override` (an externally owned replacement value);
 - `use`, `scope`, `withServices`, `useSingletons`, `close`, `http`, and `scope.fetch`;

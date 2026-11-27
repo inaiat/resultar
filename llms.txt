@@ -6,6 +6,8 @@
 > subpath for legacy eager `ResultAsync` boundaries. Add typed services, scopes, clocks,
 > retry, and fibers as needed. Tagged errors and compiler-backed diagnostics. Node.js 24+, ESM-only.
 
+- [Resultar documentation and playground](https://inaiat.github.io/resultar/)
+
 ## Installed version first
 
 For an npm installation, read `node_modules/resultar/dist/llms.txt` and

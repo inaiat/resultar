@@ -1,5 +1,5 @@
 export type BenchTab = "adapters" | "core" | "ecosystem";
-export type CompareTab = "http" | "schemas" | "progressive";
+export type Framework = "Fastify" | "Hono" | "NestJS";
 
 interface BenchDataset {
   readonly title: string;
@@ -92,236 +92,126 @@ const BENCH_DATASETS: Readonly<Record<BenchTab, BenchDataset>> = {
   },
 };
 
-interface CompareExample {
-  readonly leftTitle: string;
-  readonly leftBadge: string;
-  readonly leftCode: string;
-  readonly rightTitle: string;
-  readonly rightBadge: string;
-  readonly rightCode: string;
-  readonly takeaway: string;
-  readonly playgroundPresetId?: string;
-  readonly docsHref: string;
-  readonly docsLabel: string;
+const inventoryService = `import { createModule } from "resultar-app";
+import { RequestError, requestJsonTypeBox, t } from "resultar-request-typebox";
+
+const endpoint = "https://inventory.example.com/stock";
+const stock = t.Object({ quantity: t.Integer({ minimum: 0 }) });
+
+const unavailable = () => new RequestError("Inventory unavailable", 502);
+
+export function findStock(sku: string) {
+  const url = \`\${endpoint}?item=\${sku}\`;
+  return requestJsonTypeBox({
+    request: (signal) => fetch(url, { signal }),
+    schema: stock,
+    mapError: {
+      404: () => new RequestError("Unknown SKU", 404),
+      http: unavailable,
+      request: unavailable,
+      invalidJson: unavailable,
+      validation: unavailable,
+    },
+  }).map(({ quantity }) => ({ sku, quantity }));
 }
 
-const COMPARE_EXAMPLES: Readonly<Record<CompareTab, CompareExample>> = {
-  http: {
-    leftTitle: "Fastify 5 · resultar-fastify",
-    leftBadge: "95%+ of raw Fastify · CSP-safe DI",
-    leftCode: `import { createFastifyApp, createModule, service } from "resultar-fastify";
+export const services = createModule().value("findStock", findStock);`;
 
-// Define services once — framework-agnostic module
-const services = createModule()
-  .singleton("repo", [], () => makeUserRepo(db))
-  .scoped(service("useCase", { repo }, ({ repo }) => makeUseCase(repo)));
+const frameworkRoutes: Readonly<Record<Framework, string>> = {
+  Fastify: `import { createFastifyApp, type InferRequestServices } from "resultar-fastify";
+import { services } from "./inventory.js";
 
-const app = createFastifyApp({ services, bindings: ["useCase"] }, (app) => {
-  // Skip request scope on high-QPS probes (66.4k req/s)
-  app.get("/health", { config: { resultar: { requestScope: false } } }, () => ({
-    ok: true,
-  }));
+export const app = createFastifyApp({ services }, (server) => {
+  server.get<{ Params: { sku: string } }>("/stock/:sku", async (req, reply) => {
+    const result = await req.services.findStock(req.params.sku)
+      .runResult({ signal: req.signal });
+    if (result.isErr()) {
+      return reply.code(result.error.statusCode).send({ error: result.error.message });
+    }
+    return reply.send(result.value);
+  });
+});
 
-  // Automatic Tier 0/1 sync DI — zero TaskScope per request
-  app.get("/users/:id", async (req) => {
-    const res = await req.services.useCase.find(req.params.id).runResult();
-    return res.matchTags(
-      (user) => ({ user }),
-      { UserNotFound: (e) => ({ status: 404, error: e.message }) },
-    );
+declare module "fastify" {
+  interface FastifyRequest {
+    services: InferRequestServices<typeof app>;
+  }
+}`,
+  Hono: `import { createHonoApp } from "resultar-hono";
+import { services } from "./inventory.js";
+
+export const app = createHonoApp({ services }, (router) => {
+  router.get("/stock/:sku", async (c) => {
+    const result = await c.env.findStock(c.req.param("sku"))
+      .runResult({ signal: c.req.raw.signal });
+    if (result.isErr()) {
+      const status = result.error.statusCode === 404 ? 404 : 502;
+      return c.json({ error: result.error.message }, status);
+    }
+    return c.json(result.value);
   });
 });`,
-    rightTitle: "Hono & NestJS · same DI module",
-    rightBadge: "Zero HTTP framework lock-in",
-    rightCode: `import { Hono } from "hono";
-import { createHonoServices } from "resultar-hono";
+  NestJS: `import { Controller, Get, HttpException, Param, Req } from "@nestjs/common";
+import { createNestApp, Services, type NestRequest } from "resultar-nestjs";
+import { services, type findStock } from "./inventory.js";
 
-// Plug the exact same resultar-di module into Hono (Edge / Node)
-const di = createHonoServices(services);
-const app = new Hono();
+@Controller("stock")
+class StockController {
+  @Get(":sku")
+  async get(
+    @Param("sku") sku: string,
+    @Services("findStock") lookup: typeof findStock,
+    @Req() req: NestRequest,
+  ) {
+    const result = await lookup(sku).runResult({ signal: req.signal });
+    if (result.isErr()) {
+      throw new HttpException({ error: result.error.message }, result.error.statusCode);
+    }
+    return result.value;
+  }
+}
 
-app.get("/users/:id", di.middleware(["useCase"]), async (c) => {
-  const res = await c.var.services.useCase
-    .find(c.req.param("id"))
-    .runResult();
-  return res.matchTags(
-    (user) => c.json(user),
-    { UserNotFound: (e) => c.json({ error: e.message }, 404) },
-  );
-});
-
-// Or plug into NestJS 12 with decorators & Fastify/Express adapters:
-// createNestApp({ services, bindings: ["useCase"], controllers: [UsersCtrl] })`,
-    takeaway:
-      "Write services and domain workflows once. Plug them natively into Fastify 5, Hono, NestJS 12, or plain Fetch/Node handlers with graceful shutdown and automatic Tier 0/1/2 scoping.",
-    docsHref: "#/docs/packages/fastify",
-    docsLabel: "Explore Fastify, Hono & NestJS adapters →",
-  },
-  schemas: {
-    leftTitle: "Zod · resultar-request-zod",
-    leftBadge: "Bring your own schema library",
-    leftCode: `import { z } from "zod";
-import { requestJsonZod } from "resultar-request-zod";
-import { Retry } from "resultar";
-
-const UserSchema = z.object({
-  id: z.string(),
-  email: z.email(),
-  role: z.enum(["admin", "member"]),
-});
-
-// Typed HTTP + Zod decode + AbortSignal + retries in one ResultTask
-const fetchUser = (id: string) =>
-  requestJsonZod(\`https://api.example.com/users/\${id}\`, {
-    schema: UserSchema,
-    timeoutMs: 2_000,
-  }).retry(Retry.policy({ times: 2, delayMs: 50 }));
-
-const res = await fetchUser("u-1").runResult();`,
-    rightTitle: "TypeBox, Valibot, ArkType or any validator",
-    rightBadge: "Zero proprietary schema lock-in",
-    rightCode: `import { Type } from "typebox";
-import { requestJsonTypeBox } from "resultar-request-typebox";
-import { Result } from "resultar";
-
-const UserSchema = Type.Object({
-  id: Type.String(),
-  email: Type.String(),
-});
-
-// Compiled TypeBox validator (749× faster than uncompiled check)
-const fetchFast = (id: string) =>
-  requestJsonTypeBox(\`https://api.example.com/users/\${id}\`, {
-    schema: UserSchema,
-  });
-
-// Or wrap Valibot / ArkType / Standard Schema into Result<T, E>
-const decode = <T>(parse: (raw: unknown) => T, raw: unknown) =>
-  Result.fromThrowable(
-    () => parse(raw),
-    (cause) => new DecodeError({ cause }),
-  )();`,
-    takeaway:
-      "Use Zod, TypeBox, Valibot, ArkType, or Standard Schema at your boundaries. Resultar never forces you to learn or migrate to a proprietary schema DSL.",
-    docsHref: "#/docs/packages/request-zod",
-    docsLabel: "Explore Zod & TypeBox request packages →",
-  },
-  progressive: {
-    leftTitle: "Stage 1 · Pure sync Result<T, E>",
-    leftBadge: "~5.9 kB gzip · zero async overhead",
-    leftCode: `import { createTaggedError, ok, redact, Result } from "resultar";
-
-class InvalidTokenError extends createTaggedError({
-  name: "InvalidTokenError",
-  message: "Rejected token $token for $tenantId",
-}) {}
-
-const authorize = (
-  token: string,
-  tenantId: string,
-): Result<string, InvalidTokenError> =>
-  token.startsWith("live_")
-    ? ok(tenantId)
-    : InvalidTokenError.err({
-        token: redact(token, "apiKey"),
-        tenantId,
-      });
-
-// Real Error subclass + $var interpolation + safe secret redaction
-// Zero Promises, zero fibers, zero runtime setup`,
-    rightTitle: "Stage 2–3 · Lazy ResultTask<A, E, R>",
-    rightBadge: "Native Promise<Result> at the boundary",
-    rightCode: `import { ResultTask, Retry, serviceTag } from "resultar";
-
-const BillingApi = serviceTag<{
-  readonly charge: (tenant: string, amount: number) => ResultTask<Receipt, BillingError>;
-}>("BillingApi");
-
-const checkout = ResultTask.fn(
-  "billing.checkout",
-  function* (token: string, tenantId: string, amount: number) {
-    const tenant = yield* authorize(token, tenantId);
-    const api = yield* BillingApi;
-    return yield* api.charge(tenant, amount);
-  },
-  ResultTask.retry(Retry.policy({ times: 2, delayMs: 50 })),
-);
-
-// Standard Promise<Result<Receipt, InvalidTokenError | BillingError>>
-const res = await checkout(token, "acme", 100)
-  .provideService(BillingApi, impl)
-  .runResult();`,
-    takeaway:
-      "Adopt Resultar one function at a time. Start with pure sync Result, add lazy ResultTask when you need retries, cancellation, or DI, and cross any boundary with standard Promise<Result>.",
-    playgroundPresetId: "task-di",
-    docsHref: "#/docs/gradual-adoption",
-    docsLabel: "Read the Gradual Adoption guide →",
-  },
+export const app = createNestApp({ services, controllers: [StockController] });`,
 };
 
-export const renderInteroperabilityShowcase = (activeTab: CompareTab): string => {
-  const item = COMPARE_EXAMPLES[activeTab];
-  return `
-    <section class="compare-section" aria-labelledby="compare-heading">
-      <div class="section-head">
-        <div>
-          <span class="section-eyebrow">FRAMEWORK &amp; SCHEMA INTEROPERABILITY</span>
-          <h2 id="compare-heading">Keep your stack. Bring your own schemas.</h2>
-          <p class="section-sub">Write domain logic once with <code>Result</code> and <code>ResultTask</code>. Plug into Fastify, Hono, or NestJS and validate with Zod, TypeBox, Valibot, or ArkType — no framework rewrite.</p>
-        </div>
-        <div class="seg-tabs" role="tablist" aria-label="Interoperability views">
-          <button type="button" role="tab" aria-selected="${String(activeTab === "http")}" class="seg-tab ${activeTab === "http" ? "active" : ""}" data-compare-tab="http">Fastify · Hono · NestJS</button>
-          <button type="button" role="tab" aria-selected="${String(activeTab === "schemas")}" class="seg-tab ${activeTab === "schemas" ? "active" : ""}" data-compare-tab="schemas">Zod · TypeBox · Any Schema</button>
-          <button type="button" role="tab" aria-selected="${String(activeTab === "progressive")}" class="seg-tab ${activeTab === "progressive" ? "active" : ""}" data-compare-tab="progressive">Result → Task → DI</button>
-        </div>
+export const renderInteroperabilityShowcase = (framework: Framework): string => `
+  <section class="service-showcase" aria-labelledby="service-heading">
+    <header class="section-head">
+      <div>
+        <h2 id="service-heading">One inventory service, three HTTP frameworks</h2>
+        <p class="section-sub">The service fetches a quantity from an inventory API and validates its JSON. Each framework runs the same task when a request arrives.</p>
       </div>
-
-      <div class="compare-grid">
-        <div class="code-block compare-code">
-          <div class="code-header">
-            <span>${escapeHtml(item.leftTitle)}</span>
-            <span class="compare-badge">${escapeHtml(item.leftBadge)}</span>
-          </div>
-          <pre><code>${highlightTs(item.leftCode)}</code></pre>
-        </div>
-        <div class="code-block compare-code compare-code-accent">
-          <div class="code-header">
-            <span>${escapeHtml(item.rightTitle)}</span>
-            <div class="code-actions">
-              <span class="compare-badge compare-badge-accent">${escapeHtml(item.rightBadge)}</span>
-              ${
-                item.playgroundPresetId === undefined
-                  ? ""
-                  : `<a class="code-btn code-btn-play" href="#/playground?preset=${escapeHtml(item.playgroundPresetId)}">▶ Playground</a>`
-              }
-            </div>
-          </div>
-          <pre><code>${highlightTs(item.rightCode)}</code></pre>
-        </div>
+    </header>
+    <div class="code-block service-source">
+      <div class="code-header"><span>inventory.ts</span></div>
+      <pre><code>${highlightTs(inventoryService)}</code></pre>
+    </div>
+    <div class="route-header">
+      <h3>Serve the lookup over HTTP</h3>
+      <div class="seg-tabs" role="group" aria-label="HTTP framework">
+        ${(["Fastify", "Hono", "NestJS"] as const)
+          .map(
+            (name) =>
+              `<button type="button" class="seg-tab ${name === framework ? "active" : ""}" aria-pressed="${String(name === framework)}" data-framework="${name}">${name}</button>`,
+          )
+          .join("")}
       </div>
-
-      <div class="compare-takeaway">
-        <p>${escapeHtml(item.takeaway)}</p>
-        <a href="${escapeHtml(item.docsHref)}">${escapeHtml(item.docsLabel)}</a>
+    </div>
+    <div class="code-block route-source">
+      <div class="code-header">
+        <span>${framework.toLowerCase()}.ts</span>
+        <a href="#/docs/packages/${framework.toLowerCase()}">${framework} adapter guide →</a>
       </div>
-
-      <div class="pillar-grid">
-        <div class="pillar-card">
-          <h3>Any HTTP framework</h3>
-          <p>First-class adapters for <strong>Fastify 5</strong>, <strong>Hono</strong>, and <strong>NestJS 12</strong> — plus Fetch, Workers, and Express via standard <code>Promise&lt;Result&gt;</code>.</p>
-        </div>
-        <div class="pillar-card">
-          <h3>Any schema &amp; driver</h3>
-          <p>First-class <strong>Zod</strong> and <strong>TypeBox</strong> integrations, or wrap Valibot, ArkType, MongoDB, PostgreSQL, Redis, and OpenTelemetry directly.</p>
-        </div>
-        <div class="pillar-card">
-          <h3>Native JS &amp; strict CSP</h3>
-          <p>Real <code>Error</code> subclasses, native <code>AbortSignal</code>, pure-JS DI plans (<code>0</code> <code>new Function</code> calls), and 43 native TypeScript-Go rules.</p>
-        </div>
-      </div>
-    </section>
-  `;
-};
+      <pre><code>${highlightTs(frameworkRoutes[framework])}</code></pre>
+    </div>
+    <div class="route-responses" aria-label="Example responses">
+      <div><code>GET /stock/pen</code><samp>200 · {"sku":"pen","quantity":0}</samp></div>
+      <div><code>GET /stock/marker</code><samp>404 · {"error":"Unknown SKU"}</samp></div>
+      <div><span>Inventory API fails</span><samp>502 · {"error":"Inventory unavailable"}</samp></div>
+    </div>
+    <p class="service-links"><a href="#/docs/gradual-adoption">Gradual adoption</a> · <a href="#/docs/packages/request-zod">Zod validation</a> · <a href="#/docs/packages/request-typebox">TypeBox validation</a></p>
+  </section>
+`;
 
 export const renderBenchmarkShowcase = (activeTab: BenchTab): string => {
   const data = BENCH_DATASETS[activeTab];

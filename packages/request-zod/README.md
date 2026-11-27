@@ -1,5 +1,7 @@
 # resultar-request-zod
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/request-zod)
+
 Zod adapter for `resultar-request`.
 
 Use this package when a request response should be parsed with Zod while the transport and Resultar

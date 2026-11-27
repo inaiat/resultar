@@ -124,6 +124,22 @@ void test("renderInline escapes HTML once and neutralizes unsafe URLs", () => {
   assert.match(xssImg, /<img src="" alt="alt &quot;x&quot; &lt;b&gt;" loading="lazy" \/>/u);
 });
 
+void test("published documentation links render as internal routes", () => {
+  const sourceFile = resolve(import.meta.dirname, "../../README.md");
+
+  assert.equal(
+    renderInline("[Docs](https://inaiat.github.io/resultar/)", sourceFile),
+    '<a href="#/">Docs</a>',
+  );
+  assert.equal(
+    renderInline(
+      "[Model](https://inaiat.github.io/resultar/#/docs/full-reference#the-model)",
+      sourceFile,
+    ),
+    '<a href="#/docs/full-reference#the-model">Model</a>',
+  );
+});
+
 void test("renderMarkdown supports H5 and H6 headings cleanly", () => {
   const sourceFile = resolve(import.meta.dirname, "../../README.md");
   const md = [

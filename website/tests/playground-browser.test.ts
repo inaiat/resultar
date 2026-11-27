@@ -530,17 +530,39 @@ void test("the home page links to the full benchmark report", async (context) =>
   );
   assert.equal(layoutOverflow, false, "Home page must not overflow horizontally");
 
-  const initialCompareText = await browser.evalJs<string>(
-    `document.querySelector(".compare-grid")?.textContent ?? ""`,
+  const serviceCode = await browser.evalJs<string>(
+    'document.querySelector(".service-source code").textContent',
   );
-  assert.match(initialCompareText, /requestScope: false/u);
-
-  await browser.evalJs(`document.querySelector('[data-compare-tab="schemas"]').click()`);
-  const schemasCompareText = await browser.evalJs<string>(
-    `document.querySelector(".compare-grid")?.textContent ?? ""`,
-  );
-  assert.match(schemasCompareText, /requestJsonZod/u);
-  assert.match(schemasCompareText, /requestJsonTypeBox/u);
+  assert.match(serviceCode, /export function findStock/u);
+  assert.ok(serviceCode.includes("fetch(url, { signal })"));
+  for (const [framework, binding] of [
+    ["Fastify", "req.services.findStock"],
+    ["Hono", "c.env.findStock"],
+    ["NestJS", '@Services("findStock")'],
+  ] as const) {
+    // eslint-disable-next-line no-await-in-loop -- Inspect the selected adapter and shared service together.
+    const view = await browser.evalJs<{
+      service: string;
+      route: string;
+      guide: string;
+      pressed: string;
+    }>(`(() => {
+      const selector = '[data-framework="${framework}"]';
+      document.querySelector(selector).click();
+      return {
+        service: document.querySelector(".service-source code").textContent,
+        route: document.querySelector(".route-source code").textContent,
+        guide: document.querySelector(".route-source a").hash,
+        pressed: document.querySelector(selector).getAttribute("aria-pressed")
+      };
+    })()`);
+    assert.equal(view.service, serviceCode);
+    assert.ok(view.route.includes(binding));
+    assert.ok(view.route.includes(".runResult({ signal:"));
+    assert.ok(view.route.includes('from "./inventory.js"'));
+    assert.equal(view.guide, `#/docs/packages/${framework.toLowerCase()}`);
+    assert.equal(view.pressed, "true");
+  }
 
   for (const [tab, metric, values] of [
     ["ecosystem", "1.92×", ["35,630", "18,551"]],

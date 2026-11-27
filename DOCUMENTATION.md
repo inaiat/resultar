@@ -1,7 +1,6 @@
 # Resultar Full Guide
 
-This is the long-form Resultar guide. Use [README.md](README.md) as the project entry point and this
-file when you need the complete API map, larger examples, and repository workflow notes.
+Read the [complete guide online](https://inaiat.github.io/resultar/#/docs/full-reference) for the API map and examples. The [workspace README](README.md) links to runnable projects and repository commands.
 
 The [workspace README](README.md#core-capabilities) summarizes the new features. This guide includes
 their usage examples, checker configuration, editor tooling, and workspace validation details.
@@ -123,7 +122,7 @@ If you already know Result-style error handling, jump to:
 | If you need to...                           | Start here                                                                                                | Main APIs                                                                                            |
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Adopt one function or workflow at a time    | [Gradual adoption](docs/gradual-adoption.md)                                                              | `Result`, `ResultTask`, `Clock`, `Retry`, `Fiber`                                                    |
-| Declare service dependencies                | [Lazy tasks and service requirements](#lazy-tasks-and-service-requirements)                               | `ResultTask.service`, `Service.require`, `Service`, `requires`                                       |
+| Declare service dependencies                | [Lazy tasks and service requirements](#lazy-tasks-and-service-requirements)                               | `ResultTask.service`, `service`, `service.require`, `Service`, `requires`                            |
 | Connect services to HTTP routes             | [Services in Fastify and Hono](#services-in-fastify-and-hono)                                             | `createFastifyApp`, `createHonoApp`, `createNestApp`, `InferRequestServices`                         |
 | Create success or failure values            | [Creating Results](#creating-results)                                                                     | `ok`, `err`, `unit`, `ResultTask.ok`, `ResultTask.err`, `fromNullishOr`, `liftPredicate`             |
 | Model expected domain failures              | [Tagged Errors](#tagged-errors)                                                                           | `createTaggedError`, `.withProps`, `.err`, `StrictResult`                                            |
@@ -153,11 +152,11 @@ If you already know Result-style error handling, jump to:
 | Loop or process collections                 | [Combining And Iterating](#combining-and-iterating)                                                       | `loop`, `iterate`, `forEach`, `ResultTask.loop`, `ResultTask.iterate`                                |
 | Detect cancellation errors                  | [Concurrent Racing And Timeouts](#concurrent-racing-and-timeouts)                                         | `AbortError`, `isAbortError`                                                                         |
 | Normalize validation issues                 | [Validation Error Recipes](#validation-error-recipes)                                                     | tagged validation errors with `issues`                                                               |
-| Add logging or cleanup                      | [Observation And Cleanup](#observation-and-cleanup)                                                       | `inspect`, `inspectError`, `inspectBoth`, `log`, `toDisposable`, `toAsyncDisposable`                 |
+| Add logging or cleanup                      | [Observation And Cleanup](#observation-and-cleanup)                                                       | `inspect`, `inspectError`, `inspectCause`, `inspectBoth`, `log`, `toDisposable`, `toAsyncDisposable` |
 | Understand callback exceptions              | [Callback Failure Semantics](#callback-failure-semantics)                                                 | transform callbacks vs observation callbacks                                                         |
 | Unwrap at tests or final edges              | [Unwrapping Results](#unwrapping-results)                                                                 | `unwrapOr`, `unwrapOrThrow`, `_unsafeUnwrap`, `_unsafeUnwrapErr`                                     |
 | Prevent ignored results                     | [No-Discard Validation](#no-discard-validation)                                                           | `resultar-check`                                                                                     |
-| Check package exports and supported aliases | [Public Entry Point](#public-entry-point)                                                                 | named imports, `try`, `tryAsync`, default export                                                     |
+| Check package exports and supported aliases | [Public Entry Point](#public-entry-point)                                                                 | named imports, subpath exports, `resultar/async`                                                     |
 
 ## The Model
 
@@ -252,8 +251,10 @@ class Greeting extends Service("greeting", {
 const services = createModule().value("config", { greeting: "Hello" }).scoped(Greeting);
 ```
 
-`Service` and `Service.require` are exported from `resultar-di`. With `requires`, the factory returns a
-synchronous service value or a ResultTask (never a Promise); without it, `make: ResultTask.gen(...)` can use `yield* Service.require<Contract>()('name')`
+`service`, `service.require`, `Service`, and `Service.require` are exported from `resultar-di`.
+`service(name, { requires?, make })` and `service<Contract>()(...)` support the same `{ requires, make }`
+pattern without a class wrapper (alongside `service(name, dependencies, syncFactory)` for guaranteed-sync JIT fast paths and `service(name, task)`).
+With `requires`, the factory returns a synchronous service value or a ResultTask (never a Promise); without it, `make: ResultTask.gen(...)` can use `yield* service.require<Contract>()('name')`
 inline. Both preserve lazy construction and infer dependencies. Declaring a requirement does not
 register its provider. `Result` handles values and has no service lookup API.
 
@@ -1154,6 +1155,18 @@ const error = new ForbiddenError({ permission: "admin:write" });
 
 error instanceof AppError;
 error.statusCode;
+```
+
+For expected high-frequency domain errors (such as HTTP 404 or validation failures), pass
+`captureStackTrace: false` (defaults to `true`) to skip stack-frame capture while keeping a real
+`Error` subclass, metadata, `cause`, and the caller's `Error.stackTraceLimit`:
+
+```ts
+class UrlNotFoundError extends createTaggedError({
+  name: "UrlNotFoundError",
+  message: "URL not found: $shortCode",
+  captureStackTrace: false,
+}) {}
 ```
 
 Use `cause`, `.findCause`, or the standalone `findCause` helper for nested error lookup:
@@ -2954,11 +2967,12 @@ Use side-effect helpers for best-effort observation:
 
 - `inspect(fn)` runs only for `Ok`.
 - `inspectError(fn)` runs only for `Err`.
+- `inspectCause(fn)` (on `ResultTask`) runs on any failure `Cause` (`Fail`, `Die`, `Interrupt`, or composite).
 - `inspectBoth(handlers)` runs the matching handler for `Ok` or `Err`.
 - `log(fn)` runs for both states as `(value, error)`.
 
 They preserve the original outcome and ignore callback errors across all three models,
-without executing returned Tasks. Deprecated `Result` and `ResultAsync` `tap` / `tapError`
+without executing returned Tasks. On `"resultar/async"`, deprecated `ResultAsync` `tap` / `tapError`
 retain best-effort observation; prefer `inspect` / `inspectError`. Only Task `tap`,
 `tapError`, `tapCause` and `tapBoth` compose fallible side operations, propagating their
 errors and defects.
@@ -3293,7 +3307,7 @@ Use this as the first stop when choosing an operation:
 | Loop without throwing                                | `loop`, `iterate`, `forEach`                                         |
 | Throw intentionally at an edge                       | Result: `unwrapOrThrow()`; Task: `task.runPromise()`                 |
 | Default intentionally at an edge                     | Result: `unwrapOr(value)`; Task: `task.unwrapOr(value).runPromise()` |
-| Add observation without changing the result          | `inspect`, `inspectError`, `inspectBoth`, `log`                      |
+| Add observation without changing the result          | `inspect`, `inspectError`, `inspectCause` (Task), `inspectBoth`, `log` |
 
 ## Combining And Iterating
 

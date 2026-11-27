@@ -1,5 +1,7 @@
 # Native NestJS services
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/nestjs)
+
 Return lazy `ResultTask` workflows (`StrictResultTask`) from services and run them explicitly
 with `.runResult()` in native NestJS controller methods.
 

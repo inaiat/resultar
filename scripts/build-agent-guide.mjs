@@ -74,6 +74,7 @@ writeFileSync(
 
 Documentation bundled with this package version. Installed declarations remain authoritative.
 
+- [Documentation website and playground](https://inaiat.github.io/resultar/)
 - [Agent guide](agent/SKILL.md)
 - [API semantics](agent/references/api.md)
 - [Anti-patterns and resultar-check rules](agent/references/anti-patterns.md)

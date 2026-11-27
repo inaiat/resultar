@@ -1,5 +1,7 @@
 # Request Example
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/request)
+
 Runnable examples for `resultar-request`, `resultar-request-typebox`, and
 `resultar-request-zod`.
 

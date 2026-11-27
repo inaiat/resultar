@@ -16,7 +16,8 @@ returns a native Promise. These contracts serve different roles; see the
 ## Typed errors and service requirements
 
 Define domain failures with `createTaggedError(...).withProps<Props>()`, preserving
-causes and using `redact` for sensitive diagnostic fields. Keep error and service
+causes, passing `captureStackTrace: false` on high-frequency expected errors when
+stack frames are unnecessary, and using `redact` for sensitive diagnostic fields. Keep error and service
 unions inferred; annotate public contracts when that clarifies their obligations.
 See [errors and reasons](../../../DOCUMENTATION.md#reasoned-tagged-errors).
 
@@ -96,4 +97,6 @@ registered, and await completion before assertions. See
 Use `runResult` when handling expected `E` and allowing defects/interruption to
 reject at the application boundary. Use `runExit` when shutdown or orchestration
 must distinguish `Fail`, `Die`, `Interrupt`, and composite causes. `inspectError`
-logs best-effort; Task `tapError` can itself fail. Preserve that distinction in tests.
+and `inspectCause` (full `Cause`, including defects/interruption — useful on
+detached `runFork` background tasks alongside `orElseSucceed`) log best-effort;
+Task `tapError` / `tapCause` can themselves fail. Preserve that distinction in tests.

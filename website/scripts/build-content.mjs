@@ -754,6 +754,9 @@ export const isPlaygroundCandidate = (code, lang) => {
 
 const resolveLink = (href, sourceFileAbs) => {
   if (/^(?:https?:|mailto:)/i.test(href)) {
+    const siteUrl = "https://inaiat.github.io/resultar/";
+    if (href === siteUrl) return "#/";
+    if (href.startsWith(siteUrl + "#/")) return href.slice(siteUrl.length);
     // Rewrite GitHub main links back to internal docs routes when they point to an indexed page.
     const ghPrefix = "https://github.com/inaiat/resultar/blob/main/";
     if (href.startsWith(ghPrefix)) {

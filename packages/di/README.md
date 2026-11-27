@@ -1,5 +1,7 @@
 # resultar-di
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/di)
+
 For applications combining workflows, services and configuration, use
 [`resultar-app`](../app/README.md) as the unified installation and import entry point.
 This package is also available independently.
@@ -41,18 +43,20 @@ ESM; Node.js 24+. The implementation has no Node-specific imports or global cont
 
 Define a token with `service`, then choose its lifetime when composing the module. Dependencies
 are a typed object of tokens; ordinary synchronous factories need no class or generator wrapper.
-Use `service(name, task)` for task initialization and `resource(name, { acquire, release })` for
-resources. All three register with the same `.singleton`, `.scoped`, or `.transient` methods.
+`service` supports `service(name, dependencies, factory)` (guaranteed synchronous factory for JIT fast paths),
+`service(name, { requires?, make })` (sync or `ResultTask` `make`), `service<Contract>()(...)` for explicit
+contracts, `service(name, task)` for task initialization, and `service.require<T>()(name)` for abstract requirements.
+Use `resource(name, { acquire, release })` for owned resources. All three register with the same `.singleton`, `.scoped`, or `.transient` methods.
 
 ```ts
 import { ResultTask } from "resultar";
-import { createModule, service, Service } from "resultar-di";
+import { createModule, service } from "resultar-di";
 
 const Cache = service(
   "cache",
   ResultTask.sync(() => new Map<string, string>()),
 );
-const Tenant = Service.require<string>()("tenant");
+const Tenant = service.require<string>()("tenant");
 const Users = service("users", { cache: Cache, tenant: Tenant }, ({ cache, tenant }) => ({
   find: (id: string) => cache.get(`${tenant}:${id}`),
 }));
@@ -212,7 +216,7 @@ and routes run them explicitly. Native HTTP methods remain Promise boundaries.
 The returned application exposes `fetch(request)` and `request(path, init)` for
 tests. Keep server execution in the owning task scope and consume or cancel response bodies.
 
-The application helpers are `createModule`, `service`, `Service` (including `Service.require`),
+The application helpers are `createModule`, `service` (including `service.require` and `{ requires?, make }`), `Service` (including `Service.require`),
 and `resource`. Framework adapter helpers `inspectModule`, `withProvider`, `useServiceAccess`
 and `ServiceAccessError` are exported from the same entry point, along with their public types.
 See [named registration](#named-registration), the [API reference](#api-reference) and
@@ -419,15 +423,19 @@ not install process signal handlers or implement HTTP/session shutdown behavior.
 
 ## API reference
 
-| Operation                                            | Purpose                                                                      |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `value(name, value)`                                 | Register an externally owned value; no automatic release                     |
-| `singleton(name, dependencies, create)`              | Create a synchronous service once per root                                   |
-| `scoped(name, dependencies, create)`                 | Create a synchronous service once per child scope                            |
-| `transient(name, dependencies, create)`              | Create a synchronous service on every resolution                             |
-| `singleton(ServiceToken)`                            | Register a class-shaped service once per root                                |
-| `scoped(ServiceToken)`                               | Register a class-shaped service once per child scope                         |
-| `transient(ServiceToken)`                            | Register a class-shaped service on every resolution                          |
+| Operation                                                    | Purpose                                                                                                                 |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `service(name, dependencies, create)`                        | Define a synchronous service token (guaranteed sync for fast resolution)                                                |
+| `service(name, { requires?, make })` / `service(name, task)` | Define a service token with sync or `ResultTask` initialization (`service<Contract>()(...)` for explicit contracts)     |
+| `service.require<T>()(name)` / `Service.require<T>()(name)`  | Declare an abstract requirement token without registering a provider                                                    |
+| `resource(name, { acquire, release })`                       | Define an owned resource token with automatic LIFO cleanup                                                              |
+| `value(name, value)`                                         | Register an externally owned value; no automatic release                                                                |
+| `singleton(name, dependencies, create)`                      | Create a synchronous service once per root                                                                              |
+| `scoped(name, dependencies, create)`                         | Create a synchronous service once per child scope                                                                       |
+| `transient(name, dependencies, create)`                      | Create a synchronous service on every resolution                                                                        |
+| `singleton(ServiceToken)`                                    | Register a `service`, `resource`, or `Service` token once per root                                                      |
+| `scoped(ServiceToken)`                                       | Register a `service`, `resource`, or `Service` token once per child scope                                               |
+| `transient(ServiceToken)`                                    | Register a `service`, `resource`, or `Service` token on every resolution                                                |
 | `task(name, dependencies, create)`                   | Initialize using a lazy ResultTask, including an existing scoped acquisition |
 | `resource(name, dependencies, { acquire, release })` | Acquire with a ResultTask and register release in the same scope             |
 | `override(name, value)`                              | Return a new module with a type-checked, externally owned replacement        |

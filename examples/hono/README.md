@@ -1,5 +1,7 @@
 # Hono + Resultar App
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/hono)
+
 An example application combining dependency injection with
 [Resultar App](../../packages/app/README.md) and typed routes with
 [resultar-hono](../../packages/hono/README.md), with validated environment configuration

@@ -138,7 +138,9 @@ All library packages set `"sideEffects": false`. Focused subpaths are exported f
 ## Tagged errors, enums, matching, and functions
 
 `createTaggedError(...).withProps<Props>()` generates construction, guards, and
-Result/Task helpers (`.err`, `.taskErr`); see [tagged errors](../../../DOCUMENTATION.md#tagged-errors).
+Result/Task helpers (`.err`, `.taskErr`); pass `captureStackTrace: false` (default `true`) on
+expected high-frequency domain errors to skip stack-frame capture while keeping `instanceof Error`;
+see [tagged errors](../../../DOCUMENTATION.md#tagged-errors).
 `taggedEnum<Members>()` takes a **member map**, while `TaggedEnum<Members>` is the
 union type. Use `$is(tag, value)` and `$match(value, handlers)`.
 `redact(value, label)` renders `<redacted:label>`; `isRedacted` and `revealRedacted`

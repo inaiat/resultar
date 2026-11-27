@@ -413,7 +413,7 @@ pre {
 
 /* Home Benchmark & Comparison Sections */
 .bench-section,
-.compare-section {
+.service-showcase {
   margin-bottom: 56px;
 }
 
@@ -424,16 +424,6 @@ pre {
   gap: 20px;
   flex-wrap: wrap;
   margin-bottom: 20px;
-}
-
-.section-eyebrow {
-  display: inline-block;
-  font-size: 11px;
-  font-family: var(--font-mono);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--accent-strong);
-  margin-bottom: 6px;
 }
 
 .section-head h2 {
@@ -594,86 +584,53 @@ pre {
   font-weight: 600;
 }
 
-.compare-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px;
-}
-
-.compare-grid > * {
-  min-width: 0;
-}
-
-.compare-code {
+.service-showcase .code-block {
   margin: 0;
 }
 
-.compare-code pre {
-  font-size: 12.5px;
+.service-source {
+  border-left: 3px solid var(--accent);
 }
 
-.compare-code-accent {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-}
-
-.compare-badge {
-  font-size: 11px;
-  color: #94a3b8;
-}
-
-.compare-badge-accent {
-  color: #34d399;
-}
-
-.compare-takeaway {
+.route-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
   flex-wrap: wrap;
-  margin-top: 14px;
-  padding: 14px 18px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-elev);
+  gap: 10px 20px;
+  margin: 24px 0 12px;
 }
 
-.compare-takeaway p {
+.route-header h3 {
   margin: 0;
-  font-size: 13.5px;
-  color: var(--text-muted);
-  max-width: 720px;
+  font-size: 18px;
 }
 
-.compare-takeaway a {
-  font-size: 13.5px;
-  font-weight: 600;
-  white-space: nowrap;
+.route-header .seg-tabs {
+  width: auto;
 }
 
-.pillar-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
-  margin-top: 16px;
+.route-source .code-header a {
+  color: #6ee7b7;
 }
 
-.pillar-card {
-  padding: 18px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: var(--bg-elev);
-}
-
-.pillar-card h3 {
-  margin: 0 0 6px;
-  font-size: 14.5px;
-}
-
-.pillar-card p {
-  margin: 0;
+.route-responses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 40px;
+  border-bottom: 1px solid var(--border);
+  padding: 16px 0;
   font-size: 13px;
+}
+
+.route-responses samp {
+  display: block;
   color: var(--text-muted);
+}
+
+.service-links {
+  margin: 12px 0 0;
+  font-size: 13px;
 }
 
 .home-section-label {
@@ -1401,9 +1358,7 @@ h6:hover .heading-anchor {
   .metrics-strip {
     grid-template-columns: repeat(2, 1fr);
   }
-  .bench-comparison,
-  .compare-grid,
-  .pillar-grid {
+  .bench-comparison {
     grid-template-columns: 1fr;
   }
   .seg-tabs {

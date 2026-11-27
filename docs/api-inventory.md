@@ -109,7 +109,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `runSync` | Value | — |
 | `Scheduler` | Value | `live` |
 | `Semaphore` | Value | `make`, `withPermit`, `withPermits` |
-| `service` | Value | — |
+| `service` | Value | `require` |
 | `Service` | Value | `require` |
 | `ServiceAccess` | Type | `close`, `get`, `has`, `keys`, `use` |
 | `ServiceAccessError` | Class | Static: `err`, `is`, `tag`, `taskErr`, `withProps`<br>Instance: `_tag`, `cause`, `findCause`, `fingerprint`, `kind`, `messageTemplate`, `message`, `name`, `reason`, `serviceName`, `stack`, `toJSON` |
@@ -138,7 +138,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `TaggedEnumFactory` | Type | — |
 | `TaggedErrorClass` | Type | — |
 | `TaggedErrorInstance` | Type | — |
-| `TaggedErrorOptions` | Type | `extends`, `message`, `name` |
+| `TaggedErrorOptions` | Type | `captureStackTrace`, `extends`, `message`, `name` |
 | `TaskClock` | Type | `now`, `random`, `sleep` |
 | `TaskLocal` | Value | `make` |
 | `TaskScheduler` | Type | `yield` |
@@ -176,7 +176,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `HttpServiceSelection` | Type | — |
 | `inspectModule` | Value | — |
 | `resource` | Value | — |
-| `service` | Value | — |
+| `service` | Value | `require` |
 | `Service` | Value | `require` |
 | `ServiceAccess` | Type | `close`, `get`, `has`, `keys`, `use` |
 | `ServiceAccessError` | Class | Static: `err`, `is`, `tag`, `taskErr`, `withProps`<br>Instance: `_tag`, `cause`, `findCause`, `fingerprint`, `kind`, `messageTemplate`, `message`, `name`, `reason`, `serviceName`, `stack`, `toJSON` |
@@ -211,7 +211,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `InferAppServices` | Type | — |
 | `InferRequestServices` | Type | — |
 | `resource` | Value | — |
-| `service` | Value | — |
+| `service` | Value | `require` |
 | `Service` | Value | `require` |
 | `ServiceClass` | Type | — |
 | `ServiceLifetime` | Type | — |
@@ -235,7 +235,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `InferRequestServices` | Type | — |
 | `resource` | Value | — |
 | `runTaskJson` | Value | — |
-| `service` | Value | — |
+| `service` | Value | `require` |
 | `Service` | Value | `require` |
 | `ServiceClass` | Type | — |
 | `ServiceLifetime` | Type | — |
@@ -270,7 +270,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `NestServicesModule` | Type | `controllers`, `exports`, `global`, `imports`, `module`, `providers`, `serviceTypes` |
 | `NestServicesOptions` | Type | `appBindings`, `bindings`, `exposeApplication`, `exposeRequest`, `handlerTimeout`, `initTimeout`, `locals`, `mapError`, `name`, `requestHook`, `rethrowRollbackOnClose`, `services`, `startup` |
 | `resource` | Value | — |
-| `service` | Value | — |
+| `service` | Value | `require` |
 | `Service` | Value | `require` |
 | `ServiceClass` | Type | — |
 | `ServiceLifetime` | Type | — |
@@ -519,7 +519,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `TaggedEnumFactory` | Type | — |
 | `TaggedErrorClass` | Type | — |
 | `TaggedErrorInstance` | Type | — |
-| `TaggedErrorOptions` | Type | `extends`, `message`, `name` |
+| `TaggedErrorOptions` | Type | `captureStackTrace`, `extends`, `message`, `name` |
 | `TaskClock` | Type | `now`, `random`, `sleep` |
 | `TaskLocal` | Value | `make` |
 | `TaskScheduler` | Type | `yield` |

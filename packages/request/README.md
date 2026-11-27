@@ -1,5 +1,7 @@
 # resultar-request
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/request)
+
 Fetch-first JSON request helpers for Resultar.
 
 Use this package when a service calls another HTTP service and needs consistent JSON parsing,
