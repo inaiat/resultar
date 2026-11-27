@@ -386,3 +386,40 @@ test("forwards Fastify HTTP server options to the underlying instance", async ()
     await app.close();
   }
 });
+
+test("accepts union service modules returned by conditional override factories and rejects mixed invalid unions", async () => {
+  const createServices = (override?: number) => {
+    const base = createModule().value("answer", 42);
+    if (override !== undefined) {
+      return base.override("answer", override);
+    }
+    return base;
+  };
+  const app = createFastifyApp(
+    { services: () => createServices(99), appBindings: ["answer"], bindings: [] },
+    (router) => {
+      router.get("/", () => router.getDecorator("services"));
+    },
+  );
+  expectTypeOf<InferAppServices<typeof app>>().toEqualTypeOf<Readonly<{ answer: number }>>();
+  try {
+    const response = await app.inject("/");
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ answer: 99 });
+  } finally {
+    await app.close();
+  }
+  const mixedUnionCheck = (valid: boolean) => {
+    createFastifyApp(
+      // @ts-expect-error A union containing a non-ServiceModule branch must still be rejected.
+      {
+        services: () => (valid ? createModule().value("answer", 1) : { scope: () => "invalid" }),
+        bindings: [],
+      },
+      () => {
+        /* Type-only rejection check. */
+      },
+    );
+  };
+  expectTypeOf(mixedUnionCheck).toBeFunction();
+});

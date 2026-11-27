@@ -77,10 +77,16 @@ export type InferRequestServices<Source> = Source extends {
 type ModuleShape = { readonly scope: () => unknown };
 type ModuleSource = ModuleShape | ((app: FastifyInstance) => ModuleShape | Promise<ModuleShape>);
 type ModuleOf<M> = M extends (app: FastifyInstance) => infer Module ? Awaited<Module> : M;
-type ModuleInfo<M> =
-  ModuleOf<M> extends { readonly scope: () => ServiceScope<infer S, infer _E, infer R, infer G> }
-    ? { readonly services: S; readonly requirements: R; readonly graph: G }
-    : never;
+type ExtractModuleInfo<Mod> = Mod extends {
+  readonly scope: () => ServiceScope<infer S, infer _E, infer R, infer G>;
+}
+  ? { readonly services: S; readonly requirements: R; readonly graph: G }
+  : { readonly invalid: true };
+type ModuleInfo<M> = [Extract<ExtractModuleInfo<ModuleOf<M>>, { readonly invalid: true }>] extends [
+  never,
+]
+  ? Exclude<ExtractModuleInfo<ModuleOf<M>>, { readonly invalid: true }>
+  : never;
 type ServicesOf<M> = ModuleInfo<M>["services"];
 type Selection<M, Local extends object, Keys extends readonly string[]> = [Keys] extends [
   readonly Extract<keyof ServicesOf<M>, string>[],
