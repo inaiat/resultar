@@ -28,6 +28,36 @@ describe('cooperative task scheduling', () => {
     equal(peerBeforeCompletion, true)
   })
 
+  it('preserves cooperative scheduling across long resolved tryPromise + andThen chains in runResult() with and without options', async () => {
+    for (const mode of ['no-options', 'empty-options', 'wrapped-map'] as const) {
+      let lastStepRan = false
+      let peerRanBeforeLastStep = false
+      const nextStep = (current: number): ResultTask<number, never> => {
+        if (current >= 6000) {
+          lastStepRan = true
+          return ResultTask.ok(current)
+        }
+        const chained = ResultTask.tryPromise({
+          try: () => Promise.resolve(current + 1),
+          catch: () => 'never' as never,
+        }).andThen(nextStep)
+        return mode === 'wrapped-map' ? chained.map((value) => value) : chained
+      }
+      const task = nextStep(0)
+      const peer = new Promise<void>((resolve) => {
+        setImmediate(() => {
+          peerRanBeforeLastStep = !lastStepRan
+          resolve()
+        })
+      })
+      const running = mode === 'empty-options' ? task.runResult({}) : task.runResult()
+      const [result] = await Promise.all([running, peer])
+      equal(result.isOk(), true)
+      if (result.isOk()) equal(result.value, 6000)
+      equal(peerRanBeforeLastStep, true)
+    }
+  })
+
   it('lets a live timeout interrupt runnable work and finish cleanup', async () => {
     let steps = 0
     let released = 0

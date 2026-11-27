@@ -31,7 +31,12 @@ import { Clock } from './task-clock.js'
 import type { TaskClock } from './task-clock.js'
 import { isPromiseLike } from '../core/retry.js'
 import type { RetryPolicy } from '../core/retry.js'
-import { createScheduling, recoverScheduling, schedulerCheckpoint } from './task-scheduler.js'
+import {
+  createScheduling,
+  recoverScheduling,
+  scheduleMacrotask,
+  schedulerCheckpoint,
+} from './task-scheduler.js'
 import type { TaskScheduler } from './task-scheduler.js'
 import { markCleanupCause } from './cleanup-cause.js'
 import type { FiberHandle } from './fiber.js'
@@ -6760,6 +6765,7 @@ export class ResultTask<out A, out E = never, out R = never> {
 
   static #runResultFastPath<A, E>(
     activeTask: ResultTask<unknown, unknown, unknown>,
+    budget: number,
   ): Promise<Result<A, E>> | undefined {
     const op = activeTask.op
     if (op === OP_SUCCESS) {
@@ -6769,6 +6775,14 @@ export class ResultTask<out A, out E = never, out R = never> {
       return Promise.resolve(err(activeTask.value as E))
     }
     if (op === OP_TRY_PROMISE) {
+      if (budget <= 1) {
+        return yieldLiveMacrotask().then(() =>
+          runTryPromiseResult<A, E>(
+            activeTask.value as TryPromiseSource,
+            activeTask.continuation as ((error: unknown) => E) | undefined,
+          ),
+        )
+      }
       return runTryPromiseResult<A, E>(
         activeTask.value as TryPromiseSource,
         activeTask.continuation as ((error: unknown) => E) | undefined,
@@ -6777,7 +6791,12 @@ export class ResultTask<out A, out E = never, out R = never> {
     if (isFastResultCombinatorOp(op)) {
       const chain = ResultTask.#collectFastTryPromiseChain(activeTask)
       if (chain !== undefined) {
-        return ResultTask.#runFusedTryPromiseChainResult<A, E>(chain.leaf, chain.steps)
+        if (budget <= 1) {
+          return yieldLiveMacrotask().then(() =>
+            ResultTask.#runFusedTryPromiseChainResult<A, E>(chain.leaf, chain.steps, 2048),
+          )
+        }
+        return ResultTask.#runFusedTryPromiseChainResult<A, E>(chain.leaf, chain.steps, budget - 1)
       }
     }
     return undefined
@@ -6788,7 +6807,9 @@ export class ResultTask<out A, out E = never, out R = never> {
     steps: readonly ResultTask<unknown, unknown, unknown>[],
     remainingCount: number,
   ): Promise<Result<A, E>> {
+    const budget = fastContinuationBudget
     const context = ResultTask.#acquireRunContext()
+    context.scheduling.remaining = budget
     const scope = context.scope
     const remaining = steps.slice(0, remainingCount)
     const outcome = ResultTask.runTaskLoop(next, context, undefined, remaining)
@@ -6812,9 +6833,12 @@ export class ResultTask<out A, out E = never, out R = never> {
     initialValue: unknown,
     steps: readonly ResultTask<unknown, unknown, unknown>[],
   ): Result<A, E> | Promise<Result<A, E>> {
+    let remaining = fastContinuationBudget
     fastContinuationOk = initialOk
     fastContinuationValue = initialValue
     for (let index = steps.length - 1; index >= 0; index -= 1) {
+      remaining -= 1
+      fastContinuationBudget = remaining
       const pending = ResultTask.#applyFastResultStep<A, E>(steps, index)
       if (pending !== undefined) return pending
     }
@@ -6828,6 +6852,7 @@ export class ResultTask<out A, out E = never, out R = never> {
     steps: readonly ResultTask<unknown, unknown, unknown>[],
     index: number,
   ): Promise<Result<A, E>> | undefined {
+    const remaining = fastContinuationBudget
     const step = steps[index]
     if (step === undefined) return undefined
     const isOk = fastContinuationOk
@@ -6846,6 +6871,7 @@ export class ResultTask<out A, out E = never, out R = never> {
             input: unknown,
           ) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>
         )(value)
+        fastContinuationBudget = remaining
         return ResultTask.#advanceFastContinuation<A, E>(next, steps, index)
       }
     } else if (op === OP_MAP_ERROR) {
@@ -6858,6 +6884,7 @@ export class ResultTask<out A, out E = never, out R = never> {
           input: unknown,
         ) => ResultTask<unknown, unknown, unknown> | Result<unknown, unknown>
       )(value)
+      fastContinuationBudget = remaining
       return ResultTask.#advanceFastContinuation<A, E>(next, steps, index)
     }
     fastContinuationOk = isOk
@@ -6870,6 +6897,7 @@ export class ResultTask<out A, out E = never, out R = never> {
     steps: readonly ResultTask<unknown, unknown, unknown>[],
     index: number,
   ): Promise<Result<A, E>> | undefined {
+    const remaining = fastContinuationBudget
     if (!isResultTask(next)) {
       if (next.isOk()) {
         fastContinuationOk = true
@@ -6890,21 +6918,41 @@ export class ResultTask<out A, out E = never, out R = never> {
       fastContinuationValue = next.value
       return undefined
     }
-    return index === 0
-      ? ResultTask.#runResultNoOptions<A, E>(next)
-      : ResultTask.#runResultFromTaskAndSteps<A, E>(next, steps, index)
+    if (remaining <= 0) {
+      return yieldLiveMacrotask().then(() => {
+        if (index === 0) {
+          return ResultTask.#runResultNoOptions<A, E>(next, 2048)
+        }
+        fastContinuationBudget = 2048
+        return ResultTask.#runResultFromTaskAndSteps<A, E>(next, steps, index)
+      })
+    }
+    if (index === 0) {
+      return ResultTask.#runResultNoOptions<A, E>(next, remaining)
+    }
+    fastContinuationBudget = remaining
+    return ResultTask.#runResultFromTaskAndSteps<A, E>(next, steps, index)
   }
 
   static #runFusedTryPromiseChainResult<A, E>(
     leaf: ResultTask<unknown, unknown, unknown>,
     steps: readonly ResultTask<unknown, unknown, unknown>[],
+    budget: number,
   ): Promise<Result<A, E>> {
     const trySource = leaf.value as TryPromiseSource
     const catchFn = leaf.continuation as ((error: unknown) => unknown) | undefined
-    const onResolve = (value: unknown): Result<A, E> | Promise<Result<A, E>> =>
-      ResultTask.#runFastResultSteps<A, E>(true, value, steps)
-    const onReject = (error: unknown): Result<A, E> | Promise<Result<A, E>> =>
-      ResultTask.#runFastResultSteps<A, E>(false, catchTryPromise(trySource, catchFn, error), steps)
+    const onResolve = (value: unknown): Result<A, E> | Promise<Result<A, E>> => {
+      fastContinuationBudget = budget
+      return ResultTask.#runFastResultSteps<A, E>(true, value, steps)
+    }
+    const onReject = (error: unknown): Result<A, E> | Promise<Result<A, E>> => {
+      fastContinuationBudget = budget
+      return ResultTask.#runFastResultSteps<A, E>(
+        false,
+        catchTryPromise(trySource, catchFn, error),
+        steps,
+      )
+    }
     try {
       return Promise.resolve(invokeTryPromise(trySource, NEVER_ABORTED_SIGNAL)).then(
         onResolve,
@@ -6913,9 +6961,10 @@ export class ResultTask<out A, out E = never, out R = never> {
     } catch (error) {
       try {
         const failValue = catchTryPromise(trySource, catchFn, error)
-        return Promise.resolve().then(() =>
-          ResultTask.#runFastResultSteps<A, E>(false, failValue, steps),
-        )
+        return Promise.resolve().then(() => {
+          fastContinuationBudget = budget
+          return ResultTask.#runFastResultSteps<A, E>(false, failValue, steps)
+        })
       } catch (error_) {
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Preserve the original defect just as the asynchronous exit does.
         return Promise.reject(error_)
@@ -6953,13 +7002,15 @@ export class ResultTask<out A, out E = never, out R = never> {
 
   static #runResultNoOptions<A, E>(
     task: ResultTask<unknown, unknown, unknown>,
+    budget = 2048,
   ): Promise<Result<A, E>> {
-    const fastResult = ResultTask.#runResultFastPath<A, E>(task)
+    const fastResult = ResultTask.#runResultFastPath<A, E>(task, budget)
     if (fastResult !== undefined) {
       return fastResult
     }
     try {
       const context = ResultTask.#acquireRunContext()
+      context.scheduling.remaining = budget
       const scope = context.scope
       let activeTask = task
       let outerMap: ((value: unknown) => unknown) | undefined = undefined
@@ -7379,17 +7430,17 @@ export class ResultTask<out A, out E = never, out R = never> {
     }
     const fiberSignal = new FiberSignal(options.signal ?? NEVER_ABORTED_SIGNAL)
     const signal = fiberSignal.asAbortSignal()
-    const suppliedServices = 'services' in options ? options.services : undefined
-    const namedServices =
-      suppliedServices === undefined
-        ? EMPTY_NAMED_SERVICES
-        : new Map(Object.entries(suppliedServices))
     const scope = new TaskScope()
     const clock = options.clock ?? Clock.live
     // eslint-disable-next-line init-declarations
     let context: ResultTaskRuntimeContext
     let outcome: Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> = SUCCESS_UNDEFINED
     try {
+      const suppliedServices = 'services' in options ? options.services : undefined
+      const namedServices =
+        suppliedServices === undefined
+          ? EMPTY_NAMED_SERVICES
+          : new Map(Object.entries(suppliedServices))
       context = {
         namedServices,
         services: EMPTY_SERVICES,
@@ -8212,6 +8263,12 @@ const executeFusedInspectCauseTryPromise = <E>(
 /* Stryker disable all: options === undefined fast-path is behaviorally equivalent to runExitSyncOrAsync + exitToResult. */
 let fastContinuationOk = false
 let fastContinuationValue: unknown = undefined
+let fastContinuationBudget = 2048
+
+const yieldLiveMacrotask = (): Promise<void> =>
+  new Promise((resolve) => {
+    scheduleMacrotask(resolve)
+  })
 
 const RETURN_UNDEFINED = (): undefined => undefined
 

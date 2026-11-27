@@ -600,7 +600,8 @@ const copyOwnMetadataWithFastKey = (
   for (const key in props) {
     if (
       Object.hasOwn(props, key) &&
-      (key === safeKey || (!allReservedMetadataProperties.has(key) && !(key in target)))
+      !(key in target) &&
+      (key === safeKey || !allReservedMetadataProperties.has(key))
     ) {
       assignReadonly(target, key, props[key])
     }
@@ -762,22 +763,25 @@ const createTaggedErrorClass = <
     public readonly fingerprint = sharedFingerprint
     public readonly messageTemplate = messageTemplate
 
-    /* eslint-disable unicorn/custom-error-definition -- 1-arg super avoids options overhead when cause is absent; name is always set explicitly. */
+    /* eslint-disable constructor-super, unicorn/custom-error-definition -- super() is unconditionally called inside try/finally so Error.stackTraceLimit is always restored; 1-arg super avoids options overhead when cause is absent; name is always set explicitly. */
     public constructor(props?: ConstructorProps<MessageTemplate>) {
       const message = interpolate(props)
       const cause = props?.cause
-      let previousLimit: number | undefined = undefined
-      if (skipStackTrace) {
-        previousLimit = Error.stackTraceLimit
+      const restoreStackTraceLimit = skipStackTrace && Object.hasOwn(Error, 'stackTraceLimit')
+      const previousLimit = Error.stackTraceLimit
+      if (restoreStackTraceLimit) {
         Error.stackTraceLimit = 0
       }
-      if (cause === undefined) {
-        super(message)
-      } else {
-        super(message, { cause })
-      }
-      if (previousLimit !== undefined) {
-        Error.stackTraceLimit = previousLimit
+      try {
+        if (cause === undefined) {
+          super(message)
+        } else {
+          super(message, { cause })
+        }
+      } finally {
+        if (restoreStackTraceLimit) {
+          Error.stackTraceLimit = previousLimit
+        }
       }
       this.name = options.name
 
@@ -796,7 +800,7 @@ const createTaggedErrorClass = <
         }
       }
     }
-    /* eslint-enable unicorn/custom-error-definition */
+    /* eslint-enable constructor-super, unicorn/custom-error-definition */
 
     /**
      * Narrows a value to this tagged error class.

@@ -495,11 +495,11 @@ describe('tagged errors', async () => {
   })
 
   it('supports opting out of stack trace capture while preserving error metadata and stackTraceLimit', () => {
-    class LightweightNotFoundError extends createTaggedError({
+    const LightweightNotFoundError = createTaggedError({
       name: 'LightweightNotFoundError',
       message: 'Missing item $code',
       captureStackTrace: false,
-    }) {}
+    })
     const DefaultStackNotFoundError = createTaggedError({
       name: 'DefaultStackNotFoundError',
       message: 'Missing item $code',
@@ -509,11 +509,11 @@ describe('tagged errors', async () => {
       message: 'Missing item $code',
       captureStackTrace: true,
     })
-    class LightweightWithPropsError extends createTaggedError({
+    const LightweightWithPropsError = createTaggedError({
       name: 'LightweightWithPropsError',
       message: 'Missing item $code',
       captureStackTrace: false,
-    }).withProps<{ readonly reason?: string }>() {}
+    }).withProps<{ readonly reason?: string }>()
 
     const originalLimit = Error.stackTraceLimit
     Error.stackTraceLimit = 7
@@ -549,6 +549,91 @@ describe('tagged errors', async () => {
     } finally {
       Error.stackTraceLimit = originalLimit
     }
+  })
+
+  it('restores Error.stackTraceLimit when a base constructor throws and preserves an absent limit', () => {
+    const baseFailure = new Error('base constructor failure')
+    class ThrowingBaseError extends Error {
+      public constructor() {
+        super('unused')
+        throw baseFailure
+      }
+    }
+    const FailingTaggedError = createTaggedError({
+      name: 'FailingTaggedError',
+      message: 'Failed $code',
+      extends: ThrowingBaseError,
+      captureStackTrace: false,
+    })
+    const LightweightTaggedError = createTaggedError({
+      name: 'LightweightTaggedError',
+      message: 'Lightweight $code',
+      captureStackTrace: false,
+    })
+
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Error, 'stackTraceLimit')
+    Error.stackTraceLimit = 7
+    try {
+      throws(
+        () => new FailingTaggedError({ code: 'boom' }),
+        (thrown) => thrown === baseFailure,
+      )
+      equal(Error.stackTraceLimit, 7)
+      equal(new Error('subsequent').stack?.includes('\n    at '), true)
+
+      delete (Error as { stackTraceLimit?: number }).stackTraceLimit
+      equal(Object.hasOwn(Error, 'stackTraceLimit'), false)
+
+      const lightweight = new LightweightTaggedError({ code: 'absent' })
+      equal(lightweight.message, 'Lightweight absent')
+      equal(Object.hasOwn(Error, 'stackTraceLimit'), false)
+      equal('stackTraceLimit' in Error, false)
+
+      throws(
+        () => new FailingTaggedError({ code: 'absent-boom' }),
+        (thrown) => thrown === baseFailure,
+      )
+      equal(Object.hasOwn(Error, 'stackTraceLimit'), false)
+      equal('stackTraceLimit' in Error, false)
+    } finally {
+      if (originalDescriptor === undefined) {
+        delete (Error as { stackTraceLimit?: number }).stackTraceLimit
+      } else {
+        Object.defineProperty(Error, 'stackTraceLimit', originalDescriptor)
+      }
+    }
+  })
+
+  it('preserves inherited toJSON and subclass methods when single-key metadata collides', () => {
+    const ToJsonTemplateError = createTaggedError({
+      name: 'ToJsonTemplateError',
+      message: 'Serialize $toJSON',
+    })
+    const serialized = new ToJsonTemplateError({ toJSON: 'payload' })
+    equal(serialized.message, 'Serialize payload')
+    equal(typeof serialized.toJSON, 'function')
+    deepEqual(serialized.toJSON(), {
+      _tag: 'ToJsonTemplateError',
+      fingerprint: ['ToJsonTemplateError', 'Serialize $toJSON'],
+      message: 'Serialize payload',
+      messageTemplate: 'Serialize $toJSON',
+      name: 'ToJsonTemplateError',
+    })
+
+    const SubclassBase = createTaggedError({
+      name: 'SubclassMethodError',
+      message: 'Action $format failed',
+    }) as unknown as new (props: {
+      readonly format: string
+    }) => Error & { readonly _tag: 'SubclassMethodError' }
+    class SubclassMethodError extends SubclassBase {
+      public format(): string {
+        return `formatted:${this.message}`
+      }
+    }
+    const subclassError = new SubclassMethodError({ format: 'override' })
+    equal(subclassError.message, 'Action override failed')
+    equal(subclassError.format(), 'formatted:Action override failed')
   })
 })
 

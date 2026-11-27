@@ -299,6 +299,33 @@ describe('ResultTask.runFork', () => {
     equal(released, true)
   })
 
+  it('delivers throwing services getters through the fiber and disposes external abort listeners', async () => {
+    const getterFailure = new Error('services getter boom')
+    const services = {}
+    Object.defineProperty(services, 'broken', {
+      enumerable: true,
+      get() {
+        throw getterFailure
+      },
+    })
+    const controller = new AbortController()
+    const added = vi.spyOn(controller.signal, 'addEventListener')
+    const removed = vi.spyOn(controller.signal, 'removeEventListener')
+    try {
+      const handle = ResultTask.runFork(ResultTask.ok(1), {
+        signal: controller.signal,
+        services: services as never,
+      })
+      const exit = await Fiber.await(handle).runPromise()
+      deepEqual(exit, { _tag: 'Failure', cause: { _tag: 'Die', defect: getterFailure } })
+      equal(added.mock.calls.length, 1)
+      equal(removed.mock.calls.length, 1)
+    } finally {
+      added.mockRestore()
+      removed.mockRestore()
+    }
+  })
+
   it('removes external abort listeners across sync/async scoped releases and config errors, and preserves inspectCause exits', async () => {
     // 1. Config error (invalid yieldEvery) still disposes the attached external signal listener.
     {
