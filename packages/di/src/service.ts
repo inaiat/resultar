@@ -183,13 +183,65 @@ export const Service: typeof defineService & {
   ) => ServiceTag<Identifier, Self>;
 } = Object.assign(defineService, { require: <Self>() => ResultTask.service<Self>() });
 
+interface CurriedServiceHelper<Self> extends CurriedService<Self> {
+  <
+    const Name extends string,
+    ActualSelf extends Contract<Self, unknown> = Contract<Self, unknown>,
+    E = never,
+    R = never,
+  >(
+    name: Name,
+    make: ResultTask<Contract<Self, ActualSelf>, E, R>,
+  ): ServiceClass<Contract<Self, ActualSelf>, Name, E, R>;
+  <
+    const Name extends string,
+    const Dependencies extends Tags,
+    ActualSelf extends Contract<Self, unknown> = Contract<Self, unknown>,
+  >(
+    name: Name,
+    dependencies: Dependencies,
+    create: (
+      dependencies: Values<Dependencies>,
+    ) => ActualSelf &
+      (ActualSelf extends PromiseLike<unknown> | ResultTask<unknown, unknown, unknown>
+        ? { readonly initialization: "Use service(name, task) for asynchronous initialization" }
+        : unknown),
+  ): ServiceClass<Contract<Self, ActualSelf>, Name, never, Dependencies[keyof Dependencies]>;
+}
+
 /** Defines a task-backed token without a class wrapper. */
-export function service<const Name extends string, A, E, R>(
+function defineServiceHelper<const Name extends string, A, E, R>(
   name: Name,
   make: ResultTask<A, E, R>,
 ): ServiceClass<A, Name, E, R>;
+/** Defines a synchronous dependency-free service token using `{ make }`. */
+function defineServiceHelper<const Name extends string, Self>(
+  name: Name,
+  definition: IndependentDefinition<Self>,
+): ServiceClass<Self, Name>;
+/** Defines a task-backed service token using `{ make }`. */
+function defineServiceHelper<const Name extends string, Self, E = never, R = never>(
+  name: Name,
+  definition: TaskDefinition<Self, E, R>,
+): ServiceClass<Self, Name, E, R>;
+/** Defines an async `ResultTask` service token with explicit `{ requires, make }`. */
+function defineServiceHelper<
+  const Name extends string,
+  const Dependencies extends Tags,
+  Self,
+  E = never,
+  R = never,
+>(
+  name: Name,
+  definition: RequiredDefinition<Dependencies, Self, E, R>,
+): ServiceClass<Self, Name, E, Dependencies[keyof Dependencies] | R>;
+/** Defines a synchronous service token with explicit `{ requires, make }`. */
+function defineServiceHelper<const Name extends string, const Dependencies extends Tags, Self>(
+  name: Name,
+  definition: SyncDefinition<Dependencies, Self>,
+): ServiceClass<Self, Name, never, Dependencies[keyof Dependencies]>;
 /** Injects typed tokens into an ordinary synchronous factory. */
-export function service<const Name extends string, const Dependencies extends Tags, A>(
+function defineServiceHelper<const Name extends string, const Dependencies extends Tags, A>(
   name: Name,
   dependencies: Dependencies,
   create: (
@@ -199,37 +251,67 @@ export function service<const Name extends string, const Dependencies extends Ta
       ? { readonly initialization: "Use service(name, task) for asynchronous initialization" }
       : unknown),
 ): ServiceClass<A, Name, never, Dependencies[keyof Dependencies]>;
-export function service(
-  name: string,
-  dependencies: ResultTask<unknown, unknown, unknown> | Tags,
-  create?: (dependencies: Readonly<Record<string, unknown>>) => unknown,
-): ServiceClass<unknown, string, unknown, unknown> {
-  const isTask = dependencies instanceof ResultTask;
-  const make = isTask
-    ? dependencies
-    : ResultTask.gen(function* construct() {
-        const values = yield* resolveDependencies(dependencies);
-        if (create === undefined) throw new TypeError("A service factory is required");
-        const value = create(values);
-        if (
-          value instanceof ResultTask ||
-          (value !== null &&
-            (typeof value === "object" || typeof value === "function") &&
-            "then" in value &&
-            typeof value.then === "function")
-        )
-          throw new TypeError("Use service(name, task) for asynchronous initialization");
-        return value;
-      });
+/** Declares an explicit service contract before defining the service token. */
+function defineServiceHelper<Self = never>(): CurriedServiceHelper<Self>;
+function defineServiceHelper(...args: unknown[]): unknown {
+  if (args.length === 0) return defineServiceHelper;
+  const name = args[0] as string;
+  const second = args[1] as
+    | ResultTask<unknown, unknown, unknown>
+    | Tags
+    | TaskDefinition<unknown, unknown, unknown>
+    | RequiredDefinition<Tags, unknown, unknown, unknown>
+    | SyncDefinition<Tags, unknown>;
+  const create = args[2] as
+    | ((dependencies: Readonly<Record<string, unknown>>) => unknown)
+    | undefined;
+  if (
+    args.length === 2 &&
+    !(second instanceof ResultTask) &&
+    typeof second === "object" &&
+    second !== null &&
+    "make" in second
+  ) {
+    return defineService(name, second as TaskDefinition<unknown, unknown, unknown>);
+  }
+  const make: ResultTask<unknown, unknown, unknown> =
+    second instanceof ResultTask
+      ? second
+      : ResultTask.gen(function* construct() {
+          const values = yield* resolveDependencies(second as Tags);
+          if (create === undefined) throw new TypeError("A service factory is required");
+          const value = create(values);
+          if (
+            value instanceof ResultTask ||
+            (value !== null &&
+              (typeof value === "object" || typeof value === "function") &&
+              "then" in value &&
+              typeof value.then === "function")
+          )
+            throw new TypeError("Use service(name, task) for asynchronous initialization");
+          return value;
+        });
   const token = Service<unknown>()(name, { make });
-  if (!isTask && create !== undefined) {
-    const dependencyMap = Object.entries(dependencies).map(
+  if (!(second instanceof ResultTask) && create !== undefined) {
+    const dependencyMap = Object.entries(second as Tags).map(
       ([propKey, tag]) => [propKey, tag.identifier] as const,
     );
     syncServiceMetadata.set(token, { dependencyMap, create });
   }
   return token;
 }
+
+/**
+ * Defines a lazy service token without a class wrapper.
+ * Supports `service(name, { requires?, make })`, `service<Contract>()(...)`,
+ * `service(name, dependencies, syncFactory)`, `service(name, task)`, and `service.require<T>()(name)`.
+ */
+export const service: typeof defineServiceHelper & {
+  /** Declares a yieldable requirement; its provider must be registered separately. */
+  readonly require: <Self>() => <const Identifier extends string>(
+    identifier: Identifier,
+  ) => ServiceTag<Identifier, Self>;
+} = Object.assign(defineServiceHelper, { require: Service.require });
 
 /** Defines acquisition and cleanup; singleton/scoped/transient chooses the lifetime. */
 export const resource = <const Name extends string, A, E, R, ReleaseE, ReleaseR>(
