@@ -96,12 +96,14 @@ export class TaskScope {
 
     const childrenSet = this.children
     const hasChildren = childrenSet !== undefined && childrenSet.size > 0
+    /* Stryker disable all: empty-scope fast path equivalent to drainFinalizersSyncOrAsync with zero finalizers. */
     const hasFinalizers = this.finalizers !== undefined && this.finalizers.length > 0
     if (!hasChildren && !hasFinalizers) {
       const out = cleanupOnly ? this.cleanup : exit
       this.closedExit = out
       return out
     }
+    /* Stryker restore all */
     if (!hasChildren) {
       return this.drainFinalizersSyncOrAsync(exit, cleanupOnly, appendExit(exit, this.cleanup))
     }
@@ -125,14 +127,17 @@ export class TaskScope {
     for (const outcome of outcomes) {
       if (outcome._tag === 'Failure') {
         markCleanupCause(outcome.cause)
-        this.cleanup =
-          this.cleanup._tag === 'Success'
-            ? outcome
-            : {
-                _tag: 'Failure',
-                cause: { _tag: 'Parallel', left: this.cleanup.cause, right: outcome.cause },
-              }
-        markCleanupCause(this.cleanup.cause)
+        if (this.cleanup._tag === 'Success') {
+          this.cleanup = outcome
+        } else {
+          const combinedCause = {
+            _tag: 'Parallel' as const,
+            left: this.cleanup.cause,
+            right: outcome.cause,
+          }
+          markCleanupCause(combinedCause)
+          this.cleanup = { _tag: 'Failure', cause: combinedCause }
+        }
       }
     }
   }
@@ -141,9 +146,19 @@ export class TaskScope {
     currentResult: Exit<unknown, unknown>,
     released: Exit<unknown, unknown>,
   ): Exit<unknown, unknown> {
-    if (released._tag === 'Failure') markCleanupCause(released.cause)
-    this.cleanup = appendExit(this.cleanup, released)
-    if (this.cleanup._tag === 'Failure') markCleanupCause(this.cleanup.cause)
+    if (released._tag === 'Success') return currentResult
+    markCleanupCause(released.cause)
+    if (this.cleanup._tag === 'Success') {
+      this.cleanup = released
+    } else {
+      const combinedCause = {
+        _tag: 'Sequential' as const,
+        left: this.cleanup.cause,
+        right: released.cause,
+      }
+      markCleanupCause(combinedCause)
+      this.cleanup = { _tag: 'Failure', cause: combinedCause }
+    }
     return appendExit(currentResult, released)
   }
 
@@ -161,7 +176,6 @@ export class TaskScope {
     cleanupOnly: boolean,
     result: Exit<unknown, unknown>,
   ): Exit<unknown, unknown> {
-    if (this.cleanup._tag === 'Failure') markCleanupCause(this.cleanup.cause)
     const out = cleanupOnly ? this.cleanup : result
     this.closedExit = out
     return out
@@ -173,8 +187,11 @@ export class TaskScope {
     initialResult: Exit<unknown, unknown>,
   ): Exit<unknown, unknown> | Promise<Exit<unknown, unknown>> {
     const finalizers = this.finalizers
+    if (finalizers === undefined) {
+      return this.finishDrain(cleanupOnly, initialResult)
+    }
     let result = initialResult
-    let finalizer = finalizers?.pop()
+    let finalizer = finalizers.pop()
     while (finalizer !== undefined) {
       try {
         const released = finalizer(exit)
@@ -183,6 +200,7 @@ export class TaskScope {
         } else {
           this.closing = this.drainFinalizersAsync(exit, cleanupOnly, {
             currentResult: result,
+            finalizers,
             pendingRelease: released,
           })
           return this.closing
@@ -190,7 +208,7 @@ export class TaskScope {
       } catch (error) {
         result = this.recordFinalizerDefect(result, error)
       }
-      finalizer = finalizers?.pop()
+      finalizer = finalizers.pop()
     }
     return this.finishDrain(cleanupOnly, result)
   }
@@ -200,6 +218,7 @@ export class TaskScope {
     cleanupOnly: boolean,
     state: {
       readonly currentResult: Exit<unknown, unknown>
+      readonly finalizers: Finalizer[]
       readonly pendingRelease: Promise<Exit<unknown, unknown>>
     },
   ): Promise<Exit<unknown, unknown>> {
@@ -209,8 +228,8 @@ export class TaskScope {
     } catch (error) {
       result = this.recordFinalizerDefect(result, error)
     }
-    const finalizers = this.finalizers
-    let finalizer = finalizers?.pop()
+    const { finalizers } = state
+    let finalizer = finalizers.pop()
     while (finalizer !== undefined) {
       try {
         // eslint-disable-next-line no-await-in-loop
@@ -218,7 +237,7 @@ export class TaskScope {
       } catch (error) {
         result = this.recordFinalizerDefect(result, error)
       }
-      finalizer = finalizers?.pop()
+      finalizer = finalizers.pop()
     }
     return this.finishDrain(cleanupOnly, result)
   }

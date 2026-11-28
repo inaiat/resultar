@@ -1,5 +1,21 @@
 # resultar-di
 
+## 2.1.0
+
+### Minor Changes
+
+- fdeef4c: Extend `service` with `{ requires?, make }` definitions (supporting both synchronous and `ResultTask` `make`), curried explicit contracts (`service<Contract>()(...)`), and `service.require<T>()(name)` alongside the existing `service(name, task)` and 3-argument `service(name, dependencies, syncFactory)` forms.
+
+### Patch Changes
+
+- Check `Error.stackTraceLimit` writability before mutating it in `createTaggedError({ captureStackTrace: false })` (supporting `--frozen-intrinsics` and read-only descriptors), and ensure shared `STEP_LOCAL` dependencies in `resultar-di` Tier 1 sync plans are evaluated at most once per request.
+- 310626a: Optimize async `ResultTask.gen` continuation fast paths, fuse `tryPromise` + `map`/`mapErr`/`andThen`/`orElse` combinator chains directly inside `runResult()`, pool root contexts and fiber handles in `ResultTask.runFork()` (plus fuse `inspectCause()` over `tryPromise` and reuse a shared closure in `asVoid()`), optimize `createTaggedError` metadata copying and add opt-in `captureStackTrace: false`, compile tree-shaped Tier 1 DI plans into allocation-free closures, and eliminate hot-path overhead in `benchmarks/comparison/url-shortener-resultar`.
+- Updated dependencies
+- Updated dependencies [310626a]
+- Updated dependencies [5eb2e8e]
+- Updated dependencies
+  - resultar@5.1.0
+
 ## 2.0.0
 
 ### Major Changes

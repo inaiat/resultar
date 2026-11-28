@@ -698,4 +698,51 @@ describe("resultar-fastify Tier 0 / Tier 1 compiled request hooks and dual-mode 
     expect(closed).toBe(true);
     expect(poolReleased).toBe(1);
   });
+
+  test("evaluates a shared locals getter once per Fastify request across multiple scoped services", async () => {
+    let reads = 0;
+    const RequestSeq = service.require<number>()("requestSeq");
+    const First = service("first", {
+      requires: { requestSeq: RequestSeq },
+      make: ({ requestSeq }) => requestSeq,
+    });
+    const Second = service("second", {
+      requires: { requestSeq: RequestSeq },
+      make: ({ requestSeq }) => requestSeq,
+    });
+
+    const app = createFastifyApp(
+      {
+        services: createModule().scoped(First).scoped(Second),
+        locals: () => ({
+          get requestSeq(): number {
+            reads += 1;
+            return reads;
+          },
+        }),
+        bindings: ["first", "second"],
+      },
+      (instance) => {
+        instance.get("/seq", (request) => {
+          const { first, second } =
+            request.getDecorator<InferRequestServices<typeof app>>("services");
+          return { first, second };
+        });
+      },
+    );
+
+    try {
+      const res1 = await app.inject("/seq");
+      expect(res1.statusCode).toBe(200);
+      expect(res1.json()).toEqual({ first: 1, second: 1 });
+      expect(reads).toBe(1);
+
+      const res2 = await app.inject("/seq");
+      expect(res2.statusCode).toBe(200);
+      expect(res2.json()).toEqual({ first: 2, second: 2 });
+      expect(reads).toBe(2);
+    } finally {
+      await app.close();
+    }
+  });
 });

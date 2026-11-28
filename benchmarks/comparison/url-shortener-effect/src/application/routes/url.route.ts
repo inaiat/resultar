@@ -7,8 +7,15 @@ import type { UrlError } from '../../domain/errors/url.errors.js'
 import { UrlService } from '../../domain/usecase/url.usecase.js'
 import { respondWithError, UrlApi } from '../url-api.js'
 
-const urlErrorResponse = (error: UrlError) =>
-  Effect.succeed(respondWithError(error.statusCode, error.message))
+const urlErrorResponse = (error: UrlError) => {
+  if (error.statusCode >= 500) {
+    return Effect.as(
+      Effect.logError('Request failed', error),
+      respondWithError(error.statusCode, 'Internal Server Error'),
+    )
+  }
+  return Effect.succeed(respondWithError(error.statusCode, error.message))
+}
 
 export const UrlRoutes = HttpApiBuilder.group(UrlApi, 'urls', (handlers) =>
   handlers

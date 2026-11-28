@@ -1,5 +1,17 @@
 # resultar
 
+## 5.1.0
+
+### Minor Changes
+
+- 310626a: Optimize async `ResultTask.gen` continuation fast paths, fuse `tryPromise` + `map`/`mapErr`/`andThen`/`orElse` combinator chains directly inside `runResult()`, pool root contexts and fiber handles in `ResultTask.runFork()` (plus fuse `inspectCause()` over `tryPromise` and reuse a shared closure in `asVoid()`), optimize `createTaggedError` metadata copying and add opt-in `captureStackTrace: false`, compile tree-shaped Tier 1 DI plans into allocation-free closures, and eliminate hot-path overhead in `benchmarks/comparison/url-shortener-resultar`.
+- Move the offline coding-agent guides, version manifest, manuals and executable recipes from `resultar` to `resultar-check`. Install the checker as a dev dependency. Update agent configurations that point to `node_modules/resultar/dist/agent/SKILL.md` or `node_modules/resultar/dist/llms.txt` to use the corresponding files under `node_modules/resultar-check/dist/`.
+
+### Patch Changes
+
+- Check `Error.stackTraceLimit` writability before mutating it in `createTaggedError({ captureStackTrace: false })` (supporting `--frozen-intrinsics` and read-only descriptors), and ensure shared `STEP_LOCAL` dependencies in `resultar-di` Tier 1 sync plans are evaluated at most once per request.
+- 5eb2e8e: Preserve cooperative scheduling budgets across chained `tryPromise`/`andThen` fast paths in `ResultTask.runResult()`, restore `Error.stackTraceLimit` via `try`/`finally` while preserving absent limits when a tagged error base constructor throws, deliver `options.services` getter failures through the returned fiber in `ResultTask.runFork()` while disposing external abort listeners, and keep inherited/subclass methods intact during single-key tagged-error metadata copying. Also align URL creation validation and insert-time alias collision handling in `url-shortener-effect` and use graceful `worker.close()` during shutdown in `url-shortener-resultar`.
+
 ## 5.0.0
 
 ### Major Changes

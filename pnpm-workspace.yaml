@@ -7,18 +7,18 @@ packages:
   - packages/check/native-packages/*
 
 catalog:
-  "@nestjs/common": 12.6.0
-  "@nestjs/core": 12.6.0
-  "@nestjs/platform-fastify": 12.6.0
+  "@nestjs/common": 12.6.3
+  "@nestjs/core": 12.6.3
+  "@nestjs/platform-fastify": 12.6.3
   "@stryker-mutator/core": 10.1.1
   "@stryker-mutator/vitest-runner": 10.1.1
-  "@types/node": 26.6.6
+  "@types/node": 26.6.11
   "@vitest/coverage-v8": 5.1.1
   "@vitest/ui": 5.1.1
-  fallow: 3.48.0
+  fallow: 3.50.0
   fastify: 5.12.8
   fastify-plugin: 6.0.1
-  hono: 4.13.21
+  hono: 4.13.23
   reflect-metadata: 0.2.2
   rxjs: 7.8.2
   typebox: 1.4.7

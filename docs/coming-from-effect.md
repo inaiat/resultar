@@ -4,17 +4,19 @@ This guide maps Effect core concepts and APIs to **Resultar** so teams evaluatin
 
 ## Why teams choose Resultar
 
-- **Zero-ceremony core**: `Result<T, E>` (sync) and `ResultTask<A, E, R>` (lazy async + typed DI + scopes) cover day-to-day backend and library work without a monolithic standard library, plus an opt-in `resultar/async` compatibility subpath for legacy eager `ResultAsync`.
+- **Zero-ceremony core**: `Result<T, E>` (sync) and `ResultTask<A, E, R>` (lazy async + typed DI + scopes) cover day-to-day backend and library work without a monolithic standard library.
 - **Native JavaScript idioms**: real `Error` subclasses (`createTaggedError` with `$variable` interpolation, `.fingerprint`, `.findCause`, and `redact()`), native `AbortSignal` / `AbortError` cancellation, `Promise` interoperability, and zero-runtime-overhead TypeScript inference.
-- **Fine-grained tree-shaking**: `"sideEffects": false` across all library packages plus dedicated subpaths (`resultar/result`, `resultar/task`, `resultar/async`, `resultar/match`, `resultar/tagged`, `resultar/retry`, `resultar/function`).
+- **Fine-grained tree-shaking**: `"sideEffects": false` across all library packages plus dedicated subpaths (`resultar/result`, `resultar/task`, `resultar/match`, `resultar/tagged`, `resultar/retry`, `resultar/function`).
 - **Opt-in observability**: `Tracer.noop` by default with zero runtime overhead; attach `Tracer.memory()` or a custom `TaskTracer` (e.g. OpenTelemetry adapter) per run via `{ tracer }`, named `ResultTask.fn('span', ...)`, `task.withSpan('span')`, and `TaskLocal`.
 - **Native Go static analyzer (`resultar-check`)**: 43 semantic TypeScript-Go rules catching accidental `await task` (`no-await-result-task`), unhandled results, `Promise<ResultTask<...>>` leaks, leaked scopes, and anti-patterns — with `--fix` for safe corrections, `migrate-v5`, LSP, and Zed/VS Code/Cursor setup.
 
 ## Performance & footprint vs Effect v4
 
-Measured on Node.js 26.13.1 (Apple M4, `arm64`, 0 errors). Even with strict CSP (`RESULTAR_JIT=0`, zero dynamic code generation), Resultar beats Effect 4.1.4 in 9 of 10 runtime suites, and `resultar-di` uses 100% pure-JS monomorphic plans.
+The November 22 baseline and November 27 update both ran on Node.js 26.13.1 (Apple M4, `arm64`). In the November 22 baseline, even with strict CSP (`RESULTAR_JIT=0`, zero dynamic code generation), Resultar beats Effect 4.1.4 in 9 of 10 runtime suites, and `resultar-di` uses 100% pure-JS monomorphic plans.
 
 ### Runtime microbenchmarks (reproducible in this repo)
+
+The table uses the [November 22 baseline](../benchmarks/results/2026-11-22.md), which measured both JIT modes. The [November 27 snapshot](../benchmarks/results/2026-11-27-url-shortener.md) reports 15.30× for the 50-step sync pipeline and 2.19× for the 50-step flatMap chain in that run.
 
 | Scenario | Resultar v5 (`JIT=1`) | Effect 4.1.4 | Speedup | Resultar v5 (`JIT=0` / CSP) |
 | :--- | ---: | ---: | ---: | ---: |

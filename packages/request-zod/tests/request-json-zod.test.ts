@@ -1,12 +1,13 @@
 import { strict as assert } from "node:assert";
 import { AbortError, Cause, Match, type ResultTask } from "resultar";
-import { describe, it } from "vite-plus/test";
-import { z } from "zod";
+import { describe, expectTypeOf, it } from "vite-plus/test";
+import { z as zodFromPackage } from "zod";
 
 import {
   requestJson,
   requestJsonZod,
   RequestError,
+  z,
   type RequestJsonMapError,
 } from "../src/index.js";
 
@@ -40,6 +41,38 @@ class MappedZodError extends Error {
 const expectType = <T>(value: T) => value;
 
 describe("requestJsonZod", () => {
+  it("reexports Zod as z with exact ResultTask inference", async () => {
+    assert.equal(z, zodFromPackage);
+    const schema = z.object({
+      name: z.string(),
+      plan: z.enum(["free", "team"]),
+      email: z.string().optional(),
+    });
+    type Account = z.output<typeof schema>;
+    expectTypeOf<Account>().toEqualTypeOf<{
+      name: string;
+      plan: "free" | "team";
+      email?: string;
+    }>();
+    const payload = { name: "Ada", plan: "team" };
+    let calls = 0;
+    const request = async (signal: AbortSignal) => {
+      assert.equal(signal.aborted, false);
+      calls += 1;
+      return createFetchResponse(payload);
+    };
+    const task = requestJson({ request, schema });
+    expectTypeOf(task).toEqualTypeOf<ResultTask<Account, RequestError>>();
+    assert.equal(calls, 0);
+    assert.deepEqual(await task.runPromise(), payload);
+    assert.equal(calls, 1);
+
+    const second = await task.runResult();
+    assert.ok(second.isOk());
+    assert.deepEqual(second.value, payload);
+    assert.equal(calls, 2);
+  });
+
   it("given valid Zod payload, then returns lazy ResultTask with z.output schema type", async () => {
     let calls = 0;
     const task = requestJson({
@@ -103,6 +136,42 @@ describe("requestJsonZod", () => {
     assert.ok(result.isErr());
     assert.ok(result.error instanceof MappedZodError);
     assert.equal(result.error.kind, "not-found");
+  });
+
+  it("supports partial mapError with orElse and function shorthand", async () => {
+    class MissingUserError extends Error {
+      readonly code = "MISSING";
+
+      constructor(message: string) {
+        super(message);
+        this.name = "MissingUserError";
+      }
+    }
+
+    const partialTask = requestJsonZod({
+      request: async () => createFetchResponse("Not Found", 404),
+      schema: userSchema,
+      mapError: {
+        404: () => new MissingUserError("missing"),
+        orElse: ({ reason }) => new MappedZodError(reason, "unavailable"),
+      },
+    });
+    expectType<ResultTask<z.output<typeof userSchema>, MissingUserError | MappedZodError>>(
+      partialTask,
+    );
+    const partialResult = await partialTask.runResult();
+    assert.ok(partialResult.isErr());
+    assert.ok(partialResult.error instanceof MissingUserError);
+
+    const fnTask = requestJsonZod({
+      request: async () => createFetchResponse({ email: "invalid", name: "Ada" }),
+      schema: userSchema,
+      mapError: ({ reason }) => new MappedZodError(reason, "fallback"),
+    });
+    expectType<ResultTask<z.output<typeof userSchema>, MappedZodError>>(fnTask);
+    const fnResult = await fnTask.runResult();
+    assert.ok(fnResult.isErr());
+    assert.equal(fnResult.error.kind, "validation");
   });
 
   it("given invalid Zod payload, then returns validation error context", async () => {

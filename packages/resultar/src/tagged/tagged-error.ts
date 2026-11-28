@@ -728,6 +728,11 @@ export function createTaggedError<
   return createTaggedErrorClass(options, false)
 }
 
+const canWriteStackTraceLimit = (): boolean => {
+  const descriptor = Object.getOwnPropertyDescriptor(Error, 'stackTraceLimit')
+  return descriptor !== undefined && (descriptor.writable === true || descriptor.set !== undefined)
+}
+
 const createTaggedErrorClass = <
   Tag extends string,
   MessageTemplate extends string,
@@ -767,7 +772,7 @@ const createTaggedErrorClass = <
     public constructor(props?: ConstructorProps<MessageTemplate>) {
       const message = interpolate(props)
       const cause = props?.cause
-      const restoreStackTraceLimit = skipStackTrace && Object.hasOwn(Error, 'stackTraceLimit')
+      const restoreStackTraceLimit = skipStackTrace && canWriteStackTraceLimit()
       const previousLimit = Error.stackTraceLimit
       if (restoreStackTraceLimit) {
         Error.stackTraceLimit = 0

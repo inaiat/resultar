@@ -164,12 +164,11 @@ You do not need to rewrite your application to use Resultar. Start with a single
 ```mermaid
 flowchart LR
   R["<b>1. Result&lt;T, E&gt;</b><br/>Synchronous value (Ok / Err)<br/>Zero async overhead"]
-  RT["<b>2. ResultTask&lt;T, E, R&gt;</b><br/>Lazy async workflow<br/>Explicit run boundary"]
+  RT["<b>2. ResultTask&lt;T, E, R&gt;</b><br/>Lazy async workflow<br/>tryPromise · retry · service"]
   PR["<b>Promise&lt;Result&lt;T, E&gt;&gt;</b><br/>Native boundary execution<br/>await task.runResult()"]
 
-  R -->|"async I/O, retry, timeout"| RT
+  R -->|"yield* in ResultTask.gen"| RT
   RT -->|"task.runResult()"| PR
-  PR -->|"fromResultAsync(factory)"| RT
 ```
 
 - **`T`** is the success value.
@@ -179,20 +178,16 @@ flowchart LR
 Use `ResultTask` for all asynchronous workflows and run it explicitly, including when
 `R = never`. Providing services or closing a scope leaves a Task. Calling `task.runResult()`
 (or `ResultTask.runResult(task)`) starts the task and returns a native `Promise<Result<T, E>>`
-that you `await` directly at your imperative boundary. Legacy eager `ResultAsync` constructors live
-in the opt-in `"resultar/async"` subpath.
-The inbound `ResultTask.fromResultAsync` bridge structurally accepts any `PromiseLike<Result<T, E>>`
-(including native `Promise<Result<T, E>>` and opt-in `ResultAsync` from `"resultar/async"`).
+that you `await` directly at your imperative boundary.
 Use `ResultTask.tryPromise({ try, catch })` directly for raw Promise-returning drivers.
 New async repositories and use cases return Tasks without an `async` modifier;
 native Promise returns belong to explicit runners or framework/SDK boundaries.
 See the [boundary decision table](../../DOCUMENTATION.md#promise-boundaries-and-application-contracts).
 
-| Stage                         | When to use it                                                                                 | Key APIs                                                                                  |
-| ----------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| **1. `Result<T, E>`**         | Synchronous validation, parsing, and domain rules                                              | `ok`, `err`, `map`, `andThen`, `Result.gen`, `match`                                      |
-| **2. `ResultTask<T, E, R>`**  | All asynchronous workflows; add typed services, cooperative cancellation, and scopes as needed | `ResultTask.gen`, `ResultTask.fn`, `tryPromise`, `service`, `acquireRelease`, `runResult` |
-| **`resultar/async` (opt-in)** | Legacy eager in-flight `ResultAsync` compatibility boundaries                                  | `ResultAsync.gen`, `tryResultAsync`, `fromPromise`, `okAsync`, `errAsync`                 |
+| Stage                        | When to use it                                                                                 | Key APIs                                                                                  |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| **1. `Result<T, E>`**        | Synchronous validation, parsing, and domain rules                                              | `ok`, `err`, `map`, `andThen`, `Result.gen`, `match`                                      |
+| **2. `ResultTask<T, E, R>`** | All asynchronous workflows; add typed services, cooperative cancellation, and scopes as needed | `ResultTask.gen`, `ResultTask.fn`, `tryPromise`, `service`, `acquireRelease`, `runResult` |
 
 ### Sync-First, Pay-As-You-Go Execution Engine
 
@@ -949,7 +944,7 @@ signal handling and bounded HTTP draining at an explicit execution boundary.
 
 ## Coding Agents
 
-Every npm release bundles `dist/llms.txt`, `dist/agent/SKILL.md`, focused API and service references, and a compiled workflow example inside `node_modules/resultar/dist/agent/`. Point your coding agent to those installed files so its guidance always matches the exact installed version.
+Install `resultar-check` as a development dependency for offline agent guides and executable examples. Start at `node_modules/resultar-check/dist/llms.txt` and compare the package versions in `dist/agent/versions.json` there with the versions in your project.
 
 ---
 

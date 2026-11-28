@@ -1,5 +1,10 @@
+import { Effect, Layer, Logger } from 'effect'
+import { HttpRouter, HttpServer } from 'effect/http'
 import { afterAll, beforeAll, describe, expect, it } from 'vite-plus/test'
 
+import { HttpAppLive } from '../src/app.js'
+import { DatabaseError } from '../src/domain/errors/url.errors.js'
+import { UrlService } from '../src/domain/usecase/url.usecase.js'
 import { build } from './helpers/helper.js'
 
 describe('API Integration Tests', () => {
@@ -158,6 +163,53 @@ describe('API Integration Tests', () => {
 
       expect(result.ok).toEqual(expect.any(Number))
       expect(result.ok).toBeGreaterThan(0)
+    })
+  })
+
+  describe('5xx error sanitization', () => {
+    it('logs full DatabaseError server-side and returns a generic message for 500 responses', async () => {
+      const logged: unknown[] = []
+      const failingError = DatabaseError.query(new Error('connect ECONNREFUSED 10.0.0.42:27017'))
+      const failingService = Layer.succeed(UrlService, {
+        createShortUrl: () => Effect.fail(failingError),
+        getOriginalUrl: () => Effect.fail(failingError),
+        listUrlStats: () => Effect.fail(failingError),
+        deleteUrl: () => Effect.fail(failingError),
+      })
+      const captureLogger = Logger.layer([
+        Logger.make(({ message }) => {
+          logged.push(message)
+        }),
+      ])
+      const { handler, dispose } = HttpRouter.toWebHandler(
+        HttpAppLive.pipe(
+          Layer.provideMerge(failingService),
+          Layer.provide(captureLogger),
+          Layer.provide(HttpServer.layerServices),
+        ),
+      )
+
+      try {
+        const response = await handler(new Request('http://localhost/api/v1/abc'))
+        expect(response.status).toBe(500)
+        const body = (await response.json()) as {
+          success: boolean
+          error: string
+          message: string
+          statusCode: number
+        }
+        expect(body).toEqual({
+          success: false,
+          error: 'Internal Server Error',
+          message: 'Internal Server Error',
+          statusCode: 500,
+        })
+        expect(JSON.stringify(body)).not.toContain('10.0.0.42')
+        expect(JSON.stringify(body)).not.toContain('ECONNREFUSED')
+        expect(JSON.stringify(logged)).toContain('10.0.0.42')
+      } finally {
+        await dispose()
+      }
     })
   })
 })

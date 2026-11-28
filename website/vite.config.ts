@@ -1,6 +1,6 @@
 import { defineConfig, type UserConfig } from "vite-plus";
 
-const ignorePatterns = ["dist", "src/generated", "scripts", "node_modules"];
+const ignorePatterns = ["dist", "public", "src/generated", "scripts", "node_modules"];
 
 const config: UserConfig = defineConfig({
   base: "./",

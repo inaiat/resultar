@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   closeQueue: vi.fn(),
   closeWorker: vi.fn(),
   disconnect: vi.fn(),
+  workerListeners: new Map<string, (...args: unknown[]) => void>(),
   processor: undefined as
     | undefined
     | ((job: { data: { urlId: string; accessedAt: string } }) => Promise<undefined>),
@@ -42,7 +43,9 @@ vi.mock('bullmq', () => ({
     waitUntilReady = state.waitUntilReady
     run = state.run
     close = state.closeWorker
-    on = vi.fn()
+    on = vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+      state.workerListeners.set(event, listener)
+    })
   },
 }))
 describe('URL access queue resources', () => {
@@ -51,6 +54,7 @@ describe('URL access queue resources', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    state.workerListeners.clear()
     state.add.mockResolvedValue({ id: 'job-1' })
     state.waitUntilReady.mockResolvedValue(undefined)
     state.run.mockResolvedValue(undefined)
@@ -166,5 +170,34 @@ describe('URL access queue resources', () => {
         right: { _tag: 'Die', defect: redisFailure },
       },
     })
+  })
+
+  it('logs failed worker jobs with job identifier, urlId, and failure cause', async () => {
+    const scope = createUrlAccessQueueModule(options, logger, () =>
+      ResultTask.ok(undefined),
+    ).scope()
+    try {
+      await scope.useSingletons(['urlAccessRecorder'], () => ResultTask.ok(undefined)).runPromise()
+      const failedListener = state.workerListeners.get('failed')
+      expect(failedListener).toBeTypeOf('function')
+
+      const jobFailure = new Error('MongoDB write failed')
+      failedListener?.(
+        { id: 'job-42', data: { urlId: 'url-42', accessedAt: '2026-01-01T00:00:00.000Z' } },
+        jobFailure,
+      )
+      expect(logger.error).toHaveBeenCalledWith(
+        { err: jobFailure, jobId: 'job-42', urlId: 'url-42' },
+        'URL access job failed',
+      )
+
+      failedListener?.(undefined, jobFailure)
+      expect(logger.error).toHaveBeenCalledWith(
+        { err: jobFailure, jobId: undefined, urlId: undefined },
+        'URL access job failed',
+      )
+    } finally {
+      await scope.close().runPromise()
+    }
   })
 })

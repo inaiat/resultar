@@ -33,6 +33,8 @@ export type {
   RequestJsonInput,
   RequestJsonInvalidJsonErrorContext,
   RequestJsonMapError,
+  RequestJsonMapErrorHandlers,
+  RequestJsonMapErrorInput,
   RequestJsonMapErrorResult,
   RequestJsonMappedDecodeInput,
   RequestJsonMappedInput,

@@ -50,6 +50,9 @@ export const createUrlAccessQueueModule = (
           worker.on('error', (err) => {
             logger.error({ err }, 'URL access worker unavailable')
           })
+          worker.on('failed', (job, err) => {
+            logger.error({ err, jobId: job?.id, urlId: job?.data.urlId }, 'URL access job failed')
+          })
           connection.on('error', (err) => {
             logger.error({ err }, 'URL access Redis unavailable')
           })

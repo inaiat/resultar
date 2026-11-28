@@ -177,6 +177,7 @@ const generatedCursorRule = (project: string): string =>
     "",
     "# Resultar diagnostics",
     "",
+    "Read `node_modules/resultar-check/dist/agent/SKILL.md` for the coding guide and check signatures against the installed packages.",
     `Run \`pnpm exec resultar-check --project ${project}\` after editing TypeScript files that use \`resultar\`, \`resultar-di\`, or \`resultar-app\`.`,
     `Use \`pnpm exec resultar-check --fix --project ${project}\` to apply safe correction fixes automatically.`,
     "Never auto-silence `no-discard` diagnostics with `void` unless discarding the result is explicitly intentional.",

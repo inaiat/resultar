@@ -34,6 +34,24 @@ const requiredFiles = [
   "dist/cli.cjs",
   "dist/cli.d.ts",
   "dist/cli.js",
+  "dist/llms.txt",
+  "dist/agent/SKILL.md",
+  "dist/agent/versions.json",
+  "dist/agent/references/api.md",
+  "dist/agent/references/anti-patterns.md",
+  "dist/agent/references/patterns.md",
+  "dist/agent/references/services.md",
+  "dist/agent/references/integrations.md",
+  "dist/agent/references/review-checklist.md",
+  "dist/agent/examples/workflow.mjs",
+  "dist/agent/examples/contracts.mjs",
+  "dist/agent/manual/DOCUMENTATION.md",
+  "dist/agent/manual/docs/api-inventory.md",
+  "dist/agent/manual/docs/recipes.md",
+  "dist/agent/manual/packages/di/README.md",
+  "dist/agent/agents/openai.yaml",
+  "dist/agent/examples/contracts.mts",
+  "dist/agent/examples/workflow.mts",
   "package.json",
   "schema.json",
 ] as const;
@@ -212,9 +230,10 @@ for (const file of requiredFiles) {
   }
 }
 
-const allowedPackedFile =
-  /^(?:LICENSE|README\.md|package\.json|schema\.json|dist\/cli\.(?:cjs|js|d\.ts))$/;
-const unexpectedFiles = packedFiles.filter((file) => !allowedPackedFile.test(file));
+const expectedFiles = new Set<string>(requiredFiles);
+const unexpectedFiles = packedFiles.filter(
+  (file) => !expectedFiles.has(file) && !/^dist\/agent\/manual\/[a-zA-Z0-9_./-]+\.md$/u.test(file),
+);
 
 if (unexpectedFiles.length > 0) {
   throw new Error(`Packed check package contains unexpected files:\n${unexpectedFiles.join("\n")}`);
@@ -231,5 +250,5 @@ if (!nativePackedFiles.includes(nativeBinaryPath)) {
 }
 
 process.stdout.write(
-  `Check package smoke passed with ${packedFiles.length} launcher files and ${nativePackedFiles.length} native files.\n`,
+  `Check package smoke passed with ${packedFiles.length} checker files and ${nativePackedFiles.length} native files.\n`,
 );

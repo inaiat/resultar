@@ -10,9 +10,9 @@
 
 ## Installed version first
 
-For an npm installation, read `node_modules/resultar/dist/llms.txt` and
-`node_modules/resultar/dist/agent/SKILL.md`. These files ship with the installed version, along
-with a compiled workflow recipe and `versions.json` for companion-package compatibility.
+Install `resultar-check` as a development dependency for the offline index at
+`node_modules/resultar-check/dist/llms.txt` and the guide at `node_modules/resultar-check/dist/agent/SKILL.md`.
+Compare `node_modules/resultar-check/dist/agent/versions.json` with your installed runtime and companion packages.
 The links below follow development on `main`; they are not a substitute for versioned local types.
 
 ## Start here

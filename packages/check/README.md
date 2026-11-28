@@ -40,6 +40,14 @@ Node.js 24 or newer is required by the launcher. A separate TypeScript installat
 If the platform package is missing, the command reports an installation error; version 3 has no
 JavaScript or TypeScript fallback.
 
+## Offline coding-agent guides
+
+Point your agent at `node_modules/resultar-check/dist/llms.txt` for the index or
+`node_modules/resultar-check/dist/agent/SKILL.md` for the coding guide. The same
+directory contains reference sheets, package manuals and executable TypeScript recipes.
+The recipes use your project's `resultar` installation. Check `dist/agent/versions.json`
+in this package for the runtime and companion versions used to build the guides.
+
 ## Quick Start
 
 Add the command to the project scripts:

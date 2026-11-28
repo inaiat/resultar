@@ -1,5 +1,18 @@
 # resultar-nestjs
 
+## 2.0.1
+
+### Patch Changes
+
+- 62c813d: Distribute `ModuleInfo<M>` over union `ServiceModule` branches (such as factories with conditional `.override(...)`) while still rejecting unions with any invalid module branch, fixing false `invalidModule` errors under TypeScript 5.x.
+- Updated dependencies
+- Updated dependencies [fdeef4c]
+- Updated dependencies [310626a]
+- Updated dependencies [5eb2e8e]
+- Updated dependencies
+  - resultar@5.1.0
+  - resultar-di@2.1.0
+
 ## 2.0.0
 
 ### Major Changes

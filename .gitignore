@@ -4,6 +4,7 @@
 /editors/vscode/*.vsix
 /website/dist
 /website/node_modules
+/website/public/llms.txt
 /website/src/generated
 /benchmarks/node_modules
 /benchmarks/.tmp

@@ -48,9 +48,10 @@ test("adapter receives bounded feedback, optional guidance and no grading answer
     writeFileSync(
       adapter,
       `import assert from 'node:assert/strict';
-import {readFileSync, existsSync} from 'node:fs';
+import {existsSync} from 'node:fs';
+import {text} from 'node:stream/consumers';
 import {cases} from ${JSON.stringify(pathToFileURL(fixtures).href)};
-const request = JSON.parse(readFileSync(0, 'utf8'));
+const request = JSON.parse(await text(process.stdin));
 assert.equal(request.guidance.length, 0);
 assert.equal('reference' in request, false);
 assert.equal(existsSync('checks.mts'), false);
@@ -93,9 +94,9 @@ test("with-skill guidance loads only the references selected for each scenario",
     writeFileSync(
       adapter,
       `import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {text} from 'node:stream/consumers';
 import {cases} from ${JSON.stringify(pathToFileURL(fixtures).href)};
-const request = JSON.parse(readFileSync(0, 'utf8'));
+const request = JSON.parse(await text(process.stdin));
 const fixture = cases.find(item => item.id === request.id);
 assert.deepEqual(request.guidance.map(item => item.file), [...new Set(['SKILL.md', 'references/api.md', ...(fixture.guidance ?? ['references/review-checklist.md'])])]);
 assert.ok(request.guidance.every(item => item.content.length > 0));

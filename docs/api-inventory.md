@@ -307,6 +307,8 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `RequestJsonInput` | Type | — |
 | `RequestJsonInvalidJsonErrorContext` | Type | — |
 | `RequestJsonMapError` | Type | — |
+| `RequestJsonMapErrorHandlers` | Type | — |
+| `RequestJsonMapErrorInput` | Type | — |
 | `RequestJsonMapErrorResult` | Type | — |
 | `RequestJsonMappedDecodeInput` | Type | — |
 | `RequestJsonMappedInput` | Type | — |
@@ -351,6 +353,8 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `RequestJsonInput` | Type | — |
 | `RequestJsonInvalidJsonErrorContext` | Type | — |
 | `RequestJsonMapError` | Type | — |
+| `RequestJsonMapErrorHandlers` | Type | — |
+| `RequestJsonMapErrorInput` | Type | — |
 | `RequestJsonMapErrorResult` | Type | — |
 | `RequestJsonMappedDecodeInput` | Type | — |
 | `RequestJsonMappedInput` | Type | — |
@@ -399,6 +403,8 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `RequestJsonInput` | Type | — |
 | `RequestJsonInvalidJsonErrorContext` | Type | — |
 | `RequestJsonMapError` | Type | — |
+| `RequestJsonMapErrorHandlers` | Type | — |
+| `RequestJsonMapErrorInput` | Type | — |
 | `RequestJsonMapErrorResult` | Type | — |
 | `RequestJsonMappedDecodeInput` | Type | — |
 | `RequestJsonMappedInput` | Type | — |
@@ -417,6 +423,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `RequestJsonZodInput` | Type | — |
 | `RequestJsonZodMappedInput` | Type | — |
 | `UndiciJsonResponseData` | Type | — |
+| `z` | Value | `$brand`, `$input`, `$output`, `INVALID`, `NEVER`, `TimePrecision`, `ZodAny`, `ZodArray`, `ZodBase64URL`, `ZodBase64`, `ZodBigIntFormat`, `ZodBigInt`, `ZodBoolean`, `ZodCIDRv4`, `ZodCIDRv6`, `ZodCUID2`, `ZodCUID`, `ZodCatch`, `ZodCodec`, `ZodCompileAsyncError`, `ZodCompileUnsupportedError`, `ZodCreditCard`, `ZodCustomStringFormat`, `ZodCustom`, `ZodDate`, `ZodDefault`, `ZodDiscriminatedUnion`, `ZodE164`, `ZodEmail`, `ZodEmoji`, `ZodEnum`, `ZodError`, `ZodExactOptional`, `ZodFile`, `ZodFirstPartyTypeKind`, `ZodFunction`, `ZodGUID`, `ZodIBAN`, `ZodIPv4`, `ZodIPv6`, `ZodISODateTime`, `ZodISODate`, `ZodISODuration`, `ZodISOTime`, `ZodInstanceOf`, `ZodIntersection`, `ZodIssueCode`, `ZodJWT`, `ZodKSUID`, `ZodLazy`, `ZodLiteral`, `ZodMAC`, `ZodMap`, `ZodNaN`, `ZodNanoID`, `ZodNever`, `ZodNonOptional`, `ZodNull`, `ZodNullable`, `ZodNumberFormat`, `ZodNumber`, `ZodObject`, `ZodOptional`, `ZodPipe`, `ZodPrefault`, `ZodPreprocess`, `ZodPromise`, `ZodReadonly`, `ZodRealError`, `ZodRecord`, `ZodSet`, `ZodStringFormat`, `ZodString`, `ZodSuccess`, `ZodSymbol`, `ZodTemplateLiteral`, `ZodTransform`, `ZodTuple`, `ZodType`, `ZodULID`, `ZodURL`, `ZodUUID`, `ZodUndefined`, `ZodUnion`, `ZodUnknown`, `ZodVoid`, `ZodXID`, `ZodXor`, `_ZodString`, `_default`, `_function`, `any`, `array`, `base64`, `base64url`, `bigint`, `boolean`, `catch`, `check`, `cidrv4`, `cidrv6`, `clone`, `codec`, `coerce`, `compile`, `config`, `core`, `creditCard`, `cuid2`, `cuid`, `currencyCode`, `custom`, `date`, `decodeAsync`, `decode`, `deepPartial`, `describe`, `discriminatedUnion`, `e164`, `email`, `emoji`, `encodeAsync`, `encode`, `endsWith`, `enum`, `exactOptional`, `file`, `flattenError`, `float32`, `float64`, `formatError`, `fromJSONSchema`, `function`, `getDiscriminatedOption`, `getErrorMap`, `globalRegistry`, `gt`, `gte`, `guid`, `hash`, `hex`, `hostname`, `httpUrl`, `iban`, `includes`, `input`, `instanceof`, `int32`, `int64`, `int`, `intersection`, `invertCodec`, `ipv4`, `ipv6`, `iso`, `json`, `jwt`, `keyof`, `ksuid`, `lazy`, `length`, `literal`, `locales`, `looseObject`, `looseRecord`, `lowercase`, `lt`, `lte`, `mac`, `map`, `maxLength`, `maxSize`, `memoizer`, `meta`, `mime`, `minLength`, `minSize`, `multipleOf`, `nan`, `nanoid`, `nativeEnum`, `negative`, `never`, `nonnegative`, `nonoptional`, `nonpositive`, `normalize`, `null`, `nullable`, `nullish`, `number`, `object`, `optional`, `output`, `overwrite`, `parseAsync`, `parse`, `partialRecord`, `pipe`, `positive`, `prefault`, `preprocess`, `prettifyError`, `promise`, `properties`, `property`, `readonly`, `record`, `refine`, `regex`, `regexes`, `registry`, `safeDecodeAsync`, `safeDecode`, `safeEncodeAsync`, `safeEncode`, `safeParseAsync`, `safeParse`, `setErrorMap`, `set`, `size`, `slugify`, `startsWith`, `strictObject`, `stringFormat`, `string`, `stringbool`, `success`, `superRefine`, `symbol`, `templateLiteral`, `toJSONSchema`, `toLowerCase`, `toUpperCase`, `toZod`, `transform`, `treeifyError`, `trim`, `tuple`, `uint32`, `uint64`, `ulid`, `undefined`, `union`, `unknown`, `uppercase`, `url`, `util`, `uuid`, `uuidv4`, `uuidv6`, `uuidv7`, `validateAsync`, `validate`, `void`, `withParser`, `xid`, `xor` |
 
 ## resultar
 

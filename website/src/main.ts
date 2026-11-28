@@ -4,17 +4,24 @@ import {
   DOC_LOADERS,
   DOC_TITLES,
   NAV_SECTIONS,
-  SEARCH_INDEX,
+  type SearchEntry,
   SITE_META,
   type DocPage,
 } from "./generated/site-data.js";
 import {
+  encodeBase64Utf8,
+  HERO_RESULTAR_SNIPPET,
   highlightTs,
+  renderAiShowcase,
   renderBenchmarkShowcase,
   renderBottomCta,
+  renderHeroShowcase,
   renderInteroperabilityShowcase,
+  type AiTab,
   type BenchTab,
   type Framework,
+  type HeroTab,
+  type Schema,
 } from "./home-sections.js";
 import type { PlaygroundRunResult } from "./playground-runner.js";
 import { PLAYGROUND_PRESETS } from "./presets.js";
@@ -35,13 +42,22 @@ const INSTALL_COMMANDS: Readonly<Record<"pnpm" | "npm" | "jsr", string>> = {
   jsr: `npx jsr add @inaiat/resultar@${SITE_META.version}`,
 };
 
+const homeTitle = document.title;
+const searchDialog = document.querySelector<HTMLDialogElement>("#doc-search");
+if (!searchDialog) throw new Error("Missing search dialog");
+let searchIndex: readonly SearchEntry[] | undefined = undefined;
+
 const state = {
   installTab: "pnpm" as "pnpm" | "npm" | "jsr",
+  heroTab: "resultar" as HeroTab,
+  heroRunning: false,
+  heroResult: undefined as PlaygroundRunResult | undefined,
+  aiTab: "agents-md" as AiTab,
   benchTab: "ecosystem" as BenchTab,
   framework: "Fastify" as Framework,
+  schema: "TypeBox" as Schema,
   theme: "dark" as "dark" | "light",
   sidebarOpen: false,
-  searchOpen: false,
   searchQuery: "",
   searchSelected: 0,
   playgroundCode: PLAYGROUND_PRESETS[0]?.code ?? "",
@@ -50,6 +66,7 @@ const state = {
   playgroundRunning: false,
   playgroundLoadedFromShare: false,
   playgroundRunSeq: 0,
+  playgroundOriginalCode: PLAYGROUND_PRESETS[0]?.code ?? "",
 };
 
 const escapeHtml = (value: string): string =>
@@ -62,15 +79,6 @@ const escapeHtml = (value: string): string =>
 const decodeBase64Utf8 = (encoded: string): string => {
   const bytes = Uint8Array.from(atob(encoded), (char) => char.codePointAt(0) ?? 0);
   return new TextDecoder().decode(bytes);
-};
-
-const encodeBase64Utf8 = (text: string): string => {
-  const bytes = new TextEncoder().encode(text);
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCodePoint(byte);
-  }
-  return btoa(binary);
 };
 
 const pageCache = new Map<string, DocPage>();
@@ -139,29 +147,42 @@ const toggleTheme = (): void => {
   render();
 };
 
+const renderDocLinks = (slug: string): string =>
+  NAV_SECTIONS.map(
+    (section) => `
+            <div class="sidebar-group">
+              <div class="sidebar-group-title">${escapeHtml(section.group)}</div>
+              ${section.items
+                .map(
+                  (item) =>
+                    `<a class="sidebar-link ${item.slug === slug ? "active" : ""}" ${item.slug === slug ? 'aria-current="page"' : ""} href="#/docs/${escapeHtml(item.slug)}">${escapeHtml(item.title)}</a>`,
+                )
+                .join("")}
+            </div>
+          `,
+  ).join("");
+
 const renderTopbar = (route: Route): string => {
   const isDocs = route.view === "docs";
   const isPlay = route.view === "playground";
   return `
     <header class="topbar">
       <div class="topbar-left">
-        ${
-          isDocs
-            ? `<button class="icon-btn mobile-menu-btn" type="button" data-action="toggle-sidebar" aria-controls="docs-sidebar" aria-expanded="${String(state.sidebarOpen)}" aria-label="Toggle navigation">☰</button>`
-            : ""
-        }
+        <button class="icon-btn mobile-menu-btn" type="button" data-action="toggle-sidebar" aria-controls="site-menu" aria-expanded="${String(state.sidebarOpen)}" aria-label="Toggle navigation">☰</button>
         <a class="brand" href="#/">
           <span class="brand-mark">R</span>
           <span>Resultar</span>
           <span class="version-pill">v${escapeHtml(SITE_META.version)}</span>
         </a>
-        <nav class="nav-links" aria-label="Main navigation">
-          <a class="nav-link ${isDocs && !route.slug.startsWith("packages/") && route.slug !== "resultar-check" && route.slug !== "api-inventory" && route.slug !== "benchmarks" ? "active" : ""}" href="#/docs/quickstart">Docs</a>
+        <nav id="site-menu" class="nav-links ${state.sidebarOpen ? "open" : ""}" aria-label="Main navigation">
+          <a class="nav-link ${isDocs && !route.slug.startsWith("packages/") && !route.slug.startsWith("agents/") && route.slug !== "resultar-check" && route.slug !== "api-inventory" && !route.slug.startsWith("benchmarks") ? "active" : ""}" href="#/docs/quickstart">Docs</a>
           <a class="nav-link ${isDocs && route.slug.startsWith("packages/") ? "active" : ""}" href="#/docs/packages/di">Packages</a>
           <a class="nav-link ${isDocs && route.slug === "api-inventory" ? "active" : ""}" href="#/docs/api-inventory">API</a>
-          <a class="nav-link ${isDocs && route.slug === "benchmarks" ? "active" : ""}" href="#/docs/benchmarks">Benchmarks</a>
+          <a class="nav-link ${isDocs && route.slug.startsWith("benchmarks") ? "active" : ""}" href="#/docs/benchmarks/url-shortener">Benchmarks</a>
           <a class="nav-link ${isDocs && route.slug === "resultar-check" ? "active" : ""}" href="#/docs/resultar-check">resultar-check</a>
+          <a class="nav-link ${isDocs && route.slug.startsWith("agents/") ? "active" : ""}" href="#/docs/agents/setup" title="AI &amp; Coding Agents">AI</a>
           <a class="nav-link nav-link-play ${isPlay ? "active" : ""}" href="#/playground">▶ Playground</a>
+          ${isDocs && state.sidebarOpen ? `<div class="mobile-doc-links">${renderDocLinks(route.slug)}</div>` : ""}
         </nav>
       </div>
       <div class="topbar-right">
@@ -179,124 +200,122 @@ const renderTopbar = (route: Route): string => {
 };
 
 const renderHome = (): string => {
-  const heroSnippet = `import { ResultTask } from "resultar";
+  const resultSnippet = `import { ok, err, type Result } from "resultar";
 
-const checkOrder = ResultTask.fn(function* (quantity: number) {
-  const stock = yield* ResultTask.ok(4);
-  if (quantity > stock) {
-    return yield* ResultTask.err("InsufficientStock" as const);
-  }
-  return quantity;
-});
+type Stock = Result<number, "OutOfStock">;
 
-const order = await checkOrder(5).runResult();
-console.log(order.match({
-  ok: (quantity) => \`Ready: \${quantity}\`,
-  err: (reason) => reason,
-})); // InsufficientStock`;
+const reserveOne = (left: number): Stock =>
+  left > 0 ? ok(left - 1) : err("OutOfStock");
 
-  const encodedHero = encodeBase64Utf8(heroSnippet);
+const reservePair = (left: number) =>
+  reserveOne(left).andThen(reserveOne);
+
+console.log(reservePair(2));
+console.log(reservePair(1));`;
+
   const installCmd = INSTALL_COMMANDS[state.installTab];
   const installTabs = SITE_META.version.includes("-")
     ? (["pnpm", "npm"] as const)
     : (["pnpm", "npm", "jsr"] as const);
+  let heroRunPreview: {
+    readonly running: boolean;
+    readonly ok?: boolean;
+    readonly durationMs?: number;
+    readonly output?: string;
+  } = { running: false };
+  if (state.heroRunning) {
+    heroRunPreview = { running: true };
+  } else if (state.heroResult !== undefined) {
+    const joinedLogs = state.heroResult.logs.map((entry) => entry.text).join(" · ");
+    heroRunPreview = {
+      running: false,
+      ok: state.heroResult.ok,
+      durationMs: state.heroResult.durationMs,
+      output: joinedLogs.length > 0 ? joinedLogs : (state.heroResult.error ?? "Completed"),
+    };
+  }
 
   return `
     <main class="home">
-      <section class="hero">
-        <div>
-          <div class="hero-eyebrow">Resultar v${escapeHtml(SITE_META.version)} · Fastify · Hono · NestJS · Zod · TypeBox</div>
-          <h1>Typed errors &amp; lazy tasks for the stack you already use.</h1>
-          <p class="hero-sub">
-            Start with a <code>~5.9 kB</code> <code>Result&lt;T, E&gt;</code>. Scale to lazy
-            <code>ResultTask&lt;A, E, R&gt;</code>, CSP-safe scoped DI, your own schema library, and
-            ${SITE_META.ruleCount} native TypeScript-Go checks — with standard <code>Promise</code> boundaries.
-          </p>
-          <div class="hero-actions">
-            <a class="btn btn-primary" href="#/docs/quickstart">Get Started</a>
-            <a class="btn" href="#/playground">▶ Interactive Playground</a>
-            <a class="btn" href="#/docs/benchmarks">Benchmarks</a>
-          </div>
-          <div class="install-box">
-            <div class="install-tabs">
-              ${installTabs
-                .map(
-                  (tab) =>
-                    `<button type="button" class="install-tab ${state.installTab === tab ? "active" : ""}" data-install-tab="${tab}">${tab}</button>`,
-                )
-                .join("")}
+      <section class="hero" aria-labelledby="home-title">
+        <div class="hero-grid">
+          <div class="hero-intro">
+            <div class="hero-eyebrow">
+              <span>Resultar v${escapeHtml(SITE_META.version)}</span>
+              <span aria-hidden="true">·</span>
+              <span>Sync <code>Result</code> + Lazy <code>ResultTask</code></span>
             </div>
-            <span class="install-cmd">${escapeHtml(installCmd)}</span>
-            <button type="button" class="code-btn" data-copy-raw="${escapeHtml(installCmd)}">Copy</button>
-          </div>
-        </div>
-        <div class="code-block">
-          <div class="code-header">
-            <span>workflow.ts</span>
-            <div class="code-actions">
-              <button class="code-btn code-btn-play" type="button" data-play="${encodedHero}">▶ Try Live</button>
+            <h1 id="home-title">Stop guessing what throws. <em>Put every failure in the return type.</em></h1>
+            <p class="hero-sub">
+              TypeScript signatures hide <code>throw</code> and rejected promises. Start with a
+              <code>~5.9 kB</code> <code>Result&lt;T, E&gt;</code>, compose lazy
+              <code>ResultTask</code> workflows with <code>yield*</code>, and handle every failure
+              exhaustively at your native <code>Promise</code> boundary.
+            </p>
+            <div class="hero-tools">
+              <div class="hero-actions">
+                <a class="btn btn-primary" href="#/docs/quickstart">Start in 2 minutes →</a>
+                <a class="btn" href="#/playground">▶ Open Playground</a>
+                <a class="home-text-link" href="#/docs/gradual-adoption">Gradual adoption</a>
+              </div>
+              <div class="install-box" role="group" aria-label="Install the core package">
+                <div class="install-tabs">
+                  ${installTabs
+                    .map(
+                      (tab) =>
+                        `<button type="button" class="install-tab ${state.installTab === tab ? "active" : ""}" aria-pressed="${String(state.installTab === tab)}" data-install-tab="${tab}">${tab}</button>`,
+                    )
+                    .join("")}
+                </div>
+                <span class="install-cmd">${escapeHtml(installCmd)}</span>
+                <button type="button" class="code-btn" data-copy-raw="${escapeHtml(installCmd)}">Copy</button>
+              </div>
             </div>
+            <ul class="hero-proof" aria-label="Key highlights">
+              <li><strong>~5.9 kB</strong> 0-dep core</li>
+              <li><strong>Native Promise</strong> <code>.runResult()</code></li>
+              <li><strong>${String(SITE_META.ruleCount)}</strong> TypeScript-Go rules</li>
+              <li><strong>1.25×</strong> Effect HTTP req/s</li>
+            </ul>
           </div>
-          <pre><code>${highlightTs(heroSnippet)}</code></pre>
+          ${renderHeroShowcase(state.heroTab, heroRunPreview)}
         </div>
       </section>
 
-      <section class="metrics-strip">
-        <a class="metric-card" href="#/docs/core-guide">
-          <div class="metric-val">~5.9 kB</div>
-          <div class="metric-label"><code>resultar/result</code> gzipped · 0 deps · tree-shakeable</div>
-        </a>
-        <a class="metric-card" href="#/docs/packages/fastify">
-          <div class="metric-val">95%+ raw</div>
-          <div class="metric-label">Fastify, Hono &amp; NestJS DI · 100% CSP-safe plans</div>
-        </a>
-        <a class="metric-card" href="#/docs/benchmarks">
-          <div class="metric-val">66.4k req/s</div>
-          <div class="metric-label">Real HTTP + Mongo + Redis + BullMQ · <code>35.6k</code> redirects</div>
-        </a>
-        <a class="metric-card" href="#/docs/resultar-check">
-          <div class="metric-val">140 ms</div>
-          <div class="metric-label">${SITE_META.ruleCount} native Go rules · 120 files · <code>--fix</code> &amp; LSP</div>
-        </a>
+      <section class="adoption-section" aria-labelledby="adoption-heading">
+        <header class="section-head">
+          <div>
+            <h2 id="adoption-heading">Adopt one function at a time</h2>
+            <p class="section-sub">Two core primitives, zero global runtime lock-in. Stop at whichever stage solves your problem.</p>
+          </div>
+        </header>
+        <div class="adoption-grid">
+          <article>
+            <code>Stage 1 · Result&lt;T, E&gt;</code>
+            <h3>One synchronous function</h3>
+            <p>Replace hidden throws or <code>null</code> checks in parsers and domain rules. Chain steps with <code>andThen</code> or <code>Result.gen</code> with zero async overhead.</p>
+            <a href="#/playground?code=${encodeURIComponent(encodeBase64Utf8(resultSnippet))}">Try this in Playground →</a>
+          </article>
+          <article>
+            <code>Stage 2 · ResultTask&lt;T, E&gt;</code>
+            <h3>Lazy async workflows</h3>
+            <p>Combine sync <code>Result</code> and async <code>tryPromise</code> with <code>yield*</code>, retries, and timeouts. Run at the edge with <code>await task.runResult()</code> for a native <code>Promise&lt;Result&gt;</code>.</p>
+            <a href="#/docs/async-workflow">Compose a workflow →</a>
+          </article>
+          <article>
+            <code>Stage 3 · ResultTask&lt;T, E, R&gt;</code>
+            <h3>Typed services &amp; scopes</h3>
+            <p>Track required dependencies and LIFO resource cleanup in <code>R</code>. Supply real drivers in Fastify, Hono, or NestJS and swap test fakes at the boundary.</p>
+            <a href="#/docs/packages/di#testing-with-overrides">Provide and test services →</a>
+          </article>
+        </div>
       </section>
 
-      ${renderInteroperabilityShowcase(state.framework)}
+      ${renderInteroperabilityShowcase(state.framework, state.schema)}
+
+      ${renderAiShowcase(state.aiTab, SITE_META.ruleCount)}
 
       ${renderBenchmarkShowcase(state.benchTab)}
-
-      <div class="home-section-label">Built for Day-One Simplicity &amp; Production Scale</div>
-      <section class="feature-grid">
-        <a class="feature-card" href="#/docs/core-guide">
-          <span class="feature-tag">CORE ERGONOMICS</span>
-          <h3>Result, ResultTask &amp; Tagged Errors</h3>
-          <p>Real Error subclasses with <code>$var</code> interpolation, redaction, exhaustive <code>Match</code>, <code>runSync</code>, error-aware <code>Retry.policy</code>, and ~100% core mutation coverage.</p>
-        </a>
-        <a class="feature-card" href="#/docs/packages/di">
-          <span class="feature-tag">INTEROPERABLE DI</span>
-          <h3>One Module Across Any Framework</h3>
-          <p>Register <code>value</code>, <code>singleton</code>, <code>scoped</code>, and <code>resource</code> services once and run them in Fastify, Hono, NestJS, workers, or scripts.</p>
-        </a>
-        <a class="feature-card" href="#/playground?preset=concurrency">
-          <span class="feature-tag">CONCURRENCY</span>
-          <h3>Ref, Deferred, Queue &amp; Fibers</h3>
-          <p>Structured concurrency with bounded FIFO backpressure, interruption-safe waiters, lossless shutdown draining, and <code>task.forkChild().scoped()</code>.</p>
-        </a>
-        <a class="feature-card" href="#/playground?preset=observability">
-          <span class="feature-tag">OBSERVABILITY</span>
-          <h3>Zero-Overhead TaskLocal &amp; Tracer</h3>
-          <p>Fiber-inherited ambient context, opt-in <code>TaskTracer</code> / <code>Tracer.memory()</code>, <code>withSpan</code>, named <code>ResultTask.fn</code>, and span traces on <code>Cause</code>.</p>
-        </a>
-        <a class="feature-card" href="#/docs/resultar-check">
-          <span class="feature-tag">STATIC ANALYSIS &amp; LSP</span>
-          <h3>Native TypeScript-Go Checker</h3>
-          <p>Catch unhandled results, accidental <code>await task</code>, and leaked scopes in 140 ms — with <code>--fix</code> and live Zed, VS Code &amp; Cursor LSP support.</p>
-        </a>
-        <a class="feature-card" href="#/docs/agents/skill">
-          <span class="feature-tag">CODING AGENTS</span>
-          <h3>Version-Matched Agent Guides</h3>
-          <p>Ships <code>dist/agent/SKILL.md</code> and <code>dist/llms.txt</code> directly inside <code>node_modules/resultar</code>, verified by executable agent evals.</p>
-        </a>
-      </section>
 
       ${renderBottomCta()}
     </main>
@@ -319,20 +338,8 @@ const renderDocs = (page: DocPage): string => {
 
   return `
     <div class="docs-layout">
-      <nav id="docs-sidebar" class="sidebar ${state.sidebarOpen ? "open" : ""}" aria-label="Documentation">
-        ${NAV_SECTIONS.map(
-          (section) => `
-            <div class="sidebar-group">
-              <div class="sidebar-group-title">${escapeHtml(section.group)}</div>
-              ${section.items
-                .map(
-                  (item) =>
-                    `<a class="sidebar-link ${item.slug === page.slug ? "active" : ""}" ${item.slug === page.slug ? 'aria-current="page"' : ""} href="#/docs/${escapeHtml(item.slug)}">${escapeHtml(item.title)}</a>`,
-                )
-                .join("")}
-            </div>
-          `,
-        ).join("")}
+      <nav id="docs-sidebar" class="sidebar" aria-label="Documentation">
+        ${renderDocLinks(page.slug)}
       </nav>
       <main class="doc-main">
         <div class="doc-meta">
@@ -422,6 +429,9 @@ const logClassForLevel = (level: "log" | "info" | "warn" | "error"): string => {
   return "";
 };
 
+const renderPlaygroundHighlight = (code: string): string =>
+  highlightTs(code.endsWith("\n") ? `${code} ` : code);
+
 const renderPlayground = (): string => {
   const result = state.playgroundResult;
   let outputBody = state.playgroundLoadedFromShare
@@ -470,12 +480,13 @@ const renderPlayground = (): string => {
         </div>
       </div>
 
-      <div class="pg-presets" role="tablist" aria-label="Playground presets">
+      <div class="pg-presets" role="group" aria-label="Playground presets">
         ${PLAYGROUND_PRESETS.map(
           (preset) => `
             <button
               type="button"
               class="preset-btn ${state.playgroundPresetId === preset.id ? "active" : ""}"
+              aria-pressed="${String(state.playgroundPresetId === preset.id)}"
               data-preset="${escapeHtml(preset.id)}"
               title="${escapeHtml(preset.description)}"
             >
@@ -490,14 +501,22 @@ const renderPlayground = (): string => {
         <div class="pg-pane">
           <div class="pg-pane-head">
             <span>playground.ts</span>
-            <span>Imports from "resultar" work directly</span>
+            <span id="pg-editor-help">Tab indents · Esc focuses Run</span>
           </div>
-          <textarea
-            id="pg-editor"
-            class="pg-editor"
-            spellcheck="false"
-            aria-label="TypeScript playground editor"
-          >${escapeHtml(state.playgroundCode)}</textarea>
+          <div class="pg-editor-wrap">
+            <pre id="pg-highlight" class="pg-highlight" aria-hidden="true"><code>${renderPlaygroundHighlight(state.playgroundCode)}</code></pre>
+            <textarea
+              id="pg-editor"
+              class="pg-editor"
+              spellcheck="false"
+              autocapitalize="off"
+              autocomplete="off"
+              autocorrect="off"
+              wrap="off"
+              aria-describedby="pg-editor-help"
+              aria-label="TypeScript playground editor"
+            >${escapeHtml(state.playgroundCode)}</textarea>
+          </div>
         </div>
         <div class="pg-pane">
           <div class="pg-pane-head">
@@ -512,12 +531,13 @@ const renderPlayground = (): string => {
 };
 
 const renderSearchResults = (): string => {
-  const results = searchDocs(SEARCH_INDEX, state.searchQuery, 16);
+  if (!searchIndex) return '<p class="search-message" role="status">Loading search…</p>';
+  const results = searchDocs(searchIndex ?? [], state.searchQuery, 16);
   const clampedIdx = Math.min(state.searchSelected, Math.max(0, results.length - 1));
   state.searchSelected = clampedIdx;
 
   return results.length === 0
-    ? `<div style="padding:20px;text-align:center;color:var(--text-dim)">No results for "${escapeHtml(state.searchQuery)}"</div>`
+    ? `<div class="search-message" role="status">No results for "${escapeHtml(state.searchQuery)}"</div>`
     : results
         .map(
           ({ entry }, idx) => `
@@ -536,31 +556,6 @@ const renderSearchResults = (): string => {
                     `,
         )
         .join("");
-};
-
-const renderSearchModal = (): string => {
-  if (!state.searchOpen) return "";
-  return `
-    <div class="modal-backdrop" data-action="close-search-backdrop">
-      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Search documentation">
-        <div class="modal-input-row">
-          <span style="color:var(--text-dim)">⌕</span>
-          <input
-            id="search-input"
-            class="modal-input"
-            type="text"
-            value="${escapeHtml(state.searchQuery)}"
-            placeholder="Search guides, API symbols (Deferred, TaskLocal…), or ${SITE_META.ruleCount} rules…"
-            autocomplete="off"
-          />
-          <span class="kbd">ESC</span>
-        </div>
-        <div class="modal-results">
-          ${renderSearchResults()}
-        </div>
-      </div>
-    </div>
-  `;
 };
 
 const executePlayground = async (): Promise<void> => {
@@ -586,6 +581,7 @@ const syncPlaygroundFromRoute = (route: Route): void => {
   state.playgroundRunSeq += 1;
   state.playgroundRunning = false;
   if (route.code !== undefined) {
+    state.playgroundOriginalCode = route.code;
     state.playgroundCode = route.code;
     state.playgroundPresetId = "custom";
     state.playgroundResult = undefined;
@@ -593,13 +589,12 @@ const syncPlaygroundFromRoute = (route: Route): void => {
     return;
   }
   state.playgroundLoadedFromShare = false;
-  if (route.presetId !== undefined) {
-    const preset = PLAYGROUND_PRESETS.find((item) => item.id === route.presetId);
-    if (preset !== undefined) {
-      state.playgroundPresetId = preset.id;
-      state.playgroundCode = preset.code;
-      state.playgroundResult = undefined;
-    }
+  const preset = PLAYGROUND_PRESETS.find((item) => item.id === route.presetId);
+  if (preset) {
+    state.playgroundPresetId = preset.id;
+    state.playgroundOriginalCode = preset.code;
+    state.playgroundCode = preset.code;
+    state.playgroundResult = undefined;
   }
 };
 
@@ -611,7 +606,8 @@ const scrollToAnchor = (anchor: string | undefined): void => {
   globalThis.requestAnimationFrame(() => {
     const target = document.querySelector(`#${CSS.escape(anchor)}`);
     if (target !== null) {
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      target.classList.add("anchor-target");
+      target.scrollIntoView({ block: "start" });
     }
   });
 };
@@ -623,36 +619,50 @@ const render = (): void => {
 
   let mainContent = "";
   if (route.view === "home") {
+    document.title = homeTitle;
     mainContent = renderHome();
   } else if (route.view === "playground") {
+    document.title = "Playground · Resultar";
     mainContent = renderPlayground();
   } else {
+    document.title = `${DOC_TITLES[route.slug]} · Resultar`;
     const page = pageCache.get(route.slug);
     if (page === undefined) {
       mainContent = `<main class="doc-main"><p style="color:var(--text-muted)">Loading documentation…</p></main>`;
       void loadDocPage(route.slug).then(() => {
-        render();
-        scrollToAnchor(route.anchor);
+        const current = parseHashRoute();
+        if (current.view === "docs" && current.slug === route.slug) {
+          render();
+          scrollToAnchor(current.anchor);
+        }
       });
     } else {
       mainContent = renderDocs(page);
     }
   }
 
-  root.innerHTML = `${renderTopbar(route)}${mainContent}${renderSearchModal()}`;
-
-  if (state.searchOpen) {
-    const input = document.querySelector("#search-input");
-    if (input instanceof HTMLInputElement) {
-      input.focus();
-      input.setSelectionRange(input.value.length, input.value.length);
-    }
-  }
+  root.innerHTML = `${renderTopbar(route)}${mainContent}`;
 
   const editor = document.querySelector("#pg-editor");
+  const highlight = document.querySelector("#pg-highlight");
+  const highlightCode = highlight?.querySelector("code");
   if (editor instanceof HTMLTextAreaElement) {
+    const syncHighlightScroll = (): void => {
+      if (highlight instanceof HTMLElement) {
+        highlight.scrollTop = editor.scrollTop;
+        highlight.scrollLeft = editor.scrollLeft;
+      }
+    };
+    const syncHighlight = (): void => {
+      if (highlightCode instanceof HTMLElement) {
+        highlightCode.innerHTML = renderPlaygroundHighlight(editor.value);
+      }
+      syncHighlightScroll();
+    };
+    editor.addEventListener("scroll", syncHighlightScroll);
     editor.addEventListener("input", () => {
       state.playgroundCode = editor.value;
+      syncHighlight();
     });
     editor.addEventListener("keydown", (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -660,7 +670,11 @@ const render = (): void => {
         void executePlayground();
         return;
       }
-      if (event.key === "Tab") {
+      if (event.key === "Escape") {
+        document.querySelector<HTMLButtonElement>('[data-action="pg-run"]')?.focus();
+        return;
+      }
+      if (event.key === "Tab" && !event.shiftKey) {
         event.preventDefault();
         const start = editor.selectionStart;
         const end = editor.selectionEnd;
@@ -668,21 +682,39 @@ const render = (): void => {
         editor.selectionStart = start + 2;
         editor.selectionEnd = start + 2;
         state.playgroundCode = editor.value;
+        syncHighlight();
       }
     });
+    syncHighlightScroll();
   }
 };
 
-const openSearch = (): void => {
-  state.searchOpen = true;
-  state.searchSelected = 0;
-  render();
+const updateSearchResults = (): void => {
+  const results = searchDialog.querySelector(".modal-results");
+  if (results) results.innerHTML = renderSearchResults();
 };
 
-const closeSearch = (): void => {
-  if (!state.searchOpen) return;
-  state.searchOpen = false;
+const openSearch = async (): Promise<void> => {
+  state.searchSelected = 0;
+  updateSearchResults();
+  searchDialog.showModal();
+  searchDialog.querySelector<HTMLInputElement>("input")?.focus();
+  if (!searchIndex) {
+    try {
+      const { SEARCH_INDEX } = await import("./generated/search-index.js");
+      searchIndex = SEARCH_INDEX;
+      if (searchDialog.open) updateSearchResults();
+    } catch {
+      const results = searchDialog.querySelector(".modal-results");
+      if (results) results.textContent = "Search could not load. Reopen it to try again.";
+    }
+  }
+};
+
+const toggleMenu = (): void => {
+  state.sidebarOpen = !state.sidebarOpen;
   render();
+  document.querySelector<HTMLButtonElement>(".mobile-menu-btn")?.focus({ preventScroll: true });
 };
 
 document.addEventListener("click", (event: MouseEvent) => {
@@ -693,11 +725,11 @@ document.addEventListener("click", (event: MouseEvent) => {
   const action = actionEl?.dataset.action;
 
   if (action === "open-search") {
-    openSearch();
+    void openSearch();
     return;
   }
-  if (action === "close-search-backdrop" && target === actionEl) {
-    closeSearch();
+  if (target === searchDialog || action === "close-search") {
+    searchDialog.close();
     return;
   }
   if (action === "toggle-theme") {
@@ -705,26 +737,38 @@ document.addEventListener("click", (event: MouseEvent) => {
     return;
   }
   if (action === "toggle-sidebar") {
-    state.sidebarOpen = !state.sidebarOpen;
-    render();
+    toggleMenu();
     return;
   }
   if (action === "pg-run") {
     void executePlayground();
     return;
   }
-  if (action === "pg-reset") {
-    const preset =
-      PLAYGROUND_PRESETS.find((item) => item.id === state.playgroundPresetId) ??
-      PLAYGROUND_PRESETS[0];
-    if (preset !== undefined) {
-      state.playgroundRunSeq += 1;
-      state.playgroundRunning = false;
-      state.playgroundLoadedFromShare = false;
-      state.playgroundCode = preset.code;
-      state.playgroundResult = undefined;
+  if (action === "hero-run") {
+    if (state.heroRunning) return;
+    state.heroTab = "resultar";
+    state.heroRunning = true;
+    render();
+    void import("./playground-runner.js").then(async ({ runPlaygroundCode }) => {
+      state.heroResult = await runPlaygroundCode(HERO_RESULTAR_SNIPPET);
+      state.heroRunning = false;
       render();
-    }
+      document
+        .querySelector<HTMLButtonElement>('[data-action="hero-run"]')
+        ?.focus({ preventScroll: true });
+    });
+    return;
+  }
+  if (action === "pg-reset") {
+    state.playgroundRunSeq += 1;
+    state.playgroundRunning = false;
+    state.playgroundResult = undefined;
+    state.playgroundLoadedFromShare = state.playgroundPresetId === "custom";
+    state.playgroundCode = state.playgroundOriginalCode;
+    render();
+    document
+      .querySelector<HTMLButtonElement>('[data-action="pg-reset"]')
+      ?.focus({ preventScroll: true });
     return;
   }
   if (action === "pg-share") {
@@ -746,6 +790,35 @@ document.addEventListener("click", (event: MouseEvent) => {
     if (tab === "pnpm" || tab === "npm" || tab === "jsr") {
       state.installTab = tab;
       render();
+      document
+        .querySelector<HTMLButtonElement>(`[data-install-tab="${tab}"]`)
+        ?.focus({ preventScroll: true });
+    }
+    return;
+  }
+
+  const heroBtn = target.closest<HTMLElement>("[data-hero-tab]");
+  if (heroBtn?.dataset.heroTab !== undefined) {
+    const tab = heroBtn.dataset.heroTab;
+    if (tab === "resultar" || tab === "throw") {
+      state.heroTab = tab;
+      render();
+      document
+        .querySelector<HTMLButtonElement>(`[data-hero-tab="${tab}"]`)
+        ?.focus({ preventScroll: true });
+    }
+    return;
+  }
+
+  const aiBtn = target.closest<HTMLElement>("[data-ai-tab]");
+  if (aiBtn?.dataset.aiTab !== undefined) {
+    const tab = aiBtn.dataset.aiTab;
+    if (tab === "agents-md" || tab === "cursor" || tab === "cli") {
+      state.aiTab = tab;
+      render();
+      document
+        .querySelector<HTMLButtonElement>(`[data-ai-tab="${tab}"]`)
+        ?.focus({ preventScroll: true });
     }
     return;
   }
@@ -753,7 +826,7 @@ document.addEventListener("click", (event: MouseEvent) => {
   const benchBtn = target.closest<HTMLElement>("[data-bench-tab]");
   if (benchBtn?.dataset.benchTab !== undefined) {
     const tab = benchBtn.dataset.benchTab;
-    if (tab === "adapters" || tab === "core" || tab === "ecosystem") {
+    if (tab === "adapters" || tab === "core" || tab === "ecosystem" || tab === "create") {
       state.benchTab = tab;
       render();
       document
@@ -764,11 +837,22 @@ document.addEventListener("click", (event: MouseEvent) => {
   }
 
   const framework = target.closest<HTMLElement>("[data-framework]")?.dataset.framework;
-  if (framework === "Fastify" || framework === "Hono" || framework === "NestJS") {
+  const schema = target.closest<HTMLElement>("[data-schema]")?.dataset.schema;
+  if (schema === "Zod" || schema === "TypeBox" || schema === "Type guard") {
+    state.schema = schema;
+  } else if (framework === "Fastify" || framework === "Hono" || framework === "NestJS") {
     state.framework = framework;
-    render();
+  }
+  const stack = target.closest<HTMLElement>(".service-showcase");
+  if (stack && (schema !== undefined || framework !== undefined)) {
+    const expanded = stack.querySelector("details")?.open ?? false;
+    stack.outerHTML = renderInteroperabilityShowcase(state.framework, state.schema, expanded);
     document
-      .querySelector<HTMLButtonElement>(`[data-framework="${framework}"]`)
+      .querySelector<HTMLButtonElement>(
+        schema === undefined
+          ? `[data-framework="${state.framework}"]`
+          : `[data-schema="${state.schema}"]`,
+      )
       ?.focus({ preventScroll: true });
     return;
   }
@@ -820,10 +904,10 @@ document.addEventListener("click", (event: MouseEvent) => {
   }
 
   if (target.closest(".search-item") !== null) {
-    state.searchOpen = false;
+    searchDialog.close();
   }
-  if (target.closest(".sidebar-link") !== null) {
-    state.sidebarOpen = false;
+  if (state.sidebarOpen && target.closest("#site-menu a") !== null) {
+    toggleMenu();
   }
 });
 
@@ -832,8 +916,7 @@ document.addEventListener("input", (event: Event) => {
   if (target instanceof HTMLInputElement && target.id === "search-input") {
     state.searchQuery = target.value;
     state.searchSelected = 0;
-    const results = document.querySelector(".modal-results");
-    if (results !== null) results.innerHTML = renderSearchResults();
+    updateSearchResults();
   }
 });
 
@@ -841,55 +924,66 @@ document.addEventListener("keydown", (event: KeyboardEvent) => {
   if (event.isComposing) return;
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
-    if (state.searchOpen) closeSearch();
-    else openSearch();
+    if (searchDialog.open) searchDialog.close();
+    else void openSearch();
     return;
   }
   if (
     event.key === "/" &&
-    !state.searchOpen &&
+    !searchDialog.open &&
     !(document.activeElement instanceof HTMLInputElement) &&
     !(document.activeElement instanceof HTMLTextAreaElement)
   ) {
     event.preventDefault();
-    openSearch();
+    void openSearch();
     return;
   }
-  if (!state.searchOpen) return;
-
+  if (!searchDialog.open) {
+    if (event.key === "Escape" && state.sidebarOpen) toggleMenu();
+    return;
+  }
   if (event.key === "Escape") {
     event.preventDefault();
-    closeSearch();
+    searchDialog.close();
     return;
   }
-  const results = searchDocs(SEARCH_INDEX, state.searchQuery, 16);
-  if (event.key === "ArrowDown") {
-    event.preventDefault();
-    state.searchSelected = Math.min(results.length - 1, state.searchSelected + 1);
-    render();
-  } else if (event.key === "ArrowUp") {
-    event.preventDefault();
-    state.searchSelected = Math.max(0, state.searchSelected - 1);
-    render();
-  } else if (event.key === "Enter" && results[state.searchSelected] !== undefined) {
-    event.preventDefault();
-    const chosen = results[state.searchSelected];
-    state.searchOpen = false;
-    if (chosen !== undefined) {
-      globalThis.location.hash = chosen.entry.route;
+  if (event.key === "Tab") {
+    const controls = [...searchDialog.querySelectorAll<HTMLElement>("input, button, a[href]")];
+    const first = controls[0];
+    const last = controls.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
     }
-    render();
+    return;
+  }
+  if (!(event.target instanceof HTMLInputElement)) return;
+  const links = searchDialog.querySelectorAll<HTMLAnchorElement>(".search-item");
+  if (links.length === 0) return;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    links[state.searchSelected]?.classList.remove("selected");
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    state.searchSelected = Math.max(0, Math.min(links.length - 1, state.searchSelected + delta));
+    const selected = links[state.searchSelected];
+    selected?.classList.add("selected");
+    selected?.scrollIntoView({ block: "nearest" });
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    links[state.searchSelected]?.click();
   }
 });
 
 globalThis.addEventListener("hashchange", () => {
   const route = parseHashRoute();
   state.sidebarOpen = false;
+  if (searchDialog.open) searchDialog.close();
   syncPlaygroundFromRoute(route);
   render();
-  if (route.view === "docs") {
-    scrollToAnchor(route.anchor);
-  }
+  scrollToAnchor(route.view === "docs" ? route.anchor : undefined);
 });
 
 initTheme();

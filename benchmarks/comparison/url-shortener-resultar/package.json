@@ -25,7 +25,7 @@
   },
   "dependencies": {
     "@fastify/autoload": "^6.6.0",
-    "@fastify/type-provider-typebox": "^6.1.0",
+    "@fastify/type-provider-typebox": "^6.3.0",
     "bullmq": "6.7.9",
     "fastify": "catalog:",
     "ioredis": "6.1.0",
@@ -46,7 +46,7 @@
     "@vitest/coverage-v8": "catalog:",
     "@vitest/ui": "catalog:",
     "fallow": "catalog:",
-    "fallow-type-aware": "3.48.0",
+    "fallow-type-aware": "3.50.0",
     "pino": "^10.4.0",
     "pino-pretty": "^13.2.0",
     "resultar-check": "workspace:*",

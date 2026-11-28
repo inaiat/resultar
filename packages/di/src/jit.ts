@@ -122,11 +122,13 @@ const compileDepsRecord = (
   };
 };
 
-const isTreeShapedPlan = (
+const isSingleEvalStep = (step: PlanStep): boolean =>
+  step.tag === STEP_DYNAMIC || step.tag === STEP_LOCAL;
+
+const countStepReferences = (
   steps: readonly PlanStep[],
   outputRefs: readonly (readonly [string, number])[],
-): boolean => {
-  // Pure tree (each non-leaf/dynamic step referenced at most once) can execute directly without a values[] table.
+): number[] => {
   const refCounts = Array.from({ length: steps.length }, () => 0);
   for (const step of steps) {
     if (step.tag === STEP_SINGLETON || step.tag === STEP_DYNAMIC) {
@@ -138,12 +140,16 @@ const isTreeShapedPlan = (
   for (const [, idx] of outputRefs) {
     refCounts[idx] = (refCounts[idx] ?? 0) + 1;
   }
-  for (const [i, step] of steps.entries()) {
-    if (step.tag === STEP_DYNAMIC && (refCounts[i] ?? 0) > 1) {
-      return false;
-    }
-  }
-  return true;
+  return refCounts;
+};
+
+const isTreeShapedPlan = (
+  steps: readonly PlanStep[],
+  outputRefs: readonly (readonly [string, number])[],
+): boolean => {
+  // Pure tree (each per-request step referenced at most once) can execute directly without a values[] table.
+  const refCounts = countStepReferences(steps, outputRefs);
+  return steps.every((step, i) => !isSingleEvalStep(step) || (refCounts[i] ?? 0) <= 1);
 };
 
 const compilePureClosureTier1 = (

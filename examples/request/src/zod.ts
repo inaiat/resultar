@@ -1,8 +1,9 @@
-import { z } from "zod";
-
 import { createTaggedError, ResultTask } from "resultar";
-import { type RequestJsonMapError } from "resultar-request";
-import { requestJson as requestJsonZod } from "resultar-request-zod";
+import {
+  requestJson as requestJsonZod,
+  z,
+  type RequestJsonMapError,
+} from "resultar-request-zod";
 
 import { closeServer, startAccountExampleServer } from "./account-server.js";
 

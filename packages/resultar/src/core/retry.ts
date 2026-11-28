@@ -184,6 +184,7 @@ export const observeRetry = <E>(
   context: RetryContext,
 ): void | Promise<void> => {
   try {
+    // Stryker disable next-line OptionalChaining: calling undefined onRetry inside this best-effort try/catch throws and is swallowed identically.
     const observed = policy.onRetry?.(error, context)
     if (isPromiseLike(observed)) return ignoreObserverRejection(observed)
   } catch {

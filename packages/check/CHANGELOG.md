@@ -1,5 +1,19 @@
 # resultar-check
 
+## 6.1.0
+
+### Minor Changes
+
+- Move the offline coding-agent guides, version manifest, manuals and executable recipes from `resultar` to `resultar-check`. Install the checker as a dev dependency. Update agent configurations that point to `node_modules/resultar/dist/agent/SKILL.md` or `node_modules/resultar/dist/llms.txt` to use the corresponding files under `node_modules/resultar-check/dist/`.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [310626a]
+- Updated dependencies [5eb2e8e]
+- Updated dependencies
+  - resultar@5.1.0
+
 ## 6.0.0
 
 ### Major Changes

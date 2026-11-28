@@ -107,7 +107,7 @@ Resultar error mapping.
 | `request`         | `(signal: AbortSignal) => Promise<Response>` factory invoked on each Task execution and retry    |
 | `schema`          | TypeBox schema used for runtime validation and `Static` success inference                        |
 | `validationError` | Static or computed validation failure message                                                    |
-| `mapError`        | Status-specific and category-specific domain error mapping                                       |
+| `mapError`        | Domain error mapping via `{ [status]?, ..., orElse }`, a single function, or all four categories |
 | `retry`           | Attempts, delay, backoff, jitter, `when`, and `onRetry` policy inherited from `resultar-request` |
 
 Pass an `AbortSignal` at the execution boundary via `.runResult({ signal })` / `.runExit({ signal })`,

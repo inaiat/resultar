@@ -1,7 +1,7 @@
 import pino from 'pino'
 import { defineAppConfig } from 'resultar-config'
 import { Redis } from 'ioredis'
-import { Db, MongoClient } from 'mongodb'
+import { Db, MongoClient, ObjectId } from 'mongodb'
 import { ResultTask } from 'resultar'
 import { describe, expect, it, vi } from 'vite-plus/test'
 
@@ -54,6 +54,40 @@ const createTestAppConfig = (startupReadiness = false) =>
     },
     properties: appConfigProperties,
   })
+
+const stubLazyMigration = (events: string[]) => {
+  const gate: { release?: () => void } = {}
+  const pending = new Promise<undefined>((resolve) => {
+    gate.release = () => {
+      resolve(undefined)
+    }
+  })
+  const migrate = vi.spyOn(urlCollection, 'migrate').mockImplementation(() =>
+    ResultTask.fromPromise(async () => {
+      events.push('migrate:start')
+      await pending
+      events.push('migrate:done')
+    }),
+  )
+  const originalCreateModel = urlCollection.createModel
+  const insertOne = vi.fn(() => {
+    events.push('insertOne')
+    return ResultTask.ok({
+      _id: new ObjectId(),
+      shortCode: 'alias-1',
+      originalUrl: 'https://example.com',
+      accessCount: 0,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+  })
+  vi.spyOn(urlCollection, 'createModel').mockImplementation((args) => ({
+    ...originalCreateModel(args),
+    insertOne,
+  }))
+  return { gate, migrate }
+}
 
 describe('production Service tokens through Resultar native DI', () => {
   // oxlint-disable-next-line eslint/max-statements -- Exercise a single DI scope through startup, requests, and disposal.
@@ -160,6 +194,42 @@ describe('production Service tokens through Resultar native DI', () => {
       await expect(app.ready()).rejects.toThrow()
       expect(migrate).not.toHaveBeenCalled()
       expect(closeMongo).toHaveBeenCalledOnce()
+    } finally {
+      await app.close()
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('provisions unique indexes once before the first write even when STARTUP_READINESS=false', async () => {
+    const ping = vi.spyOn(Db.prototype, 'command').mockResolvedValue({ ok: 1 })
+    const events: string[] = []
+    const { gate, migrate } = stubLazyMigration(events)
+    const settings = await createTestAppConfig(false).load().runPromise()
+    const app = createApp(settings, { server: { logger: false } })
+    try {
+      await app.ready()
+      expect(ping).not.toHaveBeenCalled()
+      expect(migrate).not.toHaveBeenCalled()
+
+      const payload = {
+        shortCode: 'alias-1',
+        originalUrl: 'https://example.com',
+        accessCount: 0,
+        isActive: true,
+      }
+      const firstWrite = app.services.urlRepository.insert(payload).runResult()
+      const secondWrite = app.services.urlRepository.insert(payload).runResult()
+      await Promise.resolve()
+      expect(events).toEqual(['migrate:start'])
+
+      gate.release?.()
+      const [firstResult, secondResult] = await Promise.all([firstWrite, secondWrite])
+      expect(firstResult.isOk() && secondResult.isOk()).toBe(true)
+      expect(migrate).toHaveBeenCalledOnce()
+      expect(events).toEqual(['migrate:start', 'migrate:done', 'insertOne', 'insertOne'])
+
+      expect((await app.services.urlRepository.insert(payload).runResult()).isOk()).toBe(true)
+      expect(migrate).toHaveBeenCalledOnce()
     } finally {
       await app.close()
       vi.restoreAllMocks()

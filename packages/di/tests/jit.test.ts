@@ -2,6 +2,7 @@ import { ResultTask } from "resultar";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 
 import { createModule, service } from "../src/index.js";
+import { compileSyncSubgraph } from "../src/jit.js";
 
 const initialJitEnv = process.env.RESULTAR_JIT;
 
@@ -901,5 +902,52 @@ describe("resultar-di static subgraph JIT tiers and dual-mode parity", () => {
     } finally {
       Reflect.deleteProperty(Object.prototype, setterKey);
     }
+  });
+
+  test("evaluates a shared local getter at most once per resolution when multiple scoped services depend on it", () => {
+    const definitions = new Map([
+      [
+        "first",
+        {
+          kind: "sync" as const,
+          dependencies: ["requestSeq"],
+          lifetime: "scoped" as const,
+          rawSyncFactory: (deps: Readonly<Record<string, unknown>>) => deps.requestSeq,
+        },
+      ],
+      [
+        "second",
+        {
+          kind: "sync" as const,
+          dependencies: ["requestSeq"],
+          lifetime: "scoped" as const,
+          rawSyncFactory: (deps: Readonly<Record<string, unknown>>) => deps.requestSeq,
+        },
+      ],
+    ]);
+
+    const plan = compileSyncSubgraph(
+      definitions,
+      ["first", "second", "requestSeq"],
+      ["requestSeq"],
+      () => undefined,
+    );
+    expect(plan).toBeDefined();
+    if (plan === undefined) return;
+
+    let reads = 0;
+    const liveLocals = {
+      get requestSeq(): number {
+        reads += 1;
+        return reads;
+      },
+    };
+    const rootCache = new Map<string, unknown>();
+
+    expect(plan.resolve(rootCache, liveLocals)).toEqual({ first: 1, second: 1, requestSeq: 1 });
+    expect(reads).toBe(1);
+
+    expect(plan.resolve(rootCache, liveLocals)).toEqual({ first: 2, second: 2, requestSeq: 2 });
+    expect(reads).toBe(2);
   });
 });

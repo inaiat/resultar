@@ -131,6 +131,54 @@ describe("requestJsonTypeBox", () => {
     assert.equal(result.error.kind, "not-found");
   });
 
+  it("supports partial mapError with orElse and function shorthand", async () => {
+    class MissingTypeBoxUserError extends Error {
+      readonly code = "MISSING";
+
+      constructor(message: string) {
+        super(message);
+        this.name = "MissingTypeBoxUserError";
+      }
+    }
+
+    const partialTask = requestJsonTypeBox({
+      request: async () => createFetchResponse("Not Found", 404),
+      schema: userSchema,
+      mapError: {
+        404: () => new MissingTypeBoxUserError("missing"),
+        orElse: ({ reason }) => new MappedTypeBoxError(reason, "unavailable"),
+      },
+    });
+    expectTypeOf(partialTask).toEqualTypeOf<
+      ResultTask<UserSample, MissingTypeBoxUserError | MappedTypeBoxError>
+    >();
+    const partialResult = await partialTask.runResult();
+    assert.ok(partialResult.isErr());
+    assert.ok(partialResult.error instanceof MissingTypeBoxUserError);
+
+    const fallbackResult = await requestJsonTypeBox({
+      request: async () => createFetchResponse("Bad Gateway", 502),
+      schema: userSchema,
+      mapError: {
+        404: () => new MissingTypeBoxUserError("missing"),
+        orElse: ({ reason }) => new MappedTypeBoxError(reason, "unavailable"),
+      },
+    }).runResult();
+    assert.ok(fallbackResult.isErr());
+    assert.ok(fallbackResult.error instanceof MappedTypeBoxError);
+    assert.equal(fallbackResult.error.kind, "http");
+
+    const fnTask = requestJsonTypeBox({
+      request: async () => createFetchResponse({ name: userSample.name }),
+      schema: userSchema,
+      mapError: ({ reason }) => new MappedTypeBoxError(reason, "fallback"),
+    });
+    expectTypeOf(fnTask).toEqualTypeOf<ResultTask<UserSample, MappedTypeBoxError>>();
+    const fnResult = await fnTask.runResult();
+    assert.ok(fnResult.isErr());
+    assert.equal(fnResult.error.kind, "validation");
+  });
+
   it("given invalid TypeBox payload, then returns validation error context", async () => {
     const invalidPayload = { name: userSample.name };
     let receivedErrorCount = 0;

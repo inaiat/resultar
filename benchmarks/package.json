@@ -5,7 +5,7 @@
   "scripts": {
     "bench": "pnpm --filter resultar build && node --import vite-plus/register resultar-vs-neverthrow.ts",
     "bench:check-cli": "pnpm run bench:check-native",
-    "bench:check-native": "pnpm --filter resultar-check build && pnpm --filter resultar-check native:build && node --import vite-plus/register resultar-check-native.ts",
+    "bench:check-native": "pnpm --filter resultar --filter resultar-check build && pnpm --filter resultar-check native:build && node --import vite-plus/register resultar-check-native.ts",
     "bench:neverthrow": "pnpm run bench",
     "bench:stable": "pnpm --filter resultar build && node --import vite-plus/register resultar-vs-stable.ts",
     "bench:task": "pnpm --filter resultar build && node --import vite-plus/register resultar-task-chains.ts",
@@ -31,7 +31,7 @@
     "@nestjs/core": "catalog:",
     "@nestjs/platform-fastify": "catalog:",
     "cronometro": "^7.0.1",
-    "effect": "^4.1.4",
+    "effect": "^4.1.5",
     "fastify": "catalog:",
     "hono": "catalog:",
     "neverthrow": "^8.2.0",

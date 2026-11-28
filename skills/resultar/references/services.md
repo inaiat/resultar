@@ -48,15 +48,15 @@ integration projects, including external route/controller files.
 [`resultar-request`](../../../packages/request/README.md) supplies lazy `requestJson`
 (returning `ResultTask<T, E>` directly),
 Fetch/Undici response support, validators/decoders, status and body checks, cancellation-aware retry,
-and stage-preserving domain `mapError`. Its public error helpers are `RequestError`,
+and stage-preserving domain `mapError` (supporting partial objects with `orElse`, function shorthand, or full category handlers). Its public error helpers are `RequestError`,
 `HttpResponseErrorCauseError` (also `HttpClientRequestErrorCause`),
 `baseRequestErrorHandler`, `integrationErrorHandler`, and `isHttpResponseError`.
 The README describes structured error contexts and exported transport/validation types.
 
-[`resultar-request-zod`](../../../packages/request-zod/README.md) adds `requestJsonZod` (returning `ResultTask`)
-and derives transformed success from `z.output<Schema>`.
+[`resultar-request-zod`](../../../packages/request-zod/README.md) adds `requestJsonZod` (returning `ResultTask`),
+re-exports `z`, and derives transformed success from `z.output<Schema>`.
 [`resultar-request-typebox`](../../../packages/request-typebox/README.md) adds
-`requestJsonTypeBox` (returning `ResultTask`) and infers `Static<Schema>`. Both offer
+`requestJsonTypeBox` (returning `ResultTask`), re-exports `t`, and infers `Static<Schema>`. Both offer
 package-local `requestJson` aliases and re-export the base public API.
 
 Raw Promise-returning SDK/database drivers use `ResultTask.tryPromise` directly

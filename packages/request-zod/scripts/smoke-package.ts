@@ -23,6 +23,7 @@ const expectedExports = [
   "isHttpResponseError",
   "requestJson",
   "requestJsonZod",
+  "z",
 ] as const;
 
 const isRecord = (value: unknown): value is Record<PropertyKey, unknown> =>

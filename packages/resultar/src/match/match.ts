@@ -336,7 +336,7 @@ class Matcher extends Pipeable {
     for (const item of cases) {
       const handler = resolveCaseIr(item, this.#input)
       if (handler !== undefined)
-        return new Matcher('value', this.#input, this.#select, [], {
+        return new Matcher('value', this.#input, this.#select, this.#cases, {
           matched: true,
           value: handler(this.#input as never),
         })
@@ -752,18 +752,19 @@ function valueTags(inputOrHandlers: object, handlers?: object): unknown {
     (typeof inputOrHandlers === 'object' || typeof inputOrHandlers === 'function')
   const rawTag = hasInputObject ? (inputOrHandlers as { readonly _tag?: unknown })._tag : undefined
   const lookupKey = typeof rawTag === 'number' ? String(rawTag) : rawTag
-  const validLookupKey = typeof lookupKey === 'string' || typeof lookupKey === 'symbol'
   let matchedHandler: Handler | undefined = undefined
   for (const key of Reflect.ownKeys(handlers)) {
     const entry = (handlers as Record<PropertyKey, unknown>)[key]
-    if (entry !== undefined && typeof entry !== 'function') {
-      throw new TypeError('Match handlers must be functions')
-    }
-    if (validLookupKey && key === lookupKey && entry !== undefined) {
-      matchedHandler = entry as Handler
+    if (entry !== undefined) {
+      if (typeof entry !== 'function') {
+        throw new TypeError('Match handlers must be functions')
+      }
+      if (key === lookupKey) {
+        matchedHandler = entry as Handler
+      }
     }
   }
-  if (!hasInputObject || !validLookupKey || matchedHandler === undefined) return unmatched()
+  if (matchedHandler === undefined) return unmatched()
   return matchedHandler(inputOrHandlers as never)
 }
 const withReturnType =

@@ -126,6 +126,11 @@ void test("init --editor cursor and --editor all create tasks, cursor rule, and 
   try {
     const cursorInit = runCli(dir, ["init", "--editor", "cursor"]);
     assert.equal(cursorInit.status, 0, cursorInit.stderr);
+    assert.ok(
+      readFileSync(join(dir, ".cursor", "rules", "resultar-check.mdc"), "utf8").includes(
+        "node_modules/resultar-check/dist/agent/SKILL.md",
+      ),
+    );
     assert.equal(existsSync(join(dir, ".vscode", "tasks.json")), true);
     assert.equal(existsSync(join(dir, ".cursor", "rules", "resultar-check.mdc")), true);
     assert.equal(existsSync(join(dir, ".zed", "settings.json")), false);

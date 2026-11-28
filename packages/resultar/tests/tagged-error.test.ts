@@ -604,6 +604,61 @@ describe('tagged errors', async () => {
     }
   })
 
+  it('constructs captureStackTrace: false errors safely when Error.stackTraceLimit is read-only or accessor-backed', () => {
+    const LightweightTaggedError = createTaggedError({
+      name: 'ReadOnlyLimitError',
+      message: 'Read-only $code',
+      captureStackTrace: false,
+    })
+
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Error, 'stackTraceLimit')
+    try {
+      // Read-only data property (simulates Node --frozen-intrinsics)
+      Object.defineProperty(Error, 'stackTraceLimit', {
+        value: 7,
+        writable: false,
+        configurable: true,
+        enumerable: true,
+      })
+      const readOnlyInstance = new LightweightTaggedError({ code: 'frozen' })
+      equal(readOnlyInstance.message, 'Read-only frozen')
+      equal(Error.stackTraceLimit, 7)
+
+      // Read-only accessor property (getter without setter)
+      Object.defineProperty(Error, 'stackTraceLimit', {
+        get: () => 5,
+        configurable: true,
+        enumerable: true,
+      })
+      const getterOnlyInstance = new LightweightTaggedError({ code: 'getter-only' })
+      equal(getterOnlyInstance.message, 'Read-only getter-only')
+      equal(Error.stackTraceLimit, 5)
+
+      // Writable accessor property (getter + setter): sets 0 and restores previous value
+      const writes: number[] = []
+      let currentLimit = 9
+      Object.defineProperty(Error, 'stackTraceLimit', {
+        get: () => currentLimit,
+        set: (next: number) => {
+          writes.push(next)
+          currentLimit = next
+        },
+        configurable: true,
+        enumerable: true,
+      })
+      const accessorInstance = new LightweightTaggedError({ code: 'accessor' })
+      equal(accessorInstance.message, 'Read-only accessor')
+      deepEqual(writes, [0, 9])
+      equal(currentLimit, 9)
+    } finally {
+      if (originalDescriptor === undefined) {
+        delete (Error as { stackTraceLimit?: number }).stackTraceLimit
+      } else {
+        Object.defineProperty(Error, 'stackTraceLimit', originalDescriptor)
+      }
+    }
+  })
+
   it('preserves inherited toJSON and subclass methods when single-key metadata collides', () => {
     const ToJsonTemplateError = createTaggedError({
       name: 'ToJsonTemplateError',

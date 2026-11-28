@@ -114,24 +114,24 @@ Start with synchronous `Result` values and add `ResultTask` for asynchronous wor
 ```mermaid
 flowchart LR
   R["<b>Stage 1: Result&lt;T, E&gt;</b><br/>Synchronous value (Ok / Err)<br/>Zero async overhead"]
-  RT["<b>Stage 2: ResultTask&lt;T, E&gt;</b><br/>Lazy async workflow<br/>Explicit run boundary"]
+  RT["<b>Stage 2: ResultTask&lt;T, E&gt;</b><br/>Lazy async workflow<br/>tryPromise · retry · timeout"]
   RTR["<b>Stage 3: ResultTask&lt;T, E, R&gt;</b><br/>Optional service requirements<br/>and resource scopes (R)"]
   PR["<b>Promise&lt;Result&lt;T, E&gt;&gt;</b><br/>Native boundary execution<br/>await task.runResult()"]
 
-  R -->|"async I/O, retry, timeout"| RT
+  R -->|"yield* in ResultTask.gen"| RT
   RT -->|"add services or resource ownership"| RTR
   RT -->|"task.runResult()"| PR
-  PR -->|"fromResultAsync(factory)"| RT
+  RTR -->|"provide + runResult()"| PR
 ```
 
 - **Stage 1 — `Result<T, E>`**: Use in pure parsing, validation, and domain functions.
 - **Stage 2 — `ResultTask<T, E>`**: Use for all async operations, retries, timeouts, and HTTP requests. Build work lazily and execute it with `runResult`, `runExit`, `runPromise`, or `runFork`.
 - **Stage 3 — `ResultTask<T, E, R>`**: Add typed service dependencies or owned resources when needed. Providing requirements leaves a Task that still needs an explicit runner.
-- **Opt-in eager compatibility (`resultar/async`)**: Legacy `@deprecated` eager `ResultAsync` and `StrictResultAsync` compatibility exports live in the isolated `resultar/async` subpath for gradual migration throughout v5.x; see the [v5 migration guide](https://inaiat.github.io/resultar/#/docs/v5-migration).
+
+> Upgrading from v4? Legacy `@deprecated` eager `ResultAsync` compatibility exports live in the isolated `"resultar/async"` subpath for incremental migration; see the [v5 migration guide](https://inaiat.github.io/resultar/#/docs/v5-migration).
 
 New async repositories and use cases return `ResultTask`, without declaring their factories
-`async`. Wrap external `Promise<T>` drivers directly with `ResultTask.tryPromise`; reserve
-`fromResultAsync` for existing typed Async adapters. Framework callbacks and runners retain
+`async`. Wrap external `Promise<T>` drivers directly with `ResultTask.tryPromise`. Framework callbacks and runners retain
 their native Promise contracts. See [Promise boundaries](https://inaiat.github.io/resultar/#/docs/full-reference#promise-boundaries-and-application-contracts).
 
 Prefer `task.runResult()`, `task.runPromise()`, `task.runExit()`, and `task.runFork()` at execution boundaries.
@@ -369,16 +369,16 @@ export const app = createHonoApp({ services }, (router) => {
 
 ## First-Class Coding Agent Support
 
-Every release of `resultar` bundles version-matched coding-agent instructions directly inside `node_modules/resultar/dist/agent/` (built from [`skills/resultar/`](https://inaiat.github.io/resultar/#/docs/agents/skill)):
+Install `resultar-check` as a development dependency (`pnpm add -D resultar-check`) for offline coding-agent instructions. Start at `node_modules/resultar-check/dist/agent/SKILL.md`. The accompanying `versions.json` records the runtime and companion versions used by the guide.
 
 - **[`SKILL.md`](https://inaiat.github.io/resultar/#/docs/agents/skill)**: Execution contracts and routing to the relevant manual for Claude Code, Cursor, Codex, and Antigravity.
-- **[`references/api.md`](https://inaiat.github.io/resultar/#/docs/agents/api)**: Feature map and semantic constraints across `Result`, `ResultAsync`, `ResultTask`, `createTaggedError`, `taggedEnum`, `redact`, `Match`, `Cause`, `Fiber`, `Semaphore`, `Retry`, `Clock`, and `Scheduler`.
+- **[`references/api.md`](https://inaiat.github.io/resultar/#/docs/agents/api)**: Feature map and semantic constraints across `Result`, `ResultTask`, `createTaggedError`, `taggedEnum`, `redact`, `Match`, `Cause`, `Fiber`, `Semaphore`, `Retry`, `Clock`, and `Scheduler`.
 - **[`references/anti-patterns.md`](https://inaiat.github.io/resultar/#/docs/agents/anti-patterns)**: Native checker configuration, repair patterns, and links to all 43 rules and their verified defaults.
 - **[`references/patterns.md`](https://inaiat.github.io/resultar/#/docs/agents/patterns)**: Production recipes (`ResultTask.memoize`, `onExit`, background workers with `runFork`, uncooperative Promise timeouts with `interruption: 'detach'`, bounded concurrency, and `VirtualClock` testing).
 - **[`references/services.md`](https://inaiat.github.io/resultar/#/docs/agents/services)**: `serviceTag`, `resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`, and `resultar-request` (`zod` and `typebox`).
 - **[`references/integrations.md`](https://inaiat.github.io/resultar/#/docs/agents/integrations)** & **[`references/review-checklist.md`](https://inaiat.github.io/resultar/#/docs/agents/review-checklist)**: Boundary adapters and pre-commit review checklist.
 - **[Public API inventory](https://inaiat.github.io/resultar/#/docs/api-inventory) and [executable recipes](https://inaiat.github.io/resultar/#/docs/recipes)**: Generated from declarations and compiled recipe sources; checked by `vp run test:docs`. The full guide and companion READMEs are also bundled under `dist/agent/manual/`.
-- **`node_modules/resultar/dist/llms.txt`**: Structured index of the public surface and bundled reference guides.
+- **`node_modules/resultar-check/dist/llms.txt`**: Structured index of the public surface and bundled reference guides.
 - **Executable agent evaluation suite**: Run `pnpm test:agents` in this workspace to verify coding-agent contracts and grading harnesses (see [`skills/resultar/evals/README.md`](skills/resultar/evals/README.md)).
 
 ---
@@ -400,12 +400,12 @@ Explore complete, runnable projects in [`examples/`](examples):
 
 ## Documentation Map
 
-The [documentation website](https://inaiat.github.io/resultar/) includes these guides and the interactive playground. The [Markdown reference](DOCUMENTATION.md) is available in the repository and bundled with the core package.
+The [documentation website](https://inaiat.github.io/resultar/) includes these guides and the interactive playground. The [Markdown reference](DOCUMENTATION.md) is available in the repository and bundled with the `resultar-check` npm package.
 
 | Topic                                                                       | Guide                                                                                                                                |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | **Coming from Effect**                                                      | [Coming from Effect](https://inaiat.github.io/resultar/#/docs/coming-from-effect)                                                    |
-| **Gradual Adoption (`Result` → `ResultTask`; eager compatibility bridges)** | [Gradual adoption](https://inaiat.github.io/resultar/#/docs/gradual-adoption)                                                        |
+| **Gradual Adoption (`Result` → `ResultTask`)**                              | [Gradual adoption](https://inaiat.github.io/resultar/#/docs/gradual-adoption)                                                        |
 | **Core Package Quickstart & Cookbook**                                      | [Core package guide](https://inaiat.github.io/resultar/#/docs/core-guide)                                                            |
 | **The Core Model (`Ok`, `Err`, `ResultTask`)**                              | [The model](https://inaiat.github.io/resultar/#/docs/full-reference#the-model)                                                       |
 | **Tagged Errors, `.withProps()`, & Redaction**                              | [Tagged errors](https://inaiat.github.io/resultar/#/docs/full-reference#tagged-errors)                                               |

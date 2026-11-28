@@ -454,38 +454,82 @@ setTimeout(() => {}, 10_000);
   },
 );
 
-void test("readers can run the displayed example and navigate the tutorial on mobile", async (context) => {
+void test("readers can run the single-function example and navigate the tutorial on mobile", async (context) => {
   const url = await startStaticServer(context, distDir);
   const browser = await HeadlessBrowser.launch();
   context.after(async () => {
     await browser.close();
   });
   await browser.navigate(url);
-  const displayed = await browser.evalJs<string>(
-    'document.querySelector(".hero pre code").textContent',
-  );
-  await browser.evalJs('document.querySelector(".hero [data-play]").click()');
+  await browser.evalJs('document.querySelector(".adoption-grid a[href*=playground]").click()');
   await browser.waitFor('document.querySelector("#pg-editor")');
+  const displayed = await browser.evalJs<string>('document.querySelector("#pg-editor").value');
+  assert.ok(displayed.includes("reserveOne(left).andThen(reserveOne)"));
+  const highlightState = await browser.evalJs<{
+    readonly hasTokens: boolean;
+    readonly text: string;
+  }>(`({
+    hasTokens: document.querySelectorAll("#pg-highlight .tok-kw, #pg-highlight .tok-str, #pg-highlight .tok-type").length > 0,
+    text: document.querySelector("#pg-highlight code")?.textContent ?? "",
+  })`);
+  assert.equal(highlightState.hasTokens, true);
+  assert.equal(highlightState.text.trimEnd(), displayed.trimEnd());
+  const liveEdit = await browser.evalJs<{
+    readonly hasNum: boolean;
+    readonly text: string;
+  }>(`(() => {
+    const editor = document.querySelector("#pg-editor");
+    editor.value = 'const answer = 42;\\n';
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    return {
+      hasNum: document.querySelector("#pg-highlight .tok-num")?.textContent === "42",
+      text: document.querySelector("#pg-highlight code")?.textContent ?? "",
+    };
+  })()`);
+  assert.equal(liveEdit.hasNum, true);
+  assert.equal(liveEdit.text, "const answer = 42;\n ");
+  await browser.evalJs(`document.querySelector('[data-action="pg-reset"]').click()`);
   assert.equal(await browser.evalJs('document.querySelector("#pg-editor").value'), displayed);
+  await browser.evalJs('document.querySelector("#pg-editor").focus()');
+  await browser.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
+  assert.equal(await browser.evalJs("document.activeElement.dataset.action"), "pg-run");
   await browser.evalJs(`document.querySelector('[data-action="pg-run"]').click()`);
   await browser.waitFor('document.querySelector(".pg-status-ok")');
-  assert.match(
-    await browser.evalJs<string>('document.querySelector(".pg-output").textContent'),
-    /InsufficientStock/u,
+  assert.deepEqual(
+    await browser.evalJs(
+      'Array.from(document.querySelectorAll(".pg-output .pg-log"), el => el.textContent.trim())',
+    ),
+    ["Ok(0)", 'Err("OutOfStock")'],
   );
 
   await browser.send("Emulation.setDeviceMetricsOverride", {
-    width: 390,
-    height: 844,
+    width: 320,
+    height: 740,
     deviceScaleFactor: 1,
     mobile: true,
   });
   await browser.navigate(url);
-  await browser.evalJs('document.querySelector(".hero-actions .btn-primary").click()');
+  await browser.evalJs(`document.querySelector('[data-install-tab="jsr"]').click()`);
+  assert.equal(
+    await browser.evalJs(
+      "document.documentElement.scrollWidth === document.documentElement.clientWidth",
+    ),
+    true,
+  );
+  await browser.evalJs(
+    `scrollTo(0, document.body.scrollHeight); document.querySelector('.home-cta a[href="#/playground"]').click()`,
+  );
+  await browser.waitFor('document.title === "Playground · Resultar" && scrollY === 0');
+  await browser.evalJs(
+    `document.querySelector(".mobile-menu-btn").click(); document.querySelector('#site-menu a[href="#/docs/api-inventory"]').click()`,
+  );
+  await browser.waitFor('document.title === "Public API Inventory · Resultar"');
+  await browser.navigate(url);
+  await browser.evalJs('document.querySelector(".hero-actions a[href*=quickstart]").click()');
   await browser.waitFor('document.querySelector(".doc-prose #your-first-result")');
   assert.equal(
     await browser.evalJs(
-      "document.documentElement.scrollWidth <= window.innerWidth && window.innerWidth === 390",
+      "document.documentElement.scrollWidth <= window.innerWidth && window.innerWidth === 320",
     ),
     true,
   );
@@ -498,9 +542,7 @@ void test("readers can run the displayed example and navigate the tutorial on mo
   await browser.waitFor('document.querySelector(".doc-prose #compose-a-lazy-workflow")');
   await browser.evalJs('document.querySelector(".mobile-menu-btn").click()');
   assert.equal(
-    await browser.evalJs(
-      `document.querySelector('#docs-sidebar [aria-current="page"]').textContent`,
-    ),
+    await browser.evalJs(`document.querySelector('#site-menu [aria-current="page"]').textContent`),
     "Compose a lazy workflow",
   );
   assert.deepEqual(browser.uncaughtExceptions, []);
@@ -515,6 +557,19 @@ void test("the home page links to the full benchmark report", async (context) =>
 
   await browser.navigate(url);
   await browser.evalJs(`document.querySelector('[data-action="open-search"]').click()`);
+  await browser.waitFor('document.querySelector(".search-item")');
+  await browser.send("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Tab",
+    code: "Tab",
+    modifiers: 8,
+  });
+  assert.equal(
+    await browser.evalJs("document.activeElement.matches('.search-item:last-child')"),
+    true,
+  );
+  await browser.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab" });
+  assert.equal(await browser.evalJs("document.activeElement.id"), "search-input");
   const composing = await browser.evalJs<boolean>(`(() => {
     const input = document.querySelector("#search-input");
     input.value = "ResultTask";
@@ -530,20 +585,87 @@ void test("the home page links to the full benchmark report", async (context) =>
   );
   assert.equal(layoutOverflow, false, "Home page must not overflow horizontally");
 
+  const homeHero = await browser.evalJs<{
+    readonly h1: string;
+    readonly typeBar: string;
+    readonly hasResultAsync: boolean;
+  }>(`({
+    h1: document.querySelector(".hero h1")?.textContent ?? "",
+    typeBar: document.querySelector(".hero-type-bar")?.textContent ?? "",
+    hasResultAsync: (document.body.textContent ?? "").includes("ResultAsync"),
+  })`);
+  assert.match(homeHero.h1, /Stop guessing what throws\./u);
+  assert.match(homeHero.typeBar, /InvalidAmount \| CardDeclined/u);
+  assert.equal(homeHero.hasResultAsync, false);
+
+  await browser.evalJs(`document.querySelector('[data-hero-tab="throw"]').click()`);
+  assert.match(
+    await browser.evalJs<string>('document.querySelector(".hero-type-bar")?.textContent ?? ""'),
+    /2 throws hidden from callers/u,
+  );
+  await browser.evalJs(`document.querySelector('[data-hero-tab="resultar"]').click()`);
+  await browser.evalJs(`document.querySelector('[data-action="hero-run"]').click()`);
+  await browser.waitFor('document.querySelector(".hero-run-output .pg-status-ok") !== null');
+  assert.match(
+    await browser.evalJs<string>('document.querySelector(".hero-run-output")?.textContent ?? ""'),
+    /Card declined \(insufficient_funds\)/u,
+  );
+
+  const firstExample = await browser.evalJs<string>(
+    'document.querySelector(".service-showcase .stack-pane pre").textContent',
+  );
+  assert.ok(firstExample.includes('service("findStock", {'));
+  assert.ok(firstExample.includes("make: () => (sku: string) => {"));
+  assert.ok(firstExample.includes("createModule().singleton(FindStock)"));
+  assert.ok(firstExample.includes("requestJsonTypeBox({"));
+  assert.match(firstExample, /stock\?item=\$\{encodeURIComponent\(sku\)\}/u);
+  assert.ok(firstExample.includes('404: () => new RequestError("Unknown SKU", 404)'));
+  assert.match(
+    firstExample,
+    /orElse:\s*\(\) =>\s*new RequestError\("Inventory unavailable", 502\)/u,
+  );
+  await browser.evalJs('document.querySelector(".stack-source summary").click()');
+  for (const [schema, call] of [
+    ["TypeBox", "requestJsonTypeBox"],
+    ["Type guard", "requestJson"],
+    ["Zod", "requestJsonZod"],
+  ] as const) {
+    // eslint-disable-next-line no-await-in-loop -- Check the independent schema selector in the same session.
+    const selected = await browser.evalJs<{
+      code: string;
+      preview: string;
+      framework: string;
+      open: boolean;
+    }>(`(() => {
+      document.querySelector('[data-schema="${schema}"]').click();
+      return {
+        code: document.querySelector(".service-source code").textContent,
+        preview: document.querySelector(".service-showcase .stack-pane pre").textContent,
+        framework: document.querySelector('[data-framework][aria-pressed="true"]').textContent,
+        open: document.querySelector(".stack-source").open,
+      };
+    })()`);
+    assert.equal(selected.preview, selected.code);
+    assert.ok(selected.preview.includes(`import { ${call}, RequestError`));
+    assert.ok(selected.code.includes(`return ${call}({`));
+    assert.equal(selected.framework, "Fastify");
+    assert.ok(selected.open);
+  }
   const serviceCode = await browser.evalJs<string>(
     'document.querySelector(".service-source code").textContent',
   );
-  assert.match(serviceCode, /export function findStock/u);
+  assert.ok(serviceCode.includes("make: () => (sku: string) => {"));
   assert.ok(serviceCode.includes("fetch(url, { signal })"));
-  for (const [framework, binding] of [
-    ["Fastify", "req.services.findStock"],
-    ["Hono", "c.env.findStock"],
-    ["NestJS", '@Services("findStock")'],
+  for (const [framework, binding, factory] of [
+    ["Fastify", "req.services", "createFastifyApp"],
+    ["Hono", "c.env", "createHonoApp"],
+    ["NestJS", '@Services("findStock")', "createNestApp"],
   ] as const) {
     // eslint-disable-next-line no-await-in-loop -- Inspect the selected adapter and shared service together.
     const view = await browser.evalJs<{
       service: string;
       route: string;
+      preview: string;
       guide: string;
       pressed: string;
     }>(`(() => {
@@ -552,21 +674,35 @@ void test("the home page links to the full benchmark report", async (context) =>
       return {
         service: document.querySelector(".service-source code").textContent,
         route: document.querySelector(".route-source code").textContent,
-        guide: document.querySelector(".route-source a").hash,
+        preview: document.querySelector(".service-showcase .stack-pane:last-child pre").textContent,
+        guide: document.querySelector(".stack-pane:last-child a").hash,
         pressed: document.querySelector(selector).getAttribute("aria-pressed")
       };
     })()`);
     assert.equal(view.service, serviceCode);
-    assert.ok(view.route.includes(binding));
+    assert.ok(view.preview.includes('from "./inventory.js"'));
+    assert.ok(view.preview.includes(`${factory}({`));
+    assert.match(view.preview, /App\(\{\s*services\b/u);
+    assert.ok(view.preview.includes(binding));
+    assert.ok(view.preview.includes("result.isErr()"));
+    assert.ok(view.route.includes(view.preview));
     assert.ok(view.route.includes(".runResult({ signal:"));
-    assert.ok(view.route.includes('from "./inventory.js"'));
-    assert.equal(view.guide, `#/docs/packages/${framework.toLowerCase()}`);
+    const [packageRoute, anchor] = view.guide.slice("#/docs/".length).split("#");
+    assert.equal(packageRoute, `packages/${framework.toLowerCase()}`);
+    // eslint-disable-next-line no-await-in-loop -- Verify the existing-app integration guide for the selected framework.
+    const adapterPage = await DOC_LOADERS[packageRoute]?.();
+    assert.equal(
+      adapterPage?.toc.some((heading) => heading.id === anchor),
+      true,
+      view.guide,
+    );
     assert.equal(view.pressed, "true");
   }
 
   for (const [tab, metric, values] of [
     ["ecosystem", "1.25×", ["22,407", "17,964"]],
-    ["adapters", "94.8%", ["43,554", "45,919"]],
+    ["create", "1.20×", ["14,351", "12,008"]],
+    ["adapters", "83.9%", ["39,267", "46,778"]],
     ["core", "3.67×", ["360,620", "98,243"]],
   ] as const) {
     if (tab !== "ecosystem") {
@@ -588,16 +724,53 @@ void test("the home page links to the full benchmark report", async (context) =>
     assert.ok(page?.toc.some((heading) => heading.id === anchor) === true, chart.source);
   }
 
+  const llmsResponse = await fetch(`${url}/llms.txt`);
+  assert.equal(llmsResponse.status, 200);
+  assert.match(llmsResponse.headers.get("content-type") ?? "", /text\/plain/u);
+  const rootLlms = readFileSync(resolve(websiteDir, "../llms.txt"), "utf8");
+  assert.equal(await llmsResponse.text(), rootLlms);
+
+  const llmsAlternate = await browser.evalJs<string | null>(
+    `document.querySelector('link[rel="alternate"][type="text/plain"]')?.getAttribute("href") ?? null`,
+  );
+  assert.equal(llmsAlternate, "./llms.txt");
+
+  for (const [aiTab, expectedText] of [
+    ["agents-md", "node_modules/resultar-check/dist/agent/SKILL.md"],
+    ["cursor", "resultar-check init --editor cursor"],
+    ["cli", "resultar-check overview --project tsconfig.json --json"],
+  ] as const) {
+    if (aiTab !== "agents-md") {
+      // eslint-disable-next-line no-await-in-loop -- Switch AI setup tabs in the same browser session.
+      await browser.evalJs(`document.querySelector('[data-ai-tab="${aiTab}"]').click()`);
+    }
+    // eslint-disable-next-line no-await-in-loop -- Inspect the rendered AI snippet after each switch.
+    const aiView = await browser.evalJs<{ readonly code: string; readonly pressed: string | null }>(
+      `({
+        code: document.querySelector(".ai-code code")?.textContent ?? "",
+        pressed: document.querySelector('[data-ai-tab="${aiTab}"]')?.getAttribute("aria-pressed") ?? null,
+      })`,
+    );
+    assert.ok(aiView.code.includes(expectedText), `${aiTab}: ${aiView.code}`);
+    assert.equal(aiView.pressed, "true");
+  }
+
   await browser.evalJs(
-    `document.querySelector('.hero-actions a[href="#/docs/benchmarks"]').click()`,
+    `document.querySelector('.nav-links a[href="#/docs/agents/setup"]').click()`,
   );
-  await browser.waitFor(`document.querySelector(".doc-prose table") !== null`);
-  const headings = await browser.evalJs<string[]>(
-    `Array.from(document.querySelectorAll(".doc-prose h2"), (heading) => heading.textContent)`,
+  await browser.waitFor(`document.querySelector(".doc-prose #ai-coding-agents") !== null`);
+  const activeNavLabels = await browser.evalJs<string[]>(
+    `Array.from(document.querySelectorAll(".nav-link.active"), (el) => el.textContent?.trim() ?? "")`,
   );
-  assert.equal(headings.length, 12);
-  assert.match(headings[0] ?? "", /Effect 4\.1\.4/u);
-  assert.ok(headings.some((heading) => /v5 versus published 4\.1\.1/u.test(heading)));
+  assert.deepEqual(activeNavLabels, ["AI"]);
+
+  await browser.navigate(url);
+  await browser.evalJs(
+    `document.querySelector('.nav-links a[href="#/docs/benchmarks/url-shortener"]').click()`,
+  );
+  await browser.waitFor(`document.querySelector("#abba-averages-2-rounds-per-stack")`);
+  const report = await browser.evalJs<string>('document.querySelector(".doc-prose").textContent');
+  assert.ok(report.includes("22,407 req/s"));
   assert.deepEqual(browser.uncaughtExceptions, []);
 });
 
