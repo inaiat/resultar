@@ -5,6 +5,7 @@
  */
 
 export * from "resultar-request";
+export { z } from "zod";
 export { requestJsonZod } from "./request-json-zod.js";
 
 /** Package-local alias for `requestJsonZod`. */

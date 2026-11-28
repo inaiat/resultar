@@ -4,6 +4,7 @@
 /editors/vscode/*.vsix
 /website/dist
 /website/node_modules
+/website/public/llms.txt
 /website/src/generated
 /benchmarks/node_modules
 /benchmarks/.tmp
@@ -58,3 +59,10 @@ coverage/
 !.vscode/extensions.json
 .history
 .yarn
+
+# URL shortener benchmarks
+/benchmarks/comparison/*/node_modules
+/benchmarks/comparison/*/dist
+/benchmarks/comparison/*/.fallow
+/benchmarks/comparison/*/.env
+/benchmarks/comparison/*/report

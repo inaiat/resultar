@@ -66,6 +66,6 @@ The output is `InvalidQuantity`, `InsufficientStock`, then `Ready: 2`. Only the 
 
 ## Run at the application boundary
 
-`checkOrder` returns the task directly. A handler, CLI command, or test starts it with `await task.runResult()` and receives a `Result` from a native Promise. For an existing v4 operation that already produces a `ResultAsync`, keep its eager import in `resultar/async` and wrap the call with `ResultTask.fromResultAsync(() => operation())` when composing it into a new task.
+`checkOrder` returns the task directly. A handler, CLI command, or test starts it with `await task.runResult()` and receives a `Result` from a native `Promise<Result<T, E>>`. Each call to `runResult()` starts a fresh execution, so retries and repeated handler invocations never accidentally share an already-settled Promise.
 
 Continue with [failure handling and cleanup](./failure-boundaries.md) to see what a worker can inspect when a callback throws. For a real HTTP driver, see the [JSON request client](../../packages/request/README.md).

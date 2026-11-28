@@ -221,7 +221,7 @@ friction points:
 
 - Add [docs/coming-from-effect.md](../coming-from-effect.md) with a factual Effect → Resultar
   API table, end-to-end typed workflow example, and explicit deliberate omissions; bundle it into
-  `packages/resultar/dist/agent/` and `dist/llms.txt`.
+  the agent manual and index (now shipped in `resultar-check` under `dist/agent/` and `dist/llms.txt`).
 - Fix all audited drifts (`err.fingerprint` tuple, rule count `42`, `VirtualClock` methods,
   missing `resultar-app` / `resultar-config` / `resultar-request-*` in `llms.txt`, stray sections
   after `## License` / `## Freshness rule`, outdated negative statements in

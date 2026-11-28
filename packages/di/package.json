@@ -1,6 +1,6 @@
 {
   "name": "resultar-di",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Typed dependency composition and scoped resources for ResultTask.",
   "keywords": [
     "composition",
@@ -9,7 +9,7 @@
     "resultar",
     "resulttask"
   ],
-  "homepage": "https://github.com/inaiat/resultar",
+  "homepage": "https://inaiat.github.io/resultar/#/docs/packages/di",
   "bugs": {
     "url": "https://github.com/inaiat/resultar/issues"
   },

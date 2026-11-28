@@ -1,5 +1,7 @@
 # resultar-app
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/app)
+
 Unified entry point for Resultar workflows, dependency injection and validated Node
 configuration. Install one package and import the application building blocks together:
 

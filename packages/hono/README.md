@@ -1,5 +1,7 @@
 # resultar-hono
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/hono)
+
 `resultar-hono` reexports the application DI helpers: `createModule`, `Service`, `service`,
 `resource`, and the types `ServiceClass`, `ServiceModule`, `ServiceScope`, `ServiceLifetime`
 and `HttpApplication`. These are the original `resultar-di` exports, with the same identity

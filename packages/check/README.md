@@ -1,5 +1,7 @@
 # Resultar Check
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/resultar-check)
+
 Native, type-aware Resultar diagnostics powered by TypeScript-Go.
 
 `resultar-check` opens a TypeScript project once, reports compiler errors, and runs all enabled
@@ -37,6 +39,14 @@ Keep optional dependencies enabled. The launcher installs one matching native pa
 Node.js 24 or newer is required by the launcher. A separate TypeScript installation is not required.
 If the platform package is missing, the command reports an installation error; version 3 has no
 JavaScript or TypeScript fallback.
+
+## Offline coding-agent guides
+
+Point your agent at `node_modules/resultar-check/dist/llms.txt` for the index or
+`node_modules/resultar-check/dist/agent/SKILL.md` for the coding guide. The same
+directory contains reference sheets, package manuals and executable TypeScript recipes.
+The recipes use your project's `resultar` installation. Check `dist/agent/versions.json`
+in this package for the runtime and companion versions used to build the guides.
 
 ## Quick Start
 

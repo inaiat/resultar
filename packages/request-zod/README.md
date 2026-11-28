@@ -1,5 +1,7 @@
 # resultar-request-zod
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/request-zod)
+
 Zod adapter for `resultar-request`.
 
 Use this package when a request response should be parsed with Zod while the transport and Resultar
@@ -17,12 +19,18 @@ provides the same request flow with TypeBox schemas instead of Zod.
 ## Install
 
 ```sh
-pnpm add resultar-request-zod resultar zod
+pnpm add resultar-request-zod resultar
 ```
 
 ```sh
-npm install resultar-request-zod resultar zod
+npm install resultar-request-zod resultar
 ```
+
+Import `z` from `resultar-request-zod` to build schemas alongside the request helpers. It is a
+direct reexport of Zod's `z`, including type utilities such as `z.output` and `z.infer`. Zod is
+installed automatically as a dependency (`>=4.4.3 <5.0.0`); no separate installation is needed when
+using `z`. Direct Zod imports remain compatible; declare `zod` in your application dependencies if
+you import it by name.
 
 ## `requestJsonZod` and `requestJson`
 
@@ -31,13 +39,12 @@ without an `async` wrapper:
 
 ```ts
 import { ResultTask } from "resultar";
-import { requestJsonZod, type RequestError } from "resultar-request-zod";
-import { z } from "zod";
+import { requestJsonZod, z, type RequestError } from "resultar-request-zod";
 
 const userSchema = z
   .object({
     id: z.string(),
-    email: z.string().email(),
+    email: z.email(),
     plan: z.enum(["free", "team"]),
     seats: z.number().int().nonnegative(),
   })
@@ -86,7 +93,7 @@ error mapping.
 | `request`         | `(signal: AbortSignal) => Promise<Response>` factory invoked on each Task execution and retry    |
 | `schema`          | Zod schema used for runtime parsing and transformed `z.output` success inference                 |
 | `validationError` | Static or computed validation failure message                                                    |
-| `mapError`        | Status-specific and category-specific domain error mapping                                       |
+| `mapError`        | Domain error mapping via `{ [status]?, ..., orElse }`, a single function, or all four categories |
 | `retry`           | Attempts, delay, backoff, jitter, `when`, and `onRetry` policy inherited from `resultar-request` |
 
 Pass an `AbortSignal` at the execution boundary via `.runResult({ signal })` / `.runExit({ signal })`,
@@ -96,7 +103,7 @@ or compose with `ResultTask.timeout` and fiber interruption inside Task workflow
 
 - Node.js 24+
 - ESM only
-- `zod` installed as a peer dependency
+- `zod` installed automatically as a runtime dependency (`>=4.4.3 <5.0.0`)
 
 For a runnable server-backed version of this flow, see the
 [request example](https://github.com/inaiat/resultar/tree/main/examples/request).

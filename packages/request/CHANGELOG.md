@@ -1,5 +1,20 @@
 # resultar-request
 
+## 3.1.0
+
+### Minor Changes
+
+- ea7fe8e: Export `HttpErrorStatusByTag<Error>` to type exhaustive maps from error tags to HTTP response status codes across frameworks.
+- Extend `mapError` in `resultar-request`, `resultar-request-typebox`, and `resultar-request-zod` via `RequestJsonMapErrorInput` to support partial handler objects with `orElse: (context: RequestJsonErrorContext) => Error` and a single-function shorthand `(context: RequestJsonErrorContext) => Error`, while preserving `RequestJsonMapError` backward compatibility, handler `this` binding, full exhaustiveness, and exact error union inference.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [310626a]
+- Updated dependencies [5eb2e8e]
+- Updated dependencies
+  - resultar@5.1.0
+
 ## 3.0.0
 
 ### Major Changes

@@ -3,7 +3,7 @@
 Start by making one expected failure explicit with `Result<T, E>`. Keep existing
 Promise APIs at their boundaries and use `ResultTask` for asynchronous
 workflows. Add time policies, service requirements or owned concurrent work as
-needed. `task.runResult()` returns a native `Promise<Result<T, E>>` directly at your imperative boundary, while legacy eager `ResultAsync` compatibility lives in the opt-in `"resultar/async"` subpath.
+needed. `task.runResult()` returns a native `Promise<Result<T, E>>` directly at your imperative boundary.
 Each step is useful on its own; an application can adopt them incrementally.
 
 `Result<T, E>` uses `T` for success and `E` for expected errors.
@@ -18,7 +18,6 @@ types before adopting capabilities from a newer release. Upgrading from v4? See 
 | ---------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------- |
 | One synchronous validation or domain operation                                     | `Result<T, E>`        | When the function is called                                                                       |
 | Any async work, with optional service/scope requirements (`R`) and runtime options | `ResultTask<T, E, R>` | At an explicit `run*` boundary (`task.runResult()` -> `Promise<Result<T, E>>`), again on each run |
-| Legacy eager compatibility boundary (opt-in `"resultar/async"`)                    | `ResultAsync<T, E>`   | Immediately when constructed; repeated awaits observe one execution                               |
 
 The TypeScript blocks below are independent examples. Copy one into an ESM
 module; blocks using `await` use top-level await.
@@ -161,84 +160,12 @@ success value or rejects.
 Runnable examples: [task resilience](../examples/cookbook/src/task-resilience.ts) and
 [application lifecycle](../examples/cookbook/src/application-lifecycle.ts).
 
-## 4. Bridge existing eager APIs during migration
-
-Opt-in `ResultAsync` and `StrictResultAsync` live in `"resultar/async"` for codebases
-preserving legacy eager, single-execution contracts during migration. Inside a `ResultTask`
-workflow, adapt any `PromiseLike<Result<T, E>>` (including `ResultAsync` or `Promise<Result<T, E>>`)
-with `ResultTask.fromResultAsync`; a factory creates fresh work on each run.
-
-```ts
-import { ResultTask, createTaggedError, ok, type Result } from "resultar";
-import { tryResultAsync } from "resultar/async";
-
-class InvalidIdError extends createTaggedError({
-  name: "InvalidIdError",
-  message: "User id must not be empty",
-}) {}
-
-class LoadUserError extends createTaggedError({
-  name: "LoadUserError",
-  message: "Could not load user $id",
-}) {}
-
-const validateId = (id: string): Result<string, InvalidIdError> =>
-  id.trim().length > 0 ? ok(id.trim()) : InvalidIdError.err();
-
-const loadUser = (id: string) =>
-  tryResultAsync({
-    try: async () => ({ id, name: "Ada" }),
-    catch: (cause) => new LoadUserError({ id, cause }),
-  });
-
-const greetingTask = (input: string) =>
-  ResultTask.gen(function* () {
-    const id = yield* validateId(input);
-    const user = yield* ResultTask.fromResultAsync(() => loadUser(id));
-    return `Hello, ${user.name}`;
-  });
-
-// runResult() starts one execution and returns a native Promise<Result<...>>.
-const result = await greetingTask("user_123").runResult();
-console.log(result.unwrapOr("Unavailable"));
-```
-
-`task.runResult()` starts the task once and returns a native `Promise<Result<T, E>>`. Provide
-services and wrap scope-dependent work with `ResultTask.scoped` before running, or pass `{ services }` to `runResult({ services })`.
-The `runResult` boundary can still reject on defects, interruption or
-composite causes. A Task itself has no `.then`; awaiting it does not execute it.
-
-For a raw `Promise<T>` driver, use `ResultTask.tryPromise({ try: signal => ..., catch })`.
-For an existing `ResultAsync<T, E>` adapter, use `ResultTask.fromResultAsync(signal => load(signal))`.
-Forward the signal in either case. New repository and use-case methods return the Task;
-only the external driver or the explicit native execution boundary returns a Promise.
-Do not mark a Task-producing factory `async`. See the
-[boundary decision table](../DOCUMENTATION.md#promise-boundaries-and-application-contracts).
-
-| Bridge                                               | Execution behavior                                                         |
-| ---------------------------------------------------- | -------------------------------------------------------------------------- |
-| `ResultTask.fromResult(result)`                      | Wraps a synchronous `Result` that has already been computed                |
-| `ResultTask.fromResultAsync(existing)`               | Reuses an existing `PromiseLike<Result<T, E>>` execution on every task run |
-| `ResultTask.fromResultAsync(signal => load(signal))` | Evaluates the factory with the active `AbortSignal` on each task run       |
-| `ResultTask.tryPromise({ try, catch })`              | Calls the Promise factory on each task run                                 |
-| `task.runResult(options?)`                           | Starts the task once and returns a native `Promise<Result<T, E>>`          |
-
-Capturing an already-started `Promise` via `fromPromise` cannot undo its execution; use
-`ResultTask.tryPromise` directly for raw Promise work so each task run and retry
-creates a fresh operation. Reserve `fromResultAsync(factory)` for existing typed adapters. `fromResult` has no
-factory overload; defer a Result-producing call inside `ResultTask.gen` as above.
-
-The incoming bridge accepts any `PromiseLike<Result<T, E>>`. Core `Result.gen` and
-`Result.fn` are purely synchronous with plain return values; opt-in eager async generators live in
-`ResultAsync.gen` / `ResultAsync.fn` from `"resultar/async"`. See the
-[v5 migration guide](migrations/v5.md).
-
-## 5. Add services where a task needs them
+## 4. Add services where a task needs them
 
 Keep ordinary function parameters until a task benefits from typed service
 requirements. A service tag records its requirement in `R`; the run boundary
-supplies the implementation. New repositories can return Tasks directly; existing
-eager repositories use the bridge from the previous section.
+supplies the implementation. New repositories return Tasks directly; if you are
+migrating legacy v4 eager contracts incrementally, see the [v5 migration guide](migrations/v5.md).
 
 ```ts
 import { ResultTask, createTaggedError } from "resultar";
@@ -286,7 +213,7 @@ A DI container is optional; see the
 [service guide](../packages/resultar/README.md#lazy-workflows-with-resulttask) and
 [resultar-di](../packages/di/README.md) when lifetimes span several use cases.
 
-## 6. Reuse retry policy and make time deterministic
+## 5. Reuse retry policy and make time deterministic
 
 Introduce retry around an operation that is safe to repeat, such as a read.
 Use `Retry.policy` on the Task representing that operation.
@@ -342,7 +269,7 @@ Virtual time does not control an external driver's own timers.
 
 Runnable example: [task resilience](../examples/cookbook/src/task-resilience.ts).
 
-## 7. Add owned concurrency with Fibers
+## 6. Add owned concurrency with Fibers
 
 For a batch, start with `ResultTask.all` or `forEach` and an explicit concurrency
 limit. Use a Fiber when a workflow needs a handle to an individual child, such as
@@ -400,7 +327,7 @@ drivers; cancellation is cooperative and cleanup can outlast a timeout.
 Runnable examples: [task resilience](../examples/cookbook/src/task-resilience.ts)
 and [application resource lifetime](../examples/cookbook/src/application-lifecycle.ts).
 
-## 8. Choose the outer boundary explicitly
+## 7. Choose the outer boundary explicitly
 
 Prefer instance runners in new code. Each has an equivalent static form with the same options,
 service checks, and deferred scope error types:

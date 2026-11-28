@@ -4,14 +4,14 @@ A checkout form receives a quantity as text. The order needs a positive whole nu
 
 ## Run the example
 
-Open the following block in **Playground** and select **Run**. To run it locally, use Node.js 24 or later, install the v5 core package, and save the TypeScript block as `quantity.mts`.
+Open the following block in **Playground** and select **Run**. To run it locally, use Node.js 24 or later, install `resultar`, and save the TypeScript block as `quantity.mts`.
 
 ```sh
-pnpm add 'resultar@^5.0.0-0'
+pnpm add resultar
 node quantity.mts
 ```
 
-The version range includes v5 previews of 5.0.0 and stable v5 releases. The core package provides everything used in this tutorial.
+The core package provides everything used in this tutorial.
 
 ```ts
 import { err, ok, type Result } from "resultar";
@@ -60,3 +60,4 @@ Use `map` when the next step returns an ordinary value. Use `andThen` when it re
 | A handler or worker that needs to report failures and release resources | [Handle failures and cleanup](./failure-boundaries.md) |
 | A first integration in an existing application                          | [Gradual adoption](../../docs/gradual-adoption.md)     |
 | An upgrade from v4 with eager async operations                          | [v5 migration guide](../../docs/migrations/v5.md)      |
+| Using Claude Code, Codex, Cursor, or another AI coding agent            | [AI & Coding Agents setup](./ai-agents.md)             |

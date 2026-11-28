@@ -1,13 +1,13 @@
 {
   "name": "resultar-fastify",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Native Fastify services and request resource scopes for Resultar DI.",
   "keywords": [
     "dependency-injection",
     "fastify",
     "resultar"
   ],
-  "homepage": "https://github.com/inaiat/resultar",
+  "homepage": "https://inaiat.github.io/resultar/#/docs/packages/fastify",
   "bugs": {
     "url": "https://github.com/inaiat/resultar/issues"
   },

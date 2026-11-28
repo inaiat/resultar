@@ -48,7 +48,7 @@
     "test:docs": "node scripts/generate-docs.mjs --check && node --test scripts/test-documentation.mjs"
   },
   "devDependencies": {
-    "@babel/parser": "8.1.2",
+    "@babel/parser": "8.1.3",
     "@changesets/cli": "^3.0.3",
     "@types/cross-spawn": "6.0.6",
     "cross-spawn": "7.0.6",
@@ -56,5 +56,5 @@
     "sucrase": "3.35.1",
     "vite-plus": "catalog:"
   },
-  "packageManager": "pnpm@12.21.0"
+  "packageManager": "pnpm@12.22.0"
 }

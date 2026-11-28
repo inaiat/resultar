@@ -5,8 +5,8 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const core = join(root, "packages/resultar");
-const target = join(core, "dist/agent");
+const checker = join(root, "packages/check");
+const target = join(checker, "dist/agent");
 const skill = join(root, "skills/resultar");
 mkdirSync(target, { recursive: true });
 for (const name of ["SKILL.md", "references", "agents", "examples"]) {
@@ -69,11 +69,13 @@ for (const directory of readdirSync(join(root, "packages"), { withFileTypes: tru
 }
 writeFileSync(join(target, "versions.json"), JSON.stringify(versions, null, 2) + "\n");
 writeFileSync(
-  join(core, "dist/llms.txt"),
+  join(checker, "dist/llms.txt"),
   `# Resultar ${versions.resultar}
 
-Documentation bundled with this package version. Installed declarations remain authoritative.
+Bundled with resultar-check ${versions["resultar-check"]}. The examples target resultar ${versions.resultar}.
+Compare agent/versions.json with your installed packages and use their declarations for exact signatures.
 
+- [Documentation website and playground](https://inaiat.github.io/resultar/)
 - [Agent guide](agent/SKILL.md)
 - [API semantics](agent/references/api.md)
 - [Anti-patterns and resultar-check rules](agent/references/anti-patterns.md)
@@ -91,7 +93,7 @@ Documentation bundled with this package version. Installed declarations remain a
 Read companion packages' installed READMEs when their versions differ from versions.json.
 `,
 );
-const require = createRequire(join(core, "package.json"));
+const require = createRequire(join(checker, "package.json"));
 const compiler = join(dirname(require.resolve("typescript/package.json")), "bin/tsc");
 execFileSync(
   process.execPath,
@@ -110,6 +112,8 @@ execFileSync(
       .filter((file) => file.endsWith(".mts"))
       .map((file) => join(target, "examples", file)),
   ],
-  { cwd: core, stdio: "inherit" },
+  { cwd: checker, stdio: "inherit" },
 );
-console.log(`Bundled Resultar ${versions.resultar} agent guide and compiled example.`);
+console.log(
+  `Bundled agent guide and compiled examples for resultar ${versions.resultar} in resultar-check ${versions["resultar-check"]}.`,
+);

@@ -1,6 +1,6 @@
 {
   "name": "resultar-request-typebox",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "TypeBox adapter for request.",
   "keywords": [
     "fetch",
@@ -9,7 +9,7 @@
     "resultar",
     "typebox"
   ],
-  "homepage": "https://github.com/inaiat/resultar",
+  "homepage": "https://inaiat.github.io/resultar/#/docs/packages/request-typebox",
   "bugs": {
     "url": "https://github.com/inaiat/resultar/issues"
   },

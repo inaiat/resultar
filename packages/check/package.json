@@ -1,6 +1,6 @@
 {
   "name": "resultar-check",
-  "version": "6.0.0",
+  "version": "6.1.0",
   "description": "Native Resultar diagnostics powered by TypeScript-Go",
   "keywords": [
     "diagnostics",
@@ -10,7 +10,7 @@
     "resultar",
     "typescript"
   ],
-  "homepage": "https://github.com/inaiat/resultar",
+  "homepage": "https://inaiat.github.io/resultar/#/docs/resultar-check",
   "bugs": {
     "url": "https://github.com/inaiat/resultar/issues"
   },
@@ -35,7 +35,7 @@
     "./schema.json": "./schema.json"
   },
   "scripts": {
-    "build": "vp pack",
+    "build": "vp pack && node ../../scripts/build-agent-guide.mjs",
     "check": "vp check",
     "check:full": "pnpm run build && pnpm run check && pnpm run test && pnpm run native:check",
     "fmt": "vp fmt",
@@ -50,7 +50,7 @@
     "schema:test": "vpx --test scripts/schema.test.ts",
     "setup:test": "vpx --test scripts/setup.test.ts",
     "prepare": "vp config || true",
-    "prepublishOnly": "vp pack",
+    "prepublishOnly": "pnpm run build",
     "smoke:package": "pnpm run build && pnpm run native:build:current && vpx scripts/smoke-package.ts"
   },
   "dependencies": {
@@ -60,8 +60,17 @@
     "@types/node": "catalog:",
     "resultar": "workspace:*",
     "resultar-request": "workspace:*",
+    "typescript": "catalog:",
     "vite-plus": "catalog:",
     "vscode-json-languageservice": "5.6.1"
+  },
+  "peerDependencies": {
+    "resultar": "*"
+  },
+  "peerDependenciesMeta": {
+    "resultar": {
+      "optional": true
+    }
   },
   "optionalDependencies": {
     "resultar-check-darwin-arm64": "workspace:*",

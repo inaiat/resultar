@@ -1,0 +1,9 @@
+# URL Shortener Resultar
+
+> Aplicação privada de benchmark com Resultar, Fastify, MongoDB, Redis e BullMQ.
+
+- O startup verifica o MongoDB e provisiona o schema e os índices antes de servir. Use GET /health para liveness.
+- A configuração fica em `src/infrastructure/app-config.ts`. O `.env.example` lista o endereço do MongoDB e do Redis, o TTL de cache e a concorrência do BullMQ.
+- POST /api/v1 cria uma URL curta, GET /api/v1/:shortCode redireciona e POST /api/v1/:shortCode/delete faz exclusão lógica.
+- GET /api/v1/stats lista URLs recentes ou populares.
+- [Configuração e contrato HTTP](README.md)

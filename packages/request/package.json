@@ -1,6 +1,6 @@
 {
   "name": "resultar-request",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Fetch-first JSON request helpers for Resultar.",
   "keywords": [
     "fetch",
@@ -9,7 +9,7 @@
     "request",
     "resultar"
   ],
-  "homepage": "https://github.com/inaiat/resultar",
+  "homepage": "https://inaiat.github.io/resultar/#/docs/packages/request",
   "bugs": {
     "url": "https://github.com/inaiat/resultar/issues"
   },

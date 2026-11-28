@@ -1,0 +1,97 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "typeAware": { "enabled": true, "projects": ["tsconfig.json"] },
+  "entry": ["init-tracer.mjs", "test-endpoints/validate-analytics.mjs"],
+  "ignoreDependencies": ["pino-pretty"],
+  "usedClassMembers": ["message", "statusCode"],
+  "rules": {
+    "unused-files": "error",
+    "unused-exports": "warn",
+    "unused-types": "warn",
+    "unused-dependencies": "error",
+    "unused-dev-dependencies": "error",
+    "unused-class-members": "warn",
+    "unresolved-imports": "error",
+    "unlisted-dependencies": "error",
+    "circular-dependencies": "error",
+    "boundary-violation": "error"
+  },
+  "boundaries": {
+    "coverage": {
+      "requireAllFiles": true,
+      "allowUnmatched": ["init-tracer.mjs", "vite.config.ts", "tests/**", "test-endpoints/**"]
+    },
+    "zones": [
+      { "name": "url-usecase", "patterns": ["src/domain/usecase/url.usecase.ts"] },
+      {
+        "name": "url-adapters",
+        "patterns": [
+          "src/infrastructure/cache/url-cache.service.ts",
+          "src/infrastructure/repository/url.repository.ts"
+        ]
+      },
+      { "name": "bootstrap", "patterns": ["src/app.ts", "src/index.ts"] },
+      { "name": "application-routes", "patterns": ["src/application/**/*.ts"] },
+      {
+        "name": "domain",
+        "patterns": [
+          "src/domain/errors/**/*.ts",
+          "src/domain/model/**/*.ts",
+          "src/domain/usecase/url.mapper.ts",
+          "src/domain/usecase/url.helpers.ts",
+          "src/domain/usecase/url.creation.ts"
+        ]
+      },
+      { "name": "domain-cache", "patterns": ["src/domain/cache/**/*.service.ts"] },
+      { "name": "domain-repository", "patterns": ["src/domain/repository/**/*.repository.ts"] },
+      {
+        "name": "infrastructure",
+        "patterns": [
+          "src/infrastructure/app-*.ts",
+          "src/infrastructure/papr/**/*.ts",
+          "src/infrastructure/queue/**/*.ts",
+          "src/infrastructure/database/**/*.ts",
+          "src/infrastructure/cache/redis-client.ts"
+        ]
+      }
+    ],
+    "rules": [
+      {
+        "from": "bootstrap",
+        "allow": [
+          "bootstrap",
+          "domain",
+          "infrastructure",
+          "url-usecase",
+          "url-adapters",
+          "domain-repository",
+          "domain-cache",
+          "application-routes"
+        ]
+      },
+      { "from": "application-routes", "allow": ["application-routes", "domain"] },
+      { "from": "domain", "allow": ["domain", "domain-cache", "domain-repository"] },
+      { "from": "domain-cache", "allow": ["domain", "domain-cache"] },
+      { "from": "domain-repository", "allow": ["domain", "domain-repository"] },
+      {
+        "from": "infrastructure",
+        "allow": [
+          "domain",
+          "domain-cache",
+          "domain-repository",
+          "infrastructure",
+          "url-usecase",
+          "url-adapters"
+        ]
+      },
+      { "from": "url-usecase", "allow": ["domain", "domain-cache", "domain-repository"] },
+      {
+        "from": "url-adapters",
+        "allow": ["domain", "domain-cache", "domain-repository", "infrastructure"]
+      }
+    ]
+  },
+  "duplicates": { "ignore": ["tests/**", "test-endpoints/**"] },
+  "health": { "ignore": ["tests/**", "test-endpoints/**"], "maxCognitive": 20, "maxCrap": 220 },
+  "dynamicallyLoaded": ["src/application/routes/**/*.route.ts"]
+}

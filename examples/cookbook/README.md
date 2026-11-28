@@ -1,5 +1,7 @@
 # Resultar Cookbook Example
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/recipes)
+
 This package is a runnable cookbook for the core `resultar` package. It uses the native
 `resultar-check` command to type-check with TypeScript-Go and enforce Resultar rules.
 

@@ -1,5 +1,7 @@
 # Resultar Check for VS Code & Cursor
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/vscode-extension)
+
 Official thin VS Code / Cursor / OpenVSX extension bridging the native TypeScript-Go [`resultar-check lsp`](../../packages/check/README.md) server directly into your editor — with **zero external runtime dependencies**.
 
 ## Features

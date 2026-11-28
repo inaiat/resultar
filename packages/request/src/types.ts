@@ -2,6 +2,11 @@ import type { RetryContext } from "resultar";
 
 import type { RequestError } from "./request-json.js";
 
+/** Exhaustive map from tagged errors to HTTP response status codes. */
+export type HttpErrorStatusByTag<Error extends { readonly _tag: string }> = Readonly<
+  Record<Error["_tag"], number>
+>;
+
 /** Header collection carried by a Fetch-compatible or Undici-compatible response. */
 export type RequestHeaders = unknown;
 
@@ -112,36 +117,64 @@ export type RequestJsonRetry = {
   readonly when?: (context: RequestJsonRetryContext) => boolean | Promise<boolean>;
 };
 
-/** Maps each request failure category, and optionally HTTP statuses, to domain errors. */
-export type RequestJsonMapError = Partial<
-  Record<number, (context: RequestJsonHttpErrorContext) => Error>
-> & {
+type RequestJsonMapErrorCategories = {
   readonly http: (context: RequestJsonHttpErrorContext) => Error;
   readonly invalidJson: (context: RequestJsonInvalidJsonErrorContext) => Error;
   readonly request: (context: RequestJsonRequestFailureContext) => Error;
   readonly validation: (context: RequestJsonValidationErrorContext) => Error;
 };
 
-type RequestJsonStatusMapErrorResult<M extends RequestJsonMapError> = M[number] extends
-  | ((context: RequestJsonHttpErrorContext) => infer E)
-  | undefined
-  ? E
+/** Maps each request failure category, and optionally HTTP statuses, to domain errors. */
+export type RequestJsonMapError = Partial<
+  Record<number, (context: RequestJsonHttpErrorContext) => Error>
+> &
+  RequestJsonMapErrorCategories;
+
+type RequestJsonMapErrorFallback = Partial<RequestJsonMapErrorCategories> & {
+  readonly orElse: (context: RequestJsonErrorContext) => Error;
+};
+
+/** Object-shaped request failure mapper supporting full category handlers or partial handlers with `orElse`. */
+export type RequestJsonMapErrorHandlers = Partial<
+  Record<number, (context: RequestJsonHttpErrorContext) => Error>
+> &
+  (RequestJsonMapErrorCategories | RequestJsonMapErrorFallback);
+
+/** Maps request failures to domain errors via a function, full category handlers, or partial handlers with `orElse`. */
+export type RequestJsonMapErrorInput =
+  | ((context: RequestJsonErrorContext) => Error)
+  | RequestJsonMapErrorHandlers;
+
+type RequestJsonHandlerResult<H> = H extends (...args: never[]) => infer E ? E : never;
+
+type RequestJsonPropertyResult<M, K extends PropertyKey> = K extends keyof M
+  ? RequestJsonHandlerResult<M[K]>
   : never;
 
-/** Union of every error returned by a `RequestJsonMapError` configuration. */
-export type RequestJsonMapErrorResult<M extends RequestJsonMapError> =
-  | ReturnType<M["http"]>
-  | ReturnType<M["invalidJson"]>
-  | ReturnType<M["request"]>
-  | ReturnType<M["validation"]>
-  | RequestJsonStatusMapErrorResult<M>;
+type RequestJsonStatusKeys<M> = Extract<keyof M, number | `${number}`>;
+
+type RequestJsonStatusMapErrorResult<M> = RequestJsonHandlerResult<M[RequestJsonStatusKeys<M>]>;
+
+/** Union of every error returned by a `RequestJsonMapErrorInput` configuration. */
+export type RequestJsonMapErrorResult<M extends RequestJsonMapErrorInput> = M extends (
+  context: RequestJsonErrorContext,
+) => infer E
+  ? E
+  : M extends RequestJsonMapErrorHandlers
+    ? | RequestJsonPropertyResult<M, "http">
+      | RequestJsonPropertyResult<M, "invalidJson">
+      | RequestJsonPropertyResult<M, "request">
+      | RequestJsonPropertyResult<M, "validation">
+      | RequestJsonPropertyResult<M, "orElse">
+      | RequestJsonStatusMapErrorResult<M>
+    : never;
 
 /** Static or computed message used when response validation fails. */
 export type RequestJsonValidationError = string | ((reason: RequestJsonValidationReason) => string);
 
 /** Options shared by validator, decoder, and schema-adapter requests. */
 export type RequestJsonBaseInput<R extends RequestJsonResponseData = RequestJsonResponseData> = {
-  readonly mapError?: RequestJsonMapError;
+  readonly mapError?: RequestJsonMapErrorInput;
   readonly request: RequestJsonFactory<R>;
   readonly retry?: RequestJsonRetry;
   readonly validationError?: RequestJsonValidationError;
@@ -173,20 +206,20 @@ export type RequestJsonInput<T, R extends RequestJsonResponseData = RequestJsonR
 /** Decoder input with an explicit domain-error mapping. */
 export type RequestJsonMappedDecodeInput<
   T,
-  M extends RequestJsonMapError,
+  M extends RequestJsonMapErrorInput,
   R extends RequestJsonResponseData = RequestJsonResponseData,
 > = RequestJsonDecodeInput<T, R> & { readonly mapError: M };
 
 /** Validator input with an explicit domain-error mapping. */
 export type RequestJsonMappedValidatorInput<
   T,
-  M extends RequestJsonMapError,
+  M extends RequestJsonMapErrorInput,
   R extends RequestJsonResponseData = RequestJsonResponseData,
 > = RequestJsonValidatorInput<T, R> & { readonly mapError: M };
 
 /** Mapped decoder or validator input accepted by `requestJson`. */
 export type RequestJsonMappedInput<
   T,
-  M extends RequestJsonMapError,
+  M extends RequestJsonMapErrorInput,
   R extends RequestJsonResponseData = RequestJsonResponseData,
 > = RequestJsonMappedDecodeInput<T, M, R> | RequestJsonMappedValidatorInput<T, M, R>;

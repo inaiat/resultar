@@ -1,0 +1,30 @@
+services:
+  mongo:
+    image: mongo:7.0.16
+    ports:
+      - '127.0.0.1:27017:27017'
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand({ ping: 1 }).ok']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  redis:
+    image: redis:8-alpine
+    ports:
+      - '127.0.0.1:6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 2s
+
+volumes:
+  mongo_data:
+  redis_data:

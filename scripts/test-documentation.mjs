@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import * as recipes from "../packages/resultar/dist/agent/examples/contracts.mjs";
+import { account, welcome } from "../packages/check/dist/agent/examples/workflow.mjs";
+import * as recipes from "../packages/check/dist/agent/examples/contracts.mjs";
 import { ResultAsync } from "../packages/resultar/dist/async.js";
 import { Cause, Fiber, ResultTask } from "../packages/resultar/dist/index.js";
 
@@ -187,8 +188,32 @@ test("every documented native rule severity agrees with the implementation", () 
   for (const [, rule, option, severity] of rows) assert.equal(severity, options.get(option), rule);
 });
 
+test("the checker ships a runnable workflow example for the installed runtime", async () => {
+  assert.equal(account("invalid").isErr(), true);
+  const pending = ResultTask.runResult(welcome(" ADA@EXAMPLE.COM "), {
+    services: { greeting: "Hello" },
+  });
+  assert.ok(pending instanceof Promise);
+  const result = await pending;
+  assert.equal(result.isOk(), true);
+  assert.equal(result.value, "Hello, ada@example.com");
+});
+
 test("bundled guide links resolve locally, including companion manuals", () => {
-  const bundle = join(root, "packages/resultar/dist/agent");
+  const bundle = join(root, "packages/check/dist/agent");
+  const versions = JSON.parse(readFileSync(join(bundle, "versions.json"), "utf8"));
+  for (const directory of ["check", "resultar"]) {
+    const { name, version } = JSON.parse(
+      readFileSync(join(root, "packages", directory, "package.json"), "utf8"),
+    );
+    assert.equal(versions[name], version);
+  }
+  const index = readFileSync(join(bundle, "../llms.txt"), "utf8");
+  for (const [, href] of index.matchAll(/\]\((agent\/[^)]+)\)/g)) {
+    assert.ok(existsSync(join(bundle, "..", href)), href);
+  }
+  assert.ok(index.includes("(agent/SKILL.md)"));
+  assert.ok(index.includes("(agent/versions.json)"));
   let localLinks = 0;
   for (const entry of readdirSync(bundle, { recursive: true }).filter((name) =>
     name.endsWith(".md"),

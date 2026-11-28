@@ -10,10 +10,12 @@ export const detachedPromise = <A, E>(
 ): Promise<Exit<A, E>> =>
   new Promise((resolve) => {
     let settled = false
+    // Stryker disable next-line ConditionalExpression: NEVER_ABORTED_SIGNAL has non-configurable no-op listener methods; skipping tracking avoids needless calls.
     const trackSignal = signal !== NEVER_ABORTED_SIGNAL
     const finish = (exit: Exit<A, E>): void => {
       if (settled) return
       settled = true
+      // Stryker disable next-line ConditionalExpression: NEVER_ABORTED_SIGNAL.removeEventListener is a non-configurable no-op.
       if (trackSignal) {
         signal.removeEventListener('abort', onAbort)
       }
@@ -34,6 +36,7 @@ export const detachedPromise = <A, E>(
         finish(died(error))
       }
     }
+    // Stryker disable next-line ConditionalExpression: NEVER_ABORTED_SIGNAL.addEventListener is a non-configurable no-op and signal.aborted is always false.
     if (trackSignal) {
       signal.addEventListener('abort', onAbort, { once: true })
       if (signal.aborted) {

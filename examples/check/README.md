@@ -1,5 +1,7 @@
 # Resultar Check Example
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/resultar-check)
+
 This package exercises the native TypeScript-Go implementation of `resultar-check`.
 
 It deliberately keeps three independent projects:

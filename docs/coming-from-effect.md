@@ -4,17 +4,19 @@ This guide maps Effect core concepts and APIs to **Resultar** so teams evaluatin
 
 ## Why teams choose Resultar
 
-- **Zero-ceremony core**: `Result<T, E>` (sync) and `ResultTask<A, E, R>` (lazy async + typed DI + scopes) cover day-to-day backend and library work without a monolithic standard library, plus an opt-in `resultar/async` compatibility subpath for legacy eager `ResultAsync`.
+- **Zero-ceremony core**: `Result<T, E>` (sync) and `ResultTask<A, E, R>` (lazy async + typed DI + scopes) cover day-to-day backend and library work without a monolithic standard library.
 - **Native JavaScript idioms**: real `Error` subclasses (`createTaggedError` with `$variable` interpolation, `.fingerprint`, `.findCause`, and `redact()`), native `AbortSignal` / `AbortError` cancellation, `Promise` interoperability, and zero-runtime-overhead TypeScript inference.
-- **Fine-grained tree-shaking**: `"sideEffects": false` across all library packages plus dedicated subpaths (`resultar/result`, `resultar/task`, `resultar/async`, `resultar/match`, `resultar/tagged`, `resultar/retry`, `resultar/function`).
+- **Fine-grained tree-shaking**: `"sideEffects": false` across all library packages plus dedicated subpaths (`resultar/result`, `resultar/task`, `resultar/match`, `resultar/tagged`, `resultar/retry`, `resultar/function`).
 - **Opt-in observability**: `Tracer.noop` by default with zero runtime overhead; attach `Tracer.memory()` or a custom `TaskTracer` (e.g. OpenTelemetry adapter) per run via `{ tracer }`, named `ResultTask.fn('span', ...)`, `task.withSpan('span')`, and `TaskLocal`.
 - **Native Go static analyzer (`resultar-check`)**: 43 semantic TypeScript-Go rules catching accidental `await task` (`no-await-result-task`), unhandled results, `Promise<ResultTask<...>>` leaks, leaked scopes, and anti-patterns — with `--fix` for safe corrections, `migrate-v5`, LSP, and Zed/VS Code/Cursor setup.
 
 ## Performance & footprint vs Effect v4
 
-Measured on Node.js 26.13.1 (Apple M4, `arm64`, 0 errors). Even with strict CSP (`RESULTAR_JIT=0`, zero dynamic code generation), Resultar beats Effect 4.1.4 in 9 of 10 runtime suites, and `resultar-di` uses 100% pure-JS monomorphic plans.
+The November 22 baseline and November 27 update both ran on Node.js 26.13.1 (Apple M4, `arm64`). In the November 22 baseline, even with strict CSP (`RESULTAR_JIT=0`, zero dynamic code generation), Resultar beats Effect 4.1.4 in 9 of 10 runtime suites, and `resultar-di` uses 100% pure-JS monomorphic plans.
 
 ### Runtime microbenchmarks (reproducible in this repo)
+
+The table uses the [November 22 baseline](../benchmarks/results/2026-11-22.md), which measured both JIT modes. The [November 27 snapshot](../benchmarks/results/2026-11-27-url-shortener.md) reports 15.30× for the 50-step sync pipeline and 2.19× for the 50-step flatMap chain in that run.
 
 | Scenario | Resultar v5 (`JIT=1`) | Effect 4.1.4 | Speedup | Resultar v5 (`JIT=0` / CSP) |
 | :--- | ---: | ---: | ---: | ---: |
@@ -29,18 +31,19 @@ Measured on Node.js 26.13.1 (Apple M4, `arm64`, 0 errors). Even with strict CSP 
 
 ### Real-world HTTP service (URL shortener · MongoDB 7 + Redis 8 + BullMQ)
 
-Identical REST contract, strict MongoDB JSON Schema validator + 7 indexes, 50 concurrent keep-alive connections, 1.5s warmup + 5s window, 0 errors — comparing **Fastify 5 + `resultar-fastify` + `resultar-di`** against **Effect**:
+The November 27, 2026 equalized ABBA run (`benchmarks/comparison/`, commit `9dd623e`) tested both stacks under an identical REST contract, validation rules, insert-time unique collision handling, MongoDB 7 + Papr indexes, Redis 8, BullMQ 6 (4 concurrent workers), 50 concurrent keep-alive connections, 2s warmup, and 8s measurement windows across 2 ABBA rounds. Both apps passed 12/12 contract preflight checks and finished with zero errors.
 
-| Endpoint / Footprint | Fastify + Resultar v5 | Effect | Delta |
+| Endpoint / Footprint | Fastify + Resultar v5 | Effect v4 | Delta |
 | :--- | ---: | ---: | ---: |
-| `GET /health` (`requestScope: false`) | `66,376 req/s` (`p99 1.47ms`) | `42,520 req/s` (`p99 2.30ms`) | **1.56× (+56%)** |
-| `GET /api/v1/:code` (302 + Redis + BullMQ) | `35,630 req/s` (`p99 2.83ms`) | `18,551 req/s` (`p99 3.66ms`) | **1.92× (+92%)** |
-| `GET /ready` (MongoDB ping) | `23,994 req/s` (`p99 3.73ms`) | `14,806 req/s` (`p99 6.72ms`) | **1.62× (+62%)** |
-| `POST /api/v1` (MongoDB insert + Redis) | `14,350 req/s` (`p99 6.99ms`) | `11,941 req/s` (`p99 7.29ms`) | **1.20× (+20%)** |
-| `GET /api/v1/stats` (MongoDB query) | `11,410 req/s` (`p99 7.74ms`) | `9,534 req/s` (`p99 8.34ms`) | **1.20× (+20%)** |
-| Built `dist/` bundle / Idle RSS | `79.5 KB` / `175.1 MB` | `115.2 KB` / `224.2 MB` | **-31% bundle · -22% RSS** |
+| `GET /health` | `119,129 req/s` (`p50 0.36ms · p99 1.05ms`) | `69,550 req/s` (`p50 0.67ms · p99 1.45ms`) | **1.71× (+71%)** |
+| `GET /api/v1/stats` (recent, limit 10) | `12,425 req/s` (`p50 3.91ms · p99 7.57ms`) | `9,513 req/s` (`p50 5.10ms · p99 10.99ms`) | **1.31× (+31%)** |
+| `GET /api/v1/:code` (302 + Redis + BullMQ) | `22,407 req/s` (`p50 2.08ms · p99 4.06ms`) | `17,964 req/s` (`p50 2.64ms · p99 4.74ms`) | **1.25× (+25%)** |
+| `GET /api/v1/stats` (popular, limit 10) | `11,936 req/s` (`p50 4.04ms · p99 8.66ms`) | `9,576 req/s` (`p50 5.09ms · p99 11.56ms`) | **1.25× (+25%)** |
+| `POST /api/v1` (MongoDB insert + Redis) | `14,351 req/s` (`p50 3.22ms · p99 8.65ms`) | `12,008 req/s` (`p50 4.03ms · p99 7.35ms`) | **1.20× (+20%)** |
+| `GET /api/v1/:missing` (404 miss) | `13,818 req/s` (`p50 3.30ms · p99 8.95ms`) | `11,695 req/s` (`p50 3.97ms · p99 9.84ms`) | **1.18× (+18%)** |
+| Startup / Idle RSS / Post-write RSS | `416 ms` / `137.9 MB` / `230.5 MB` | `545 ms` / `187.6 MB` / `350.1 MB` | **-24% startup · -26% idle · -34% post-write RSS** |
 
-See the full methodology and all 12 reproducible benchmark suites in the [Benchmark Report](../benchmarks/results/2026-11-22.md).
+See the full methodology and all 12 reproducible benchmark suites in the [Benchmark Report](../benchmarks/results/2026-11-22.md) and the [2026-11-27 Equalized URL Shortener Report](../benchmarks/results/2026-11-27-url-shortener.md).
 
 ## Concept & API mapping
 
@@ -71,9 +74,9 @@ See the full methodology and all 12 reproducible benchmark suites in the [Benchm
 | `Queue.bounded` / `Queue.unbounded`                                      | `Queue.bounded<A>(capacity)` / `Queue.unbounded<A>()`                                                                                        | FIFO backpressure, interruption-safe waiters, lossless shutdown draining                                                                    |
 | `FiberRef` / `ServiceMap.Reference`                                      | `TaskLocal.make(defaultValue, name?)`                                                                                                        | Fiber-inherited ambient context (`get()`, `set(v)`, `update(fn)`, `locally`, `locallyWith`)                                                 |
 | `TestClock`                                                              | `Clock.virtual()`                                                                                                                            | `advanceBy(ms)`, `advanceToNext()`, `runToCompletion(task, { maxSteps })`                                                                   |
-| `Context.Tag` / `Layer`                                                  | `serviceTag` + `resultar-di` (`service`, `resource`, `Service`, `createModule`)                                                              | Composable typed DI with singleton/scoped/transient lifetimes (`module.use`, `module.scope`, `provideService`)                              |
+| `Context.Tag` / `Layer`                                                  | `serviceTag` + `resultar-di` (`service`, `service.require`, `resource`, `Service`, `createModule`)                                           | Composable typed DI with singleton/scoped/transient lifetimes (`{ requires, make }`, `module.use`, `module.scope`, `provideService`)        |
 | `Config`                                                                 | `resultar-config`                                                                                                                            | Declarative env/config loading with redaction and typed errors                                                                              |
-| `Data.TaggedError`                                                       | `createTaggedError`                                                                                                                          | Real `Error` subclasses with `$var` interpolation, `.fingerprint` tuple, `.findCause`, `redact()`                                           |
+| `Data.TaggedError`                                                       | `createTaggedError`                                                                                                                          | Real `Error` subclasses with `$var` interpolation, `.fingerprint` tuple, `.findCause`, `redact()`, and opt-out `captureStackTrace: false`   |
 | `Match`                                                                  | `Match` (`resultar/match`)                                                                                                                   | Exhaustive pattern matching (`Match.value`, `Match.type`, `Match.valueTags`, `Match.typeTags`, `Match.fn`)                                  |
 | `Redacted`                                                               | `redact` / `isRedacted` / `revealRedacted`                                                                                                   | Safe `<redacted>` / `<redacted:label>` formatting in errors and JSON                                                                        |
 

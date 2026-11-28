@@ -1,6 +1,6 @@
 {
   "name": "resultar-request-zod",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Zod adapter for request.",
   "keywords": [
     "fetch",
@@ -9,7 +9,7 @@
     "resultar",
     "zod"
   ],
-  "homepage": "https://github.com/inaiat/resultar",
+  "homepage": "https://inaiat.github.io/resultar/#/docs/packages/request-zod",
   "bugs": {
     "url": "https://github.com/inaiat/resultar/issues"
   },
@@ -51,7 +51,8 @@
   },
   "dependencies": {
     "resultar": "workspace:^",
-    "resultar-request": "workspace:^"
+    "resultar-request": "workspace:^",
+    "zod": ">=4.4.3 <5.0.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
@@ -60,11 +61,7 @@
     "fallow": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
-    "vitest": "catalog:",
-    "zod": "catalog:"
-  },
-  "peerDependencies": {
-    "zod": "^4.4.3"
+    "vitest": "catalog:"
   },
   "engines": {
     "node": ">=24"

@@ -1,0 +1,60 @@
+{
+  "name": "url-shortener-resultar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "High-performance URL shortening service with Resultar, Fastify, MongoDB, and Redis",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "scripts": {
+    "build": "vp pack",
+    "check": "vp check",
+    "check:fallow": "fallow",
+    "check:fix": "vp check --fix",
+    "check:full": "pnpm check && pnpm check:resultar && pnpm check:fallow && vp test run",
+    "dev": "vp run dev-server",
+    "fmt": "vp fmt",
+    "lint": "vp lint",
+    "start": "node --env-file-if-exists=.env dist/index.js",
+    "test": "vp test",
+    "test:cov": "vp test run --coverage",
+    "test:mutation": "stryker run",
+    "test:ui": "vp test --ui --watch",
+    "test:watch": "vp test watch",
+    "check:resultar": "resultar-check"
+  },
+  "dependencies": {
+    "@fastify/autoload": "^6.6.0",
+    "@fastify/type-provider-typebox": "^6.3.0",
+    "bullmq": "6.7.9",
+    "fastify": "catalog:",
+    "ioredis": "6.1.0",
+    "mongodb": "7.9.1",
+    "nanoid": "^6.0.2",
+    "papr": "17.1.1",
+    "resultar": "workspace:*",
+    "resultar-config": "workspace:*",
+    "resultar-di": "workspace:*",
+    "resultar-fastify": "workspace:*",
+    "resultar-request": "workspace:*",
+    "typebox": "catalog:"
+  },
+  "devDependencies": {
+    "@stryker-mutator/core": "catalog:",
+    "@stryker-mutator/vitest-runner": "catalog:",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "@vitest/ui": "catalog:",
+    "fallow": "catalog:",
+    "fallow-type-aware": "3.50.0",
+    "pino": "^10.4.0",
+    "pino-pretty": "^13.2.0",
+    "resultar-check": "workspace:*",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

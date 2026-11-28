@@ -1,5 +1,5 @@
 import { parse } from "@babel/parser";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
@@ -14,10 +14,6 @@ const PLAYGROUND_MODULES = new Map([
   [
     "resultar",
     await import(pathToFileURL(join(repoRoot, "packages/resultar/dist/index.js")).href),
-  ],
-  [
-    "resultar/async",
-    await import(pathToFileURL(join(repoRoot, "packages/resultar/dist/async.js")).href),
   ],
   [
     "resultar/function",
@@ -138,14 +134,13 @@ const SECTIONS = [
     group: "Adoption & Migration",
     pages: [
       { slug: "overview", title: "Project overview", source: "README.md" },
+      { slug: "gradual-adoption", title: "Gradual Adoption", source: "docs/gradual-adoption.md" },
       {
         slug: "coming-from-effect",
         title: "Coming from Effect",
         source: "docs/coming-from-effect.md",
       },
-      { slug: "gradual-adoption", title: "Gradual Adoption", source: "docs/gradual-adoption.md" },
       { slug: "v5-migration", title: "v5 Migration Guide", source: "docs/migrations/v5.md" },
-      { slug: "v4-migration", title: "v4 Migration Guide", source: "docs/migrations/v4.md" },
     ],
   },
   {
@@ -156,8 +151,13 @@ const SECTIONS = [
       { slug: "recipes", title: "Executable Recipes", source: "docs/recipes.md" },
       { slug: "api-inventory", title: "Public API Inventory", source: "docs/api-inventory.md" },
       {
+        slug: "benchmarks/url-shortener",
+        title: "URL shortener · Resultar vs Effect",
+        source: "benchmarks/results/2026-11-27-url-shortener.md",
+      },
+      {
         slug: "benchmarks",
-        title: "Benchmarks",
+        title: "Core and adapter benchmarks",
         source: "benchmarks/results/2026-11-22.md",
       },
     ],
@@ -202,6 +202,8 @@ const SECTIONS = [
   {
     group: "Coding Agents",
     pages: [
+      { slug: "agents/setup", title: "AI & Coding Agents", source: "website/guides/ai-agents.md" },
+      { slug: "agents/llms", title: "llms.txt Index", source: "llms.txt" },
       { slug: "agents/skill", title: "Agent Skill (SKILL.md)", source: "skills/resultar/SKILL.md" },
       { slug: "agents/api", title: "API Semantics", source: "skills/resultar/references/api.md" },
       {
@@ -240,6 +242,11 @@ const SECTIONS = [
         title: "RFC 0010: DX, Concurrency & Tooling",
         source: "docs/rfcs/rfc-0010-dx-observability-concurrency-and-tooling.md",
       },
+      {
+        slug: "v4-migration",
+        title: "v4 Migration (Historical)",
+        source: "docs/migrations/v4.md",
+      },
     ],
   },
 ];
@@ -269,9 +276,10 @@ const slugify = (text) =>
 const stripMarkdown = (text) =>
   text
     .replaceAll(/```[\s\S]*?```/g, " ")
-    .replaceAll(/`([^`]+)`/g, "$1")
-    .replaceAll(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replaceAll(/[*_~>#|]/g, " ")
+    .replaceAll(/\[!\[([^\]]*)\]\([^)]+\)\]\([^)]+\)/g, "$1")
+    .replaceAll(/!?\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replaceAll(/`([^`]+)`|\*\*([^*]+)\*\*|~~([^~]+)~~|<br\s*\/?>/g,
+      (_, code, bold, deleted) => code ?? bold ?? deleted ?? " ")
     .replaceAll(/\s+/g, " ")
     .trim();
 
@@ -325,6 +333,66 @@ const highlightJson = (code) =>
     )
     .replaceAll(/\b(true|false|null)\b/g, '<span class="tok-kw">$1</span>')
     .replaceAll(/\b(\d+(?:\.\d+)?)\b/g, '<span class="tok-num">$1</span>');
+
+const decodeEntities = (value) =>
+  value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&quot;", '"');
+
+const renderMermaidFlowchart = (code) => {
+  const lines = code
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("flowchart"));
+  const nodes = [];
+  const edges = [];
+
+  for (const line of lines) {
+    const nodeMatch = /^([A-Za-z0-9_]+)\["([\s\S]+)"\]$/.exec(line);
+    if (nodeMatch) {
+      const parts = nodeMatch[2]
+        .split(/<br\s*\/?>/iu)
+        .map((part) => decodeEntities(part.replaceAll(/<\/?b>/giu, "").trim()))
+        .filter((part) => part.length > 0);
+      nodes.push({ id: nodeMatch[1], title: parts[0] ?? nodeMatch[1], details: parts.slice(1) });
+      continue;
+    }
+    const edgeMatch = /^([A-Za-z0-9_]+)\s*-->\|"([^"]+)"\|\s*([A-Za-z0-9_]+)$/.exec(line);
+    if (edgeMatch) {
+      edges.push({
+        from: edgeMatch[1],
+        label: decodeEntities(edgeMatch[2]),
+        to: edgeMatch[3],
+      });
+    }
+  }
+
+  if (nodes.length === 0) return undefined;
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const cards = nodes
+    .map(
+      (node) => `
+      <div class="mermaid-node">
+        <strong>${escapeHtml(node.title)}</strong>
+        ${node.details.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
+      </div>`,
+    )
+    .join("");
+  const transitions =
+    edges.length === 0
+      ? ""
+      : `<div class="mermaid-edges">${edges
+          .map((edge) => {
+            const fromTitle = nodeById.get(edge.from)?.title.split(":")[0] ?? edge.from;
+            const toTitle = nodeById.get(edge.to)?.title.split(":")[0] ?? edge.to;
+            return `<span class="mermaid-edge"><code>${escapeHtml(fromTitle)}</code> → <em>${escapeHtml(edge.label)}</em> → <code>${escapeHtml(toTitle)}</code></span>`;
+          })
+          .join("")}</div>`;
+
+  return `<figure class="mermaid-flow" aria-label="Adoption architecture flow"><div class="mermaid-nodes">${cards}</div>${transitions}</figure>`;
+};
 
 const highlightCode = (code, lang) => {
   const normalized = (lang || "").toLowerCase();
@@ -754,6 +822,9 @@ export const isPlaygroundCandidate = (code, lang) => {
 
 const resolveLink = (href, sourceFileAbs) => {
   if (/^(?:https?:|mailto:)/i.test(href)) {
+    const siteUrl = "https://inaiat.github.io/resultar/";
+    if (href === siteUrl) return "#/";
+    if (href.startsWith(siteUrl + "#/")) return href.slice(siteUrl.length);
     // Rewrite GitHub main links back to internal docs routes when they point to an indexed page.
     const ghPrefix = "https://github.com/inaiat/resultar/blob/main/";
     if (href.startsWith(ghPrefix)) {
@@ -881,6 +952,8 @@ export const renderMarkdown = (rawMarkdown, sourceFileAbs) => {
   const toc = [];
   const sections = [];
   const usedIds = new Map();
+  const referenceEntries = [];
+  const pageSlug = slugByAbsPath.get(sourceFileAbs);
 
   let currentSection = { heading: "", anchor: "", text: [] };
   const flushSection = () => {
@@ -916,6 +989,13 @@ export const renderMarkdown = (rawMarkdown, sourceFileAbs) => {
       }
       if (i < lines.length) i++;
       const codeText = codeLines.join("\n");
+      if (lang.toLowerCase() === "mermaid") {
+        const diagram = renderMermaidFlowchart(codeText);
+        if (diagram !== undefined) {
+          html.push(diagram);
+          continue;
+        }
+      }
       const highlighted = highlightCode(codeText, lang);
       const encoded = Buffer.from(codeText, "utf8").toString("base64");
       const playgroundBtn = isPlaygroundCandidate(codeText, lang)
@@ -986,12 +1066,29 @@ export const renderMarkdown = (rawMarkdown, sourceFileAbs) => {
         i++;
       }
       const thead = `<thead><tr>${headers.map((h) => `<th>${renderInline(h, sourceFileAbs)}</th>`).join("")}</tr></thead>`;
-      const tbody = `<tbody>${rows
-        .map(
-          (row) =>
-            `<tr>${headers.map((_, col) => `<td>${renderInline(row[col] ?? "", sourceFileAbs)}</td>`).join("")}</tr>`,
-        )
-        .join("")}</tbody>`;
+      const tbody = rows.map((row) => {
+        let anchor;
+        if (pageSlug === "api-inventory" && headers[0] === "Export") {
+          const [title, kind, members] = row.map(stripMarkdown);
+          const pkg = currentSection.heading;
+          anchor = `api-${currentSection.anchor}-${title}`;
+          referenceEntries.push({
+            kind: "api", title, subtitle: `${pkg} · ${kind}`, route: `#/docs/${pageSlug}#${anchor}`,
+            keywords: `${title} ${pkg} ${kind} ${members}`,
+            excerpt: members === "—" ? `${kind} exported by ${pkg}` : members.slice(0, 180),
+          });
+        } else if (pageSlug === "resultar-check" && headers[0] === "Rule" && headers[1] === "Option") {
+          const [title, option, severity, meaning] = row.map(stripMarkdown);
+          anchor = `rule-${title}`;
+          referenceEntries.push({
+            kind: "rule", title, subtitle: `resultar-check · default: ${severity}`,
+            route: `#/docs/${pageSlug}#${anchor}`, keywords: `${title} ${option} ${severity} ${meaning}`,
+            excerpt: `${option} (${severity}): ${meaning}`,
+          });
+        }
+        const cells = headers.map((_, col) => `<td>${renderInline(row[col] ?? "", sourceFileAbs)}</td>`).join("");
+        return `<tr${anchor ? ` id="${escapeHtml(anchor)}"` : ""}>${cells}</tr>`;
+      }).join("");
       html.push(`<div class="table-wrap"><table>${thead}${tbody}</table></div>`);
       continue;
     }
@@ -1043,7 +1140,7 @@ export const renderMarkdown = (rawMarkdown, sourceFileAbs) => {
   }
 
   flushSection();
-  return { html: html.join("\n"), toc, sections };
+  return { html: html.join("\n"), toc, sections, referenceEntries };
 };
 
 const buildContent = async () => {
@@ -1054,8 +1151,9 @@ const searchIndex = [];
 for (const page of ALL_PAGES) {
   const absPath = resolve(repoRoot, page.source);
   const raw = readFileSync(absPath, "utf8");
-  const { html, toc, sections } = renderMarkdown(raw, absPath);
+  const { html, toc, sections, referenceEntries } = renderMarkdown(raw, absPath);
 
+  searchIndex.push(...referenceEntries);
   docsPages[page.slug] = {
     slug: page.slug,
     title: page.title,
@@ -1087,52 +1185,7 @@ for (const page of ALL_PAGES) {
   }
 }
 
-// Parse public API symbols from docs/api-inventory.md into search index.
-const inventoryRaw = readFileSync(join(repoRoot, "docs/api-inventory.md"), "utf8");
-let currentPkg = "resultar";
-const seenSymbols = new Set();
-for (const line of inventoryRaw.split("\n")) {
-  const pkgMatch = /^##\s+(.+)$/.exec(line);
-  if (pkgMatch) {
-    currentPkg = pkgMatch[1].trim();
-    continue;
-  }
-  const rowMatch = /^\|\s*`([^`]+)`\s*\|\s*([^|]+)\|\s*([^|]+)\|/.exec(line);
-  if (!rowMatch) continue;
-  const symbol = rowMatch[1].trim();
-  const kind = rowMatch[2].trim();
-  const members = stripMarkdown(rowMatch[3]).slice(0, 180);
-  const key = `${currentPkg}:${symbol}`;
-  if (seenSymbols.has(key)) continue;
-  seenSymbols.add(key);
-  const pkgAnchor = slugify(currentPkg);
-  searchIndex.push({
-    kind: "api",
-    title: symbol,
-    subtitle: `${currentPkg} · ${kind}`,
-    route: `#/docs/api-inventory#${pkgAnchor}`,
-    keywords: `${symbol} ${currentPkg} ${kind} ${members}`,
-    excerpt: members === "—" ? `${kind} exported by ${currentPkg}` : members,
-  });
-}
-
-// Parse all 43 resultar-check rules from packages/check/README.md into search index.
-const checkReadme = readFileSync(join(repoRoot, "packages/check/README.md"), "utf8");
-let ruleCount = 0;
-for (const match of checkReadme.matchAll(
-  /^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|\s*([^|]+)\|/gm,
-)) {
-  ruleCount++;
-  const [, ruleId, optionName, severity, meaning] = match;
-  searchIndex.push({
-    kind: "rule",
-    title: ruleId,
-    subtitle: `resultar-check · default: ${severity}`,
-    route: "#/docs/resultar-check#diagnostics",
-    keywords: `${ruleId} ${optionName} ${severity} ${meaning}`,
-    excerpt: `${optionName} (${severity}): ${stripMarkdown(meaning)}`,
-  });
-}
+const ruleCount = searchIndex.filter((entry) => entry.kind === "rule").length;
 
 const navSections = SECTIONS.map((section) => ({
   group: section.group,
@@ -1198,10 +1251,17 @@ export const DOC_TITLES: Readonly<Record<string, string>> = ${JSON.stringify(
 export const DOC_LOADERS: Readonly<Record<string, () => Promise<DocPage>>> = {
 ${loaderEntries.join("\n")}
 };
-export const SEARCH_INDEX: readonly SearchEntry[] = ${JSON.stringify(searchIndex)};
 `;
 
+writeFileSync(join(outDir, "search-index.ts"),
+  `/* eslint-disable */\nimport type { SearchEntry } from "./site-data.js";\nexport const SEARCH_INDEX: readonly SearchEntry[] = ${JSON.stringify(searchIndex)};\n`, "utf8");
+
 writeFileSync(join(outDir, "site-data.ts"), outputContent, "utf8");
+
+// Publish root llms.txt as a static text asset at /llms.txt for agents and crawlers.
+const publicDir = join(websiteDir, "public");
+mkdirSync(publicDir, { recursive: true });
+copyFileSync(join(repoRoot, "llms.txt"), join(publicDir, "llms.txt"));
 
 // Bundle the opaque-origin playground sandbox runtime as a self-contained IIFE string
 // so sandboxed iframes need zero network or CORS access to the portal origin.

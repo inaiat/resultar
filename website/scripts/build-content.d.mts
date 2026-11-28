@@ -1,3 +1,5 @@
+import type { SearchEntry } from "../src/generated/site-data.js";
+
 export interface RenderedSection {
   readonly heading: string;
   readonly anchor: string;
@@ -14,6 +16,7 @@ export interface RenderedMarkdown {
   readonly html: string;
   readonly toc: readonly RenderedTocItem[];
   readonly sections: readonly RenderedSection[];
+  readonly referenceEntries: readonly SearchEntry[];
 }
 
 export declare const isPlaygroundCandidate: (code: string, lang: string) => boolean;

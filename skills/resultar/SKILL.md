@@ -69,18 +69,20 @@ are synchronous; `yield*` of a synchronous `Result` inside a Task is supported. 
 always-failing branch with `return yield*`. For legacy eager async generators (`async function*`),
 use `ResultAsync.gen` / `ResultAsync.fn` from `"resultar/async"`.
 
-Use `createTaggedError(...).withProps<...>()` for new domain errors. Keep class
-names and tags equal; use the generated constructor. Existing error contracts,
+Use `createTaggedError(...).withProps<...>()` for new domain errors (pass
+`captureStackTrace: false` on hot-path expected errors when stack frames are unnecessary).
+Keep class names and tags equal; use the generated constructor. Existing error contracts,
 including the request client's `RequestError`, remain supported.
 
-Use `andThen`, `mapErr`, `orElse`, and `ok` / `err`. Capture expected
+Use `andThen`, `mapErr`, `orElse`, `orElseSucceed`, and `ok` / `err`. Capture expected
 throws/rejections with `Result.try`, `ResultTask.try`, or
 `ResultTask.tryPromise` (or `ResultAsync.try` from `"resultar/async"` for legacy eager boundaries).
 Exceptions in Task callbacks become defects, not typed `E`.
 
-`inspect` / `inspectError` are best-effort synchronous observers on `Result`, `ResultTask`, and
-`ResultAsync`. `tap` / `tapError` exist **only** on `ResultTask` for composing fallible task side
-operations (thrown callbacks become defects). Do not confuse `inspect` and Task `tap`.
+`inspect` / `inspectError` (and `inspectCause` on `ResultTask` for full `Cause` observation,
+including defects and interruption) are best-effort synchronous observers on `Result`, `ResultTask`,
+and `ResultAsync`. `tap` / `tapError` / `tapCause` exist **only** on `ResultTask` for composing
+fallible task side operations (thrown callbacks become defects). Do not confuse `inspect` and Task `tap`.
 
 Run Tasks only at application boundaries: `runResult`, `runPromise`, `runExit`,
 `runSync`, `runSyncExit`, `runFork` (instance and static forms). `runResult` returns a native
@@ -109,6 +111,7 @@ that work itself. Timeouts cannot guarantee a deadline for uncooperative cleanup
 | Diagnose/configure the native checker                                                               | [Checker guide](references/anti-patterns.md)           |
 | Review generated changes                                                                            | [Review checklist](references/review-checklist.md)     |
 
+The [documentation website](https://inaiat.github.io/resultar/) includes browsable guides and a playground.
 The [full guide](../../DOCUMENTATION.md), [public API inventory](../../docs/api-inventory.md),
 [package READMEs](../../README.md#ecosystem-packages), and [v5 migration guide](../../docs/migrations/v5.md)
 cover the complete ecosystem. Consult only the relevant sections. Installed

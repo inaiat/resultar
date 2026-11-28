@@ -211,4 +211,206 @@ describe('ResultTask.runFork', () => {
       cause: { _tag: 'Die', defect },
     })
   })
+
+  it('supports pooled runFork with tryPromise, inspectCause, interruption, and async cleanup', async () => {
+    const observed: Cause<string>[] = []
+
+    const okFiber = ResultTask.tryPromise({
+      try: () => Promise.resolve(21),
+      catch: () => 'unexpected',
+    })
+      .map((value) => value * 2)
+      .inspectCause((cause) => observed.push(cause))
+      .runFork()
+    equal(await Fiber.join(okFiber).runPromise(), 42)
+    equal(observed.length, 0)
+
+    const failFiber = ResultTask.tryPromise<number, string>({
+      try: () => Promise.reject(new Error('boom')),
+      catch: () => 'mapped-error',
+    })
+      .asVoid()
+      .inspectCause((cause) => observed.push(cause))
+      .runFork()
+    deepEqual(await Fiber.await(failFiber).runPromise(), {
+      _tag: 'Failure',
+      cause: { _tag: 'Fail', error: 'mapped-error' },
+    })
+    deepEqual(observed, [{ _tag: 'Fail', error: 'mapped-error' }])
+
+    const defect = new Error('map-defect')
+    const defectObserved: Cause<string>[] = []
+    const defectFiber = ResultTask.tryPromise<number, string>({
+      try: () => Promise.resolve(1),
+      catch: () => 'unused',
+    })
+      .map(() => {
+        throw defect
+      })
+      .inspectCause((cause) => defectObserved.push(cause))
+      .runFork()
+    deepEqual(await Fiber.await(defectFiber).runPromise(), {
+      _tag: 'Failure',
+      cause: { _tag: 'Die', defect },
+    })
+    deepEqual(defectObserved, [{ _tag: 'Die', defect }])
+
+    const deferred = Promise.withResolvers<number>()
+    const receivedSignals: AbortSignal[] = []
+    const interruptObserved: Cause<string>[] = []
+    const interruptedFiber = ResultTask.tryPromise<number, string>({
+      try: (signal) => {
+        receivedSignals.push(signal)
+        return deferred.promise
+      },
+      catch: () => 'unused',
+    })
+      .inspectCause((cause) => interruptObserved.push(cause))
+      .runFork()
+    const interruptExitPromise = Fiber.interrupt(interruptedFiber, 'stop-now').runPromise()
+    equal(receivedSignals[0]?.aborted, true)
+    deferred.resolve(99)
+    deepEqual(await interruptExitPromise, {
+      _tag: 'Failure',
+      cause: { _tag: 'Interrupt', reason: 'stop-now' },
+    })
+    deepEqual(interruptObserved, [{ _tag: 'Interrupt', reason: 'stop-now' }])
+
+    const releaseDeferred = Promise.withResolvers<void>()
+    let released = false
+    const syncAcquireAsyncRelease = ResultTask.gen(function* () {
+      yield* ResultTask.acquireRelease({
+        acquire: ResultTask.ok('res'),
+        release: () =>
+          ResultTask.fromPromise(() =>
+            releaseDeferred.promise.then(() => {
+              released = true
+            }),
+          ),
+      })
+      return 'done'
+    }).runFork()
+    equal(syncAcquireAsyncRelease.poll(), undefined)
+    releaseDeferred.resolve()
+    deepEqual(await Fiber.await(syncAcquireAsyncRelease).runPromise(), {
+      _tag: 'Success',
+      value: 'done',
+    })
+    equal(released, true)
+  })
+
+  it('delivers throwing services getters through the fiber and disposes external abort listeners', async () => {
+    const getterFailure = new Error('services getter boom')
+    const services = {}
+    Object.defineProperty(services, 'broken', {
+      enumerable: true,
+      get() {
+        throw getterFailure
+      },
+    })
+    const controller = new AbortController()
+    const added = vi.spyOn(controller.signal, 'addEventListener')
+    const removed = vi.spyOn(controller.signal, 'removeEventListener')
+    try {
+      const handle = ResultTask.runFork(ResultTask.ok(1), {
+        signal: controller.signal,
+        services: services as never,
+      })
+      const exit = await Fiber.await(handle).runPromise()
+      deepEqual(exit, { _tag: 'Failure', cause: { _tag: 'Die', defect: getterFailure } })
+      equal(added.mock.calls.length, 1)
+      equal(removed.mock.calls.length, 1)
+    } finally {
+      added.mockRestore()
+      removed.mockRestore()
+    }
+  })
+
+  it('removes external abort listeners across sync/async scoped releases and config errors, and preserves inspectCause exits', async () => {
+    // 1. Config error (invalid yieldEvery) still disposes the attached external signal listener.
+    {
+      const controller = new AbortController()
+      const added = vi.spyOn(controller.signal, 'addEventListener')
+      const removed = vi.spyOn(controller.signal, 'removeEventListener')
+      try {
+        const invalid = ResultTask.runFork(ResultTask.ok(1), {
+          signal: controller.signal,
+          yieldEvery: 0,
+        })
+        const exit = await Fiber.await(invalid).runPromise()
+        assertOk(exit._tag === 'Failure')
+        equal(added.mock.calls.length, 1)
+        equal(removed.mock.calls.length, 1)
+      } finally {
+        added.mockRestore()
+        removed.mockRestore()
+      }
+    }
+
+    // 2. Sync & async bodies with sync & async releases all dispose their external signal listener.
+    for (const asyncBody of [false, true]) {
+      for (const asyncRelease of [false, true]) {
+        const controller = new AbortController()
+        const added = vi.spyOn(controller.signal, 'addEventListener')
+        const removed = vi.spyOn(controller.signal, 'removeEventListener')
+        const releaseGate = Promise.withResolvers<void>()
+        try {
+          const task = ResultTask.gen(function* () {
+            yield* ResultTask.acquireRelease({
+              acquire: ResultTask.ok('r'),
+              release: () =>
+                asyncRelease
+                  ? ResultTask.fromPromise(() => releaseGate.promise)
+                  : ResultTask.ok(undefined),
+            })
+            if (asyncBody) {
+              return yield* ResultTask.fromPromise(() => Promise.resolve('async-body'))
+            }
+            return 'sync-body'
+          })
+          const fiber = task.runFork({ signal: controller.signal })
+          if (asyncRelease) {
+            equal(fiber.poll(), undefined)
+            releaseGate.resolve()
+          }
+          deepEqual(await Fiber.await(fiber).runPromise(), {
+            _tag: 'Success',
+            value: asyncBody ? 'async-body' : 'sync-body',
+          })
+          equal(added.mock.calls.length, 1)
+          equal(removed.mock.calls.length, 1)
+        } finally {
+          added.mockRestore()
+          removed.mockRestore()
+        }
+      }
+    }
+
+    // 3. inspectCause stays synchronous for sync observers and unexecuted ResultTask returns,
+    //    and preserves the failure exit when an async observer rejects.
+    const seenSync: Cause<string>[] = []
+    deepEqual(
+      ResultTask.err('sync-err')
+        .inspectCause((cause) => {
+          seenSync.push(cause)
+        })
+        .runSyncExit(),
+      { _tag: 'Failure', cause: { _tag: 'Fail', error: 'sync-err' } },
+    )
+    deepEqual(seenSync, [{ _tag: 'Fail', error: 'sync-err' }])
+
+    deepEqual(
+      ResultTask.err('task-ret')
+        .inspectCause(() => ResultTask.ok('ignored-task'))
+        .runSyncExit(),
+      { _tag: 'Failure', cause: { _tag: 'Fail', error: 'task-ret' } },
+    )
+
+    deepEqual(
+      await ResultTask.err('reject-obs')
+        .inspectCause(() => Promise.reject(new Error('observer rejection')))
+        .runExit(),
+      { _tag: 'Failure', cause: { _tag: 'Fail', error: 'reject-obs' } },
+    )
+  })
 })

@@ -3,29 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Resultar — Typed Errors, Lazy Tasks & Scoped DI for Your TypeScript Stack</title>
+    <link rel="canonical" href="https://inaiat.github.io/resultar/" />
+    <link rel="alternate" type="text/plain" title="Resultar llms.txt" href="./llms.txt" />
+    <title>Resultar — Stop guessing what throws. Put every failure in the return type.</title>
     <meta
       name="description"
-      content="Start with a ~5.9 kB Result<T, E>. Scale to lazy ResultTask<A, E, R>, CSP-safe scoped DI for Fastify, Hono & NestJS, your choice of Zod or TypeBox schemas, and 43 native TypeScript-Go checks."
+      content="Typed error handling and lazy async workflows for TypeScript. Start with a ~5.9 kB Result<T, E>, scale to ResultTask<T, E, R> with scoped DI, and await native Promise<Result> boundaries in Fastify, Hono, or NestJS."
     />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Resultar" />
     <meta
       property="og:title"
-      content="Resultar — Typed Errors, Lazy Tasks & Scoped DI for Your TypeScript Stack"
+      content="Resultar — Stop guessing what throws. Put every failure in the return type."
     />
     <meta
       property="og:description"
-      content="Interoperable typed error handling, lazy tasks, structured concurrency, and scoped DI for Fastify, Hono, NestJS, Zod & TypeBox — plus 43 native TypeScript-Go static checks."
+      content="Typed error handling and lazy async workflows for TypeScript. Start with a ~5.9 kB Result<T, E>, scale to ResultTask<T, E, R> with scoped DI, and await native Promise<Result> boundaries in Fastify, Hono, or NestJS."
     />
     <meta name="twitter:card" content="summary_large_image" />
     <meta
       name="twitter:title"
-      content="Resultar — Typed Errors & Lazy Tasks for the Stack You Already Use"
+      content="Resultar — Stop guessing what throws. Put every failure in the return type."
     />
     <meta
       name="twitter:description"
-      content="~5.9 kB Result<T, E>, lazy ResultTask<A, E, R>, Fastify/Hono/NestJS DI, Zod/TypeBox validation, and 43 native TypeScript-Go checks."
+      content="Typed error handling and lazy async workflows for TypeScript. Start with a ~5.9 kB Result<T, E>, scale to ResultTask<T, E, R> with scoped DI, and await native Promise<Result> boundaries in Fastify, Hono, or NestJS."
     />
     <link
       rel="icon"
@@ -35,6 +37,24 @@
   </head>
   <body>
     <div id="app"></div>
+    <dialog id="doc-search" class="modal-backdrop" aria-label="Search documentation">
+      <div class="modal-card">
+        <div class="modal-input-row">
+          <input
+            id="search-input"
+            class="modal-input"
+            type="text"
+            aria-label="Search documentation"
+            placeholder="Search guides, API symbols or rules…"
+            autocomplete="off"
+          />
+          <button class="kbd" type="button" data-action="close-search" aria-label="Close search">
+            Esc
+          </button>
+        </div>
+        <div class="modal-results"></div>
+      </div>
+    </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

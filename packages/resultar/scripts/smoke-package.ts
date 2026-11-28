@@ -28,21 +28,6 @@ const requiredFiles = [
   'dist/function.js',
   'dist/async.d.ts',
   'dist/async.js',
-  'dist/llms.txt',
-  'dist/agent/SKILL.md',
-  'dist/agent/versions.json',
-  'dist/agent/references/api.md',
-  'dist/agent/references/anti-patterns.md',
-  'dist/agent/references/patterns.md',
-  'dist/agent/references/services.md',
-  'dist/agent/references/integrations.md',
-  'dist/agent/references/review-checklist.md',
-  'dist/agent/examples/workflow.mjs',
-  'dist/agent/examples/contracts.mjs',
-  'dist/agent/manual/DOCUMENTATION.md',
-  'dist/agent/manual/docs/api-inventory.md',
-  'dist/agent/manual/docs/recipes.md',
-  'dist/agent/manual/packages/di/README.md',
   'package.json',
 ] as const
 
@@ -191,7 +176,7 @@ for (const file of requiredFiles) {
 }
 
 const allowedPackedFile =
-  /^(?:LICENSE|README\.md|package\.json|dist\/[^/]+\.(?:js|d\.ts|js\.map|txt)|dist\/agent\/(?:SKILL\.md|versions\.json|agents\/openai\.yaml|references\/[a-z-]+\.md|examples\/(?:workflow|contracts)\.(?:mts|mjs)|manual\/[a-zA-Z0-9_./-]+\.md))$/u
+  /^(?:LICENSE|README\.md|package\.json|dist\/[^/]+\.(?:js|d\.ts|js\.map))$/u
 const unexpectedFiles = packedFiles.filter((file) => !allowedPackedFile.test(file))
 
 if (unexpectedFiles.length > 0) {
@@ -253,13 +238,6 @@ assert.equal((await pipe(ResultAsync.ok(2), ResultAsync.map(value => value * 3),
 assert.equal((await asyncMap(ok(2), async value => value * 3))._unsafeUnwrap(), 6);
 assert.equal((await asyncAndThen(ok(2), value => okAsync(value * 4)))._unsafeUnwrap(), 8);
 assert.equal(await ResultAsync.err('boom').match({ok: () => 'ok', err: error => error}), 'boom');
-import {account, welcome} from './dist/agent/examples/workflow.mjs';
-assert.equal(account('invalid').isErr(), true);
-const pendingWelcome = ResultTask.runResult(welcome(' ADA@EXAMPLE.COM '), {services: {greeting: 'Hello'}});
-assert.equal(pendingWelcome instanceof Promise, true);
-const result = await pendingWelcome;
-assert.equal(result.isOk(), true);
-assert.equal(result.value, 'Hello, ada@example.com');
 const normalize = flow((value) => value.trim(), (value) => value.toLowerCase());
 assert.equal(pipe(' ADA ', normalize), 'ada');
 assert.equal(ok('Ready').match({ok: identity, err: constant('Unavailable')}), 'Ready');

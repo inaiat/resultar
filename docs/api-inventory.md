@@ -109,7 +109,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `runSync` | Value | — |
 | `Scheduler` | Value | `live` |
 | `Semaphore` | Value | `make`, `withPermit`, `withPermits` |
-| `service` | Value | — |
+| `service` | Value | `require` |
 | `Service` | Value | `require` |
 | `ServiceAccess` | Type | `close`, `get`, `has`, `keys`, `use` |
 | `ServiceAccessError` | Class | Static: `err`, `is`, `tag`, `taskErr`, `withProps`<br>Instance: `_tag`, `cause`, `findCause`, `fingerprint`, `kind`, `messageTemplate`, `message`, `name`, `reason`, `serviceName`, `stack`, `toJSON` |
@@ -138,7 +138,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `TaggedEnumFactory` | Type | — |
 | `TaggedErrorClass` | Type | — |
 | `TaggedErrorInstance` | Type | — |
-| `TaggedErrorOptions` | Type | `extends`, `message`, `name` |
+| `TaggedErrorOptions` | Type | `captureStackTrace`, `extends`, `message`, `name` |
 | `TaskClock` | Type | `now`, `random`, `sleep` |
 | `TaskLocal` | Value | `make` |
 | `TaskScheduler` | Type | `yield` |
@@ -176,7 +176,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `HttpServiceSelection` | Type | — |
 | `inspectModule` | Value | — |
 | `resource` | Value | — |
-| `service` | Value | — |
+| `service` | Value | `require` |
 | `Service` | Value | `require` |
 | `ServiceAccess` | Type | `close`, `get`, `has`, `keys`, `use` |
 | `ServiceAccessError` | Class | Static: `err`, `is`, `tag`, `taskErr`, `withProps`<br>Instance: `_tag`, `cause`, `findCause`, `fingerprint`, `kind`, `messageTemplate`, `message`, `name`, `reason`, `serviceName`, `stack`, `toJSON` |
@@ -203,7 +203,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `createFastifyApp` | Value | — |
 | `createFastifyPlugin` | Value | — |
 | `createModule` | Value | — |
-| `FastifyAppOptions` | Type | `ajv`, `allowErrorHandlerOverride`, `allowUnsafeRegex`, `appBindings`, `bindings`, `bodyLimit`, `caseSensitive`, `childLoggerFactory`, `clientErrorHandler`, `connectionTimeout`, `constraints`, `disableRequestLogging`, `exposeApplication`, `exposeHeadRoutes`, `exposeRequest`, `forceCloseConnections`, `frameworkErrors`, `genReqId`, `handlerTimeout`, `http2`, `http`, `ignoreDuplicateSlashes`, `ignoreTrailingSlash`, `keepAliveTimeout`, `locals`, `logController`, `loggerInstance`, `logger`, `mapError`, `maxParamLength`, `maxRequestsPerSocket`, `name`, `onConstructorPoisoning`, `onProtoPoisoning`, `pluginTimeout`, `querystringParser`, `requestHook`, `requestIdHeader`, `requestIdLogLabel`, `requestTimeout`, `rethrowRollbackOnClose`, `return503OnClosing`, `rewriteUrl`, `routerOptions`, `schemaController`, `schemaErrorFormatter`, `serializerOpts`, `serverFactory`, `services`, `startup`, `trustProxy`, `useSemicolonDelimiter` |
+| `FastifyAppOptions` | Type | `ajv`, `allowErrorHandlerOverride`, `allowUnsafeRegex`, `appBindings`, `bindings`, `bodyLimit`, `caseSensitive`, `childLoggerFactory`, `clientErrorHandler`, `connectionTimeout`, `constraints`, `disableRequestLogging`, `exposeApplication`, `exposeHeadRoutes`, `exposeRequest`, `forceCloseConnections`, `frameworkErrors`, `genReqId`, `handlerTimeout`, `http2`, `httpErrors`, `http`, `ignoreDuplicateSlashes`, `ignoreTrailingSlash`, `keepAliveTimeout`, `locals`, `logController`, `loggerInstance`, `logger`, `mapError`, `maxParamLength`, `maxRequestsPerSocket`, `name`, `onConstructorPoisoning`, `onProtoPoisoning`, `pluginTimeout`, `querystringParser`, `requestHook`, `requestIdHeader`, `requestIdLogLabel`, `requestTimeout`, `rethrowRollbackOnClose`, `return503OnClosing`, `rewriteUrl`, `routerOptions`, `schemaController`, `schemaErrorFormatter`, `serializerOpts`, `serverFactory`, `services`, `startup`, `trustProxy`, `useSemicolonDelimiter` |
 | `FastifyServicesApplication` | Type | `addConstraintStrategy`, `addContentTypeParser`, `addHook`, `addHttpMethod`, `addSchema`, `addresses`, `after`, `all`, `childLoggerFactory`, `close`, `copy`, `decorateReply`, `decorateRequest`, `decorate`, `defaultTextParser`, `delete`, `errorHandler`, `findRoute`, `getDecorator`, `getDefaultJsonParser`, `getSchema`, `getSchemas`, `get`, `hasConstraintStrategy`, `hasContentTypeParser`, `hasDecorator`, `hasPlugin`, `hasReplyDecorator`, `hasRequestDecorator`, `hasRoute`, `head`, `initialConfig`, `inject`, `listen`, `listeningOrigin`, `lock`, `log`, `mkcalendar`, `mkcol`, `move`, `options`, `patch`, `pluginName`, `post`, `prefix`, `printPlugins`, `printRoutes`, `propfind`, `proppatch`, `put`, `query`, `ready`, `register`, `removeAllContentTypeParsers`, `removeContentTypeParser`, `report`, `route`, `routing`, `search`, `serializerCompiler`, `server`, `serviceTypes`, `setChildLoggerFactory`, `setErrorHandler`, `setGenReqId`, `setNotFoundHandler`, `setReplySerializer`, `setSchemaController`, `setSchemaErrorFormatter`, `setSerializerCompiler`, `setValidatorCompiler`, `supportedMethods`, `trace`, `unlock`, `validatorCompiler`, `version`, `withTypeProvider` |
 | `FastifyServicesOptions` | Type | `appBindings`, `bindings`, `exposeApplication`, `exposeRequest`, `locals`, `mapError`, `name`, `requestHook`, `rethrowRollbackOnClose`, `services`, `startup` |
 | `FastifyServicesPlugin` | Type | `serviceTypes` |
@@ -211,7 +211,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `InferAppServices` | Type | — |
 | `InferRequestServices` | Type | — |
 | `resource` | Value | — |
-| `service` | Value | — |
+| `service` | Value | `require` |
 | `Service` | Value | `require` |
 | `ServiceClass` | Type | — |
 | `ServiceLifetime` | Type | — |
@@ -235,7 +235,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `InferRequestServices` | Type | — |
 | `resource` | Value | — |
 | `runTaskJson` | Value | — |
-| `service` | Value | — |
+| `service` | Value | `require` |
 | `Service` | Value | `require` |
 | `ServiceClass` | Type | — |
 | `ServiceLifetime` | Type | — |
@@ -270,7 +270,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `NestServicesModule` | Type | `controllers`, `exports`, `global`, `imports`, `module`, `providers`, `serviceTypes` |
 | `NestServicesOptions` | Type | `appBindings`, `bindings`, `exposeApplication`, `exposeRequest`, `handlerTimeout`, `initTimeout`, `locals`, `mapError`, `name`, `requestHook`, `rethrowRollbackOnClose`, `services`, `startup` |
 | `resource` | Value | — |
-| `service` | Value | — |
+| `service` | Value | `require` |
 | `Service` | Value | `require` |
 | `ServiceClass` | Type | — |
 | `ServiceLifetime` | Type | — |
@@ -288,6 +288,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `baseRequestErrorHandler` | Value | — |
 | `FetchJsonResponseData` | Type | — |
 | `HttpClientRequestErrorCause` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `body`, `cause`, `headers`, `message`, `name`, `stack`, `statusCode` |
+| `HttpErrorStatusByTag` | Type | — |
 | `HttpResponseErrorCauseError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `body`, `cause`, `headers`, `message`, `name`, `stack`, `statusCode` |
 | `integrationErrorHandler` | Value | — |
 | `isHttpResponseError` | Value | — |
@@ -306,6 +307,8 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `RequestJsonInput` | Type | — |
 | `RequestJsonInvalidJsonErrorContext` | Type | — |
 | `RequestJsonMapError` | Type | — |
+| `RequestJsonMapErrorHandlers` | Type | — |
+| `RequestJsonMapErrorInput` | Type | — |
 | `RequestJsonMapErrorResult` | Type | — |
 | `RequestJsonMappedDecodeInput` | Type | — |
 | `RequestJsonMappedInput` | Type | — |
@@ -331,6 +334,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `baseRequestErrorHandler` | Value | — |
 | `FetchJsonResponseData` | Type | — |
 | `HttpClientRequestErrorCause` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `body`, `cause`, `headers`, `message`, `name`, `stack`, `statusCode` |
+| `HttpErrorStatusByTag` | Type | — |
 | `HttpResponseErrorCauseError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `body`, `cause`, `headers`, `message`, `name`, `stack`, `statusCode` |
 | `integrationErrorHandler` | Value | — |
 | `isHttpResponseError` | Value | — |
@@ -349,6 +353,8 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `RequestJsonInput` | Type | — |
 | `RequestJsonInvalidJsonErrorContext` | Type | — |
 | `RequestJsonMapError` | Type | — |
+| `RequestJsonMapErrorHandlers` | Type | — |
+| `RequestJsonMapErrorInput` | Type | — |
 | `RequestJsonMapErrorResult` | Type | — |
 | `RequestJsonMappedDecodeInput` | Type | — |
 | `RequestJsonMappedInput` | Type | — |
@@ -378,6 +384,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `baseRequestErrorHandler` | Value | — |
 | `FetchJsonResponseData` | Type | — |
 | `HttpClientRequestErrorCause` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `body`, `cause`, `headers`, `message`, `name`, `stack`, `statusCode` |
+| `HttpErrorStatusByTag` | Type | — |
 | `HttpResponseErrorCauseError` | Class | Static: `captureStackTrace`, `isError`, `prepareStackTrace`, `stackTraceLimit`<br>Instance: `body`, `cause`, `headers`, `message`, `name`, `stack`, `statusCode` |
 | `integrationErrorHandler` | Value | — |
 | `isHttpResponseError` | Value | — |
@@ -396,6 +403,8 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `RequestJsonInput` | Type | — |
 | `RequestJsonInvalidJsonErrorContext` | Type | — |
 | `RequestJsonMapError` | Type | — |
+| `RequestJsonMapErrorHandlers` | Type | — |
+| `RequestJsonMapErrorInput` | Type | — |
 | `RequestJsonMapErrorResult` | Type | — |
 | `RequestJsonMappedDecodeInput` | Type | — |
 | `RequestJsonMappedInput` | Type | — |
@@ -414,6 +423,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `RequestJsonZodInput` | Type | — |
 | `RequestJsonZodMappedInput` | Type | — |
 | `UndiciJsonResponseData` | Type | — |
+| `z` | Value | `$brand`, `$input`, `$output`, `INVALID`, `NEVER`, `TimePrecision`, `ZodAny`, `ZodArray`, `ZodBase64URL`, `ZodBase64`, `ZodBigIntFormat`, `ZodBigInt`, `ZodBoolean`, `ZodCIDRv4`, `ZodCIDRv6`, `ZodCUID2`, `ZodCUID`, `ZodCatch`, `ZodCodec`, `ZodCompileAsyncError`, `ZodCompileUnsupportedError`, `ZodCreditCard`, `ZodCustomStringFormat`, `ZodCustom`, `ZodDate`, `ZodDefault`, `ZodDiscriminatedUnion`, `ZodE164`, `ZodEmail`, `ZodEmoji`, `ZodEnum`, `ZodError`, `ZodExactOptional`, `ZodFile`, `ZodFirstPartyTypeKind`, `ZodFunction`, `ZodGUID`, `ZodIBAN`, `ZodIPv4`, `ZodIPv6`, `ZodISODateTime`, `ZodISODate`, `ZodISODuration`, `ZodISOTime`, `ZodInstanceOf`, `ZodIntersection`, `ZodIssueCode`, `ZodJWT`, `ZodKSUID`, `ZodLazy`, `ZodLiteral`, `ZodMAC`, `ZodMap`, `ZodNaN`, `ZodNanoID`, `ZodNever`, `ZodNonOptional`, `ZodNull`, `ZodNullable`, `ZodNumberFormat`, `ZodNumber`, `ZodObject`, `ZodOptional`, `ZodPipe`, `ZodPrefault`, `ZodPreprocess`, `ZodPromise`, `ZodReadonly`, `ZodRealError`, `ZodRecord`, `ZodSet`, `ZodStringFormat`, `ZodString`, `ZodSuccess`, `ZodSymbol`, `ZodTemplateLiteral`, `ZodTransform`, `ZodTuple`, `ZodType`, `ZodULID`, `ZodURL`, `ZodUUID`, `ZodUndefined`, `ZodUnion`, `ZodUnknown`, `ZodVoid`, `ZodXID`, `ZodXor`, `_ZodString`, `_default`, `_function`, `any`, `array`, `base64`, `base64url`, `bigint`, `boolean`, `catch`, `check`, `cidrv4`, `cidrv6`, `clone`, `codec`, `coerce`, `compile`, `config`, `core`, `creditCard`, `cuid2`, `cuid`, `currencyCode`, `custom`, `date`, `decodeAsync`, `decode`, `deepPartial`, `describe`, `discriminatedUnion`, `e164`, `email`, `emoji`, `encodeAsync`, `encode`, `endsWith`, `enum`, `exactOptional`, `file`, `flattenError`, `float32`, `float64`, `formatError`, `fromJSONSchema`, `function`, `getDiscriminatedOption`, `getErrorMap`, `globalRegistry`, `gt`, `gte`, `guid`, `hash`, `hex`, `hostname`, `httpUrl`, `iban`, `includes`, `input`, `instanceof`, `int32`, `int64`, `int`, `intersection`, `invertCodec`, `ipv4`, `ipv6`, `iso`, `json`, `jwt`, `keyof`, `ksuid`, `lazy`, `length`, `literal`, `locales`, `looseObject`, `looseRecord`, `lowercase`, `lt`, `lte`, `mac`, `map`, `maxLength`, `maxSize`, `memoizer`, `meta`, `mime`, `minLength`, `minSize`, `multipleOf`, `nan`, `nanoid`, `nativeEnum`, `negative`, `never`, `nonnegative`, `nonoptional`, `nonpositive`, `normalize`, `null`, `nullable`, `nullish`, `number`, `object`, `optional`, `output`, `overwrite`, `parseAsync`, `parse`, `partialRecord`, `pipe`, `positive`, `prefault`, `preprocess`, `prettifyError`, `promise`, `properties`, `property`, `readonly`, `record`, `refine`, `regex`, `regexes`, `registry`, `safeDecodeAsync`, `safeDecode`, `safeEncodeAsync`, `safeEncode`, `safeParseAsync`, `safeParse`, `setErrorMap`, `set`, `size`, `slugify`, `startsWith`, `strictObject`, `stringFormat`, `string`, `stringbool`, `success`, `superRefine`, `symbol`, `templateLiteral`, `toJSONSchema`, `toLowerCase`, `toUpperCase`, `toZod`, `transform`, `treeifyError`, `trim`, `tuple`, `uint32`, `uint64`, `ulid`, `undefined`, `union`, `unknown`, `uppercase`, `url`, `util`, `uuid`, `uuidv4`, `uuidv6`, `uuidv7`, `validateAsync`, `validate`, `void`, `withParser`, `xid`, `xor` |
 
 ## resultar
 
@@ -516,7 +526,7 @@ The [native checker](../packages/check/README.md) exposes CLI/LSP commands and
 | `TaggedEnumFactory` | Type | — |
 | `TaggedErrorClass` | Type | — |
 | `TaggedErrorInstance` | Type | — |
-| `TaggedErrorOptions` | Type | `extends`, `message`, `name` |
+| `TaggedErrorOptions` | Type | `captureStackTrace`, `extends`, `message`, `name` |
 | `TaskClock` | Type | `now`, `random`, `sleep` |
 | `TaskLocal` | Value | `make` |
 | `TaskScheduler` | Type | `yield` |

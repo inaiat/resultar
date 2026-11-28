@@ -1,16 +1,18 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "node:test";
 
 import * as resultar from "../../packages/resultar/dist/index.js";
 import { isPlaygroundCandidate, renderInline, renderMarkdown } from "../scripts/build-content.mjs";
 import {
+  type DocPage,
   DOC_LOADERS,
   DOC_SLUGS,
   NAV_SECTIONS,
-  SEARCH_INDEX,
   SITE_META,
 } from "../src/generated/site-data.js";
+import { SEARCH_INDEX } from "../src/generated/search-index.js";
 import { executePlaygroundInContext } from "../src/playground-core.js";
 import { searchDocs } from "../src/search.js";
 
@@ -60,6 +62,90 @@ void test("search index finds guides, public API symbols, and all 43 resultar-ch
   const effectHits = searchDocs(SEARCH_INDEX, "Coming from Effect");
   assert.ok(effectHits.length > 0);
   assert.equal(effectHits[0]?.entry.route, "#/docs/coming-from-effect");
+
+  const aiHits = searchDocs(SEARCH_INDEX, "AI & Coding Agents");
+  assert.ok(aiHits.length > 0);
+  assert.equal(aiHits[0]?.entry.route, "#/docs/agents/setup");
+
+  const llmsHits = searchDocs(SEARCH_INDEX, "llms.txt");
+  assert.ok(llmsHits.some(({ entry }) => entry.route === "#/docs/agents/llms"));
+
+  const asyncHits = searchDocs(SEARCH_INDEX, "async workflow");
+  assert.equal(
+    asyncHits[0]?.entry.route,
+    "#/docs/full-reference#asynchronous-workflows-with-resulttask",
+  );
+  assert.equal(
+    asyncHits
+      .slice(0, 5)
+      .some(
+        ({ entry }) =>
+          entry.route.startsWith("#/docs/v4-migration") ||
+          entry.title.toLowerCase().includes("resultasync") ||
+          entry.title.toLowerCase().includes("deprecated"),
+      ),
+    false,
+  );
+});
+
+void test("getting-started and gradual-adoption guides stay free of deprecated ResultAsync", async () => {
+  for (const slug of ["quickstart", "async-workflow", "failure-boundaries", "gradual-adoption"]) {
+    // eslint-disable-next-line no-await-in-loop -- Inspect each onboarding page sequentially for clear diagnostics.
+    const page = await DOC_LOADERS[slug]?.();
+    assert.ok(page !== undefined, `Missing page ${slug}`);
+    assert.equal(
+      page.html.includes("ResultAsync"),
+      false,
+      `Expected onboarding page "${slug}" not to mention deprecated ResultAsync`,
+    );
+  }
+
+  const adoptionNav = NAV_SECTIONS.find((section) => section.group === "Adoption & Migration");
+  assert.ok(adoptionNav !== undefined);
+  assert.equal(
+    adoptionNav.items.some((item) => item.slug === "v4-migration"),
+    false,
+    "Historical v4 migration guide must not appear in primary Adoption & Migration nav",
+  );
+
+  const overview = await DOC_LOADERS.overview?.();
+  assert.ok(overview !== undefined);
+  assert.match(overview.html, /class="mermaid-flow"/u);
+  assert.equal(overview.html.includes("lang-mermaid"), false);
+});
+
+void test("search opens each API export and checker rule at its unique table row", async () => {
+  const entries = SEARCH_INDEX.filter(({ kind }) => kind === "api" || kind === "rule");
+  assert.equal(new Set(entries.map((entry) => entry.route)).size, entries.length);
+  const inventory = await DOC_LOADERS["api-inventory"]?.();
+  const checker = await DOC_LOADERS["resultar-check"]?.();
+  assert.ok(inventory && checker);
+  for (const entry of entries) {
+    const page: DocPage = entry.kind === "api" ? inventory : checker;
+    const anchor = entry.route.split("#")[2];
+    assert.ok(
+      page.html.includes(`<tr id="${anchor}"><td><code>${entry.title}</code></td>`),
+      entry.route,
+    );
+  }
+  const migration = SEARCH_INDEX.find((entry) => entry.title.startsWith("1. runResult()"));
+  assert.equal(migration?.title.includes("Promise<Result<T, E | ScopeError<R>>>"), true);
+});
+
+void test("AI coding agents guide and published llms.txt stay in sync", async () => {
+  const setupPage = await DOC_LOADERS["agents/setup"]?.();
+  assert.ok(setupPage !== undefined);
+  assert.match(setupPage.html, /node_modules\/resultar-check\/dist\/agent\/SKILL\.md/u);
+  assert.match(setupPage.html, /resultar-check init --editor cursor/u);
+  assert.match(setupPage.html, /href="#\/docs\/agents\/llms"/u);
+
+  const llmsPage = await DOC_LOADERS["agents/llms"]?.();
+  assert.ok(llmsPage !== undefined);
+  assert.match(llmsPage.html, /Installed version first/u);
+
+  const rootLlms = readFileSync(resolve(import.meta.dirname, "../../llms.txt"), "utf8");
+  const publicLlms = readFileSync(resolve(import.meta.dirname, "../public/llms.txt"), "utf8");
+  assert.equal(publicLlms, rootLlms);
 });
 
 void test("benchmarks expose the full report in docs and search", async () => {
@@ -124,6 +210,22 @@ void test("renderInline escapes HTML once and neutralizes unsafe URLs", () => {
   assert.match(xssImg, /<img src="" alt="alt &quot;x&quot; &lt;b&gt;" loading="lazy" \/>/u);
 });
 
+void test("published documentation links render as internal routes", () => {
+  const sourceFile = resolve(import.meta.dirname, "../../README.md");
+
+  assert.equal(
+    renderInline("[Docs](https://inaiat.github.io/resultar/)", sourceFile),
+    '<a href="#/">Docs</a>',
+  );
+  assert.equal(
+    renderInline(
+      "[Model](https://inaiat.github.io/resultar/#/docs/full-reference#the-model)",
+      sourceFile,
+    ),
+    '<a href="#/docs/full-reference#the-model">Model</a>',
+  );
+});
+
 void test("renderMarkdown supports H5 and H6 headings cleanly", () => {
   const sourceFile = resolve(import.meta.dirname, "../../README.md");
   const md = [
@@ -157,6 +259,13 @@ void test("isPlaygroundCandidate rejects non-runnable pseudocode and accepts sel
   assert.equal(
     isPlaygroundCandidate(
       `import { ResultAsync } from "resultar";\nconst r = ResultAsync.ok(1);\nconsole.log(r);\n// line 4`,
+      "ts",
+    ),
+    false,
+  );
+  assert.equal(
+    isPlaygroundCandidate(
+      `import { ResultAsync } from "resultar/async";\nconst r = ResultAsync.ok(1);\nconsole.log(r);\n// line 4`,
       "ts",
     ),
     false,

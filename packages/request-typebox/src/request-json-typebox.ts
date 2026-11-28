@@ -9,7 +9,7 @@ import {
   type RequestError,
   type RequestJsonBaseInput,
   type RequestJsonDecodeResult,
-  type RequestJsonMapError,
+  type RequestJsonMapErrorInput,
   type RequestJsonMapErrorResult,
   type RequestJsonResponseData,
 } from "resultar-request";
@@ -23,7 +23,7 @@ export type RequestJsonTypeBoxInput<
 /** TypeBox request input with an explicit domain-error mapping. */
 export type RequestJsonTypeBoxMappedInput<
   S extends TSchema,
-  M extends RequestJsonMapError,
+  M extends RequestJsonMapErrorInput,
   R extends RequestJsonResponseData = RequestJsonResponseData,
 > = RequestJsonTypeBoxInput<S, R> & { readonly mapError: M };
 
@@ -92,7 +92,7 @@ const decodeWithTypeBoxSchema =
  */
 export function requestJsonTypeBox<
   S extends TSchema,
-  M extends RequestJsonMapError,
+  M extends RequestJsonMapErrorInput,
   R extends RequestJsonResponseData = RequestJsonResponseData,
 >(
   input: RequestJsonTypeBoxMappedInput<S, M, R>,

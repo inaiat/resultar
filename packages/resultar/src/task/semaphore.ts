@@ -28,16 +28,20 @@ const createSemaphoreTask: SemaphoreTaskFactory = (acquire, task, caller) => {
   return semaphoreTaskFactory(acquire, task, caller)
 }
 
+interface WaiterAbort {
+  readonly signal: AbortSignal
+  readonly onAbort: () => void
+}
+
 interface Waiter {
   readonly permits: number
-  signal: AbortSignal | undefined
-  resolve: ((release: (() => void) | undefined) => void) | undefined
-  onAbort: (() => void) | undefined
+  readonly resolve: (release: (() => void) | undefined) => void
+  abort: WaiterAbort | undefined
   aborted: boolean
 }
 
 const assertPositiveSafeInteger = (permits: number, label: string): void => {
-  if (typeof permits !== 'number' || !Number.isSafeInteger(permits) || permits < 1) {
+  if (!Number.isSafeInteger(permits) || permits < 1) {
     throw new RangeError(`${label} must be a positive safe integer`)
   }
 }
@@ -90,6 +94,7 @@ const make = (permits: number): Semaphore => {
           drainQueue()
         }
 
+  /* Stryker disable all: amortized waiter-queue compaction memory optimization; FIFO semantics are invariant to compaction thresholds. */
   const compactWaiters = (): void => {
     const remaining = waiters.length - waitersHead
     if (remaining === 0) {
@@ -105,40 +110,33 @@ const make = (permits: number): Semaphore => {
       waitersHead = 0
     }
   }
+  /* Stryker restore all */
 
   const grantWaiter = (next: Waiter): void => {
     currentPermits -= next.permits
-    const waiterSignal = next.signal
-    const waiterOnAbort = next.onAbort
-    const waiterResolve = next.resolve
-    next.signal = undefined
-    next.onAbort = undefined
-    next.resolve = undefined
-    if (
-      waiterSignal !== undefined &&
-      waiterSignal !== NEVER_ABORTED_SIGNAL &&
-      waiterOnAbort !== undefined
-    ) {
-      waiterSignal.removeEventListener('abort', waiterOnAbort)
+    const waiterAbort = next.abort
+    next.abort = undefined
+    if (waiterAbort !== undefined) {
+      waiterAbort.signal.removeEventListener('abort', waiterAbort.onAbort)
     }
-    waiterResolve?.(makeRelease(next.permits))
+    next.resolve(makeRelease(next.permits))
   }
 
   const drainQueue = (): void => {
     while (waitersHead < waiters.length) {
       const next = waiters[waitersHead]
-      if (next === undefined || next.aborted) {
-        waiters[waitersHead] = undefined
-        waitersHead += 1
-      } else {
-        if (next.permits > currentPermits) {
-          break
-        }
-        waiters[waitersHead] = undefined
-        waitersHead += 1
-        grantWaiter(next)
+      // Stryker disable next-line ConditionalExpression: live queue slots at waitersHead are always populated.
+      const pending = next !== undefined && !next.aborted ? next : undefined
+      if (pending !== undefined && pending.permits > currentPermits) {
+        break
+      }
+      waiters[waitersHead] = undefined
+      waitersHead += 1
+      if (pending !== undefined) {
+        grantWaiter(pending)
       }
     }
+    // Stryker disable next-line CallExpression: amortized memory compaction does not affect permit semantics.
     compactWaiters()
   }
 
@@ -154,23 +152,17 @@ const make = (permits: number): Semaphore => {
       return makeRelease(requested)
     }
     return new Promise<(() => void) | undefined>((resolve) => {
-      const waiter: Waiter = {
-        permits: requested,
-        signal,
-        resolve,
-        aborted: false,
-        onAbort: () => {
+      const waiter: Waiter = { permits: requested, resolve, abort: undefined, aborted: false }
+      // Stryker disable next-line ConditionalExpression: NEVER_ABORTED_SIGNAL has non-configurable no-op addEventListener; skipping avoids allocating onAbort.
+      if (signal !== NEVER_ABORTED_SIGNAL) {
+        const onAbort = (): void => {
           waiter.aborted = true
-          const finish = waiter.resolve
-          waiter.signal = undefined
-          waiter.resolve = undefined
-          waiter.onAbort = undefined
-          finish?.(undefined)
+          waiter.abort = undefined
+          resolve(undefined)
           drainQueue()
-        },
-      }
-      if (signal !== NEVER_ABORTED_SIGNAL && waiter.onAbort !== undefined) {
-        signal.addEventListener('abort', waiter.onAbort, { once: true })
+        }
+        waiter.abort = { signal, onAbort }
+        signal.addEventListener('abort', onAbort, { once: true })
       }
       waiters.push(waiter)
     })

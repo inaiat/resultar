@@ -7,29 +7,30 @@ import { createRuntimeTask } from './task-runtime-bridge.js'
 const createQueueShutdownExit = (): Exit<never, never> =>
   failure({ _tag: 'Interrupt', reason: 'Queue shut down' })
 
+interface AbortRegistration {
+  readonly signal: AbortSignal
+  readonly onAbort: () => void
+}
+
 interface Taker<A> {
-  signal: AbortSignal | undefined
-  resolve: ((exit: Exit<A, never>) => void) | undefined
-  onAbort: (() => void) | undefined
-  settled: boolean
+  readonly resolve: (exit: Exit<A, never>) => void
+  abort: AbortRegistration | undefined
 }
 
 interface Putter<A> {
   value: A | undefined
-  signal: AbortSignal | undefined
-  resolve: ((exit: Exit<boolean, never>) => void) | undefined
-  onAbort: (() => void) | undefined
-  settled: boolean
+  readonly resolve: (exit: Exit<boolean, never>) => void
+  abort: AbortRegistration | undefined
 }
 
 const assertPositiveCapacity = (capacity: number): void => {
-  if (typeof capacity !== 'number' || !Number.isSafeInteger(capacity) || capacity < 1) {
+  if (!Number.isSafeInteger(capacity) || capacity < 1) {
     throw new RangeError('Queue.bounded capacity must be a positive safe integer')
   }
 }
 
 const assertNonNegativeLimit = (max: number): void => {
-  if (typeof max !== 'number' || !Number.isSafeInteger(max) || max < 0) {
+  if (!Number.isSafeInteger(max) || max < 0) {
     throw new RangeError('Queue.takeUpTo max must be a non-negative safe integer')
   }
 }
@@ -42,54 +43,27 @@ const shiftWaiter = <T>(waiters: Set<T>): T | undefined => {
   return undefined
 }
 
-const detachSignal = (
-  signal: AbortSignal | undefined,
-  listener: (() => void) | undefined,
-): void => {
-  if (signal !== undefined && listener !== undefined && signal !== NEVER_ABORTED_SIGNAL) {
-    signal.removeEventListener('abort', listener)
+const detachSignal = (abort: AbortRegistration | undefined): void => {
+  if (abort !== undefined) {
+    abort.signal.removeEventListener('abort', abort.onAbort)
   }
-}
-
-const clearTaker = <A>(taker: Taker<A>): void => {
-  taker.signal = undefined
-  taker.resolve = undefined
-  taker.onAbort = undefined
-}
-
-const clearPutter = <A>(putter: Putter<A>): void => {
-  putter.value = undefined
-  putter.signal = undefined
-  putter.resolve = undefined
-  putter.onAbort = undefined
 }
 
 const makePutterAbortHandler =
-  <A>(putters: Set<Putter<A>>, putter: Putter<A>): (() => void) =>
+  <A>(putters: Set<Putter<A>>, putter: Putter<A>, signal: AbortSignal): (() => void) =>
   () => {
-    if (putter.settled) return
-    putter.settled = true
-    putters.delete(putter)
-    const finish = putter.resolve
-    const abortSignal = putter.signal
-    clearPutter(putter)
-    if (finish !== undefined && abortSignal !== undefined) {
-      finish(interrupted(abortSignal))
-    }
+    if (!putters.delete(putter)) return
+    putter.value = undefined
+    putter.abort = undefined
+    putter.resolve(interrupted(signal))
   }
 
 const makeTakerAbortHandler =
-  <A>(takers: Set<Taker<A>>, taker: Taker<A>): (() => void) =>
+  <A>(takers: Set<Taker<A>>, taker: Taker<A>, signal: AbortSignal): (() => void) =>
   () => {
-    if (taker.settled) return
-    taker.settled = true
-    takers.delete(taker)
-    const finish = taker.resolve
-    const abortSignal = taker.signal
-    clearTaker(taker)
-    if (finish !== undefined && abortSignal !== undefined) {
-      finish(interrupted(abortSignal))
-    }
+    if (!takers.delete(taker)) return
+    taker.abort = undefined
+    taker.resolve(interrupted(signal))
   }
 
 const enqueuePutter = <A>(
@@ -98,10 +72,11 @@ const enqueuePutter = <A>(
   signal: AbortSignal,
 ): Promise<Exit<boolean, never>> =>
   new Promise<Exit<boolean, never>>((resolve) => {
-    const putter: Putter<A> = { value, signal, resolve, onAbort: undefined, settled: false }
-    const onAbort = makePutterAbortHandler(putters, putter)
-    putter.onAbort = onAbort
+    const putter: Putter<A> = { value, resolve, abort: undefined }
+    // Stryker disable next-line ConditionalExpression: NEVER_ABORTED_SIGNAL has non-configurable no-op addEventListener; skipping avoids allocating onAbort.
     if (signal !== NEVER_ABORTED_SIGNAL) {
+      const onAbort = makePutterAbortHandler(putters, putter, signal)
+      putter.abort = { signal, onAbort }
       signal.addEventListener('abort', onAbort, { once: true })
     }
     putters.add(putter)
@@ -109,10 +84,11 @@ const enqueuePutter = <A>(
 
 const enqueueTaker = <A>(takers: Set<Taker<A>>, signal: AbortSignal): Promise<Exit<A, never>> =>
   new Promise<Exit<A, never>>((resolve) => {
-    const taker: Taker<A> = { signal, resolve, onAbort: undefined, settled: false }
-    const onAbort = makeTakerAbortHandler(takers, taker)
-    taker.onAbort = onAbort
+    const taker: Taker<A> = { resolve, abort: undefined }
+    // Stryker disable next-line ConditionalExpression: NEVER_ABORTED_SIGNAL has non-configurable no-op addEventListener; skipping avoids allocating onAbort.
     if (signal !== NEVER_ABORTED_SIGNAL) {
+      const onAbort = makeTakerAbortHandler(takers, taker, signal)
+      taker.abort = { signal, onAbort }
       signal.addEventListener('abort', onAbort, { once: true })
     }
     takers.add(taker)
@@ -170,6 +146,7 @@ interface QueueBuffer<A> {
 }
 
 const createBoundedBuffer = <A>(capacity: number): QueueBuffer<A> => {
+  // Stryker disable next-line ArrayDeclaration: ring slots are written by push before shift reads them; count tracks occupancy.
   const ring: (A | undefined)[] = []
   let head = 0
   let tail = 0
@@ -186,6 +163,7 @@ const createBoundedBuffer = <A>(capacity: number): QueueBuffer<A> => {
       ring[head] = undefined
       head = (head + 1) % capacity
       count -= 1
+      // Stryker disable next-line ConditionalExpression,BlockStatement: resetting head/tail when empty keeps sparse ring storage compact; ring modulo arithmetic is origin-invariant.
       if (count === 0) {
         head = 0
         tail = 0
@@ -207,6 +185,7 @@ const createUnboundedBuffer = <A>(): QueueBuffer<A> => {
       const value = items[head] as A
       items[head] = undefined
       head += 1
+      /* Stryker disable all: amortized array-compaction memory optimization; FIFO semantics are invariant to compaction thresholds. */
       const remaining = items.length - head
       if (remaining === 0) {
         items.length = 0
@@ -218,6 +197,7 @@ const createUnboundedBuffer = <A>(): QueueBuffer<A> => {
         items.length = remaining
         head = 0
       }
+      /* Stryker restore all */
       return value
     },
   }
@@ -238,34 +218,25 @@ const createQueue = <A>(capacity: number): Queue<A> => {
   const shiftBuffer = (): A => storage.shift()
 
   const refillFromPutters = (): void => {
-    if (closed) return
     while (bufferedSize() < capacity) {
       const putter = shiftWaiter(putters)
       if (putter === undefined) break
-      if (!putter.settled) {
-        putter.settled = true
-        const value = putter.value as A
-        const finish = putter.resolve
-        detachSignal(putter.signal, putter.onAbort)
-        clearPutter(putter)
-        pushBuffer(value)
-        finish?.(success(true))
-      }
+      const value = putter.value as A
+      detachSignal(putter.abort)
+      putter.value = undefined
+      putter.abort = undefined
+      pushBuffer(value)
+      putter.resolve(success(true))
     }
   }
 
   const deliverDirectOrBuffer = (value: A): boolean => {
-    for (;;) {
-      const taker = shiftWaiter(takers)
-      if (taker === undefined) break
-      if (!taker.settled) {
-        taker.settled = true
-        const finish = taker.resolve
-        detachSignal(taker.signal, taker.onAbort)
-        clearTaker(taker)
-        finish?.(success(value))
-        return true
-      }
+    const taker = shiftWaiter(takers)
+    if (taker !== undefined) {
+      detachSignal(taker.abort)
+      taker.abort = undefined
+      taker.resolve(success(value))
+      return true
     }
     if (bufferedSize() < capacity) {
       pushBuffer(value)
@@ -276,7 +247,6 @@ const createQueue = <A>(capacity: number): Queue<A> => {
 
   const drainBuffered = (limit: number): readonly A[] => {
     const count = Math.min(limit, bufferedSize())
-    if (count === 0) return []
     const items: A[] = []
     for (let index = 0; index < count; index += 1) {
       items.push(shiftBuffer())
@@ -317,29 +287,21 @@ const createQueue = <A>(capacity: number): Queue<A> => {
 
   const shutdown = (): ResultTask<void> =>
     ResultTask.sync(() => {
-      if (closed) return
       closed = true
       for (;;) {
         const putter = shiftWaiter(putters)
         if (putter === undefined) break
-        if (!putter.settled) {
-          putter.settled = true
-          const finish = putter.resolve
-          detachSignal(putter.signal, putter.onAbort)
-          clearPutter(putter)
-          finish?.(createQueueShutdownExit())
-        }
+        detachSignal(putter.abort)
+        putter.value = undefined
+        putter.abort = undefined
+        putter.resolve(createQueueShutdownExit())
       }
       for (;;) {
         const taker = shiftWaiter(takers)
         if (taker === undefined) break
-        if (!taker.settled) {
-          taker.settled = true
-          const finish = taker.resolve
-          detachSignal(taker.signal, taker.onAbort)
-          clearTaker(taker)
-          finish?.(createQueueShutdownExit())
-        }
+        detachSignal(taker.abort)
+        taker.abort = undefined
+        taker.resolve(createQueueShutdownExit())
       }
     })
 

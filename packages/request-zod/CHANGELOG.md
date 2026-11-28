@@ -1,5 +1,23 @@
 # resultar-request-zod
 
+## 3.1.0
+
+### Minor Changes
+
+- Extend `mapError` in `resultar-request`, `resultar-request-typebox`, and `resultar-request-zod` via `RequestJsonMapErrorInput` to support partial handler objects with `orElse: (context: RequestJsonErrorContext) => Error` and a single-function shorthand `(context: RequestJsonErrorContext) => Error`, while preserving `RequestJsonMapError` backward compatibility, handler `this` binding, full exhaustiveness, and exact error union inference.
+- Re-export `z` directly from `resultar-request-zod` (matching `t` in `resultar-request-typebox`) and install `zod` (`>=4.4.3 <5.0.0`) automatically as a runtime dependency so schemas can be built without installing or importing `zod` separately.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [ea7fe8e]
+- Updated dependencies
+- Updated dependencies [310626a]
+- Updated dependencies [5eb2e8e]
+- Updated dependencies
+  - resultar@5.1.0
+  - resultar-request@3.1.0
+
 ## 3.0.0
 
 ### Major Changes

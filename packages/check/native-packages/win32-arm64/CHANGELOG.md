@@ -1,5 +1,9 @@
 # resultar-check-win32-arm64
 
+## 6.1.0
+
+No changes in this release.
+
 ## 6.0.0
 
 No changes in this release.

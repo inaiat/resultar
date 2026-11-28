@@ -15,7 +15,8 @@ import type {
   RequestJsonErrorContext,
   RequestJsonFactory,
   RequestJsonInput,
-  RequestJsonMapError,
+  RequestJsonMapErrorHandlers,
+  RequestJsonMapErrorInput,
   RequestJsonMapErrorResult,
   RequestJsonMappedInput,
   RequestJsonResponseData,
@@ -442,30 +443,52 @@ const toRetryContext = (
 const shouldRetryRequestJson = (context: RequestJsonRetryContext) =>
   context.reason === "request" || (context.reason === "http" && context.statusCode >= 500);
 
+const applyMapErrorFallback = (
+  mapError: RequestJsonMapErrorHandlers,
+  context: RequestJsonErrorContext,
+): Error =>
+  "orElse" in mapError && mapError.orElse !== undefined ? mapError.orElse(context) : context.error;
+
+const mapRequestJsonErrorWithObject = (
+  mapError: RequestJsonMapErrorHandlers,
+  context: RequestJsonErrorContext,
+): Error => {
+  if (context.reason === "http") {
+    const statusHandler = mapError[context.statusCode];
+    const handler = typeof statusHandler === "function" ? statusHandler : mapError.http;
+    return handler === undefined
+      ? applyMapErrorFallback(mapError, context)
+      : handler.call(mapError, context);
+  }
+  if (context.reason === "invalidJson") {
+    return mapError.invalidJson === undefined
+      ? applyMapErrorFallback(mapError, context)
+      : mapError.invalidJson(context);
+  }
+  if (context.reason === "validation") {
+    return mapError.validation === undefined
+      ? applyMapErrorFallback(mapError, context)
+      : mapError.validation(context);
+  }
+  return mapError.request === undefined
+    ? applyMapErrorFallback(mapError, context)
+    : mapError.request(context);
+};
+
 const mapRequestJsonError =
-  (mapError: RequestJsonMapError) =>
+  (mapError: RequestJsonMapErrorInput) =>
   (error: RequestError): Error => {
     const context = classifyRequestJsonError(error);
-
-    switch (context.reason) {
-      case "http":
-        return mapError[context.statusCode]?.(context) ?? mapError.http(context);
-      case "invalidJson":
-        return mapError.invalidJson(context);
-      case "request":
-        return mapError.request(context);
-      case "validation":
-        return mapError.validation(context);
-      default:
-        return mapError.request({ cause: asErrorCause(error), error });
-    }
+    return typeof mapError === "function"
+      ? mapError(context)
+      : mapRequestJsonErrorWithObject(mapError, context);
   };
 
 const executeRequestJson = <T, R extends RequestJsonResponseData = RequestJsonResponseData>(
   request: RequestJsonFactory<R>,
   decode: RequestJsonDecoder<T>,
   validationError: RequestJsonValidationError | undefined,
-  mapError: RequestJsonMapError | undefined,
+  mapError: RequestJsonMapErrorInput | undefined,
   retry: RequestJsonRetry | undefined,
 ): ResultTask<T, Error> => {
   if (typeof request !== "function") {
@@ -540,7 +563,7 @@ const resolveDecoder = <T>(
  */
 export function requestJson<
   T,
-  M extends RequestJsonMapError,
+  M extends RequestJsonMapErrorInput,
   R extends RequestJsonResponseData = RequestJsonResponseData,
 >(input: RequestJsonMappedInput<T, M, R>): ResultTask<T, RequestJsonMapErrorResult<M>>;
 export function requestJson<T, R extends RequestJsonResponseData = RequestJsonResponseData>(

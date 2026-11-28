@@ -6,7 +6,7 @@ import {
   type RequestError,
   type RequestJsonBaseInput,
   type RequestJsonDecodeResult,
-  type RequestJsonMapError,
+  type RequestJsonMapErrorInput,
   type RequestJsonMapErrorResult,
   type RequestJsonResponseData,
 } from "resultar-request";
@@ -20,7 +20,7 @@ export type RequestJsonZodInput<
 /** Zod request input with an explicit domain-error mapping. */
 export type RequestJsonZodMappedInput<
   S extends z.ZodType,
-  M extends RequestJsonMapError,
+  M extends RequestJsonMapErrorInput,
   R extends RequestJsonResponseData = RequestJsonResponseData,
 > = RequestJsonZodInput<S, R> & { readonly mapError: M };
 
@@ -53,7 +53,7 @@ const decodeWithZodSchema =
  */
 export function requestJsonZod<
   S extends z.ZodType,
-  M extends RequestJsonMapError,
+  M extends RequestJsonMapErrorInput,
   R extends RequestJsonResponseData = RequestJsonResponseData,
 >(input: RequestJsonZodMappedInput<S, M, R>): ResultTask<z.output<S>, RequestJsonMapErrorResult<M>>;
 export function requestJsonZod<

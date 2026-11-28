@@ -1,5 +1,7 @@
 # resultar-fastify
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/fastify)
+
 `resultar-fastify` reexports the application DI helpers: `createModule`, `Service`, `service`,
 `resource`, and the types `ServiceClass`, `ServiceModule`, `ServiceScope`, `ServiceLifetime`
 and `HttpApplication`. These are the original `resultar-di` exports, with the same identity
@@ -35,6 +37,39 @@ and `requestIdHeader`). It does not start a listener or initialize providers; na
 `FastifyServicesApplication`, preserves the selected services for `InferRequestServices` and
 `InferAppServices` without adding runtime metadata. For an existing server, register
 `createFastifyPlugin` on your own instance.
+
+## Map tagged errors to HTTP statuses
+
+Pass `httpErrors: { statusByTag }` to install a root Fastify error handler. Use
+`HttpErrorStatusByTag` from `resultar-request` to check that the table includes every
+tag in your application's error union.
+
+```ts
+import { createFastifyApp, createModule } from "resultar-fastify";
+import type { HttpErrorStatusByTag } from "resultar-request";
+
+type UserError = { readonly _tag: "UserNotFound" } | { readonly _tag: "UserConflict" };
+
+const statusByTag = {
+  UserNotFound: 404,
+  UserConflict: 409,
+} satisfies HttpErrorStatusByTag<UserError>;
+
+const app = createFastifyApp(
+  { services: createModule(), httpErrors: { statusByTag } },
+  (router) => {
+    router.get("/health", () => ({ status: "ok" }));
+  },
+);
+```
+
+The handler checks the error's tag first, then its HTTP status and the reply status.
+Statuses outside `400–599` become `500`. It forwards error headers and sends
+`{ error: message }`. For `5xx` responses, it logs the original error and sends
+`{ error: "Internal Server Error" }`. Omit `httpErrors` to use Fastify's native
+handler or install your own root handler. The option handles errors that reach
+Fastify's error pipeline, so a route still needs to handle or throw failures
+returned as `Result` values.
 
 ## Optional request bindings
 
@@ -260,8 +295,9 @@ Fastify owns listeners, connection draining and shutdown settings. Stop acceptin
 finish/cancel persistent streams before awaiting close. WebSocket upgrades and `reply.hijack()`
 are outside this response lifecycle.
 
-Domain results are mapped explicitly with `match` or `matchTags`. The package adds no `reply.result`,
-error-status table or serialization policy. See [resultar-di](../di/README.md) for ownership and
+Use `match` or `matchTags` to map domain results explicitly. Routes can also throw tagged failures
+and use the optional [HTTP error handler](#map-tagged-errors-to-http-statuses).
+See [resultar-di](../di/README.md) for ownership and
 [resultar-hono](../hono/README.md) for the equivalent native Hono middleware.
 
 ## Validation

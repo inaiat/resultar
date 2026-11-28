@@ -1,8 +1,13 @@
 # Resultar Benchmarks
 
+[Published benchmark results](https://inaiat.github.io/resultar/#/docs/benchmarks)
+
 This workspace package contains reproducible microbenchmarks for `resultar` and `resultar-check`, comparing core primitives against `neverthrow`, `effect` (v4), and previous stable releases.
 
+The [application comparison guide](comparison/README.md) covers the URL shortener applications built with Resultar and Effect.
+
 The [2026-11-22 full benchmark report](results/2026-11-22.md) covers all 12 suites, including the published v4.1.1 baseline and the JIT comparisons.
+The [2026-11-27 equalized URL shortener ABBA & runtime snapshot](results/2026-11-27-url-shortener.md) records the latest equalized HTTP comparison and core microbenchmark run.
 
 Local asynchronous scenarios use `ResultTask` with explicit `runResult` (returning native `Promise<Result>`) or `runPromise` execution. Synchronous `Result` scenarios remain separate. Promise-returning steps use `tryPromise` and `andThen`; `map` stays synchronous.
 

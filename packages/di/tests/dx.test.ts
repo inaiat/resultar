@@ -368,3 +368,68 @@ test("the unified module preserves named and token registration throughout fluen
   expect(await ResultTask.runPromise(task)).toBe(5);
   expect(events).toEqual(["open", "close"]);
 });
+
+test("service supports { requires, make }, explicit curried contracts, and service.require", async () => {
+  interface Greeter {
+    readonly greet: (name: string) => string;
+  }
+
+  const Prefix = service.require<string>()("prefix");
+  const Standalone = service("standalone", { make: () => "!" });
+  const AsyncFactor = service("asyncFactor", {
+    requires: { prefix: Prefix },
+    make: ({ prefix }) => ResultTask.ok(`${prefix}:`),
+  });
+  const GreeterService = service<Greeter>()("greeter", {
+    requires: { factor: AsyncFactor, suffix: Standalone },
+    make: ({ factor, suffix }) => ({ greet: (name: string) => `${factor}${name}${suffix}` }),
+  });
+  const MakeNamedDep = service.require<number>()("makeDep");
+  const ThreeArgMakeAlias = service("threeArg", { make: MakeNamedDep }, ({ make }) => make * 2);
+  const CurriedThreeArg = service<{ readonly doubled: number }>()(
+    "curriedThreeArg",
+    { value: MakeNamedDep },
+    ({ value }) => ({ doubled: value * 2 }),
+  );
+  const CurriedTask = service<number>()("curriedTask", ResultTask.ok(7));
+
+  const mod = createModule()
+    .value("prefix", "hi")
+    .value("makeDep", 21)
+    .singleton(Standalone)
+    .singleton(AsyncFactor)
+    .singleton(GreeterService)
+    .scoped(ThreeArgMakeAlias)
+    .scoped(CurriedThreeArg)
+    .scoped(CurriedTask);
+
+  const task = mod.use(["greeter", "threeArg", "curriedThreeArg", "curriedTask"], (deps) =>
+    ResultTask.ok({
+      message: deps.greeter.greet("ada"),
+      threeArg: deps.threeArg,
+      doubled: deps.curriedThreeArg.doubled,
+      curriedTask: deps.curriedTask,
+    }),
+  );
+  expectTypeOf(task).toEqualTypeOf<
+    ResultTask<
+      { message: string; threeArg: number; doubled: number; curriedTask: number },
+      never,
+      never
+    >
+  >();
+  expect(await ResultTask.runPromise(task)).toEqual({
+    message: "hi:ada!",
+    threeArg: 42,
+    doubled: 42,
+    curriedTask: 7,
+  });
+
+  const contractCheck = () => {
+    service<Greeter>()("badGreeter", {
+      // @ts-expect-error Missing required method from the declared contract.
+      make: () => ({ nope: true }),
+    });
+  };
+  expectTypeOf(contractCheck).toBeFunction();
+});

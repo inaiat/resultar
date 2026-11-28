@@ -51,6 +51,17 @@ export const searchDocs = (
     else if (entry.kind === "rule") score += 12;
     else if (entry.kind === "api") score += 10;
 
+    // Keep current Result + ResultTask documentation ahead of historical/deprecated references.
+    if (
+      entry.route.startsWith("#/docs/v4-migration") ||
+      entry.route.startsWith("#/docs/rfcs/") ||
+      titleLower.includes("deprecated") ||
+      titleLower.includes("resultasync") ||
+      subtitleLower.includes("v4 migration")
+    ) {
+      score -= 35;
+    }
+
     scored.push({ entry, score });
   }
 

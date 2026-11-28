@@ -11,6 +11,7 @@ import {
   requestJson,
   RequestError,
   type RequestJsonMapError,
+  type RequestJsonMapErrorHandlers,
   type UndiciJsonResponseData,
 } from "../src/index.js";
 
@@ -520,6 +521,136 @@ describe("requestJson", () => {
     const genericError = expectMappedError(genericHttpResult.error);
     assert.equal(genericError.kind, "http");
     assert.equal(genericError.message, "502");
+  });
+
+  it("given mapError with orElse, then applies status -> category -> orElse precedence and infers exact union", async () => {
+    const partialMap = {
+      404: ({ body }: { readonly body: string }) => new NotFoundRequestError(body),
+      orElse: (context: { readonly reason: string; readonly error: RequestError }) =>
+        new MappedRequestJsonError(context.reason, context.error.message),
+    } satisfies RequestJsonMapErrorHandlers;
+
+    const notFoundTask = requestJson({
+      request: async () => createFetchResponse("Unknown SKU", { status: 404 }),
+      mapError: partialMap,
+      validator: isUserSample,
+    });
+    expectType<ResultTask<UserSample, MappedRequestJsonError | NotFoundRequestError>>(notFoundTask);
+
+    const notFound = await notFoundTask.runResult();
+    assert.ok(notFound.isErr());
+    assert.ok(notFound.error instanceof NotFoundRequestError);
+    assert.equal(notFound.error.message, "Unknown SKU");
+
+    const httpFallback = await requestJson({
+      request: async () => createFetchResponse("Bad Gateway", { status: 502 }),
+      mapError: partialMap,
+      validator: isUserSample,
+    }).runResult();
+    assert.ok(httpFallback.isErr());
+    assert.equal(expectMappedError(httpFallback.error).kind, "http");
+
+    const invalidJsonFallback = await requestJson({
+      request: async () => createFetchResponse("not-json"),
+      mapError: partialMap,
+      validator: isUserSample,
+    }).runResult();
+    assert.ok(invalidJsonFallback.isErr());
+    assert.equal(expectMappedError(invalidJsonFallback.error).kind, "invalidJson");
+
+    const requestFallback = await requestJson({
+      request: async () => {
+        throw new Error("socket closed");
+      },
+      mapError: partialMap,
+      validator: isUserSample,
+    }).runResult();
+    assert.ok(requestFallback.isErr());
+    assert.equal(expectMappedError(requestFallback.error).kind, "request");
+
+    const validationFallback = await requestJson({
+      request: async () => createFetchResponse({ wrong: true }),
+      mapError: partialMap,
+      validator: isUserSample,
+    }).runResult();
+    assert.ok(validationFallback.isErr());
+    assert.equal(expectMappedError(validationFallback.error).kind, "validation");
+
+    // Category handlers take precedence over orElse, while exact status wins over http.
+    const layeredMap = {
+      404: ({ body }) => new NotFoundRequestError(body),
+      http: ({ statusCode }) => new MappedRequestJsonError("http-layer", String(statusCode)),
+      validation: ({ message }) => new MappedRequestJsonError("validation-layer", message),
+      orElse: ({ reason }) => new MappedRequestJsonError("or-else", reason),
+    } satisfies RequestJsonMapErrorHandlers;
+
+    const layeredHttp = await requestJson({
+      request: async () => createFetchResponse("Unavailable", { status: 503 }),
+      mapError: layeredMap,
+      validator: isUserSample,
+    }).runResult();
+    assert.ok(layeredHttp.isErr());
+    assert.equal(expectMappedError(layeredHttp.error).kind, "http-layer");
+
+    const layeredValidation = await requestJson({
+      request: async () => createFetchResponse({ invalid: true }),
+      mapError: layeredMap,
+      validator: isUserSample,
+    }).runResult();
+    assert.ok(layeredValidation.isErr());
+    assert.equal(expectMappedError(layeredValidation.error).kind, "validation-layer");
+
+    const layeredInvalidJson = await requestJson({
+      request: async () => createFetchResponse("{"),
+      mapError: layeredMap,
+      validator: isUserSample,
+    }).runResult();
+    assert.ok(layeredInvalidJson.isErr());
+    assert.equal(expectMappedError(layeredInvalidJson.error).kind, "or-else");
+    assert.equal(expectMappedError(layeredInvalidJson.error).message, "invalidJson");
+
+    const checkIncompleteMap = () =>
+      requestJson({
+        // @ts-expect-error -- Partial mapError without orElse or all four categories is rejected.
+        mapError: { 404: () => new NotFoundRequestError("missing") },
+        request: async () => createFetchResponse(userSample),
+        validator: isUserSample,
+      });
+    assert.equal(typeof checkIncompleteMap, "function");
+  });
+
+  it("given function shorthand mapError, then maps every failure stage with full context", async () => {
+    const fnTask = requestJson({
+      request: async () => createFetchResponse("Service Unavailable", { status: 503 }),
+      validator: isUserSample,
+      mapError: (context) =>
+        new MappedRequestJsonError(
+          context.reason,
+          context.reason === "http" ? String(context.statusCode) : context.error.message,
+        ),
+    });
+    expectType<ResultTask<UserSample, MappedRequestJsonError>>(fnTask);
+
+    const httpFailure = await fnTask.runResult();
+    assert.ok(httpFailure.isErr());
+    assert.equal(expectMappedError(httpFailure.error).kind, "http");
+    assert.equal(expectMappedError(httpFailure.error).message, "503");
+
+    const validationFailure = await requestJson({
+      request: async () => createFetchResponse({ bad: true }),
+      validator: isUserSample,
+      mapError: ({ reason, error }) => new MappedRequestJsonError(reason, error.message),
+    }).runResult();
+    assert.ok(validationFailure.isErr());
+    assert.equal(expectMappedError(validationFailure.error).kind, "validation");
+
+    const invalidFactory = await requestJson({
+      request: "not-a-function" as never,
+      validator: isUserSample,
+      mapError: ({ reason, error }) => new MappedRequestJsonError(reason, error.message),
+    }).runResult();
+    assert.ok(invalidFactory.isErr());
+    assert.equal(expectMappedError(invalidFactory.error).kind, "request");
   });
 
   it("given mapError and invalid JSON, then invalidJson handler is used", async () => {
@@ -1207,5 +1338,55 @@ describe("requestJson", () => {
 
     assert.ok(result.isOk());
     assert.deepEqual(result.value, value);
+  });
+
+  it("preserves this binding on HTTP status and category handlers and keeps RequestJsonMapError indexable", async () => {
+    type HttpMapper = RequestJsonMapError["http"];
+    type InvalidJsonMapper = RequestJsonMapError["invalidJson"];
+    type RequestMapper = RequestJsonMapError["request"];
+    type ValidationMapper = RequestJsonMapError["validation"];
+    const typedHttp: HttpMapper = ({ statusCode }) =>
+      new MappedRequestJsonError("http", String(statusCode));
+    const typedInvalidJson: InvalidJsonMapper = ({ cause }) =>
+      new MappedRequestJsonError("invalid-json", cause.message);
+    const typedRequest: RequestMapper = ({ cause }) =>
+      new MappedRequestJsonError("request", cause.message);
+    const typedValidation: ValidationMapper = ({ message }) =>
+      new MappedRequestJsonError("validation", message);
+    expectType<RequestJsonMapError>({
+      http: typedHttp,
+      invalidJson: typedInvalidJson,
+      request: typedRequest,
+      validation: typedValidation,
+    });
+
+    const statefulMapper = {
+      prefix: "svc",
+      404({ statusCode }: { readonly statusCode: number }) {
+        return new MappedRequestJsonError("status", `${this.prefix}:${String(statusCode)}`);
+      },
+      http({ statusCode }: { readonly statusCode: number }) {
+        return new MappedRequestJsonError("http", `${this.prefix}:${String(statusCode)}`);
+      },
+      orElse({ reason }: { readonly reason: string }) {
+        return new MappedRequestJsonError("fallback", `${this.prefix}:${reason}`);
+      },
+    };
+
+    const statusResult = await requestJson({
+      request: async () => createFetchResponse("Not Found", { status: 404 }),
+      mapError: statefulMapper,
+      validator: isUserSample,
+    }).runResult();
+    assert.ok(statusResult.isErr());
+    assert.equal(expectMappedError(statusResult.error).message, "svc:404");
+
+    const categoryResult = await requestJson({
+      request: async () => createFetchResponse("Bad Gateway", { status: 502 }),
+      mapError: statefulMapper,
+      validator: isUserSample,
+    }).runResult();
+    assert.ok(categoryResult.isErr());
+    assert.equal(expectMappedError(categoryResult.error).message, "svc:502");
   });
 });

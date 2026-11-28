@@ -493,6 +493,203 @@ describe('tagged errors', async () => {
       statusCode: 403,
     })
   })
+
+  it('supports opting out of stack trace capture while preserving error metadata and stackTraceLimit', () => {
+    const LightweightNotFoundError = createTaggedError({
+      name: 'LightweightNotFoundError',
+      message: 'Missing item $code',
+      captureStackTrace: false,
+    })
+    const DefaultStackNotFoundError = createTaggedError({
+      name: 'DefaultStackNotFoundError',
+      message: 'Missing item $code',
+    })
+    const ExplicitStackNotFoundError = createTaggedError({
+      name: 'ExplicitStackNotFoundError',
+      message: 'Missing item $code',
+      captureStackTrace: true,
+    })
+    const LightweightWithPropsError = createTaggedError({
+      name: 'LightweightWithPropsError',
+      message: 'Missing item $code',
+      captureStackTrace: false,
+    }).withProps<{ readonly reason?: string }>()
+
+    const originalLimit = Error.stackTraceLimit
+    Error.stackTraceLimit = 7
+    try {
+      const cause = new Error('upstream')
+      const error = new LightweightNotFoundError({ code: 'abc123', cause })
+      equal(Error.stackTraceLimit, 7)
+      equal(error.stack?.includes('\n    at '), false)
+
+      const defaultError = new DefaultStackNotFoundError({ code: 'def' })
+      equal(Error.stackTraceLimit, 7)
+      equal(defaultError.stack?.includes('\n    at '), true)
+
+      const explicitError = new ExplicitStackNotFoundError({ code: 'ghi' })
+      equal(Error.stackTraceLimit, 7)
+      equal(explicitError.stack?.includes('\n    at '), true)
+
+      const withProps = new LightweightWithPropsError({ code: 'xyz', reason: 'expired' })
+      equal(Error.stackTraceLimit, 7)
+      equal(withProps.stack?.includes('\n    at '), false)
+
+      equal(error instanceof Error, true)
+      equal(error instanceof LightweightNotFoundError, true)
+      equal(error._tag, 'LightweightNotFoundError')
+      equal(error.name, 'LightweightNotFoundError')
+      equal(error.message, 'Missing item abc123')
+      equal(error.code, 'abc123')
+      equal(error.cause, cause)
+      equal(Object.getOwnPropertyDescriptor(error, 'code')?.writable, false)
+      equal(withProps._tag, 'LightweightWithPropsError')
+      equal(withProps.reason, 'expired')
+      equal(Object.getOwnPropertyDescriptor(withProps, 'reason')?.writable, false)
+    } finally {
+      Error.stackTraceLimit = originalLimit
+    }
+  })
+
+  it('restores Error.stackTraceLimit when a base constructor throws and preserves an absent limit', () => {
+    const baseFailure = new Error('base constructor failure')
+    class ThrowingBaseError extends Error {
+      public constructor() {
+        super('unused')
+        throw baseFailure
+      }
+    }
+    const FailingTaggedError = createTaggedError({
+      name: 'FailingTaggedError',
+      message: 'Failed $code',
+      extends: ThrowingBaseError,
+      captureStackTrace: false,
+    })
+    const LightweightTaggedError = createTaggedError({
+      name: 'LightweightTaggedError',
+      message: 'Lightweight $code',
+      captureStackTrace: false,
+    })
+
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Error, 'stackTraceLimit')
+    Error.stackTraceLimit = 7
+    try {
+      throws(
+        () => new FailingTaggedError({ code: 'boom' }),
+        (thrown) => thrown === baseFailure,
+      )
+      equal(Error.stackTraceLimit, 7)
+      equal(new Error('subsequent').stack?.includes('\n    at '), true)
+
+      delete (Error as { stackTraceLimit?: number }).stackTraceLimit
+      equal(Object.hasOwn(Error, 'stackTraceLimit'), false)
+
+      const lightweight = new LightweightTaggedError({ code: 'absent' })
+      equal(lightweight.message, 'Lightweight absent')
+      equal(Object.hasOwn(Error, 'stackTraceLimit'), false)
+      equal('stackTraceLimit' in Error, false)
+
+      throws(
+        () => new FailingTaggedError({ code: 'absent-boom' }),
+        (thrown) => thrown === baseFailure,
+      )
+      equal(Object.hasOwn(Error, 'stackTraceLimit'), false)
+      equal('stackTraceLimit' in Error, false)
+    } finally {
+      if (originalDescriptor === undefined) {
+        delete (Error as { stackTraceLimit?: number }).stackTraceLimit
+      } else {
+        Object.defineProperty(Error, 'stackTraceLimit', originalDescriptor)
+      }
+    }
+  })
+
+  it('constructs captureStackTrace: false errors safely when Error.stackTraceLimit is read-only or accessor-backed', () => {
+    const LightweightTaggedError = createTaggedError({
+      name: 'ReadOnlyLimitError',
+      message: 'Read-only $code',
+      captureStackTrace: false,
+    })
+
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Error, 'stackTraceLimit')
+    try {
+      // Read-only data property (simulates Node --frozen-intrinsics)
+      Object.defineProperty(Error, 'stackTraceLimit', {
+        value: 7,
+        writable: false,
+        configurable: true,
+        enumerable: true,
+      })
+      const readOnlyInstance = new LightweightTaggedError({ code: 'frozen' })
+      equal(readOnlyInstance.message, 'Read-only frozen')
+      equal(Error.stackTraceLimit, 7)
+
+      // Read-only accessor property (getter without setter)
+      Object.defineProperty(Error, 'stackTraceLimit', {
+        get: () => 5,
+        configurable: true,
+        enumerable: true,
+      })
+      const getterOnlyInstance = new LightweightTaggedError({ code: 'getter-only' })
+      equal(getterOnlyInstance.message, 'Read-only getter-only')
+      equal(Error.stackTraceLimit, 5)
+
+      // Writable accessor property (getter + setter): sets 0 and restores previous value
+      const writes: number[] = []
+      let currentLimit = 9
+      Object.defineProperty(Error, 'stackTraceLimit', {
+        get: () => currentLimit,
+        set: (next: number) => {
+          writes.push(next)
+          currentLimit = next
+        },
+        configurable: true,
+        enumerable: true,
+      })
+      const accessorInstance = new LightweightTaggedError({ code: 'accessor' })
+      equal(accessorInstance.message, 'Read-only accessor')
+      deepEqual(writes, [0, 9])
+      equal(currentLimit, 9)
+    } finally {
+      if (originalDescriptor === undefined) {
+        delete (Error as { stackTraceLimit?: number }).stackTraceLimit
+      } else {
+        Object.defineProperty(Error, 'stackTraceLimit', originalDescriptor)
+      }
+    }
+  })
+
+  it('preserves inherited toJSON and subclass methods when single-key metadata collides', () => {
+    const ToJsonTemplateError = createTaggedError({
+      name: 'ToJsonTemplateError',
+      message: 'Serialize $toJSON',
+    })
+    const serialized = new ToJsonTemplateError({ toJSON: 'payload' })
+    equal(serialized.message, 'Serialize payload')
+    equal(typeof serialized.toJSON, 'function')
+    deepEqual(serialized.toJSON(), {
+      _tag: 'ToJsonTemplateError',
+      fingerprint: ['ToJsonTemplateError', 'Serialize $toJSON'],
+      message: 'Serialize payload',
+      messageTemplate: 'Serialize $toJSON',
+      name: 'ToJsonTemplateError',
+    })
+
+    const SubclassBase = createTaggedError({
+      name: 'SubclassMethodError',
+      message: 'Action $format failed',
+    }) as unknown as new (props: {
+      readonly format: string
+    }) => Error & { readonly _tag: 'SubclassMethodError' }
+    class SubclassMethodError extends SubclassBase {
+      public format(): string {
+        return `formatted:${this.message}`
+      }
+    }
+    const subclassError = new SubclassMethodError({ format: 'override' })
+    equal(subclassError.message, 'Action override failed')
+    equal(subclassError.format(), 'formatted:Action override failed')
+  })
 })
 
 describe('tagged error types', async () => {

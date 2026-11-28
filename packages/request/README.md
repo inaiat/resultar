@@ -1,5 +1,7 @@
 # resultar-request
 
+[Read the documentation online](https://inaiat.github.io/resultar/#/docs/packages/request)
+
 Fetch-first JSON request helpers for Resultar.
 
 Use this package when a service calls another HTTP service and needs consistent JSON parsing,
@@ -99,12 +101,12 @@ Both adapters use this package for transport, JSON parsing, retries, and error m
 re-export the public request API, so you can keep using `RequestError`, retry types, and map-error
 types from the adapter package.
 
-The TypeBox adapter installs TypeBox automatically and exports its builders as `t`.
-The Zod adapter requires Zod as a peer dependency:
+Both adapters install their schema library automatically and re-export its builders (`t` for TypeBox,
+`z` for Zod):
 
 ```sh
 pnpm add resultar-request-typebox
-pnpm add resultar-request-zod zod
+pnpm add resultar-request-zod
 ```
 
 ## Decode
@@ -138,10 +140,38 @@ const userTask = requestJson({
 ## Error Mapping
 
 Use `mapError` when callers need domain-specific errors instead of `RequestError`.
+`mapError` is always exhaustive and supports three forms:
+
+1. **Partial handlers with `orElse`** — specialize status codes and/or categories and route every
+   remaining failure (`RequestJsonErrorContext`) to `orElse`:
 
 ```ts
 const id = "123";
 
+const userTask = requestJson({
+  request: (signal) => fetch(`https://example.com/users/${id}`, { signal }),
+  validator: isUser,
+  mapError: {
+    404: () => new Error("User not found"),
+    orElse: ({ reason, error }) => new Error(`User API failed (${reason}): ${error.message}`),
+  },
+});
+```
+
+2. **Function shorthand** — map every failure stage through one handler receiving `RequestJsonErrorContext`:
+
+```ts
+const userTask = requestJson({
+  request: (signal) => fetch(`https://example.com/users/${id}`, { signal }),
+  validator: isUser,
+  mapError: ({ reason, error }) => new Error(`User API failed (${reason}): ${error.message}`),
+});
+```
+
+3. **Full category handlers** — handle `http`, `invalidJson`, `request`, and `validation` explicitly
+   (plus optional status codes):
+
+```ts
 const userTask = requestJson({
   request: (signal) => fetch(`https://example.com/users/${id}`, { signal }),
   validator: isUser,
@@ -155,9 +185,8 @@ const userTask = requestJson({
 });
 ```
 
-HTTP status-specific handlers win over the generic `http` handler.
-The returned error type is inferred as the union of every error produced by the map, including
-status-specific handlers.
+Resolution precedence is **HTTP status code → category handler → `orElse`**.
+The returned error type is inferred as the exact union of every error returned by the supplied handlers.
 
 ## Retry and Cancellation
 
@@ -216,11 +245,26 @@ one carrying that structured cause, so callers can inspect response metadata.
 These helpers support custom integrations; `requestJson` already applies the
 normal request/error pipeline.
 
+Use `HttpErrorStatusByTag<Error>` to check that an HTTP status map has an entry
+for every tag in an error union. The type works in any HTTP framework.
+
+```ts
+import type { HttpErrorStatusByTag } from "resultar-request";
+
+type UserError = { readonly _tag: "UserNotFound" } | { readonly _tag: "UserConflict" };
+
+const statusByTag = {
+  UserNotFound: 404,
+  UserConflict: 409,
+} satisfies HttpErrorStatusByTag<UserError>;
+```
+
 Public type families include `RequestJsonInput` and its validator/decode/mapped
 variants, `RequestJsonFactory`, `RequestJsonResponseData`, `FetchJsonResponseData`,
 `UndiciJsonResponseData`, `RequestHeaders`, `RequestJsonValidator`,
 `RequestJsonDecoder`, decode success/failure/result types, validation issue/reason
-and error types, `RequestJsonMapError` / `RequestJsonMapErrorResult`, HTTP/request/
+and error types, `RequestJsonMapError` / `RequestJsonMapErrorHandlers` /
+`RequestJsonMapErrorInput` / `RequestJsonMapErrorResult`, HTTP/request/
 invalid-JSON/validation contexts, and `RequestJsonRetry` / `RequestJsonRetryContext`.
 The [public inventory](../../docs/api-inventory.md#resultar-request) lists every
 export; installed declarations give exact overloads. Zod and TypeBox adapters

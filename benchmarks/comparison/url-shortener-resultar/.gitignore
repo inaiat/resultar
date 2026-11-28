@@ -1,0 +1,28 @@
+# Node.js
+node_modules/
+dist/
+coverage/
+reports/
+.stryker-tmp/
+*.log
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local package experiments and their isolated lockfile
+/.local-flashify/
+/.pnpmfile.mjs
+
+# OS
+.DS_Store
+Thumbs.db

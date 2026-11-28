@@ -4,10 +4,10 @@
 
 [![Node.js 24+](https://img.shields.io/badge/node-%3E%3D24-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
 [![ESM Only](https://img.shields.io/badge/module-ESM-f7df1e?logo=javascript&logoColor=black)](https://github.com/inaiat/resultar/blob/main/packages/resultar/package.json)
-[![TypeScript 7 Native Checks](https://img.shields.io/badge/resultar--check-TypeScript--Go-3178c6?logo=typescript&logoColor=white)](https://github.com/inaiat/resultar/blob/main/packages/check/README.md)
+[![TypeScript 7 Native Checks](https://img.shields.io/badge/resultar--check-TypeScript--Go-3178c6?logo=typescript&logoColor=white)](https://inaiat.github.io/resultar/#/docs/resultar-check)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/inaiat/resultar/blob/main/LICENSE)
 
-[Coming from Effect](https://github.com/inaiat/resultar/blob/main/docs/coming-from-effect.md) · [What's New in v5](#whats-new-in-v5) · [v5 Migration](https://github.com/inaiat/resultar/blob/main/docs/migrations/v5.md) · [Gradual Adoption](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md) · [Full Reference (`DOCUMENTATION.md`)](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md) · [`resultar-check` Compiler CLI/LSP](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) · [Benchmarks](https://github.com/inaiat/resultar/blob/main/benchmarks/README.md) · [API Decision Guide](#api-decision-guide)
+[Documentation](https://inaiat.github.io/resultar/) · [Playground](https://inaiat.github.io/resultar/#/playground) · [Coming from Effect](https://inaiat.github.io/resultar/#/docs/coming-from-effect) · [What's New in v5](#whats-new-in-v5) · [v5 Migration](https://inaiat.github.io/resultar/#/docs/v5-migration) · [Gradual Adoption](https://inaiat.github.io/resultar/#/docs/gradual-adoption) · [Complete Guide](https://inaiat.github.io/resultar/#/docs/full-reference) · [`resultar-check` Compiler CLI/LSP](https://inaiat.github.io/resultar/#/docs/resultar-check) · [Benchmarks](https://inaiat.github.io/resultar/#/docs/benchmarks) · [API Decision Guide](#api-decision-guide)
 
 In standard TypeScript, `throw` and rejected promises are invisible in function signatures. Callers have no way of knowing what can fail—or whether they handled every failure case—without reading the implementation.
 
@@ -115,7 +115,7 @@ const response = result.matchTags((account) => ({ status: 201, body: account }),
 | **Exhaustive boundary handling**         | `matchTags`, `catchTag`, `catchTags`, and general-purpose `Match` pattern matching                                                                                                        |
 | **Production async resilience**          | Built-in `timeout`, `retry` (with portable `Retry.policy`), `race`, bounded `forEach`, and resource cleanup                                                                               |
 | **Lazy tasks & typed dependencies**      | `ResultTask<T, E, R>` with typed service requirements (`R`), `AbortSignal` cancellation, and LIFO resource scopes                                                                         |
-| **Compiler guardrails**                  | Optional native [`resultar-check`](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) CLI & LSP to forbid ignored results (`noDiscard`) and raw `throw`               |
+| **Compiler guardrails**                  | Optional native [`resultar-check`](https://inaiat.github.io/resultar/#/docs/resultar-check) CLI & LSP to forbid ignored results (`noDiscard`) and raw `throw`                             |
 
 ### Where Resultar Sits Between `neverthrow` and `Effect`
 
@@ -153,7 +153,7 @@ npm install resultar
 - **Opt-in `@deprecated` `"resultar/async"` subpath**: Legacy eager `ResultAsync` and `StrictResultAsync` constructors (`okAsync`, `errAsync`, `unitAsync`, `fromPromise`, `fromSafePromise`, `tryResultAsync`, `ResultAsync.gen` / `ResultAsync.fn`, standalone `asyncMap` / `asyncAndThen`, `safeTry`, and `@deprecated` v4 `ResultAsync` compatibility helpers such as `fromTask`, `retry`, `withResource`, `fromCallback`, `tap`, and `tapError`) remain available in `"resultar/async"` throughout v5.x for incremental migration while removed from root `"resultar"`.
 - **Task-native ecosystem & `resultar-check migrate-v5`**: `resultar-request`, `resultar-request-zod`, and `resultar-request-typebox` return `ResultTask` directly; companion adapters (`resultar-di`, `resultar-hono`, `resultar-fastify`, `resultar-nestjs`) have zero `ResultAsync` dependencies; and `resultar-check` adds `no-await-result-task` (default `"error"`) plus `resultar-check migrate-v5` automated migration.
 
-> Upgrading from v4? Read the full **[v5 Migration Guide (`docs/migrations/v5.md`)](https://github.com/inaiat/resultar/blob/main/docs/migrations/v5.md)** and run `pnpm exec resultar-check migrate-v5`.
+> Upgrading from v4? Read the full **[v5 Migration Guide](https://inaiat.github.io/resultar/#/docs/v5-migration)** and run `pnpm exec resultar-check migrate-v5`.
 
 ---
 
@@ -164,12 +164,11 @@ You do not need to rewrite your application to use Resultar. Start with a single
 ```mermaid
 flowchart LR
   R["<b>1. Result&lt;T, E&gt;</b><br/>Synchronous value (Ok / Err)<br/>Zero async overhead"]
-  RT["<b>2. ResultTask&lt;T, E, R&gt;</b><br/>Lazy async workflow<br/>Explicit run boundary"]
+  RT["<b>2. ResultTask&lt;T, E, R&gt;</b><br/>Lazy async workflow<br/>tryPromise · retry · service"]
   PR["<b>Promise&lt;Result&lt;T, E&gt;&gt;</b><br/>Native boundary execution<br/>await task.runResult()"]
 
-  R -->|"async I/O, retry, timeout"| RT
+  R -->|"yield* in ResultTask.gen"| RT
   RT -->|"task.runResult()"| PR
-  PR -->|"fromResultAsync(factory)"| RT
 ```
 
 - **`T`** is the success value.
@@ -179,20 +178,16 @@ flowchart LR
 Use `ResultTask` for all asynchronous workflows and run it explicitly, including when
 `R = never`. Providing services or closing a scope leaves a Task. Calling `task.runResult()`
 (or `ResultTask.runResult(task)`) starts the task and returns a native `Promise<Result<T, E>>`
-that you `await` directly at your imperative boundary. Legacy eager `ResultAsync` constructors live
-in the opt-in `"resultar/async"` subpath.
-The inbound `ResultTask.fromResultAsync` bridge structurally accepts any `PromiseLike<Result<T, E>>`
-(including native `Promise<Result<T, E>>` and opt-in `ResultAsync` from `"resultar/async"`).
+that you `await` directly at your imperative boundary.
 Use `ResultTask.tryPromise({ try, catch })` directly for raw Promise-returning drivers.
 New async repositories and use cases return Tasks without an `async` modifier;
 native Promise returns belong to explicit runners or framework/SDK boundaries.
 See the [boundary decision table](../../DOCUMENTATION.md#promise-boundaries-and-application-contracts).
 
-| Stage                         | When to use it                                                                                 | Key APIs                                                                                  |
-| ----------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| **1. `Result<T, E>`**         | Synchronous validation, parsing, and domain rules                                              | `ok`, `err`, `map`, `andThen`, `Result.gen`, `match`                                      |
-| **2. `ResultTask<T, E, R>`**  | All asynchronous workflows; add typed services, cooperative cancellation, and scopes as needed | `ResultTask.gen`, `ResultTask.fn`, `tryPromise`, `service`, `acquireRelease`, `runResult` |
-| **`resultar/async` (opt-in)** | Legacy eager in-flight `ResultAsync` compatibility boundaries                                  | `ResultAsync.gen`, `tryResultAsync`, `fromPromise`, `okAsync`, `errAsync`                 |
+| Stage                        | When to use it                                                                                 | Key APIs                                                                                  |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| **1. `Result<T, E>`**        | Synchronous validation, parsing, and domain rules                                              | `ok`, `err`, `map`, `andThen`, `Result.gen`, `match`                                      |
+| **2. `ResultTask<T, E, R>`** | All asynchronous workflows; add typed services, cooperative cancellation, and scopes as needed | `ResultTask.gen`, `ResultTask.fn`, `tryPromise`, `service`, `acquireRelease`, `runResult` |
 
 ### Sync-First, Pay-As-You-Go Execution Engine
 
@@ -203,7 +198,7 @@ asynchronous step is needed:
 - **Zero-microtask synchronous fast path**: `Result.gen`, synchronous `ResultTask` pipelines, and `ResultTask.scoped` workflows without async steps execute inside a tight synchronous `while` loop (`runTaskLoop` / `#runGen`) without scheduling microtasks—reusing static singletons (`sharedSuccessExit`, `idleTaskIterator`, `idleRunContext`) on the happy path until a real `Promise` or cooperative `yieldEvery` checkpoint is encountered.
 - **Pay only for the stage you use**: Service maps, LIFO finalizer stacks, and fiber schedulers are allocated lazily only when a workflow invokes `service()`, `acquireRelease()`, or `forkChild()`.
 
-See the [Gradual Adoption Guide](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md) for a step-by-step walkthrough and the [Benchmarks Guide](https://github.com/inaiat/resultar/blob/main/benchmarks/README.md) for the architectural and runtime profile.
+See the [Gradual Adoption Guide](https://inaiat.github.io/resultar/#/docs/gradual-adoption) for a step-by-step walkthrough and the [Benchmarks Guide](https://inaiat.github.io/resultar/#/docs/benchmarks) for the architectural and runtime profile.
 
 ---
 
@@ -297,7 +292,7 @@ if (isRedacted(error.token)) {
 }
 ```
 
-> Need lightweight tagged variants or nested error reasons without full `Error` stack traces? Use `taggedEnum` — see the [Tagged Enums guide](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#tagged-enums).
+> **Skipping stack traces on expected hot-path errors:** Pass `captureStackTrace: false` to `createTaggedError({ name, message, captureStackTrace: false })` to avoid V8 stack-frame capture while keeping a real `Error` subclass (`instanceof Error`, `_tag`, `cause`, `fingerprint`, and original `Error.stackTraceLimit`). Need plain tagged variants without `Error` inheritance at all? Use `taggedEnum` — see the [Tagged Enums guide](https://inaiat.github.io/resultar/#/docs/full-reference#tagged-enums).
 
 ---
 
@@ -619,7 +614,7 @@ if (exit._tag === "Failure") {
 }
 ```
 
-> For advanced `ResultTask` details—including `interruption: 'detach'`, custom `Scheduler` instruction budgets, `provideServiceResolver`, and `catchCause` / `sandbox`—see the [Full Resultar Guide](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#lazy-tasks-and-service-requirements).
+> For advanced `ResultTask` details—including `interruption: 'detach'`, custom `Scheduler` instruction budgets, `provideServiceResolver`, and `catchCause` / `sandbox`—see the [Full Resultar Guide](https://inaiat.github.io/resultar/#/docs/full-reference#lazy-tasks-and-service-requirements).
 
 ---
 
@@ -727,7 +722,7 @@ return result.match({
 
 ## Prevent Ignored Results
 
-A `Result` only protects your application if callers actually handle it. Install [`resultar-check`](https://github.com/inaiat/resultar/blob/main/packages/check/README.md)—a native TypeScript-Go CLI and LSP server that runs compiler typechecks and Resultar-specific rules in a single pass:
+A `Result` only protects your application if callers actually handle it. Install [`resultar-check`](https://inaiat.github.io/resultar/#/docs/resultar-check)—a native TypeScript-Go CLI and LSP server that runs compiler typechecks and Resultar-specific rules in a single pass:
 
 ```sh
 pnpm add -D resultar-check
@@ -753,7 +748,7 @@ Add the rule configuration to `tsconfig.json` (use `"diagnosticSeverity": "error
 }
 ```
 
-Run `resultar-check` in CI, `resultar-check --fix` for safe auto-repairs, `resultar-check migrate-v5` for v4 -> v5 codemods, or `resultar-check lsp` in your editor to catch accidental `await task` (`noAwaitResultTask`), discarded `Result` / `ResultAsync` / `ResultTask` / `MatchMatcher` / `Fiber` values, `unknown` error or task requirement channels, generator anti-patterns, unscoped resources, raw `throw` statements (`noThrow`), and ad-hoc `try/catch` blocks (`noTryCatch`). See the [`resultar-check` README](https://github.com/inaiat/resultar/blob/main/packages/check/README.md) and the [Anti-Patterns & `resultar-check` Guide](https://github.com/inaiat/resultar/blob/main/skills/resultar/references/anti-patterns.md) for all 43 rules and editor setup.
+Run `resultar-check` in CI, `resultar-check --fix` for safe auto-repairs, `resultar-check migrate-v5` for v4 -> v5 codemods, or `resultar-check lsp` in your editor to catch accidental `await task` (`noAwaitResultTask`), discarded `Result` / `ResultAsync` / `ResultTask` / `MatchMatcher` / `Fiber` values, `unknown` error or task requirement channels, generator anti-patterns, unscoped resources, raw `throw` statements (`noThrow`), and ad-hoc `try/catch` blocks (`noTryCatch`). See the [`resultar-check` README](https://inaiat.github.io/resultar/#/docs/resultar-check) and the [Anti-Patterns & `resultar-check` Guide](https://inaiat.github.io/resultar/#/docs/agents/anti-patterns) for all 43 rules and editor setup.
 
 ---
 
@@ -761,16 +756,16 @@ Run `resultar-check` in CI, `resultar-check --fix` for safe auto-repairs, `resul
 
 Resultar's companion packages integrate directly with the core primitives:
 
-| Package                                                                              | When to use it                                                                    | Documentation                                                                             |
-| ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| [`resultar-check`](https://www.npmjs.com/package/resultar-check)                     | Native TypeScript-Go compiler + Resultar linter, `migrate-v5`, & LSP              | [README](https://github.com/inaiat/resultar/blob/main/packages/check/README.md)           |
-| [`resultar-request`](https://www.npmjs.com/package/resultar-request)                 | Fetch-first JSON HTTP client returning lazy, cancelable `ResultTask` workflows    | [README](https://github.com/inaiat/resultar/blob/main/packages/request/README.md)         |
-| [`resultar-request-zod`](https://www.npmjs.com/package/resultar-request-zod)         | Zod schema validation adapter for `resultar-request`                              | [README](https://github.com/inaiat/resultar/blob/main/packages/request-zod/README.md)     |
-| [`resultar-request-typebox`](https://www.npmjs.com/package/resultar-request-typebox) | TypeBox schema validation adapter for `resultar-request`                          | [README](https://github.com/inaiat/resultar/blob/main/packages/request-typebox/README.md) |
-| [`resultar-di`](https://www.npmjs.com/package/resultar-di)                           | Typed dependency injection, class services, and scoped resources for `ResultTask` | [README](https://github.com/inaiat/resultar/blob/main/packages/di/README.md)              |
-| [`resultar-hono`](https://www.npmjs.com/package/resultar-hono)                       | Hono integration with per-request DI scopes and graceful shutdown                 | [README](https://github.com/inaiat/resultar/blob/main/packages/hono/README.md)            |
-| [`resultar-fastify`](https://www.npmjs.com/package/resultar-fastify)                 | Fastify plugin with application/request DI scopes and lifecycle cleanup           | [README](https://github.com/inaiat/resultar/blob/main/packages/fastify/README.md)         |
-| [`resultar-nestjs`](https://www.npmjs.com/package/resultar-nestjs)                   | NestJS module & `@Services()` decorator with application/request DI scopes        | [README](https://github.com/inaiat/resultar/blob/main/packages/nestjs/README.md)          |
+| Package                                                                              | When to use it                                                                    | Documentation                                                             |
+| ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [`resultar-check`](https://www.npmjs.com/package/resultar-check)                     | Native TypeScript-Go compiler + Resultar linter, `migrate-v5`, & LSP              | [Docs](https://inaiat.github.io/resultar/#/docs/resultar-check)           |
+| [`resultar-request`](https://www.npmjs.com/package/resultar-request)                 | Fetch-first JSON HTTP client returning lazy, cancelable `ResultTask` workflows    | [Docs](https://inaiat.github.io/resultar/#/docs/packages/request)         |
+| [`resultar-request-zod`](https://www.npmjs.com/package/resultar-request-zod)         | Zod schema validation adapter for `resultar-request`                              | [Docs](https://inaiat.github.io/resultar/#/docs/packages/request-zod)     |
+| [`resultar-request-typebox`](https://www.npmjs.com/package/resultar-request-typebox) | TypeBox schema validation adapter for `resultar-request`                          | [Docs](https://inaiat.github.io/resultar/#/docs/packages/request-typebox) |
+| [`resultar-di`](https://www.npmjs.com/package/resultar-di)                           | Typed dependency injection, class services, and scoped resources for `ResultTask` | [Docs](https://inaiat.github.io/resultar/#/docs/packages/di)              |
+| [`resultar-hono`](https://www.npmjs.com/package/resultar-hono)                       | Hono integration with per-request DI scopes and graceful shutdown                 | [Docs](https://inaiat.github.io/resultar/#/docs/packages/hono)            |
+| [`resultar-fastify`](https://www.npmjs.com/package/resultar-fastify)                 | Fastify plugin with application/request DI scopes and lifecycle cleanup           | [Docs](https://inaiat.github.io/resultar/#/docs/packages/fastify)         |
+| [`resultar-nestjs`](https://www.npmjs.com/package/resultar-nestjs)                   | NestJS module & `@Services()` decorator with application/request DI scopes        | [Docs](https://inaiat.github.io/resultar/#/docs/packages/nestjs)          |
 
 Opt-in eager compatibility lives in the [`resultar/async`](#opt-in-eager-compatibility-resultarasync) subpath of `resultar`.
 
@@ -801,7 +796,7 @@ const syncAccount = (id: string) =>
 | Goal                                           | Recommended API                                                                                                        |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | Create success or failure                      | Sync: `ok`, `err`, `unit`; Task: `ResultTask.ok`, `ResultTask.err`                                                     |
-| Define a structured error class                | `createTaggedError({ name, message })` (`.withProps<...>()` for custom field types)                                    |
+| Define a structured error class                | `createTaggedError({ name, message })` (`.withProps<...>()` for custom fields; `captureStackTrace: false` to skip stacks) |
 | Lift nullable values or predicates             | `Result.fromNullishOr`, `Result.liftPredicate`                                                                         |
 | Wrap throwing sync or async code               | Sync: `tryResult` / `fromThrowable`; async: `ResultTask.tryPromise`                                                    |
 | Transform or chain results                     | `map`, `mapErr`, `andThen`, `filterOrElse`, `as`, `asVoid`; Task `map` is synchronous                                  |
@@ -816,11 +811,11 @@ const syncAccount = (id: string) =>
 | Trace workflows & propagate request context    | `TaskLocal.make`, `Tracer.memory()`, `task.withSpan`, named `ResultTask.fn('span', ...)`                               |
 | Run lazy tasks at an edge                      | `task.runResult()`, `runExit()`, `runPromise()`, `runSync()`, `runSyncExit()`, `runFork()`                             |
 | Test timers and retries deterministically      | `Clock.virtual()` (`advanceBy`, `advanceToNext`, `runToCompletion`)                                                    |
-| Observe without altering the channel           | `inspect`, `inspectError`, `inspectBoth`, `log`                                                                        |
+| Observe without altering the channel           | `inspect`, `inspectError`, `inspectCause` (Task), `inspectBoth`, `log`                                                 |
 | Preserve an existing eager Async boundary      | `import { tryResultAsync, fromPromise, okAsync, errAsync } from "resultar/async"`                                      |
 | Adapt eager Async or Promise<Result> into Task | `ResultTask.fromResultAsync(signal => load(signal))`                                                                   |
 
-See the [Complete API Map](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md#api-map) for all overloads, collection helpers, and compatibility aliases.
+See the [Complete API Map](https://inaiat.github.io/resultar/#/docs/full-reference#api-map) for all overloads, collection helpers, and compatibility aliases.
 
 ---
 
@@ -949,17 +944,17 @@ signal handling and bounded HTTP draining at an explicit execution boundary.
 
 ## Coding Agents
 
-Every npm release bundles `dist/llms.txt`, `dist/agent/SKILL.md`, focused API and service references, and a compiled workflow example inside `node_modules/resultar/dist/agent/`. Point your coding agent to those installed files so its guidance always matches the exact installed version.
+Install `resultar-check` as a development dependency for offline agent guides and executable examples. Start at `node_modules/resultar-check/dist/llms.txt` and compare the package versions in `dist/agent/versions.json` there with the versions in your project.
 
 ---
 
 ## More Documentation
 
-- [Coming from Effect](https://github.com/inaiat/resultar/blob/main/docs/coming-from-effect.md)
-- [Gradual Adoption: `Result` to `ResultTask`](https://github.com/inaiat/resultar/blob/main/docs/gradual-adoption.md)
-- [Full Resultar Reference (`DOCUMENTATION.md`)](https://github.com/inaiat/resultar/blob/main/DOCUMENTATION.md)
-- [v5 Migration Guide (`Result` + `ResultTask` Unification)](https://github.com/inaiat/resultar/blob/main/docs/migrations/v5.md)
-- [v4 Migration & Compatibility Notes (Historical)](https://github.com/inaiat/resultar/blob/main/docs/migrations/v4.md)
+- [Coming from Effect](https://inaiat.github.io/resultar/#/docs/coming-from-effect)
+- [Gradual Adoption: `Result` to `ResultTask`](https://inaiat.github.io/resultar/#/docs/gradual-adoption)
+- [Complete Resultar Guide](https://inaiat.github.io/resultar/#/docs/full-reference)
+- [v5 Migration Guide (`Result` + `ResultTask` Unification)](https://inaiat.github.io/resultar/#/docs/v5-migration)
+- [v4 Migration & Compatibility Notes (Historical)](https://inaiat.github.io/resultar/#/docs/v4-migration)
 - [Runnable Examples (`examples/`)](https://github.com/inaiat/resultar/tree/main/examples)
 - [Type-Safe Error Handling Article (EN)](https://github.com/inaiat/resultar/blob/main/articles/en/type-safe.md) | [Artigo em Português (PT-BR)](https://github.com/inaiat/resultar/blob/main/articles/pt/type-safe.md)
 

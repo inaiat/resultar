@@ -41,7 +41,7 @@ const require = createRequire(join(root, "packages/resultar/package.json"));
 const compiler = join(dirname(require.resolve("typescript/package.json")), "bin/tsc");
 const checker = join(root, "packages/check/dist/cli.js");
 const catalog = JSON.parse(readFileSync(join(root, "skills/resultar/evals/evals.json"), "utf8"));
-const guideRoot = join(root, "packages/resultar/dist/agent");
+const guideRoot = join(root, "packages/check/dist/agent");
 const versions = JSON.parse(readFileSync(join(guideRoot, "versions.json"), "utf8"));
 function guidanceFor(test) {
   return values.guidance === "with-skill"

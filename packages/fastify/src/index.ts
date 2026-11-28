@@ -1,7 +1,9 @@
 import Fastify, {
+  type FastifyError,
   type FastifyHttpOptions,
   type FastifyInstance,
   type FastifyPluginAsync,
+  type FastifyReply,
   type FastifyRequest,
   type RawServerDefault,
 } from "fastify";
@@ -75,10 +77,16 @@ export type InferRequestServices<Source> = Source extends {
 type ModuleShape = { readonly scope: () => unknown };
 type ModuleSource = ModuleShape | ((app: FastifyInstance) => ModuleShape | Promise<ModuleShape>);
 type ModuleOf<M> = M extends (app: FastifyInstance) => infer Module ? Awaited<Module> : M;
-type ModuleInfo<M> =
-  ModuleOf<M> extends { readonly scope: () => ServiceScope<infer S, infer _E, infer R, infer G> }
-    ? { readonly services: S; readonly requirements: R; readonly graph: G }
-    : never;
+type ExtractModuleInfo<Mod> = Mod extends {
+  readonly scope: () => ServiceScope<infer S, infer _E, infer R, infer G>;
+}
+  ? { readonly services: S; readonly requirements: R; readonly graph: G }
+  : { readonly invalid: true };
+type ModuleInfo<M> = [Extract<ExtractModuleInfo<ModuleOf<M>>, { readonly invalid: true }>] extends [
+  never,
+]
+  ? Exclude<ExtractModuleInfo<ModuleOf<M>>, { readonly invalid: true }>
+  : never;
 type ServicesOf<M> = ModuleInfo<M>["services"];
 type Selection<M, Local extends object, Keys extends readonly string[]> = [Keys] extends [
   readonly Extract<keyof ServicesOf<M>, string>[],
@@ -139,7 +147,10 @@ export interface FastifyServicesOptions {
 }
 
 export interface FastifyAppOptions
-  extends FastifyServicesOptions, FastifyHttpOptions<RawServerDefault> {}
+  extends FastifyServicesOptions, FastifyHttpOptions<RawServerDefault> {
+  /** Opt into a root error handler that maps tags to statuses and sends { error }. */
+  readonly httpErrors?: { readonly statusByTag: Readonly<Record<string, number>> };
+}
 
 type LocalValues<O> = O extends { readonly locals: infer Local extends LocalsFactory }
   ? Awaited<ReturnType<Local>>
@@ -215,9 +226,32 @@ export function createFastifyApp<const Options extends FastifyAppOptions>(
     exposeRequest,
     mapError,
     rethrowRollbackOnClose,
+    httpErrors,
     ...serverOptions
   } = appOptions;
   const app = Fastify(serverOptions);
+  if (httpErrors !== undefined) {
+    const statusByTag = new Map(Object.entries(httpErrors.statusByTag));
+    app.setErrorHandler<
+      FastifyError & {
+        readonly _tag?: string;
+        readonly status?: number;
+        readonly headers?: Parameters<FastifyReply["headers"]>[0];
+      }
+    >((error, request, reply) => {
+      const tag = error?._tag;
+      const mappedStatus = tag === undefined ? undefined : statusByTag.get(tag);
+      const code = mappedStatus ?? error?.statusCode ?? error?.status ?? reply.statusCode;
+      const status = Number.isInteger(code) && code >= 400 && code <= 599 ? code : 500;
+      if (error?.headers !== undefined) reply.headers(error.headers);
+      if (status >= 500) request.log.error({ err: error }, "Request failed");
+      reply
+        .code(status)
+        .send({
+          error: status >= 500 ? "Internal Server Error" : (error?.message ?? "Request Error"),
+        });
+    });
+  }
   app.register(
     buildFastifyPlugin({
       name,
