@@ -2,6 +2,7 @@ import { getEventListeners } from 'node:events'
 
 import { describe, expect, it, vi } from 'vite-plus/test'
 
+import { canUseJit } from '../src/core/jit.js'
 import {
   isPromiseLike,
   isRetryElapsedExceeded,
@@ -236,7 +237,7 @@ describe('match mutation coverage', () => {
       .when(Match.any, () => 'any')
       .exhaustive()
 
-    expect(matcher.name).toBe('resultarMatchType')
+    expect(matcher.name === 'resultarMatchType').toBe(canUseJit())
     expect(matcher('hi')).toBe('non-empty:hi')
     expect(matcher('')).toBe('empty-string')
     expect(matcher(7)).toBe('num:7')
@@ -256,7 +257,7 @@ describe('match mutation coverage', () => {
       builder = builder.when(index, () => index) as unknown as ReturnType<typeof Match.type<number>>
     }
     const compiled = builder.orElse(() => -1)
-    expect(compiled.name).toBe('resultarMatchType')
+    expect(compiled.name === 'resultarMatchType').toBe(canUseJit())
     expect(compiled(0)).toBe(0)
     expect(compiled(127)).toBe(127)
     expect(compiled(128)).toBe(-1)
@@ -286,7 +287,7 @@ describe('match mutation coverage', () => {
       },
     }) as unknown as (input: unknown, extra?: unknown) => unknown
 
-    expect(curried.name).toBe('resultarMatchType')
+    expect(curried.name === 'resultarMatchType').toBe(canUseJit())
     expect(curried({ _tag: 'A' }, 'ignored-extra')).toBe('a')
     expect(calls).toEqual([[{ _tag: 'A' }]])
 
